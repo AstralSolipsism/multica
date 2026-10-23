@@ -448,7 +448,7 @@ func probeDshMulticaProfile(ctx context.Context, executablePath string) dshProbe
 	// A manifest that does not name the runtime is missing. Decide that before
 	// starting dsh: on current DSH, --probe against the skeleton a refused
 	// install leaves hangs until this timeout, and the file is already the answer.
-	if !dshMulticaProfilePresent() {
+	if dshMulticaProfileState(executablePath) == dshProfileMissing {
 		return dshProbeMissingProfile
 	}
 

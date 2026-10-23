@@ -240,7 +240,7 @@ func TestSeedUserCodexSkillsNormalizesWithoutChangingSource(t *testing.T) {
 	}
 	home := t.TempDir()
 	for i := 0; i < 2; i++ {
-		if err := hydrateCodexSkills(home, nil, nil, testLogger()); err != nil {
+		if err := hydrateCodexSkills(home, nil, nil, testLogger(), nil); err != nil {
 			t.Fatal(err)
 		}
 		dst := filepath.Join(home, "skills", "koc-publish-registration")

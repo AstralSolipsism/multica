@@ -161,7 +161,7 @@ func TestProbeDshMulticaProfile(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "ran")
 			t.Setenv("DSH_PROBE_MARKER", marker)
 			path := filepath.Join(t.TempDir(), "dsh")
-			script := "#!/bin/sh\ncase \"$*\" in\n  *--probe*) touch \"$DSH_PROBE_MARKER\"; exec sleep 30 ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
+			script := "#!/bin/sh\nexport DSH_HOME='" + home + "'\ncase \"$*\" in\n  *--probe*) touch \"$DSH_PROBE_MARKER\"; exec sleep 30 ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
 			if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +193,7 @@ func TestProbeDshMulticaProfile(t *testing.T) {
 		marker := filepath.Join(t.TempDir(), "ran")
 		t.Setenv("DSH_PROBE_MARKER", marker)
 		path := filepath.Join(t.TempDir(), "dsh")
-		script := "#!/bin/sh\ncase \"$*\" in\n  *--probe*) touch \"$DSH_PROBE_MARKER\"; exit 0 ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
+		script := "#!/bin/sh\nexport DSH_HOME='" + home + "'\ncase \"$*\" in\n  *--probe*) touch \"$DSH_PROBE_MARKER\"; exit 0 ;;\n  *) printf '%s\\n' '0.1.2-rc.1' ;;\nesac\n"
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}

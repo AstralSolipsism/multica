@@ -377,6 +377,7 @@ GET	/api/runtimes/{runtimeId}/local-skills/import/{requestId}	user-auth	deny
 GET	/api/runtimes/{runtimeId}/local-skills/{requestId}	user-auth	deny
 POST	/api/runtimes/{runtimeId}/models	user-auth	deny
 GET	/api/runtimes/{runtimeId}/models/{requestId}	user-auth	deny
+POST	/api/runtimes/{runtimeId}/revoke-workspace-access	user-auth	deny
 POST	/api/runtimes/{runtimeId}/unbind-agents-and-delete	user-auth	deny
 POST	/api/runtimes/{runtimeId}/update	user-auth	deny
 GET	/api/runtimes/{runtimeId}/update/{updateId}	user-auth	deny

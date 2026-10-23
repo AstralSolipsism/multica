@@ -357,3 +357,31 @@ func TestAntigravityExplicitSkillsExecuteFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeSkillInitializationUsesHandshakeTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	path := filepath.Join(t.TempDir(), "fake-claude")
+	// Deliberately never answer initialize. The configured budget must release
+	// skill discovery without waiting for the whole execution timeout.
+	writeTestExecutable(t, path, []byte(`#!/bin/sh
+IFS= read -r init
+IFS= read -r input
+printf '%s\n' '{"type":"result","subtype":"success","result":"fallback completed"}'
+cat >/dev/null
+`))
+	backend := &claudeBackend{cfg: Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"IS_SANDBOX": "1"}}}
+	skill := testSkillInvocation(t)
+	session, err := backend.Execute(t.Context(), skill.FallbackPrompt(), ExecOptions{
+		SkillInvocation: skill, HandshakeTimeout: 30 * time.Millisecond, Timeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	if result := <-session.Result; result.Status != "completed" || result.Output != "fallback completed" {
+		t.Fatalf("skill-only handshake did not honor its budget: %+v", result)
+	}
+}

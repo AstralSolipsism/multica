@@ -42,7 +42,7 @@ func TestResolveTaskModelSelectionThinkingLevelWarning(t *testing.T) {
 			stubModelDiscovery(t, map[string]agent.Catalog{tc.provider: catalog})
 			sel := resolveTaskModelSelection(context.Background(), tc.provider, agent.Command{}, taskModelSelection{
 				Model: tc.model, ThinkingLevel: tc.level,
-			}, quietTaskLog())
+			}, quietTaskLog(), nil)
 			if sel.Model != tc.model || sel.ThinkingLevelWarning != tc.want {
 				t.Fatalf("selection = %+v, want model %q and warning %q", sel, tc.model, tc.want)
 			}

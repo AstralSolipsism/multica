@@ -308,6 +308,12 @@ func TestRevokeRuntimeWorkspaceAccess(t *testing.T) {
 
 	ownerAgentID := createRuntimePrivacyAgent(t, runtimeID, runtimeOwnerID, "Runtime Privacy Owner Agent")
 	memberAgentID := createRuntimePrivacyAgent(t, runtimeID, memberID, "Runtime Privacy Member Agent")
+	folderID := dbfx.Insert(t, "labrastro_agent_folder", testutil.Cols{
+		"workspace_id": testWorkspaceID, "name": "Runtime privacy folder",
+	})
+	dbfx.InsertNoID(t, "labrastro_agent_placement", testutil.Cols{
+		"workspace_id": testWorkspaceID, "agent_id": memberAgentID, "folder_id": folderID,
+	}, "workspace_id=$1 AND agent_id=$2", testWorkspaceID, memberAgentID)
 	ownerBuilderID := dbfx.Agent(t, "Runtime Privacy Owner Builder", runtimeID, testutil.Cols{
 		"owner_id": runtimeOwnerID, "kind": "system", "system_key": "agent_builder:privacy-owner",
 	})
@@ -385,6 +391,13 @@ func TestRevokeRuntimeWorkspaceAccess(t *testing.T) {
 	}
 	if memberBound || !ownerBound {
 		t.Fatalf("bindings after revocation: member=%v owner=%v; want false/true", memberBound, ownerBound)
+	}
+	var retainedFolderID, retainedOwnerID string
+	dbfx.QueryRow(t, `SELECT p.folder_id, a.owner_id FROM labrastro_agent_placement p
+		JOIN agent a ON a.id=p.agent_id WHERE p.workspace_id=$1 AND p.agent_id=$2`,
+		testWorkspaceID, memberAgentID).Scan(&retainedFolderID, &retainedOwnerID)
+	if retainedFolderID != folderID || retainedOwnerID != memberID {
+		t.Fatalf("revocation changed folder/ownership: folder=%s owner=%s", retainedFolderID, retainedOwnerID)
 	}
 	var autopilotStatus, autopilotPauseReason string
 	if err := testPool.QueryRow(ctx, `SELECT status, COALESCE(pause_reason, '') FROM autopilot WHERE id = $1`, memberAutopilotID).Scan(&autopilotStatus, &autopilotPauseReason); err != nil {
