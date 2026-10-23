@@ -124,7 +124,7 @@ func writeSystemdAutostart(profile string, spec autostartSpec) (autostartState, 
 	}
 	previous, readErr := os.ReadFile(path)
 	// Second line of defense behind the shared guard: never overwrite a unit
-	// at our path that lacks the Multica marker — a user's hand-written unit
+	// at our path that lacks the Labrastro marker — a user's hand-written unit
 	// (e.g. one with an EnvironmentFile=) lives at this exact name.
 	if readErr == nil && !autostartCommentMarked(string(previous)) {
 		return autostartState{

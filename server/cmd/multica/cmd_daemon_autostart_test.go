@@ -156,22 +156,29 @@ func TestLaunchAgentPlistContent(t *testing.T) {
 	if launchAgentManaged([]byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>x</string></dict></plist>`)) {
 		t.Errorf("launchAgentManaged() = true for a plist without our marker")
 	}
-	// The coexistence trap this fork fixed: upstream Multica writes the same
-	// ManagedBy key with its own value at the same plist path. That file must
-	// read as foreign — enable/disable refuse it and the refresh skips it —
-	// or each CLI would treat the other's LaunchAgent as its own and silently
-	// rewrite it to point at its own daemon.
-	upstreamPlist := `<?xml version="1.0"?><plist version="1.0"><dict>` +
-		`<key>` + autostartPlistMarkerKey + `</key><string>` + upstreamPlistMarkerValue + `</string>` +
-		`<key>Label</key><string>x</string></dict></plist>`
-	if launchAgentManaged([]byte(upstreamPlist)) {
-		t.Errorf("launchAgentManaged() = true for an upstream Multica plist; the marker values must stay distinct")
-	}
 
 	// status must be able to read the argv back out of the written file.
 	if got, want := launchAgentStoredCommand([]byte(content)),
 		"/opt/homebrew/bin/multica daemon start --foreground --profile staging"; got != want {
 		t.Errorf("launchAgentStoredCommand = %q, want %q", got, want)
+	}
+}
+
+// TestLaunchAgentAutostartMarkerRejectsUpstream pins the coexistence fix:
+// upstream Multica writes the same ManagedBy key with "multica-daemon-
+// autostart" at the same plist path. That file must read as foreign —
+// enable/disable refuse it and the refresh skips it — or each CLI would
+// treat the other's LaunchAgent as its own and silently rewrite it. The
+// upstream value is a literal here, not the production constant, so this
+// expectation cannot drift with the code it guards.
+func TestLaunchAgentAutostartMarkerRejectsUpstream(t *testing.T) {
+	t.Parallel()
+
+	upstreamPlist := `<?xml version="1.0"?><plist version="1.0"><dict>` +
+		`<key>ManagedBy</key><string>multica-daemon-autostart</string>` +
+		`<key>Label</key><string>x</string></dict></plist>`
+	if launchAgentManaged([]byte(upstreamPlist)) {
+		t.Errorf("launchAgentManaged() = true for an upstream Multica plist; the marker values must stay distinct")
 	}
 }
 

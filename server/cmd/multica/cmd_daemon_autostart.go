@@ -79,10 +79,6 @@ const (
 	// whoever enabled first owns the file, the other side refuses to touch it.
 	autostartPlistMarkerKey   = "ManagedBy"
 	autostartPlistMarkerValue = "labrastro-daemon-autostart"
-	// upstreamPlistMarkerValue is the ManagedBy value upstream Multica writes.
-	// A plist carrying it is foreign: enable/disable refuse it and the
-	// `daemon start` refresh skips it.
-	upstreamPlistMarkerValue = "multica-daemon-autostart"
 )
 
 // daemonSystemdHandoffExitStatus is what the foreground daemon exits with
