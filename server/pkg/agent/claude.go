@@ -175,7 +175,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	go func() {
 		var commands map[string]bool
 		if initializer != nil {
-			if initErr := initializer.initialize(inputWriter, claudeSupplementHandshakeTimeout, opts.EnableTaskSupplement); initErr != nil {
+			if initErr := initializer.initialize(inputWriter, opts.HandshakeTimeout, opts.EnableTaskSupplement); initErr != nil {
 				b.cfg.Logger.Warn("Claude initialization unavailable; continuing with text input", "error", initErr)
 				initializer.end()
 			} else if !slashCommandsDisabled(b.cfg.LaunchPrefix, opts.ExtraArgs, opts.CustomArgs) {

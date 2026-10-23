@@ -1911,44 +1911,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		liveRateLimits := c.rateLimits
 		c.usageMu.Unlock()
 
-		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
-		// Codex writes token_count events to $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl;
-		// scan this backend's per-task CODEX_HOME, since sessions are isolated
-		// there rather than in the shared ~/.codex/sessions (MUL-4424).
-		//
-		// The scan is NOT gated on the usage fallback alone: token_count's
-		// rate_limits payload must be recovered even for runs whose token
-		// usage DID arrive over JSON-RPC (the live notification stream can
-		// drop the legacy token_count event entirely), so the scan runs
-		// whenever usage OR rate limits are still missing.
-		needUsage := u.InputTokens == 0 && u.OutputTokens == 0 &&
-			u.CacheReadTokens == 0 && u.CacheWriteTokens == 0
+		// Codex sometimes omits usage from JSON-RPC notifications, and can also
+		// omit the configured model when the agent relies on Codex's default.
+		// Scan the per-task session JSONL for either missing value. Session usage
+		// is only a fallback, so it must never replace a JSON-RPC usage sample.
+		taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 		var scannedRateLimits *codexRawRateLimits
-		if needUsage || !codexRateLimitsUsable(liveRateLimits) {
-			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
-			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
-				// A quota-only scan result (rate-limited before the first
-				// completed turn) carries zero usage; adopting it wholesale
-				// would wipe usage the live stream already reported.
-				scannedHasUsage := scanned.usage.InputTokens > 0 || scanned.usage.OutputTokens > 0 ||
-					scanned.usage.CacheReadTokens > 0 || scanned.usage.CacheWriteTokens > 0
-				if needUsage && scannedHasUsage {
-					u = scanned.usage
-					if scanned.model != "" && opts.Model == "" {
-						opts.Model = scanned.model
-					}
-				}
-				scannedRateLimits = scanned.rateLimits
-			}
-		}
-
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
-			}
-			usageMap = map[string]TokenUsage{model: u}
-		}
+		usageMap, scannedRateLimits = codexResultUsageMap(startTime, taskCodexHome, threadID, resumed, opts.Model, u, liveRateLimits)
 
 		// Plan quota: the live token_count capture is fresher than anything
 		// the JSONL scan can recover, so it wins; the scan covers runs whose
@@ -4126,10 +4095,41 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 	// has exactly that shape, and dropping it would hide the exhausted state.
 	hasUsage := result.usage.InputTokens > 0 || result.usage.OutputTokens > 0 ||
 		result.usage.CacheReadTokens > 0 || result.usage.CacheWriteTokens > 0
-	if !hasUsage && result.rateLimits == nil {
+	if !hasUsage && result.rateLimits == nil && result.model == "" {
 		return nil
 	}
 	return result
+}
+
+// codexResultUsageMap resolves a Codex result's model and usage without trading
+// one provider signal for another. JSON-RPC usage is authoritative when present;
+// the session log fills only a missing model. Session usage is used only when the
+// JSON-RPC path reported no tokens. A default-model run therefore remains
+// attributable instead of being stored as "unknown".
+func codexResultUsageMap(startTime time.Time, codexHome, threadID string, resumed bool, model string, usage TokenUsage, liveRateLimits *codexRawRateLimits) (map[string]TokenUsage, *codexRawRateLimits) {
+	usageEmpty := usage.InputTokens == 0 && usage.OutputTokens == 0 &&
+		usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0
+	var scanned *codexSessionUsage
+	if usageEmpty || model == "" || !codexRateLimitsUsable(liveRateLimits) {
+		scanned = scanCodexSessionUsage(startTime, codexHome, threadID, resumed)
+	}
+	if usageEmpty && scanned != nil {
+		usage = scanned.usage
+	}
+	if model == "" && scanned != nil {
+		model = scanned.model
+	}
+	var scannedRateLimits *codexRawRateLimits
+	if scanned != nil {
+		scannedRateLimits = scanned.rateLimits
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
+		return nil, scannedRateLimits
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	return map[string]TokenUsage{model: usage}, scannedRateLimits
 }
 
 // findCodexSessionRollouts returns uncompressed rollout files owned by threadID
@@ -4419,10 +4419,12 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	// rate-limited before the first turn finished, or every counter stayed at
 	// zero. The quota snapshot must survive that: usage stays zero and the
 	// caller decides per field, mirroring the "never fabricate a value" rule.
-	if !finalUsageFound && result.rateLimits == nil {
+	if !finalUsageFound && result.rateLimits == nil && result.model == "" {
 		return nil
 	}
-	result.usage = codexTokenUsage(finalUsage)
+	if finalUsageFound {
+		result.usage = codexTokenUsage(finalUsage)
+	}
 	return &result
 }
 

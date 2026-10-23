@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "motion/react";
 import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Archive, Pencil, Loader2, Square } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
@@ -46,7 +46,6 @@ import { AgentAccessRevokedBanner } from "./agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./runtime-required-banner";
 import {
   chatSessionsOptions,
-  chatMessagesPageOptions,
   pendingChatTaskOptions,
   pendingChatTasksOptions,
   chatKeys,
@@ -55,7 +54,6 @@ import {
 import {
   useCreateChatSession,
   useMarkChatSessionRead,
-  useRegenerateChatQuickActions,
   useSetChatSessionArchived,
   useSetChatSessionProject,
   useUpdateChatSession,
@@ -65,12 +63,11 @@ import { upsertChatMessageToCaches } from "@multica/core/chat/message-cache";
 import { chatQuickActionsPendingOptions } from "@multica/core/chat/queries";
 import { useQuickActionsPendingTimeout } from "@multica/core/chat/use-quick-actions-pending-timeout";
 import { useQuickActionsFailureToast } from "./use-quick-actions-failure-toast";
-import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
-import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { ChatQueue } from "./chat-queue";
 import { EmptyState } from "./chat-empty-state";
@@ -111,7 +108,6 @@ export function ChatWindow() {
   useQuickActionsPendingTimeout(activeSessionId ?? null, quickActionsPending);
   // Toast when an accepted refresh later fails in the daemon (async half).
   useQuickActionsFailureToast(activeSessionId ?? null);
-  const regenerateQuickActions = useRegenerateChatQuickActions();
   const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   const selectedProjectId = useChatStore((s) => s.selectedProjectId);
   const setOpen = useChatStore((s) => s.setOpen);
@@ -129,25 +125,6 @@ export function ChatWindow() {
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
     projectListOptions(wsId),
   );
-  const {
-    data: rawMessagePages,
-    isLoading: messagesLoading,
-    fetchNextPage: fetchOlderMessages,
-    hasNextPage: hasOlderMessages,
-    isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery(chatMessagesPageOptions(activeSessionId ?? ""));
-  // When no active session, always show empty — don't use stale cache.
-  // Page 0 contains the latest chronological window; later cursor pages are
-  // older chronological windows. Reverse pages so older fetched pages render
-  // above the initial latest page. The Virtuoso firstItemIndex is owned by
-  // ChatMessageList itself, tracked by row identity (chat-message-window.ts):
-  // page-boundary arithmetic cannot tell a real prepend from a refetch that
-  // only slid the cursor boundaries (OL-272).
-  const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
-  const allMessages = [...messagePages].reverse().flatMap((page) => page.messages);
-  // Skeleton only shows for an un-cached session fetch. Cached switches
-  // return data synchronously — no flash. `enabled: false` (new chat)
-  // keeps isLoading false so the conversation starters aren't hidden.
   // Server-authoritative pending task. Survives refresh / reopen / session
   // switch because it's keyed on sessionId in the Query cache; WS events
   // (chat:message / chat:done / task:*) keep it invalidated in real time.
@@ -156,9 +133,6 @@ export function ChatWindow() {
   const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery(
     pendingChatTaskOptions(activeSessionId ?? ""),
   );
-  const showSkeleton =
-    !!activeSessionId && (messagesLoading || pendingTaskLoading);
-  const messages = hideQueuedChatMessages(allMessages, pendingTask);
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // Durable deferred-cancellation draft restores (#5219). Same hook as the chat
@@ -776,10 +750,6 @@ export function ChatWindow() {
 
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
 
-  // Show the list (vs empty state) as soon as there's anything to display —
-  // a real message, or a pending task whose timeline will stream in.
-  const hasMessages = messages.length > 0 || !!pendingTaskId;
-
   const isVisible = isOpen && (isExpanded || boundsReady);
 
   // Small screens drop the floating-card form entirely — a 90%-of-375px
@@ -852,17 +822,15 @@ export function ChatWindow() {
       aria-hidden={!isOpen}
       className={containerClass}
       style={containerStyle}
-      initial={{ opacity: 0, scale: 0.95, ...motionSize }}
+      initial={{ opacity: 0, ...motionSize }}
       animate={{
         opacity: isVisible ? 1 : 0,
-        scale: isVisible ? 1 : 0.95,
         ...motionSize,
       }}
       transition={{
         width: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
         height: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
         opacity: { duration: 0.15 },
-        scale: { type: "spring", duration: 0.2, bounce: 0 },
       }}
     >
       {!isMobile && <ChatResizeHandles onDragStart={startDrag} />}
@@ -940,56 +908,47 @@ export function ChatWindow() {
       )}
 
       {/* Messages / skeleton / empty state */}
-      {showSkeleton ? (
-        <ChatMessageSkeleton />
-      ) : hasMessages ? (
-        <ChatMessageList
-          key={activeSessionId}
-          messages={messages}
-          pendingTask={pendingTask}
-          availability={availability}
-          hasOlderMessages={!!hasOlderMessages}
-          isFetchingOlderMessages={isFetchingOlderMessages}
-          onLoadOlderMessages={() => void fetchOlderMessages()}
-          onQuickAction={(action) => handleSend(action.prompt)}
-          resumeFollowNonce={resumeFollowNonce}
-          quickActionsDisabled={
-            !!pendingTaskId ||
-            isSessionArchived ||
-            isAgentArchived ||
-            isAgentAccessRevoked ||
-            !activeAgentRuntimeBound ||
-            noAgent
-          }
-          onRegenerateQuickActions={(message) =>
-            activeSessionId
-              ? regenerateQuickActions.mutateAsync({
-                  sessionId: activeSessionId,
-                  messageId: message.id,
-                })
-              : undefined
-          }
-          quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
-        />
-      ) : currentSession?.tip_source ? (
-        <TipSideChatStarters
-          onPick={(prompt) => handleSend(prompt)}
-          disabled={
-            isSessionArchived ||
-            isAgentArchived ||
-            isAgentAccessRevoked ||
-            !activeAgentRuntimeBound ||
-            noAgent
-          }
-        />
-      ) : (
-        <EmptyState
-          agent={activeAgent}
-          hasSessions={sessions.length > 0}
-          onPickPrompt={sendConversationStarter}
-          customizeHref={customizeConversationStartersHref}
-        />
-      )}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <ChatWindowMessages
+            sessionId={activeSessionId}
+            pendingTask={pendingTask}
+            pendingTaskLoading={pendingTaskLoading}
+            availability={availability}
+            resumeFollowNonce={resumeFollowNonce}
+            onQuickAction={(action) => handleSend(action.prompt)}
+            quickActionsDisabled={
+              !!pendingTaskId ||
+              isSessionArchived ||
+              isAgentArchived ||
+              isAgentAccessRevoked ||
+              !activeAgentRuntimeBound ||
+              noAgent
+            }
+            quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+          >
+            {currentSession?.tip_source ? (
+              <TipSideChatStarters
+                onPick={(prompt) => handleSend(prompt)}
+                disabled={
+                  isSessionArchived ||
+                  isAgentArchived ||
+                  isAgentAccessRevoked ||
+                  !activeAgentRuntimeBound ||
+                  noAgent
+                }
+              />
+            ) : (
+              <EmptyState
+                agent={activeAgent}
+                hasSessions={sessions.length > 0}
+                onPickPrompt={sendConversationStarter}
+                customizeHref={customizeConversationStartersHref}
+              />
+            )}
+          </ChatWindowMessages>
+        )}
+      </AnimatePresence>
 
       {/* Status banner above the input — single mutually-exclusive slot.
        *  Priority: no-agent > offline / unstable. Agent presence is the
