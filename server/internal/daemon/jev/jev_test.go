@@ -200,6 +200,46 @@ func TestDecide_AuthHeadersPerSource(t *testing.T) {
 	}
 }
 
+func TestDecide_FractionalLatencyMS(t *testing.T) {
+	// Regression: dashscope reports latency_ms with a fraction (45.7); the
+	// decision must still succeed — the field is unused, local latency wins.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		return 200, `{"answers":{"effort":{"choice":"high","confidence":0.9,"probabilities":{"low":0.1,"high":0.9}}},"latency_ms":45.7}`
+	})
+	c := New(Options{Sources: []Source{{Name: "dashscope", BaseURL: rs.srv.URL}}})
+	dec, err := c.Decide(context.Background(), testReq())
+	if err != nil {
+		t.Fatalf("Decide with fractional latency_ms: %v", err)
+	}
+	if dec.Level != "high" || dec.Source != "dashscope" {
+		t.Fatalf("decision = %+v", dec)
+	}
+}
+
+func TestDecide_FailoverToFractionalLatencySource(t *testing.T) {
+	// Regression: first source 500, second reports latency_ms with a
+	// fraction — the decision must land on the second source.
+	rs := newRecordingServer(t, func(r *http.Request, body []byte) (int, string) {
+		switch r.URL.Path {
+		case "/five":
+			return 500, "boom"
+		default:
+			return 200, `{"answers":{"effort":{"choice":"low","confidence":0.9,"probabilities":{"low":0.9,"high":0.1}}},"latency_ms":45.7}`
+		}
+	})
+	c := New(Options{Sources: []Source{
+		{Name: "a", BaseURL: rs.srv.URL + "/five"},
+		{Name: "dashscope", BaseURL: rs.srv.URL + "/ok"},
+	}})
+	dec, err := c.Decide(context.Background(), testReq())
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if dec.Source != "dashscope" || dec.Level != "low" {
+		t.Fatalf("decision = %+v, want source dashscope", dec)
+	}
+}
+
 func TestDecide_FailoverOn5xxTimeoutInvalidChoice(t *testing.T) {
 	// Path-based backend: /five returns 500, /choice returns a fixed
 	// choice, anything else answers "low".
