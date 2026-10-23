@@ -25,7 +25,9 @@ Main then advanced through PR #183 (OL-1083) and was merged without conflicts.
 The approved per-field decision bounds and untrimmed step-state behavior are
 retained byte-for-byte; the overlapping environment-variable documents preserve
 both its guidance and this sync's `gpt-5.6-luna` default. Neither refresh changes
-migration files. Daemon, hook and affected UI tests are rerun after this merge.
+migration files. Daemon tests (including embedded hook installation) and
+affected UI tests are rerun after this merge. The standalone Claude hook-engine
+TypeScript suite is not included in this environment's validation.
 
 The live upstream tag lookup on 2026-10-23 reports annotation object
 `8a4d3eeb521e699eb977a6a5709bc834bb1927bb`, unlike the annotation recorded in the
