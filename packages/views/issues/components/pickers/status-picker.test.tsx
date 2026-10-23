@@ -293,6 +293,23 @@ describe("StatusPicker on an issue outside any project (MUL-8121)", () => {
     expect(onUpdate).toHaveBeenCalledWith({ status: "merged" });
   });
 
+  it("keeps dependency restrictions while searching custom statuses outside Default", () => {
+    const discussion = entry({ key: "backlog_2", name: "Discussion", category: "unstarted" });
+    catalogEntries = [TODO, IN_REVIEW, QA, MERGED, DONE, discussion];
+    workspaceDefault = DEFAULT;
+    const onUpdate = vi.fn();
+    renderWithI18n(
+      <StatusPicker status="todo" projectId={null} allowedStatuses={new Set(["todo", "backlog_2"])}
+        onUpdate={onUpdate} open onOpenChange={() => {}} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Search status..."), { target: { value: "merg" } });
+    expect(rows()).toEqual([]);
+    fireEvent.change(screen.getByPlaceholderText("Search status..."), { target: { value: "discuss" } });
+    expect(rows()).toEqual(["Discussion"]);
+    fireEvent.click(optionRow("Discussion"));
+    expect(onUpdate).toHaveBeenCalledWith({ status: "backlog_2" });
+  });
+
   it("offers the whole catalog when the surface spans projects", () => {
     catalogEntries = [TODO, IN_REVIEW, QA, MERGED, DONE];
     workspaceDefault = DEFAULT;

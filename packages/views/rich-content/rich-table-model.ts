@@ -70,10 +70,12 @@ function collectTables(node: MdastNodes, out: Span[]): void {
 }
 
 // The block syntax RichContent's own parse sees (remark-gfm, remark-math), so
-// both find the same tables: a `|` line inside `$$` is not one.
+// both find the same tables: a `|` line inside `$$` is not one. The fork's
+// validated single-dollar math is strictly inline; the permissive upstream
+// single-dollar parser must not swallow table lines across newlines.
 function tableSpans(markdown: string): Span[] {
   const tree = fromMarkdown(markdown, {
-    extensions: [gfmTable(), math()],
+    extensions: [gfmTable(), math({ singleDollarTextMath: false })],
     mdastExtensions: [gfmTableFromMarkdown(), mathFromMarkdown()],
   });
   const spans: Span[] = [];

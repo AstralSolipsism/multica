@@ -146,20 +146,20 @@ describe("WorkspaceDocumentTitle", () => {
     document.title = SITE_TITLE;
 
     await waitFor(() => {
-      expect(document.title).toBe("MUL-123: Fix login | Multica");
+      expect(document.title).toBe("MUL-123: Fix login | Labrastro");
     });
   });
   it("updates when navigating from one issue to another", () => {
     open("/acme/issues/HIBE-63");
     presentation.title = "HIBE-63: First issue";
     const view = render(<WorkspaceDocumentTitle />);
-    expect(document.title).toBe("HIBE-63: First issue | Multica");
+    expect(document.title).toBe("HIBE-63: First issue | Labrastro");
 
     open("/acme/issues/HIBE-64");
     presentation.title = "HIBE-64: Second issue";
     view.rerender(<WorkspaceDocumentTitle />);
 
-    expect(document.title).toBe("HIBE-64: Second issue | Multica");
+    expect(document.title).toBe("HIBE-64: Second issue | Labrastro");
   });
 
   it("restores the latest issue after metadata overwrites a later navigation", async () => {
@@ -173,7 +173,7 @@ describe("WorkspaceDocumentTitle", () => {
     document.title = SITE_TITLE;
 
     await waitFor(() => {
-      expect(document.title).toBe("HIBE-64: Second issue | Multica");
+      expect(document.title).toBe("HIBE-64: Second issue | Labrastro");
     });
   });
 });

@@ -10,8 +10,6 @@ import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 
-const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
-
 /** Message-only observers leave with the fading list; the composer stays alive. */
 export function ChatWindowMessages({
   sessionId,
@@ -21,6 +19,7 @@ export function ChatWindowMessages({
   onQuickAction,
   quickActionsDisabled,
   quickActionsPendingMessageId,
+  resumeFollowNonce,
   children,
 }: {
   sessionId: string | null;
@@ -30,6 +29,7 @@ export function ChatWindowMessages({
   onQuickAction: (action: ChatQuickAction) => void | Promise<unknown>;
   quickActionsDisabled: boolean;
   quickActionsPendingMessageId: string | null;
+  resumeFollowNonce?: number;
   children: ReactNode;
 }) {
   const isPresent = useIsPresent();
@@ -45,11 +45,6 @@ export function ChatWindowMessages({
   const messages = hideQueuedChatMessages(
     [...pages].reverse().flatMap((page) => page.messages),
     pendingTask ?? undefined,
-  );
-  // Older pages prepend rows without changing the newest window's indices.
-  const olderMessageCount = pages.slice(1).reduce(
-    (count, page) => count + page.messages.length,
-    0,
   );
 
   return (
@@ -69,9 +64,7 @@ export function ChatWindowMessages({
           messages={messages}
           pendingTask={pendingTask}
           availability={availability}
-          firstItemIndex={messages.length > 0
-            ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
-            : 0}
+          resumeFollowNonce={resumeFollowNonce}
           hasOlderMessages={!!hasNextPage}
           isFetchingOlderMessages={isFetchingNextPage}
           onLoadOlderMessages={() => void fetchNextPage()}

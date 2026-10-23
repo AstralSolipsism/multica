@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { ChatMessage } from "@multica/core/types";
 import { ChatWindowMessages } from "./chat-window-messages";
+import { renderWithI18n } from "../../test/i18n";
+import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 
 const fetchMessages = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", () => ({ api: { listChatMessagesPage: fetchMessages } }));
@@ -66,6 +68,26 @@ function renderWindow(open: boolean) {
 beforeEach(() => { fetchMessages.mockReset(); });
 
 describe("floating chat message lifetime", () => {
+  it("shows tip-session starters only while its message window is empty", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const key = chatKeys.messagesPage("session-1");
+    qc.setQueryData(key, pages([]));
+    renderWithI18n(
+      <QueryClientProvider client={qc}>
+        <ChatWindowMessages sessionId="session-1" pendingTask={null} pendingTaskLoading={false}
+          availability={undefined} onQuickAction={vi.fn()} quickActionsDisabled={false}
+          quickActionsPendingMessageId={null}>
+          <TipSideChatStarters onPick={vi.fn(async () => {})} disabled={false} />
+        </ChatWindowMessages>
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.queryByTestId("messages")).not.toBeInTheDocument();
+    act(() => qc.setQueryData(key, pages([message("tip reply")])));
+    expect(await screen.findByText("tip reply")).toBeInTheDocument();
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+  });
+
   it("keeps message observers absent when the window starts closed", () => {
     const { observers } = renderWindow(false);
     expect(screen.queryByTestId("messages")).not.toBeInTheDocument();

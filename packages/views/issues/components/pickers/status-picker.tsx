@@ -107,8 +107,10 @@ export function StatusPicker({
     // Outside a project only the list is narrowed to Default, not what the
     // issue may take: search reaches every status. (MUL-8121)
     const pool = defaultScope ? catalog : allOptions;
-    return pool.filter((o) => o.label.toLowerCase().includes(q));
-  }, [allOptions, catalog, defaultScope, query]);
+    return pool.filter((o) =>
+      (!allowedStatuses || allowedStatuses.has(o.key)) && o.label.toLowerCase().includes(q),
+    );
+  }, [allOptions, allowedStatuses, catalog, defaultScope, query]);
 
   const searchable = !!workflow || !!defaultScope || allOptions.length > SEARCH_THRESHOLD;
   const [pendingStatus, setPendingStatus] = useState<IssueStatus | null>(null);

@@ -66,6 +66,16 @@ afterEach(() => {
 });
 
 describe("RichTable", () => {
+  it("renders single-dollar formulas in cells and copies their original source", async () => {
+    const source = "| Formula | Price |\n| --- | --- |\n| $x_i^2$ | $5 |";
+    const { container } = render(<RichContent content={source} />);
+    expect(container.querySelector("td .katex")).not.toBeNull();
+    expect(container.querySelectorAll(".katex")).toHaveLength(1);
+    expect(screen.getByText("$5")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copy as Markdown" }));
+    expect(copyText).toHaveBeenCalledWith(source);
+  });
+
   it("keeps the browser's layout until a column is resized", () => {
     const { table } = renderTable();
     expect(table.closest(".tableWrapper")).not.toBeNull();

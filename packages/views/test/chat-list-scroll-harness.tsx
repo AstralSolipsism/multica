@@ -31,6 +31,10 @@ import type { ReactElement } from "react";
 // scroller to the bottom — the real component's job, and the only route the
 // bottom-stick may take (MUL-6879).
 let reportContentHeightChanged: (() => void) | undefined;
+
+export function chatListHeightChangedCallback() {
+  return reportContentHeightChanged;
+}
 let pinCalls: unknown[] = [];
 let scrollToLastItemEnd: (() => void) | undefined;
 
