@@ -2,7 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import type { RuntimeModel } from "@multica/core/types";
+import type {
+  RuntimeModel,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { PropRow } from "../../../common/prop-row";
 import { SettingsRow } from "../../../settings/components/settings-layout";
@@ -35,6 +38,8 @@ export function ThinkingPropRow({
   model,
   value,
   canEdit,
+  adaptSupported = false,
+  adaptSnapshot = null,
   onChange,
 }: {
   runtimeId: string | null;
@@ -45,6 +50,8 @@ export function ThinkingPropRow({
   model: string;
   value: string;
   canEdit: boolean;
+  adaptSupported?: boolean;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -63,6 +70,8 @@ export function ThinkingPropRow({
         value={value}
         levels={levels}
         canEdit={canEdit}
+        adaptSupported={adaptSupported}
+        adaptSnapshot={adaptSnapshot}
         onChange={onChange}
       />
     </PropRow>
@@ -78,6 +87,8 @@ export function ThinkingSettingField({
   model,
   value,
   canEdit,
+  adaptSupported = false,
+  adaptSnapshot = null,
   onChange,
 }: {
   label: ReactNode;
@@ -87,6 +98,8 @@ export function ThinkingSettingField({
   model: string;
   value: string;
   canEdit: boolean;
+  adaptSupported?: boolean;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const modelsQuery = useQuery(
@@ -106,6 +119,8 @@ export function ThinkingSettingField({
         value={value}
         levels={levels}
         canEdit={canEdit}
+        adaptSupported={adaptSupported}
+        adaptSnapshot={adaptSnapshot}
         onChange={onChange}
       />
     </SettingsRow>
@@ -132,6 +147,13 @@ function pickModelEntry(
   // its own default role model, then clamps the level to what that model
   // supports. Previewing any entry here would offer a level the real model may
   // silently lower. (MUL-7412)
-  if (provider === "codex" || provider === "omp") return undefined;
+  //
+  // deveco is fenced off likewise: its OpenCode-engine catalog also marks no
+  // default, and the backend rejects a level without a pinned model, so a
+  // preview here would diverge from what ValidateThinkingLevel allows.
+  // (OL-1007)
+  if (provider === "codex" || provider === "omp" || provider === "deveco") {
+    return undefined;
+  }
   return models.find((m) => m.default) ?? models[0];
 }

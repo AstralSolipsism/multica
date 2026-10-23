@@ -112,9 +112,9 @@ type AgentResponse struct {
 	Status             string                     `json:"status"`
 	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
 	Model              string                     `json:"model"`
-	// ThinkingLevel is the runtime-native reasoning/effort token persisted
-	// for this agent (empty = use runtime default). The picker is per-runtime
-	// per-model; the API never normalizes across providers. See MUL-2339.
+	// ThinkingLevel is the runtime-native reasoning/effort token or reserved
+	// adaptive mode persisted for this agent (empty = use runtime default). The
+	// picker is per-runtime per-model; the API never normalizes across providers.
 	ThinkingLevel string `json:"thinking_level"`
 	// ServiceTier is the runtime-native Codex execution tier persisted for
 	// this agent (empty = inherit local Codex configuration).
@@ -489,6 +489,10 @@ type AgentTaskResponse struct {
 	// said on this issue", so only the first may waive the workflow's comment
 	// scan. Absent on old servers, which is the safe reading (MUL-6984).
 	NewCommentsDeltaKnown bool `json:"new_comments_delta_known,omitempty"`
+
+	// IssueDescription is sent only for adaptive decisions, not the agent brief.
+	IssueDescription string `json:"issue_description,omitempty"`
+
 	// IssueStateDeltaKnown is the same contract as NewCommentsDeltaKnown, for
 	// the ISSUE record rather than its comments: the server compared this
 	// claim's title / description against the
@@ -1475,14 +1479,19 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// Pi has a fixed token universe and a daemon-discovered per-model subset.
 	// Per-model gaps are enforced by the daemon at execution time (MUL-2339):
 	// combination-invalid values are logged and omitted from the invocation.
-	if !agent.IsKnownThinkingValue(runtime.Provider, req.ThinkingLevel) {
+	if req.ThinkingLevel == agent.ThinkingLevelAdapt {
+		if rejection := h.adaptThinkingRejection(r.Context(), runtime.Provider, runtime.ID, req.Model); rejection != "" {
+			writeError(w, http.StatusBadRequest, rejection)
+			return
+		}
+	} else if !agent.IsKnownThinkingValue(runtime.Provider, req.ThinkingLevel) {
 		writeError(w, http.StatusBadRequest, thinkingLevelRejection(runtime.Provider, req.ThinkingLevel))
 		return
 	}
 	// For ACP-catalog providers the provider name is not the capability answer
 	// — this runtime's own discovered catalog is. Keeps a Hermes Agent user's
 	// clear 400 instead of accepting a level the daemon would later drop.
-	if req.ThinkingLevel != "" {
+	if req.ThinkingLevel != "" && req.ThinkingLevel != agent.ThinkingLevelAdapt {
 		switch h.acpThinkingDecision(r.Context(), runtime.Provider, runtime.ID) {
 		case acpEffortAbsent:
 			writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(runtime.Provider))
@@ -2082,6 +2091,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	//   - field set to value → validate against the target runtime's fixed enum
 	//     or dynamic-token syntax; reject literal-invalid with 400. Per-model
 	//     combination checks run in the daemon at execution time, not here.
+	// Reserved adaptive mode uses its own eligibility check and clears an
+	// implicit carry-over when the runtime/model selection no longer allows it.
 	shouldClearThinkingLevel := false
 	if req.ThinkingLevel != nil {
 		value := *req.ThinkingLevel
@@ -2100,19 +2111,44 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if !agent.IsKnownThinkingValue(provider, value) {
+			if value == agent.ThinkingLevelAdapt {
+				if rejection := h.adaptThinkingRejection(r.Context(), provider, targetRuntimeID, effectiveModelValue(params, existing)); rejection != "" {
+					writeError(w, http.StatusBadRequest, rejection)
+					return
+				}
+			} else if !agent.IsKnownThinkingValue(provider, value) {
 				writeError(w, http.StatusBadRequest, thinkingLevelRejection(provider, value))
 				return
 			}
-			switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
-			case acpEffortAbsent:
-				writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(provider))
-				return
-			case acpEffortUnknown:
-				writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(provider))
-				return
+			if value != agent.ThinkingLevelAdapt {
+				switch h.acpThinkingDecision(r.Context(), provider, targetRuntimeID) {
+				case acpEffortAbsent:
+					writeError(w, http.StatusBadRequest, thinkingCapabilityRejection(provider))
+					return
+				case acpEffortUnknown:
+					writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(provider))
+					return
+				}
 			}
 			params.ThinkingLevel = pgtype.Text{String: value, Valid: true}
+		}
+	} else if existing.ThinkingLevel.String == agent.ThinkingLevelAdapt {
+		// Adaptive mode belongs to the runtime/model pair it was enabled on.
+		// An explicit new choice above is validated; an implicit carry-over is
+		// cleared on a runtime move or when the new model cannot support it.
+		if targetRuntimeID != existing.RuntimeID {
+			shouldClearThinkingLevel = true
+		} else if params.Model.Valid && params.Model.String != existing.Model.String {
+			provider := targetProvider
+			if provider == "" {
+				var ok bool
+				provider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+				if !ok {
+					writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
+					return
+				}
+			}
+			shouldClearThinkingLevel = h.adaptThinkingRejection(r.Context(), provider, targetRuntimeID, effectiveModelValue(params, existing)) != ""
 		}
 	} else if req.RuntimeID != nil && existing.ThinkingLevel.Valid && existing.ThinkingLevel.String != "" {
 		// Runtime is changing but the caller didn't touch thinking_level.
@@ -2538,6 +2574,41 @@ func (h *Handler) acpThinkingDecision(ctx context.Context, provider string, runt
 		}
 	}
 	return acpEffortAbsent
+}
+
+// adaptThinkingRejection validates the reserved mode separately from native
+// tokens. ACP runtimes need evidence for the selected (or catalog default)
+// model, not merely another model in the same catalog with an effort dial.
+func (h *Handler) adaptThinkingRejection(ctx context.Context, provider string, runtimeID pgtype.UUID, model string) string {
+	if !agent.ThinkingControlSupported(provider) {
+		return thinkingCapabilityRejection(provider)
+	}
+	if agent.ThinkingRequiresExplicitModel(provider) && strings.TrimSpace(model) == "" {
+		return thinkingNeedsExplicitModelRejection(provider)
+	}
+	if !agent.UsesACPCatalogThinking(provider) {
+		return ""
+	}
+	snapshot := h.cachedModelCatalog(ctx, uuidToString(runtimeID))
+	if snapshot == nil {
+		return thinkingCapabilityUnknownRejection(provider)
+	}
+	for _, m := range snapshot.Models {
+		if m.ID != model && !(model == "" && m.Default) {
+			continue
+		}
+		if m.Thinking != nil {
+			levels := make([]agent.ThinkingLevel, 0, len(m.Thinking.SupportedLevels))
+			for _, level := range m.Thinking.SupportedLevels {
+				levels = append(levels, agent.ThinkingLevel(level))
+			}
+			if len(agent.AdaptThinkingCandidates(levels)) >= 2 {
+				return ""
+			}
+		}
+		break
+	}
+	return fmt.Sprintf("thinking_level %q requires at least two reasoning effort candidates for model %q on runtime %q; choose a supported model or leave thinking_level empty to use the runtime default", agent.ThinkingLevelAdapt, model, provider)
 }
 
 // existingThinkingLevelRejection is thinkingLevelRejection for the carry-over

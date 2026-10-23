@@ -31,8 +31,9 @@ export function dagOverviewLayoutInput(model: DagOverviewModel): DagScenePlan {
   };
 }
 
-/** Hover can include satisfied subsets of mixed bundles without a layout call. */
-export function dagOverviewHoverEdges(model: DagOverviewModel, cardId: string) {
+/** Selecting or focusing an overview card can include satisfied subsets of
+ *  mixed bundles without a layout call. */
+export function dagOverviewSatisfiedEdges(model: DagOverviewModel, cardId: string) {
   return (model.satisfiedByCard.get(cardId) ?? []).map((edge) => ({
     edge: { id: edge.id, source: edge.source, target: edge.target, sourceKind: "task" as const, targetKind: "task" as const },
     dependencyIds: edge.sourceEdgeIds,

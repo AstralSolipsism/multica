@@ -3,24 +3,13 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { MoreHorizontal, Pause, Play, Unplug } from "lucide-react";
+import { MoreHorizontal, Pause, Play } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@multica/ui/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useConfigStore } from "@multica/core/config";
@@ -40,6 +29,7 @@ import {
   SettingsTab,
 } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
+import { GitHubAccountRows, GitHubConnectButton } from "./code-github";
 import { VCSConnectionRows } from "./code-vcs";
 import { HostMark, HostStatus } from "./code-host";
 import { RepositoriesSection } from "./repositories-section";
@@ -76,13 +66,9 @@ export function CodeTab() {
   const configured = installationData?.configured ?? false;
   const canManageGitHub = installationData?.can_manage === true;
   const connected = installations.length > 0;
-  const primaryInstallation = installations[0] ?? null;
 
   const flags = deriveGitHubSettings(workspace);
   const [savingKey, setSavingKey] = useState<GitHubSettingsKey | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
-  const [disconnecting, setDisconnecting] = useState(false);
 
   async function persistSetting(key: GitHubSettingsKey, next: boolean) {
     if (!workspace || savingKey) return;
@@ -103,37 +89,6 @@ export function CodeTab() {
     }
   }
 
-  async function handleConnect() {
-    setConnecting(true);
-    try {
-      const resp = await api.getGitHubConnectURL(wsId);
-      if (!resp.configured || !resp.url) {
-        toast.error(t(($) => $.github.toast_not_configured));
-        return;
-      }
-      window.open(resp.url, "_blank", "noopener");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_open_failed));
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  async function handleDisconnect() {
-    if (!disconnectTarget || disconnecting) return;
-    setDisconnecting(true);
-    try {
-      await api.deleteGitHubInstallation(wsId, disconnectTarget);
-      await qc.invalidateQueries({ queryKey: ["github", wsId] });
-      toast.success(t(($) => $.github.toast_disconnected));
-      setDisconnectTarget(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_disconnect_failed));
-    } finally {
-      setDisconnecting(false);
-    }
-  }
-
   if (!workspace) return null;
 
   const githubStatus = !connected
@@ -147,21 +102,16 @@ export function CodeTab() {
   const pausedNote = !flags.enabled ? (
     <span className="block">{t(($) => $.github.master_description_off)}</span>
   ) : null;
-  const githubDetail = connected ? (
-    <>
-      {t(($) => $.github.connected_to, {
-        login: installations.map((i) => i.account_login).join(", "),
-      })}
-      {primaryInstallation?.connected_by
-        ? ` · ${t(($) => $.github.connected_by, { name: primaryInstallation.connected_by })}`
-        : null}
-      {pausedNote}
-    </>
-  ) : !canManageGitHub ? (
-    <>
-      {t(($) => $.github.contact_admin_to_connect)}
-      {pausedNote}
-    </>
+  // Connected accounts have their own rows below.
+  const githubDetail = !canManageGitHub ? (
+    connected ? (
+      pausedNote
+    ) : (
+      <>
+        {t(($) => $.github.contact_admin_to_connect)}
+        {pausedNote}
+      </>
+    )
   ) : !configured ? (
     <>
       {t(($) => $.github.not_configured)}{" "}
@@ -198,24 +148,12 @@ export function CodeTab() {
             }
             description={githubDetail ? <span className="block pl-12">{githubDetail}</span> : undefined}
           >
-            {canManageGitHub ? (
+            {canManageGitHub && installationData ? (
               <span className="flex items-center gap-1">
-                {connected ? null : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleConnect}
-                    disabled={connecting || !configured}
-                    aria-busy={connecting || undefined}
-                  >
-                    {connecting
-                      ? t(($) => $.github.connect_opening)
-                      : t(($) => $.github.connect_github)}
-                  </Button>
-                )}
+                <GitHubConnectButton installationData={installationData} />
                 {/* Resume stays reachable after a disconnect: the pause is a
                     workspace setting, and Co-authored-by works without an App.
-                    Only disconnecting needs an installation. */}
+                    Each account disconnects from its own row. */}
                 {connected || !flags.enabled ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger
@@ -239,24 +177,13 @@ export function CodeTab() {
                           ? t(($) => $.github.pause)
                           : t(($) => $.github.resume)}
                       </DropdownMenuItem>
-                      {primaryInstallation ? (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() => setDisconnectTarget(primaryInstallation.id)}
-                          >
-                            <Unplug />
-                            {t(($) => $.github.disconnect)}
-                          </DropdownMenuItem>
-                        </>
-                      ) : null}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : null}
               </span>
             ) : null}
           </SettingsRow>
+          <GitHubAccountRows installations={installations} canManage={canManageGitHub} />
           {vcsAvailable ? <VCSConnectionRows /> : null}
         </SettingsCard>
       </SettingsSection>
@@ -317,32 +244,6 @@ export function CodeTab() {
           <PRMergeStatusRow canManage={isManager} />
         </SettingsCard>
       </SettingsSection>
-
-      <AlertDialog
-        open={!!disconnectTarget}
-        onOpenChange={(v) => {
-          if (!v && !disconnecting) setDisconnectTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t(($) => $.github.disconnect_confirm_title)}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.github.disconnect_confirm_description)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
-              {t(($) => $.github.disconnect_confirm_cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
-              {disconnecting
-                ? t(($) => $.github.disconnecting)
-                : t(($) => $.github.disconnect_confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </SettingsTab>
   );
 }

@@ -1,4 +1,11 @@
 {
+  "agents": {
+    "thinking_adapt": {
+      "label": "適応",
+      "description": "選択すると、秘匿情報を除去した実行概要が外部の決定サービスに送信されます。デフォルトでは OpenCode Zen の無料チャネルを使用します。",
+      "upgrade_required": "このデーモンは古すぎるため、適応を利用できません。デーモンをアップグレードしてください。"
+    }
+  },
   "issues": {
     "detail": {
       "more_actions": "タスク操作"
@@ -20,6 +27,26 @@
         "cli_install_windows_help": "Windows にはスクリプトインストーラーがありません。ワークスペース管理者に問い合わせるか、内部リリースソース（{{downloadsUrl}}/cli/v<バージョン>/、現在のバージョンは {{latestManifestUrl}} を参照）から該当バージョンの multica-cli-<バージョン>-windows-<アーキテクチャ>.zip をダウンロードし、multica.exe を PATH の通った場所に展開してください。",
         "cli_install_windows_label": "Windows では手動インストールが必要です"
       }
+    },
+    "github": {
+      "add_account": "アカウントを追加",
+      "connecting": "接続中…",
+      "reuse_label": "管理している他のワークスペースから",
+      "install_on_another_account": "別の GitHub アカウントにインストール",
+      "account_type_user": "個人アカウント",
+      "account_type_organization": "組織",
+      "account_actions": "{{login}} の操作",
+      "disconnect_account_confirm_title": "{{login}} の接続を解除しますか？",
+      "toast_account_connected": "{{login}} を接続しました",
+      "toast_account_not_reusable": "{{login}} はもう再利用できません。別の場所で接続が解除されたか、GitHub でアンインストールされた可能性があります。",
+      "toast_account_suspended": "{{login}} のインストールは GitHub で一時停止されています。GitHub で再開してから、もう一度お試しください。",
+      "toast_account_connect_failed": "{{login}} を接続できませんでした。もう一度お試しください。"
+    },
+    "repositories": {
+      "github_error_not_authorized": "owner または admin 権限のないワークスペースにすでに接続されている GitHub アカウントです。そのワークスペースの owner または admin にここで接続してもらうか、先にそのワークスペースの admin にしてもらってください。",
+      "github_error_unknown_installation": "GitHub によると、このインストールは存在しません。GitHub で App を再インストールしてから、もう一度お試しください。",
+      "github_error_installation_suspended": "このインストールは GitHub で一時停止されています。GitHub で再開してから、もう一度お試しください。GitHub がここに戻らず App の設定ページで止まる場合は、GitHub で App をアンインストールしてから再インストールしてください。",
+      "github_error_verification_unavailable": "現在 GitHub でこのインストールを確認できないため、接続は完了していません。しばらくしてからもう一度接続してください。GitHub がここに戻らず App の設定ページで止まる場合は、GitHub で App をアンインストールしてから再インストールしてください。"
     }
   },
   "skills": {

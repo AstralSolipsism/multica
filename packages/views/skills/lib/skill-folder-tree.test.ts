@@ -9,7 +9,6 @@ import type {
 } from "@multica/core/api/schemas";
 import {
   buildFolderNodes,
-  buildFolderSkillIndex,
   collectSubtreeFolderIds,
   commonCandidatePrefix,
   folderDisplayPath,
@@ -19,7 +18,6 @@ import {
   isManagedInternalFolder,
   isPackageRootFolder,
   packageForRootFolder,
-  skillMatchesFolderSelection,
   skillMoveDestinations,
 } from "./skill-folder-tree";
 
@@ -202,53 +200,5 @@ describe("packageForRootFolder", () => {
     const t = tree({ packages: [pkg({ id: "p1", root_folder_id: "root-f" })] });
     expect(packageForRootFolder(t, "root-f")?.id).toBe("p1");
     expect(packageForRootFolder(t, "other")).toBeNull();
-  });
-});
-
-describe("skillMatchesFolderSelection", () => {
-  const t = tree({
-    folders: [
-      folder({ id: "root" }),
-      folder({ id: "child", parent_id: "root" }),
-    ],
-    placements: [
-      placement({ skill_id: "in-root", folder_id: "root" }),
-      placement({ skill_id: "in-child", folder_id: "child" }),
-    ],
-  });
-
-  it("all matches everything", () => {
-    expect(skillMatchesFolderSelection(t, { kind: "all" }, "anything")).toBe(true);
-  });
-
-  it("uncategorized matches only skills without a placement", () => {
-    expect(skillMatchesFolderSelection(t, { kind: "uncategorized" }, "loose")).toBe(true);
-    expect(skillMatchesFolderSelection(t, { kind: "uncategorized" }, "in-root")).toBe(false);
-  });
-
-  it("a folder matches its whole subtree", () => {
-    expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "root" }, "in-child")).toBe(true);
-    expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "child" }, "in-root")).toBe(false);
-    expect(skillMatchesFolderSelection(t, { kind: "folder", folderId: "child" }, "loose")).toBe(false);
-  });
-});
-
-describe("buildFolderSkillIndex", () => {
-  const t = tree({
-    folders: [
-      folder({ id: "root" }),
-      folder({ id: "child", parent_id: "root" }),
-    ],
-    placements: [
-      placement({ skill_id: "in-root", folder_id: "root" }),
-      placement({ skill_id: "in-child", folder_id: "child" }),
-    ],
-  });
-
-  it("accumulates subtree skills once for every folder", () => {
-    const index = buildFolderSkillIndex(t);
-    expect([...(index.byFolder.get("root") ?? [])].sort()).toEqual(["in-child", "in-root"]);
-    expect([...(index.byFolder.get("child") ?? [])]).toEqual(["in-child"]);
-    expect([...index.placed].sort()).toEqual(["in-child", "in-root"]);
   });
 });

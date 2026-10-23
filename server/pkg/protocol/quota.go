@@ -1,5 +1,7 @@
 package protocol
 
+import "github.com/multica-ai/multica/server/internal/daemon/jev"
+
 // Runtime plan quota and host metrics wire types.
 //
 // The plan-quota shape crosses the daemon -> server heartbeat boundary, the
@@ -95,3 +97,11 @@ type HostMetrics struct {
 	// the first (set-if-newer) and consumers treat stale samples as absent.
 	CapturedAt int64 `json:"captured_at"`
 }
+
+// ThinkingAdaptSnapshot is the daemon's Jev health snapshot (contract §3)
+// for adaptive thinking levels. It travels as "thinking_adapt" on daemon
+// heartbeats of thinking-capable runtimes, is cached in Redis keyed by
+// (workspace id, daemon id) like HostMetrics, and is exposed on the runtime
+// list API as "thinking_adapt". Carries only source names — never URLs,
+// keys, or run content.
+type ThinkingAdaptSnapshot = jev.Snapshot

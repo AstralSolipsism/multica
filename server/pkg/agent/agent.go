@@ -147,6 +147,16 @@ type ExecOptions struct {
 	// (Claude only, see labrastro_ysk.go). It runs on the stream reader and
 	// must return promptly. The batches never become task messages.
 	OnYouShouldKnow func(json.RawMessage)
+	// OnEffortEffect receives each effect record the labrastro-effort mod
+	// logs (Claude only, see labrastro_effort.go): the level that took
+	// effect at a step, with the decision or the fallback reason. It runs on
+	// the stream reader and must return promptly.
+	OnEffortEffect func(EffortEffect)
+	// OnPerTurnEffort reports the per-turn effort state Claude Code announces:
+	// once per system/init frame (active or not), and false again when a
+	// system/per_turn_effort_changed frame revokes it mid-run. It runs on the
+	// stream reader and must return promptly.
+	OnPerTurnEffort func(active bool)
 	// piMcpExtensionPath is set by piBackend.Execute after it writes the
 	// temporary MCP extension. The daemon does not fill it.
 	piMcpExtensionPath string
@@ -230,6 +240,10 @@ const (
 
 // Message is a unified event emitted by an agent during execution.
 type Message struct {
+	ModelRequestID  string // model request identity, shared by split assistant events
+	ParentToolUseID string // non-empty for subagent output; never starts a main-thread step
+
+	Metadata  map[string]any // optional structured message metadata; immutable after emission
 	Type      MessageType
 	Content   string         // text content (Text, Error, Log)
 	Tool      string         // tool name (ToolUse, ToolResult)

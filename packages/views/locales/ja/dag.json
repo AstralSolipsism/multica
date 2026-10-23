@@ -72,6 +72,7 @@
   "edge_aggregate_summary_other": "{{count}} 件の依存を集約",
   "edge_locate": "位置へ移動",
   "legend_highlight": "カードや線をクリック：関連チェーンを強調し、ほかを暗くします。もう一度クリックで全上流・下流に切替",
+  "legend_lit_flow": "強調されたチェーンでは流光が前提から後続へ流れます：ブロック中はブランドブルー、満たされた依存は柔らかい緑、キャンセル済みでブロック中は赤です",
   "selection_scope_neighborhood": "1層",
   "selection_scope_closure": "全上流・下流",
   "focus_mode": "フォーカスモード",

@@ -12,21 +12,31 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
 - **Four edge states** (OL-183 §4): satisfied (thin grey), blocking (dark),
   advancing (dark with dots flowing downstream), cancelled-blocking (red
   dashes breathing). Motion is CSS (`dag-edge-motion.css`) and follows a
-  budget (`dag-highlight.ts#dagMotionSegments`): system reduced motion or
-  zoom < 50% stops it; past ~60 moving segments on screen only the selected
-  chain keeps moving.
-- **Highlight**: hover lights a card's own in/out edges (debounced 100 ms so
-  pan gestures do not storm, and suppressed on the card that already owns the
-  selection); a click selects the one-layer neighborhood; a second click on
-  the same node (after a 400 ms double-click window, skipped for
+  budget (`dag-highlight.ts#dagMotionPlan`): system reduced motion or
+  zoom < 50% stops it; past ~60 moving elements on screen (the OL-997 lit
+  flows count too) only the selected chain keeps moving, truncated to
+  cancelled-blocking, then unsatisfied, then satisfied routes.
+- **Highlight**: a click selects the one-layer neighborhood; a second click
+  on the same node (after a 400 ms double-click window, skipped for
   `event.detail > 1`, rolled back when a slow double-click still fires)
   switches to all upstream + downstream (`DagFocusWay: "both"`); a third
-  returns. Toolbar focus buttons keep the one-way modes. Every lit dependency
+  returns. Toolbar focus buttons keep the one-way modes. Hover never lights
+  or dims anything — cards keep only their own border/pointer affordance
+  (OL-996). Every lit dependency
   repaints along its own complete route — never the whole bus (OL-280 option
-  B). Node dimming is a single masked rect in a z-3 overlay svg with holes
+  B). Node dimming is a single even-odd path in a z-3 overlay svg with holes
   over the lit cards — the z-index-2 cards never rebuild, and the selection
-  ring is an SVG rect (brand blue). The lit routes and their flow dots paint
-  in the same overlay svg, after the dim rect, so dimming never dulls them.
+  ring is an SVG rect (brand blue). The lit routes paint in the same overlay
+  svg, after the dim path, so dimming never dulls them. Each also carries a
+  state-colored flow (OL-997): a glowing dot with a short trailing echo
+  traveling the route's own point order via CSS motion path, source to
+  target — brand blue while unsatisfied, softened success green once
+  satisfied, destructive red for a cancelled blocker (which keeps its red
+  dashed breath). Routes sharing a bus interval each follow their own
+  direction and stack satisfied → unsatisfied → cancelled-blocking; the
+  background dots a lit advancing segment used to borrow are gone — the
+  route flow replaces them. The flow dots pause while the viewport moves
+  (pan/zoom) and resume on move end.
 - **Bus click**: visible segments carry inset transparent hit strokes; a
   click stores the segment's deduplicated original dependency IDs and the
   toolbar lists them in the restored OL-182 "aggregate N dependencies"
@@ -152,9 +162,10 @@ Fully satisfied overview dependencies are **always overlays**, even when the
 show-satisfied switch is on. That switch does not enter the placement key.
 `routeDagOverlays(geometry, plan.overlays, plan.input.edges)` returns combined
 base/overlay routes, segments and dots without
-changing boxes; it uses simple orthogonal corridors. Hover uses
-`dagOverviewHoverEdges(model, cardId)` and the same router. Mixed bundles reuse
-their existing route while `overlayDependencyIds` / hover membership select
+changing boxes; it uses simple orthogonal corridors. Selecting or focusing an
+overview card uses `dagOverviewSatisfiedEdges(model, cardId)` and the same
+router. Mixed bundles reuse
+their existing route while `overlayDependencyIds` / overlay membership select
 only the satisfied subset. The optional third argument composes trunk
 membership across base and overlay edges before styling or hit testing; use
 the returned segments as the complete displayed set. Omitting it returns just

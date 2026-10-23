@@ -4585,11 +4585,7 @@ func (s *TaskService) CompleteTaskWithTransition(ctx context.Context, taskID pgt
 			var payload protocol.TaskCompletedPayload
 			if err := json.Unmarshal(result, &payload); err == nil {
 				if payload.Output != "" {
-					// Match the CLI's --content / --description behavior: agents that
-					// emit literal `\n` 4-char sequences (Python/JSON-style) get them
-					// decoded into real newlines before the comment hits the DB. See
-					// util.UnescapeBackslashEscapes for the exact contract.
-					body := util.UnescapeBackslashEscapes(payload.Output)
+					body := normalizeTaskOutput(payload.Output)
 					if task.TriggerCommentID.Valid && isTrivialDoneOutput(body) {
 						slog.Warn("suppressing trivial comment-trigger fallback output",
 							"task_id", util.UUIDToString(task.ID),
@@ -4681,9 +4677,6 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 	// valid JSON; an empty Output is the only case this branch cares about.
 	var payload protocol.TaskCompletedPayload
 	_ = json.Unmarshal(result, &payload)
-	// Same unescape as the issue-comment path: literal `\n` from agent stdout
-	// becomes a real newline so the chat panel renders paragraph breaks.
-	body := util.UnescapeBackslashEscapes(payload.Output)
 	// Strip any in-band quick-actions footer from EVERY chat completion — the
 	// reserved syntax must never reach a stored transcript. This includes the
 	// agent-initiated intro turn (chat_input_task_id NULL), which previously
@@ -4694,7 +4687,12 @@ func (s *TaskService) writeChatCompletionOutcome(ctx context.Context, qtx *db.Qu
 	// now (SupplementChatQuickActions). Honouring a footer here would pin a
 	// pre-upgrade session to the retired, lower-quality in-band suggestions and
 	// suppress the pass that would have replaced them.
-	body, _ = splitChatQuickActions(body)
+	body, _ := splitChatQuickActions(payload.Output)
+	// Choose escaped mode from the original output: removing the footer may
+	// remove the only real newline in an already-decoded reply.
+	if !strings.ContainsAny(payload.Output, "\r\n") {
+		body = normalizeTaskOutput(body)
+	}
 	isEmpty := strings.TrimSpace(body) == ""
 
 	// MUL-4899 completion-boundary observation. Measures whether the delivery
@@ -7855,9 +7853,7 @@ func quickCreateFailureDetail(result []byte) string {
 	if err := json.Unmarshal(result, &payload); err != nil {
 		return ""
 	}
-	// Same unescape as the comment-fallback path: literal `\n` sequences from
-	// agent stdout become real newlines before the reason reaches the user.
-	body := strings.TrimSpace(util.UnescapeBackslashEscapes(payload.Output))
+	body := strings.TrimSpace(normalizeTaskOutput(payload.Output))
 	if body == "" {
 		return ""
 	}

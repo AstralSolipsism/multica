@@ -1,3 +1,4 @@
+import { installLabrastroAgentFolderApi, type LabrastroAgentFolderApi } from "./labrastro-agent-folder-api";
 import type { ApiClient } from "./client";
 import { installLabrastroSkillApi, type LabrastroSkillApi } from "./labrastro-skill-api";
 import { installLabrastroMessageDeliveryApi, type LabrastroMessageDeliveryApi } from "./labrastro-message-delivery-api";
@@ -5,6 +6,7 @@ import { installLabrastroDependencyApi, type LabrastroDependencyApi } from "./la
 import { installLabrastroLarkApi, type LabrastroLarkApi } from "./labrastro-lark-api";
 import { installLabrastroQuotaApi, type LabrastroQuotaApi } from "./labrastro-quota-api";
 import { installLabrastroYskApi, type LabrastroYskApi } from "./labrastro-ysk-api";
+import { installLabrastroGitHubApi, type LabrastroGitHubApi } from "./labrastro-github-api";
 
 // The upstream client's three retained boundary hooks use the same entry point.
 export { ApiError } from "./labrastro-api-error";
@@ -18,19 +20,23 @@ export { dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro
 // existing ApiClient imports and mocks typed without duplicating signatures.
 declare module "./client" {
   interface ApiClient extends
+    LabrastroAgentFolderApi,
     LabrastroSkillApi,
     LabrastroMessageDeliveryApi,
     LabrastroDependencyApi,
     LabrastroLarkApi,
     LabrastroQuotaApi,
-    LabrastroYskApi {}
+    LabrastroYskApi,
+    LabrastroGitHubApi {}
 }
 
 export function installLabrastroApi(target: { prototype: ApiClient }): void {
+  installLabrastroAgentFolderApi(target);
   installLabrastroSkillApi(target);
   installLabrastroMessageDeliveryApi(target);
   installLabrastroDependencyApi(target);
   installLabrastroLarkApi(target);
   installLabrastroQuotaApi(target);
   installLabrastroYskApi(target);
+  installLabrastroGitHubApi(target);
 }

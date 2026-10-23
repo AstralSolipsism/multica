@@ -11,6 +11,7 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   AGENT_MAX_CONCURRENT_TASKS_MAX,
   AGENT_MAX_CONCURRENT_TASKS_MIN,
+  runtimeSupportsThinkingAdapt,
 } from "@multica/core/agents";
 import {
   isRuntimeUsableForUser,
@@ -286,6 +287,8 @@ export function AgentDetailInspector({
             model={agent.model ?? ""}
             value={agent.thinking_level ?? ""}
             canEdit={canEdit}
+            adaptSupported={runtimeSupportsThinkingAdapt(runtime)}
+            adaptSnapshot={runtime?.thinking_adapt ?? null}
             onChange={(thinkingLevel) =>
               update({ thinking_level: thinkingLevel })
             }

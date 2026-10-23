@@ -117,6 +117,8 @@ export function SkillListToolbar({
   onToggleColumn,
   allRows,
   visibleCount,
+  countLabel,
+  countTitle,
 }: {
   search: string;
   onSearchChange: (v: string) => void;
@@ -131,8 +133,10 @@ export function SkillListToolbar({
   onToggleColumn: (key: SkillColumnKey) => void;
   /** Unfiltered rows — option lists and counts derive from the full set. */
   allRows: SkillRow[];
-  /** Rows surviving search + filters — shown as "n / total" when narrowed. */
+  /** Skill rows in the current flat or folder view. */
   visibleCount: number;
+  countLabel?: string;
+  countTitle?: string;
 }) {
   const { t } = useT("skills");
   const [labelSearch, setLabelSearch] = useState("");
@@ -207,11 +211,8 @@ export function SkillListToolbar({
 
   return (
     <div className={PAGE_TOOLBAR}>
-      {/* Left: name search + result count. The count only appears while
-          search/filters narrow the list — in the idle state it would just
-          duplicate the total already shown in the page header. Below md the
-          search (and its count) disappear entirely, following the issues
-          header's small-screen treatment. */}
+      {/* Flat views show a count only while narrowed. Folder views provide a
+          label that distinguishes direct skills from the workspace total. */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -223,12 +224,12 @@ export function SkillListToolbar({
             className="h-8 w-64 pl-8 text-body"
           />
         </div>
-        {(hasActiveFilters || search.trim().length > 0) && (
+        {(countLabel !== undefined || hasActiveFilters || search.trim().length > 0) && (
           <span
-            title={t(($) => $.toolbar.result_count_title)}
-            className="hidden shrink-0 text-caption tabular-nums text-muted-foreground md:inline"
+            title={countTitle ?? t(($) => $.toolbar.result_count_title)}
+            className={`shrink-0 text-caption tabular-nums text-muted-foreground ${countLabel === undefined ? "hidden md:inline" : ""}`}
           >
-            {visibleCount} / {allRows.length}
+            {countLabel ?? `${visibleCount} / ${allRows.length}`}
           </span>
         )}
       </div>

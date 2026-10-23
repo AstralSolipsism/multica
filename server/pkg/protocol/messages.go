@@ -3,6 +3,9 @@ package protocol
 import "encoding/json"
 
 const (
+	// DaemonCapabilityThinkingAdaptV1 allows claims to carry the reserved
+	// adaptive thinking mode. Older daemons receive an empty thinking level.
+	DaemonCapabilityThinkingAdaptV1     = "thinking-adapt-v1"
 	DaemonCapabilityYouShouldKnowV1     = "you-should-know-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
@@ -216,6 +219,7 @@ type ChatQuickActionsPayload struct {
 
 // TaskMessagePayload represents a single agent execution message (tool call, text, etc.)
 type TaskMessagePayload struct {
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	TaskID  string         `json:"task_id"`
@@ -410,6 +414,10 @@ type DaemonHeartbeatRequestPayload struct {
 	// the sampler's shared CapturedAt. Same backward-compat story as
 	// PlanQuota.
 	Metrics *HostMetrics `json:"metrics,omitempty"`
+	// ThinkingAdapt carries the daemon's Jev health snapshot (contract §3)
+	// for adaptive thinking. Only runtimes whose provider supports thinking
+	// control attach it. Same backward-compat story as PlanQuota.
+	ThinkingAdapt *ThinkingAdaptSnapshot `json:"thinking_adapt,omitempty"`
 }
 
 // DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.

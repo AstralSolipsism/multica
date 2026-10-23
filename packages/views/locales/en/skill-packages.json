@@ -1,10 +1,6 @@
 {
   "tree": {
-    "title": "Folders",
-    "all_skills": "All skills",
-    "uncategorized": "Uncategorized",
     "new_folder": "New folder",
-    "new_subfolder": "New subfolder",
     "rename_folder": "Rename",
     "move_folder": "Move",
     "delete_folder": "Delete",
@@ -13,15 +9,24 @@
     "delete_package": "Delete package",
     "folder_actions": "Actions for {{name}}",
     "not_imported": "Not imported",
-    "gray_hint": "Rescan the package to import this candidate.",
+    "gray_hint": "Rescan the package to import this unimported skill.",
     "package_label": "Package",
     "indeterminate": "Folders couldn't be loaded.",
     "retry": "Retry",
-    "empty": "No folders yet. Create one, or import a skill package.",
     "package_forbidden": "Only the package importer or an admin can do this.",
     "expand_folder": "Expand {{name}}",
     "collapse_folder": "Collapse {{name}}",
-    "clear_filter": "Clear filter"
+    "breadcrumb_aria": "Folder location",
+    "up": "Up one level",
+    "managed_new_folder": "Package folders follow the package.",
+    "flat_results": "Results from all folders",
+    "empty_folder": "This folder is empty.",
+    "unavailable": "Folders are unavailable. Showing skills in a flat list.",
+    "open_folder": "Open {{name}}",
+    "folder_skill_count_one": "{{count}} skill",
+    "folder_skill_count_other": "{{count}} skills",
+    "folder_count": "{{visible}} here / {{total}} in workspace",
+    "folder_count_title": "Skills directly in this folder / all skills in the workspace"
   },
   "folder_form": {
     "create_title": "New folder",
@@ -32,30 +37,43 @@
     "save": "Save",
     "saving": "Saving...",
     "cancel": "Cancel",
-    "failed": "Couldn't save the folder. Try again."
+    "failed": "Couldn't save the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
   },
   "folder_move": {
     "title": "Move folder",
     "description": "Move \"{{name}}\" into:",
-    "root_option": "Top level",
+    "root_option": "Root",
     "confirm": "Move",
     "moving": "Moving...",
     "cancel": "Cancel",
-    "failed": "Couldn't move the folder. Try again."
+    "failed": "Couldn't move the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
   },
   "folder_delete": {
     "title": "Delete this folder?",
-    "description": "\"{{name}}\" is removed. Its skills and subfolders move up one level; nothing is deleted from the workspace.",
+    "description": "\"{{name}}\" is removed. Its skills and subfolders move up one level. No skills are deleted.",
     "confirm": "Delete",
     "deleting": "Deleting...",
     "cancel": "Cancel",
-    "failed": "Couldn't delete the folder. Try again."
+    "failed": "Couldn't delete the folder. Try again.",
+    "unconfirmed": "The result couldn't be confirmed. The list was refreshed — check it before retrying."
+  },
+  "folder_errors": {
+    "name_conflict": "A folder with this name already exists at the destination.",
+    "folder_cycle": "A folder can't be moved into one of its own subfolders.",
+    "invalid_name": "The folder name isn't valid: 1–255 bytes, no surrounding whitespace, no control characters or line breaks.",
+    "forbidden": "You don't have permission to do this.",
+    "not_found": "The target couldn't be found — it may have been deleted. The list was refreshed.",
+    "managed_folder": "Managed package folders follow the package and can't be changed here.",
+    "preview_stale": "The folder tree changed. The list was refreshed — try again.",
+    "permission_changed": "Your permissions changed. The list was refreshed — try again."
   },
   "move_skills": {
     "title_one": "Move skill",
     "title_other": "Move {{count}} skills",
     "destination": "Destination",
-    "uncategorized": "Uncategorized",
+    "root_option": "Root",
     "confirm": "Move",
     "moving": "Moving...",
     "cancel": "Cancel",
@@ -63,6 +81,8 @@
     "done_other": "{{count}} skills moved.",
     "partial": "Moved {{done}} of {{total}}; the rest failed.",
     "failed": "Couldn't move the skills. Try again.",
+    "unconfirmed_one": "Moved {{done}} of {{total}}; {{count}} couldn't be confirmed. The list was refreshed — check it before retrying.",
+    "unconfirmed_other": "Moved {{done}} of {{total}}; {{count}} couldn't be confirmed. The list was refreshed — check it before retrying.",
     "no_permission": "You don't have permission to move every selected skill.",
     "packaged_hint": "Packaged skills can't be moved. Detach from the package first."
   },
@@ -176,7 +196,7 @@
   "picker": {
     "uncategorized": "Uncategorized",
     "not_imported": "Not imported",
-    "not_imported_hint": "Import this candidate from the skills page before binding it.",
+    "not_imported_hint": "Import this skill from the skills page before binding it.",
     "toggle_folder": "Select all in {{name}}"
   }
 }

@@ -51,6 +51,35 @@ func TestSplitChatQuickActionsStripsMalformedTrailingProtocol(t *testing.T) {
 	}
 }
 
+func TestSplitChatQuickActionsEscapedLines(t *testing.T) {
+	t.Parallel()
+	footer := "```quick-actions\\n" + `[{"label":"A","prompt":"B\nC"}]` + "\\n```"
+	for _, tc := range []struct {
+		name, input, want string
+		actionCount       int
+	}{
+		{"trailing footer", `Answer text\n\n` + footer, "Answer text", 1},
+		{"escaped CRLF", "Answer\\r\\n```quick-actions\\r\\n" + `[{"label":"A","prompt":"B\nC"}]` + "\\r\\n```\\r\\n", "Answer", 1},
+		{"footer only", footer, "", 1},
+		{"trailing escaped whitespace", `Answer\n` + footer + `\n\n `, "Answer", 1},
+		{"malformed footer", "Answer\\n```quick-actions\\nnot json\\n```", "Answer", 0},
+		{"body remains literal", `$x\n$\n` + footer, `$x\n$`, 1},
+		{"escaped backslash before footer", `Literal \\n\n` + footer, `Literal \\n`, 1},
+		{"mid-response example", footer + `\nMore text`, footer + `\nMore text`, 0},
+		{"later unrelated fence", footer + "\\nExample\\n```go\\ncode\\n```", footer + "\\nExample\\n```go\\ncode\\n```", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			visible, actions := splitChatQuickActions(tc.input)
+			if visible != tc.want || len(actions) != tc.actionCount {
+				t.Fatalf("visible = %q, actions = %+v; want %q, %d actions", visible, actions, tc.want, tc.actionCount)
+			}
+			if len(actions) != 0 && actions[0].Prompt != "B\nC" {
+				t.Fatalf("JSON prompt escapes changed: %+v", actions[0])
+			}
+		})
+	}
+}
+
 func TestSplitChatQuickActionsLeavesMidResponseFenceVisible(t *testing.T) {
 	t.Parallel()
 	input := "Example:\n```quick-actions\n[]\n```\nMore explanation."

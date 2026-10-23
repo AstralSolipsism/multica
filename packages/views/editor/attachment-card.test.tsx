@@ -84,6 +84,28 @@ describe("AttachmentCard — chrome row", () => {
     );
     expect(screen.getByTitle("Preview")).toBeTruthy();
   });
+
+  // OL-998 — inside the editor the card sits under the composers' cursor-text
+  // surface: the body pins the arrow explicitly so it can't turn into an
+  // I-beam by inheritance, while the action buttons keep the pointer.
+  it("keeps the body on the arrow cursor and the action buttons on pointer", () => {
+    render(
+      <AttachmentCard
+        filename="manual.pdf"
+        contentType="application/pdf"
+        attachmentId="att-1"
+        href="https://cdn.example/manual.pdf"
+        onPreview={() => {}}
+        onDownload={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    const body = screen.getByText("manual.pdf").closest("div[class*='cursor-default']");
+    expect(body).not.toBeNull();
+    for (const title of ["Preview", "Download", "Remove attachment"]) {
+      expect(screen.getByTitle(title).className).toContain("cursor-pointer");
+    }
+  });
 });
 
 describe("AttachmentCard — Eye / Download buttons", () => {

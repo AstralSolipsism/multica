@@ -12,12 +12,13 @@ import { useCancelIssueRun, useRetryIssueRun } from "@multica/core/issues/mutati
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { commentSupplementReceipts } from "@multica/core/issues/run-steering";
 import { dispatchReasonCode } from "@multica/core/api";
-import type { AgentTask, TimelineEntry } from "@multica/core/types";
+import type { AgentTask, TaskMessagePayload, TimelineEntry } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { AgentTranscriptDialog, StepBody } from "../../common/task-transcript/agent-transcript-dialog";
+import { ThinkingLevelBadge } from "../../common/thinking-level-badge";
 import { buildTimeline } from "../../common/task-transcript/build-timeline";
 import { buildSteps, groupSteps, isCallStep, isGroupRow, type TraceRow } from "../../common/task-transcript/build-steps";
 import { traceEventSummary, traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
@@ -143,7 +144,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
   const stepLabel = steps.length > 0 ? t(($) => $.inline_run.steps, { count: steps.length }) : "";
   const stopLabel = cancel.isPending || cancel.isSuccess ? t(($) => $.inline_run.stopping) : t(($) => $.inline_run.stop);
   const transcript = fullLogOpen && <AgentTranscriptDialog open onOpenChange={setFullLogOpen}
-    task={task} items={items} agentName={name} isLive={active} finalFocus={logFromKeyboard}
+    task={task} items={items} messages={data ?? NO_MESSAGES} agentName={name} isLive={active} finalFocus={logFromKeyboard}
     contentState={isPending ? <p role="status" className="text-body text-muted-foreground">{t(($) => $.inline_run.loading)}</p>
       : isError ? <div role="alert" className="text-body text-destructive">{t(($) => $.inline_run.load_failed)}
         <button className="ml-2 underline" type="button" onClick={() => void refetch()}>{t(($) => $.inline_run.try_again)}</button>
@@ -206,7 +207,8 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
           onClick={(event) => { state.disclosure.onTrigger(event); setExpanded(!expanded); }}>
           {showProgress
             ? <><RunActivityIndicator status={task.status} animate={animationVisibility.visible} />
-                <RunActivitySummary summary={summary} /></>
+                <RunActivitySummary summary={summary} />
+                <ThinkingLevelBadge messages={data ?? NO_MESSAGES} /></>
             : <span className={cn(showIdentity && "@max-[32rem]/run:sr-only")}>{activityLabel}</span>}
           {!showProgress && stepLabel && <span className="text-faint-foreground @max-[32rem]/run:hidden">· {stepLabel}</span>}
           <ChevronRight ref={state.disclosure.chevronRef} aria-hidden className={cn("size-3.5 shrink-0", expanded && "rotate-90")} />
@@ -257,6 +259,9 @@ interface DeliveredSteer {
 }
 
 const NO_STEERS: DeliveredSteer[] = [];
+
+// Stable empty stream for the badge before the transcript query lands.
+const NO_MESSAGES: readonly TaskMessagePayload[] = [];
 
 function deliveredSteers(entries: TimelineEntry[], taskId: string): DeliveredSteer[] {
   const out: DeliveredSteer[] = [];

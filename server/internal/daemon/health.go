@@ -421,6 +421,33 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	}
 }
 
+// taskEndpointsHandler routes the /tasks/... paths on the health server:
+// currently only the per-step thinking decision endpoint (contract §6).
+func (d *Daemon) taskEndpointsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Path shape: /tasks/{task_id}/thinking-decision
+		rest := strings.TrimPrefix(r.URL.Path, "/tasks/")
+		taskID, action, ok := strings.Cut(rest, "/")
+		if !ok || taskID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		switch action {
+		case "thinking-decision":
+			d.thinkingDecisionHandler().ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), taskIDContextKey{}, taskID)))
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+type taskIDContextKey struct{}
+
+func taskIDFromRequest(r *http.Request) string {
+	id, _ := r.Context().Value(taskIDContextKey{}).(string)
+	return id
+}
+
 // serveHealth runs the health HTTP server on the given listener.
 // Blocks until ctx is cancelled.
 func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt time.Time) {
@@ -428,6 +455,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
+	mux.HandleFunc("/tasks/", d.taskEndpointsHandler())
 
 	srv := &http.Server{Handler: mux}
 

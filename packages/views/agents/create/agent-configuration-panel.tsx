@@ -5,6 +5,7 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   applyDraftModelChange,
   applyDraftRuntimeChange,
+  runtimeSupportsThinkingAdapt,
   type AgentDraft,
   type AgentPermissionScope,
 } from "@multica/core/agents";
@@ -224,9 +225,11 @@ export function AgentConfigurationPanel({
               runtimeId={selectedRuntime?.id ?? null}
               runtimeOnline={selectedRuntime?.status === "online"}
               value={draft.model}
-              onChange={(value) => onChange(applyDraftModelChange(draft, value))}
-              onAutomaticChange={(value) =>
-                onAutomaticChange(applyDraftModelChange(draft, value))
+              onChange={(value, levels) =>
+                onChange(applyDraftModelChange(draft, value, levels))
+              }
+              onAutomaticChange={(value, levels) =>
+                onAutomaticChange(applyDraftModelChange(draft, value, levels))
               }
               // A successful switch clears the model, so an edit made while the
               // rebind is in flight would be silently discarded.
@@ -414,6 +417,8 @@ export function AgentExecutionOverrides({
         model={draft.model}
         value={draft.thinkingLevel}
         canEdit={!disabled}
+        adaptSupported={runtimeSupportsThinkingAdapt(runtime)}
+        adaptSnapshot={runtime?.thinking_adapt ?? null}
         onChange={(thinkingLevel) => onChange({ ...draft, thinkingLevel })}
       />
       <ServiceTierSettingField

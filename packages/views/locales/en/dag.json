@@ -80,6 +80,7 @@
   "edge_aggregate_summary_other": "Summary of {{count}} dependencies",
   "edge_locate": "Locate",
   "legend_highlight": "Click a card or edge: its chain lights up, the rest dims; click the card again for all upstream + downstream",
+  "legend_lit_flow": "On a lit chain, a glowing dot with a short tail travels from prerequisite to dependent: brand blue while blocking, soft green when satisfied, red when cancelled but still blocking",
   "selection_scope_neighborhood": "One layer",
   "selection_scope_closure": "All upstream + downstream",
   "focus_mode": "Focus mode",

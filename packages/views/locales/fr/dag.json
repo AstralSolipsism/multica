@@ -80,6 +80,7 @@
   "edge_aggregate_summary_other": "Synthèse de {{count}} dépendances",
   "edge_locate": "Localiser",
   "legend_highlight": "Cliquez sur une carte ou une ligne : sa chaîne s'illumine, le reste s'estompe ; recliquez pour tout l'amont + aval",
+  "legend_lit_flow": "Sur une chaîne illuminée, le flux va du prérequis au dépendant : bleu de marque tant que c'est bloquant, vert doux une fois satisfait, rouge si annulé mais toujours bloquant",
   "selection_scope_neighborhood": "Une couche",
   "selection_scope_closure": "Amont + aval",
   "focus_mode": "Mode focus",

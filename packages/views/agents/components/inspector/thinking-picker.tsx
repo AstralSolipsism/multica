@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { Brain, ChevronDown } from "lucide-react";
-import type { RuntimeModelThinkingLevel } from "@multica/core/types";
+import {
+  hasAdaptThinkingCandidates,
+  THINKING_LEVEL_ADAPT,
+} from "@multica/core/agents";
+import type {
+  RuntimeModelThinkingLevel,
+  RuntimeThinkingAdapt,
+} from "@multica/core/types";
 import { Label } from "@multica/ui/components/ui/label";
 import {
   PickerItem,
@@ -10,6 +17,7 @@ import {
 } from "../../../issues/components/pickers";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
+import { thinkingAdaptSubtitle } from "../../../common/thinking-adapt";
 
 /**
  * Per-agent reasoning/effort picker (MUL-2339). Renders only when the
@@ -31,6 +39,8 @@ export function ThinkingPicker({
   canEdit = true,
   variant = "chip",
   showLabel = true,
+  adaptSupported = false,
+  adaptSnapshot = null,
   onChange,
 }: {
   /** Persisted thinking_level — "" means "follow local CLI config". */
@@ -44,19 +54,28 @@ export function ThinkingPicker({
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
+  adaptSupported?: boolean;
+  adaptSnapshot?: RuntimeThinkingAdapt | null;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
+  const { t: tf } = useT("fork-ui");
+  const { t: tq } = useT("quota");
   const [open, setOpen] = useState(false);
 
+  const showAdapt = hasAdaptThinkingCandidates(levels);
+  const adaptLabel = tf(($) => $.agents.thinking_adapt.label);
   const selected = value ? levels.find((l) => l.value === value) : undefined;
   // Unknown-but-set value (model swap that dropped the option, CLI upgrade
   // that trimmed the catalog): show the raw token so the user can see what
   // is actually persisted and clear it, rather than silently labelling it
   // "Default" when the backend would still send the stale value.
-  const triggerLabel = selected
-    ? selected.label
-    : value || t(($) => $.pickers.thinking_default);
+  const triggerLabel =
+    value === THINKING_LEVEL_ADAPT
+      ? adaptLabel
+      : selected
+        ? selected.label
+        : value || t(($) => $.pickers.thinking_default);
   const triggerTitle = t(($) => $.pickers.thinking_tooltip, {
     value: triggerLabel,
   });
@@ -142,6 +161,29 @@ export function ThinkingPicker({
         </>
       }
     >
+      {showAdapt && (
+        <PickerItem
+          selected={value === THINKING_LEVEL_ADAPT}
+          disabled={!adaptSupported}
+          onClick={() => void select(THINKING_LEVEL_ADAPT)}
+        >
+          <span className="block min-w-0 flex-1 text-left">
+            <span className="block truncate text-label font-medium">
+              {adaptLabel}
+            </span>
+            <span className="mt-0.5 block text-micro leading-snug text-muted-foreground">
+              {adaptSupported
+                ? thinkingAdaptSubtitle(adaptSnapshot, tq)
+                : tf(($) => $.agents.thinking_adapt.upgrade_required)}
+            </span>
+            {adaptSupported && (
+              <span className="mt-0.5 block text-micro leading-snug text-muted-foreground">
+                {tf(($) => $.agents.thinking_adapt.description)}
+              </span>
+            )}
+          </span>
+        </PickerItem>
+      )}
       {levels.map((l) => (
         <PickerItem
           key={l.value}

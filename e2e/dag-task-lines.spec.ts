@@ -148,6 +148,42 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       contentType: "image/png",
     });
 
+    // Hovering never lights or dims anything (OL-996): resting the pointer on
+    // a card for well past the old 100 ms debounce must not create the
+    // overlay layer or any lit route. Start from a clean state — lineA is
+    // still selected from the checks above, and its lit neighborhood would
+    // defeat the assertions.
+    await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
+    const hoverBox = (await cardA.boundingBox())!;
+    await page.mouse.move(hoverBox.x + hoverBox.width / 2, hoverBox.y + hoverBox.height / 2);
+    await page.waitForTimeout(250);
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).not.toHaveClass(/opacity-15/);
+
+    // A click, by contrast, selects the card and lights its neighborhood —
+    // with the OL-997 state-colored flow streaming along each lit route.
+    await cardA.click();
+    await expect(page.locator("[data-dag-lit-edge]").first()).toBeAttached();
+    await expect(page.locator("[data-dag-lit-flow]").first()).toBeAttached();
+    await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
+    await page.locator(`.react-flow__node[data-id="issue:${lineA.id}"]`).focus();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-flow]")).toHaveCount(0);
+
+    // Clicking empty canvas folds the lit routes and their flows away.
+    await cardA.click();
+    await expect(page.locator("[data-dag-lit-flow]").first()).toBeAttached();
+    const clearPaneBox = (await page.locator(".react-flow__pane").boundingBox())!;
+    await page.mouse.click(clearPaneBox.x + 8, clearPaneBox.y + clearPaneBox.height - 8);
+    await expect(page.locator("[data-dag-overlay-layer]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-edge]")).toHaveCount(0);
+    await expect(page.locator("[data-dag-lit-flow]")).toHaveCount(0);
+
     // Pan away from the default so the later restore is meaningful.
     const panArea = (await page.locator("[data-dag-canvas]").boundingBox())!;
     await page.mouse.move(panArea.x + panArea.width / 2, panArea.y + panArea.height / 2);
@@ -216,15 +252,37 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
       await page.getByRole("menuitemcheckbox", { name: "Highlight prerequisites" }).click();
     }
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
-    // Node dimming is a masked overlay above the z-index-2 cards: holes over
-    // the lit cards, none over d, and d's pixels really change (OL-284 review:
-    // the mask used to sit under the cards, dimming nothing).
+    // Node dimming is an even-odd path in the overlay above the z-index-2
+    // cards: holes over the lit cards, none over d, and d's pixels really
+    // change (OL-284 review: the mask used to sit under the cards, dimming
+    // nothing).
     const dimLayer = page.locator("[data-dag-overlay-layer]");
     await expect(dimLayer).toHaveCount(1);
     expect(await dimLayer.evaluate((el) => getComputedStyle(el).zIndex)).toBe("3");
-    // c is the focus anchor (lit through a hole); d is downstream (no hole).
-    await expect(page.locator(`[data-dag-dim-hole="${c.id}"]`)).toHaveCount(1);
-    await expect(page.locator(`[data-dag-dim-hole="${d.id}"]`)).toHaveCount(0);
+    // c is the focus anchor (its box is a hole subpath in the dim path);
+    // d is downstream (no hole). Holes start at (box.x + 2, box.y - 8).
+    const holes = await page.evaluate(([cId, dId]) => {
+      const flowPos = (id: string) => {
+        const el = document.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null;
+        let x = 0, y = 0, node: HTMLElement | null = el;
+        while (node?.classList.contains("react-flow__node")) {
+          const t = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(node.style.transform);
+          if (t) {
+            x += Number(t[1]);
+            y += Number(t[2]);
+          }
+          node = node.parentElement;
+        }
+        return { x, y };
+      };
+      const d = document.querySelector("[data-dag-dim-overlay]")!.getAttribute("d")!;
+      const subs = [...d.matchAll(/ M (-?[\d.]+) (-?[\d.]+) H/g)].map((m) => [Number(m[1]), Number(m[2])]);
+      const near = (pos: { x: number; y: number }) =>
+        subs.some(([hx, hy]) => Math.abs(hx - (pos.x + 2)) <= 2 && Math.abs(hy - (pos.y - 8)) <= 2);
+      return { c: near(flowPos(cId)), d: near(flowPos(dId)), count: subs.length };
+    }, [c.id, d.id]);
+    expect(holes.c).toBe(true);
+    expect(holes.d).toBe(false);
     const dimmedAfter = await page.screenshot({ clip: dimmedClip });
     expect(dimmedBefore.equals(dimmedAfter)).toBe(false);
     const focusAgain = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });

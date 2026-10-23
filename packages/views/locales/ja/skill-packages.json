@@ -1,10 +1,6 @@
 {
   "tree": {
-    "title": "フォルダ",
-    "all_skills": "すべてのスキル",
-    "uncategorized": "未分類",
     "new_folder": "新規フォルダ",
-    "new_subfolder": "サブフォルダを作成",
     "rename_folder": "名前を変更",
     "move_folder": "移動",
     "delete_folder": "削除",
@@ -13,15 +9,23 @@
     "delete_package": "パッケージを削除",
     "folder_actions": "「{{name}}」の操作",
     "not_imported": "未インポート",
-    "gray_hint": "パッケージを再スキャンするとこの候補をインポートできます。",
+    "gray_hint": "パッケージを再スキャンするとこの未インポートスキルをインポートできます。",
     "package_label": "パッケージ",
     "indeterminate": "フォルダを読み込めませんでした。",
     "retry": "再試行",
-    "empty": "フォルダはまだありません。作成するか、スキルパッケージをインポートしてください。",
     "package_forbidden": "この操作はパッケージのインポート者または管理者のみ実行できます。",
     "expand_folder": "「{{name}}」を展開",
     "collapse_folder": "「{{name}}」を折りたたむ",
-    "clear_filter": "フィルタを解除"
+    "breadcrumb_aria": "フォルダの場所",
+    "up": "1つ上へ",
+    "managed_new_folder": "パッケージフォルダの内容はパッケージに従います。",
+    "flat_results": "すべてのフォルダの結果を表示中",
+    "empty_folder": "このフォルダは空です。",
+    "unavailable": "フォルダを利用できないため、スキルをフラットリストで表示しています。",
+    "open_folder": "「{{name}}」を開く",
+    "folder_skill_count_other": "{{count}} 件のスキル",
+    "folder_count": "このフォルダ {{visible}} 件 / ワークスペース合計 {{total}} 件",
+    "folder_count_title": "このフォルダの直接のスキル数 / ワークスペースの全スキル数"
   },
   "folder_form": {
     "create_title": "新規フォルダ",
@@ -32,35 +36,49 @@
     "save": "保存",
     "saving": "保存中...",
     "cancel": "キャンセル",
-    "failed": "フォルダを保存できませんでした。もう一度お試しください。"
+    "failed": "フォルダを保存できませんでした。もう一度お試しください。",
+    "unconfirmed": "結果を確認できませんでした。リストは更新済みです。確認してからもう一度お試しください。"
   },
   "folder_move": {
     "title": "フォルダを移動",
     "description": "「{{name}}」の移動先：",
-    "root_option": "トップレベル",
+    "root_option": "ルート",
     "confirm": "移動",
     "moving": "移動中...",
     "cancel": "キャンセル",
-    "failed": "フォルダを移動できませんでした。もう一度お試しください。"
+    "failed": "フォルダを移動できませんでした。もう一度お試しください。",
+    "unconfirmed": "結果を確認できませんでした。リストは更新済みです。確認してからもう一度お試しください。"
   },
   "folder_delete": {
     "title": "このフォルダを削除しますか？",
-    "description": "「{{name}}」は削除されます。含まれるスキルとサブフォルダは1階層上に移動し、ワークスペースからは何も削除されません。",
+    "description": "「{{name}}」を削除します。含まれるスキルとサブフォルダは1階層上に移動し、スキルは削除されません。",
     "confirm": "削除",
     "deleting": "削除中...",
     "cancel": "キャンセル",
-    "failed": "フォルダを削除できませんでした。もう一度お試しください。"
+    "failed": "フォルダを削除できませんでした。もう一度お試しください。",
+    "unconfirmed": "結果を確認できませんでした。リストは更新済みです。確認してからもう一度お試しください。"
+  },
+  "folder_errors": {
+    "name_conflict": "移動先に同名のフォルダがすでに存在します。別の名前にしてください。",
+    "folder_cycle": "フォルダをそれ自身のサブフォルダに移動することはできません。",
+    "invalid_name": "フォルダ名が無効です。1–255 バイトで、前後の空白、制御文字、改行を含めないでください。",
+    "forbidden": "この操作を実行する権限がありません。",
+    "not_found": "対象が見つかりません。削除された可能性があります。リストは更新済みです。",
+    "managed_folder": "パッケージフォルダはパッケージに従うため、ここでは変更できません。",
+    "preview_stale": "フォルダが変更されました。リストは更新済みです。もう一度お試しください。",
+    "permission_changed": "権限が変更されました。リストは更新済みです。もう一度お試しください。"
   },
   "move_skills": {
     "title_other": "{{count}} 件のスキルを移動",
     "destination": "移動先",
-    "uncategorized": "未分類",
+    "root_option": "ルート",
     "confirm": "移動",
     "moving": "移動中...",
     "cancel": "キャンセル",
     "done_other": "{{count}} 件のスキルを移動しました。",
     "partial": "{{total}} 件中 {{done}} 件を移動しました。残りは失敗しました。",
     "failed": "スキルを移動できませんでした。もう一度お試しください。",
+    "unconfirmed_other": "{{total}} 件中 {{done}} 件を移動しました。{{count}} 件は結果を確認できませんでした。リストは更新済みです。確認してからもう一度お試しください。",
     "no_permission": "選択したすべてのスキルを移動する権限がありません。",
     "packaged_hint": "パッケージ内のスキルは移動できません。先にパッケージから切り離してください。"
   },
@@ -167,7 +185,7 @@
   "picker": {
     "uncategorized": "未分類",
     "not_imported": "未インポート",
-    "not_imported_hint": "紐付ける前に、スキルページでこの候補をインポートしてください。",
+    "not_imported_hint": "紐付ける前に、スキルページでこのスキルをインポートしてください。",
     "toggle_folder": "「{{name}}」内をすべて選択"
   }
 }

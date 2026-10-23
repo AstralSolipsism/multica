@@ -5,6 +5,7 @@ import "i18next";
 import "@multica/ui/i18n-types";
 import type common from "../locales/en/common.json";
 import type quota from "../locales/en/quota.json";
+import type thinking from "../locales/en/thinking.json";
 import type lark from "../locales/en/lark.json";
 import type forkUi from "../locales/en/fork-ui.json";
 import type dependencies from "../locales/en/dependencies.json";
@@ -27,6 +28,7 @@ import type projects from "../locales/en/projects.json";
 import type autopilots from "../locales/en/autopilots.json";
 import type skills from "../locales/en/skills.json";
 import type skillPackages from "../locales/en/skill-packages.json";
+import type agentFolders from "../locales/en/agent-folders.json";
 import type chat from "../locales/en/chat.json";
 import type modals from "../locales/en/modals.json";
 import type runtimes from "../locales/en/runtimes.json";
@@ -55,6 +57,7 @@ declare global {
   interface I18nResources {
     common: typeof common;
     quota: typeof quota;
+    thinking: typeof thinking;
     lark: typeof lark;
     "fork-ui": typeof forkUi;
     dependencies: typeof dependencies;
@@ -77,6 +80,7 @@ declare global {
     autopilots: typeof autopilots;
     skills: typeof skills;
     "skill-packages": typeof skillPackages;
+    "agent-folders": typeof agentFolders;
     chat: typeof chat;
     modals: typeof modals;
     runtimes: typeof runtimes;

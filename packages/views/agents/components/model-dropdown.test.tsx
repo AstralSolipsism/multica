@@ -105,6 +105,30 @@ describe("ModelDropdown", () => {
     expect(onAutomaticChange).not.toHaveBeenCalled();
   });
 
+  it("passes the selected catalog model's thinking levels to the caller", async () => {
+    const levels = [
+      { value: "low", label: "Low" },
+      { value: "high", label: "High" },
+    ];
+    discovery = async () => ({
+      models: [
+        {
+          id: "adaptable-model",
+          label: "Adaptable model",
+          provider: "openai",
+          thinking: { supported_levels: levels },
+        },
+      ],
+      supported: true,
+    });
+    const { container, onChange } = renderDropdown();
+    openDropdown(container);
+
+    fireEvent.click(await screen.findByText("Adaptable model"));
+
+    expect(onChange).toHaveBeenCalledWith("adaptable-model", levels);
+  });
+
   it("routes unsupported model cleanup separately from user selections", async () => {
     discovery = async () => ({ models: [], supported: false });
     const onAutomaticChange = vi.fn();
