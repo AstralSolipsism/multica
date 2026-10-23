@@ -229,15 +229,11 @@ type StepThinkingInput struct {
 	ToolIsError                                                 bool
 }
 
-// stepStateLimit bounds the encoded state. Step-state fields are each
-// capped (goal/assistant 500 runes, summary 300, features 200, result
-// 2500 raw bytes), so the realistic worst case lands between 4 KB and
-// 8 KB once JSON escaping is counted; 8192 keeps every normal state whole
-// (no goal trimming) while still bounding the payload. External Jev
-// sources accept 65,536 tokens and laya-serve 2 MiB bodies, so the bound
-// is a daemon-side guard, not an engine requirement.
+// runStateLimit bounds the run-level state; the step state has no
+// whole-state trim (OL-1083: every step field is capped on its own, and a
+// trim could only cut goal or assistant).
 const (
-	stepStateLimit  = 8192
+	runStateLimit   = 4096
 	stepResultLimit = 2500
 	stepResultTail  = 1000
 )
@@ -331,7 +327,7 @@ func boundedThinkingState(fields ...thinkingStateField) string {
 			raw.Write(value)
 		}
 		raw.WriteByte('}')
-		if raw.Len() <= stepStateLimit {
+		if raw.Len() <= runStateLimit {
 			return raw.String()
 		}
 		// Trim text from the end, keeping valid JSON and earlier diagnostic
