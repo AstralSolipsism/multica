@@ -470,18 +470,23 @@ describe("thinking Adapt engine status", () => {
     expect(screen.getByText(`Adapt · ${label} · 290ms`)).toBeInTheDocument();
   });
 
-  it("labels the dashscope source as 阿里云百炼 in zh-Hans", () => {
+  it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen 免费通道"],
+    ["dashscope", "阿里云百炼"],
+    ["self-hosted", "自部署"],
+  ])("labels the %s source in zh-Hans", (source, label) => {
     const runtime = quotaRuntime("claude", {});
     renderWithI18n(
       <RuntimeQuotaCell
         runtime={runtime}
         now={NOW}
-        thinkingAdapt={adaptSnapshot("available", { active_source: "dashscope" })}
+        thinkingAdapt={adaptSnapshot("available", { active_source: source })}
       />,
       { locale: "zh-Hans" },
     );
 
-    expect(screen.getByText("自适应 · 阿里云百炼 · 290ms")).toBeInTheDocument();
+    expect(screen.getByText(`自适应 · ${label} · 290ms`)).toBeInTheDocument();
   });
 
   it("reads the runtime snapshot by default without plan quota", () => {

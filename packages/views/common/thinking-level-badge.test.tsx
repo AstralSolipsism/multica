@@ -35,6 +35,10 @@ function chip(label: string | RegExp) {
   return screen.getByText(label).closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function tooltipOf(label: string | RegExp) {
   await userEvent.hover(chip(label));
   const content = await screen.findByText((_, node) =>
@@ -140,7 +144,9 @@ describe("ThinkingLevelBadge", () => {
   });
 
   // The tooltip shares the selector subtitle / quota-area source mapping
-  // (thinkingAdaptSourceLabel) — one table, three surfaces.
+  // (thinkingAdaptSourceLabel) — one table, three surfaces. The assertion is
+  // anchored at the end of the tooltip text so "OpenCode Zen" cannot pass
+  // against a tooltip that actually rendered "OpenCode Zen (free)".
   it.each([
     ["opencode", "OpenCode Zen"],
     ["opencode-free", "OpenCode Zen (free)"],
@@ -151,16 +157,21 @@ describe("ThinkingLevelBadge", () => {
       <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source }))]} />,
     );
     const tooltip = await tooltipOf("high");
-    expect(tooltip).toHaveTextContent(`source: ${label}`);
+    expect(tooltip).toHaveTextContent(new RegExp(`source: ${escapeRegExp(label)}$`));
   });
 
-  it("localizes the dashscope source name in zh-Hans", async () => {
+  it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen 免费通道"],
+    ["dashscope", "阿里云百炼"],
+    ["self-hosted", "自部署"],
+  ])("shows the %s source name in zh-Hans", async (source, label) => {
     renderWithI18n(
-      <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source: "dashscope" }))]} />,
+      <ThinkingLevelBadge messages={[message(1, adapt("high", 1, { source }))]} />,
       { locale: "zh-Hans" },
     );
     const tooltip = await tooltipOf("high");
-    expect(tooltip).toHaveTextContent("来源 阿里云百炼");
+    expect(tooltip).toHaveTextContent(new RegExp(`来源 ${escapeRegExp(label)}$`));
   });
 
   it("shows an unrecognized source name as-is", async () => {
