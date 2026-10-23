@@ -60,9 +60,6 @@ func (r *stepEffortRun) observeStepOutcome(req thinkingDecisionRequest) {
 		}
 	}
 	s.sample.ErrorSig = &sig
-	if req.ErrorOmitted {
-		s.sample.ErrorSig = nil
-	}
 	r.inheritStepError(step)
 	if prev := r.steps[step-1]; prev != nil && prev.sample.OutcomeOK != nil {
 		r.writeStepOutcome(step - 1)

@@ -24,25 +24,18 @@ import (
 // authenticates the same way: the task-scoped bearer token of a running task.
 
 // thinkingDecisionRequest is the body the mod posts: the previous main-thread
-// step's raw material (OL-1013). The daemon normalizes error features and
-// counts repeats; the mod judges nothing.
+// step's raw material (OL-1013, OL-1083). The daemon normalizes error features
+// and counts repeats; the mod judges nothing. Material crosses unredacted.
 type thinkingDecisionRequest struct {
 	Step          int    `json:"step"` // 1-based
 	AssistantText string `json:"assistant_text"`
-	// Whole-or-omitted flags (#32): a field over the mod's byte limit ships
-	// as "" with its flag set — never a partial body.
-	AssistantOmitted bool `json:"assistant_omitted"`
-	Tools            []struct {
-		Name          string `json:"name"`
-		IsError       bool   `json:"is_error"`
-		IsFileContent bool   `json:"is_file_content"`
-		InputSummary  string `json:"input_summary"`
-		ResultText    string `json:"result_text"`
-		InputOmitted  bool   `json:"input_summary_omitted"`
-		ResultOmitted bool   `json:"result_omitted"`
+	Tools         []struct {
+		Name         string `json:"name"`
+		IsError      bool   `json:"is_error"`
+		InputSummary string `json:"input_summary"`
+		ResultText   string `json:"result_text"`
 	} `json:"tools"`
-	ErrorText    string `json:"error_text"`
-	ErrorOmitted bool   `json:"error_omitted"`
+	ErrorText string `json:"error_text"`
 }
 
 type thinkingDecisionResponse struct {
@@ -234,29 +227,28 @@ func (r *stepEffortRun) enabledNow() bool {
 // step state per contract §4 plus the shared criteria.
 func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Request, StepThinkingInput) {
 	r.stepMu.Lock()
-	feature, repeats := r.Errors.Observe(req.ErrorText, req.ErrorOmitted)
+	feature, repeats := r.Errors.Observe(req.ErrorText)
 	r.stepMu.Unlock()
 	input := StepThinkingInput{
 		Step:           req.Step,
 		Goal:           r.Goal,
-		AssistantText:  stepOmittedText(req.AssistantText, req.AssistantOmitted),
+		AssistantText:  req.AssistantText,
 		ErrorFeatures:  feature,
 		RepeatedErrors: repeats,
 	}
 	// The state describes one tool: the last failed one when the step had a
 	// failure (its is_error/exit_code must agree with error_features), else
-	// the last tool. Name and is_error always arrive: the mod never omits
-	// them (OL-1013 wants the full tool list).
+	// the last tool (OL-1013 wants the full tool list; name and is_error
+	// always arrive).
 	for i := len(req.Tools) - 1; i >= 0; i-- {
 		tool := req.Tools[i]
 		if !tool.IsError {
 			continue
 		}
 		input.ToolName = tool.Name
-		input.ToolInputSummary = stepOmittedText(tool.InputSummary, tool.InputOmitted)
-		input.ToolResult = stepOmittedText(tool.ResultText, tool.ResultOmitted)
+		input.ToolInputSummary = tool.InputSummary
+		input.ToolResult = tool.ResultText
 		input.ToolIsError = true
-		input.FileContent = tool.IsFileContent
 		if code := ParseExitCode(tool.ResultText); code >= 0 {
 			input.ExitCode = code
 		}
@@ -265,21 +257,11 @@ func (r *stepEffortRun) buildStepRequest(req thinkingDecisionRequest) (jev.Reque
 	if !input.ToolIsError && len(req.Tools) > 0 {
 		tool := req.Tools[len(req.Tools)-1]
 		input.ToolName = tool.Name
-		input.ToolInputSummary = stepOmittedText(tool.InputSummary, tool.InputOmitted)
-		input.ToolResult = stepOmittedText(tool.ResultText, tool.ResultOmitted)
+		input.ToolInputSummary = tool.InputSummary
+		input.ToolResult = tool.ResultText
 		input.ToolIsError = tool.IsError
-		input.FileContent = tool.IsFileContent
 	}
 	return ThinkingRequest(BuildStepThinkingState(input), r.Candidates), input
-}
-
-// stepOmittedText marks a field the mod omitted whole; the state then says
-// so instead of shipping an empty body as if nothing was there (#32).
-func stepOmittedText(text string, omitted bool) string {
-	if omitted {
-		return "[omitted: over limit]"
-	}
-	return text
 }
 
 // decide answers one step: a level from Jev, a fallback reason, or "not

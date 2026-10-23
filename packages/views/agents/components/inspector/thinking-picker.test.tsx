@@ -124,7 +124,7 @@ describe("ThinkingPicker", () => {
 
     const items = document.querySelectorAll("button[data-picker-item]");
     expect(items[0]).toHaveTextContent("Adapt");
-    expect(screen.getByText(/redacted run summary/)).toBeInTheDocument();
+    expect(screen.getByText(/run summary including raw tool output/)).toBeInTheDocument();
   });
 
   it("omits Adapt when fewer than two candidates remain", () => {

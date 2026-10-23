@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -14,7 +15,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
 	"github.com/multica-ai/multica/server/pkg/agent"
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 type thinkingDecider interface {
@@ -22,7 +22,7 @@ type thinkingDecider interface {
 }
 
 // ThinkingDecisionTrace is local provenance, deliberately separate from the
-// redacted request. Sample collection can use it without sending IDs upstream.
+// request. Sample collection can use it without sending IDs upstream.
 type ThinkingDecisionTrace struct {
 	TaskID   string
 	Scope    string
@@ -33,7 +33,8 @@ type ThinkingDecisionTrace struct {
 
 // ThinkingDecisionRecord remains reachable from the execution context through
 // terminal handling, including fresh-session retries. Request contains only the
-// rendered, redacted state, never the task's raw input or instructions.
+// rendered state, never the task's raw input beyond what §4 selects (the
+// decision engine sees material the coding model already sees, OL-1083).
 // SampleID links the collected decision sample to its outcome record; empty
 // when collection is off or the decision fell back.
 type ThinkingDecisionRecord struct {
@@ -217,28 +218,72 @@ func StepThinkingGoal(task Task) string {
 	return title + "\n" + description
 }
 
-// StepThinkingInput contains summaries, not files or full tool arguments. The
-// step adapter supplies error counts; this builder is also used by evaluation.
+// StepThinkingInput contains the previous step's raw material, unredacted:
+// the decision engine receives it the same way the coding model does
+// (OL-1083). The step adapter supplies error counts; this builder is also
+// used by evaluation.
 type StepThinkingInput struct {
 	Goal, AssistantText, ToolName, ToolInputSummary, ToolResult string
 	ErrorFeatures                                               string
 	Step, ExitCode, RepeatedErrors                              int
-	FileContent, ToolIsError                                    bool
+	ToolIsError                                                 bool
+}
+
+// runStateLimit bounds the run-level state; the step state has no
+// whole-state trim (OL-1083: every step field is capped on its own, and a
+// trim could only cut goal or assistant).
+const (
+	runStateLimit   = 4096
+	stepResultLimit = 2500
+	stepResultTail  = 1000
+)
+
+// stepResultExcerpt clips a long result once: a stepResultLimit-byte
+// excerpt keeping the first (stepResultLimit-stepResultTail) and the last
+// stepResultTail bytes, marking the elided middle with its byte count.
+// Cuts move to rune boundaries so the excerpt stays valid UTF-8. Results
+// within the limit ship whole.
+func stepResultExcerpt(result string) string {
+	if len(result) <= stepResultLimit {
+		return result
+	}
+	head := stepResultLimit - stepResultTail
+	for head > 0 && !utf8.ValidString(result[:head]) {
+		head--
+	}
+	cut := len(result) - stepResultTail
+	for cut < len(result) && !utf8.ValidString(result[cut:]) {
+		cut++
+	}
+	return result[:head] + fmt.Sprintf("\n[... %d bytes elided ...]\n", cut-head) + result[cut:]
+}
+
+// encodeThinkingState renders the fields as compact JSON. Unlike
+// boundedThinkingState it applies no whole-state trim: BuildStepThinkingState
+// callers rely on every field being capped on its own (OL-1083), so a trim
+// would only ever cut goal or assistant — the fields the caps exist to keep.
+func encodeThinkingState(fields ...thinkingStateField) string {
+	var raw bytes.Buffer
+	raw.WriteByte('{')
+	for i, field := range fields {
+		if i > 0 {
+			raw.WriteByte(',')
+		}
+		key, _ := json.Marshal(field.name)
+		value, _ := json.Marshal(field.value)
+		raw.Write(key)
+		raw.WriteByte(':')
+		raw.Write(value)
+	}
+	raw.WriteByte('}')
+	return raw.String()
 }
 
 func BuildStepThinkingState(input StepThinkingInput) string {
-	result := redact.Text(input.ToolResult)
-	// A file-content tool's FAILURE result is an error message, not a body:
-	// it must stay visible (#32). Only successful bodies are omitted.
-	if input.FileContent && !input.ToolIsError {
-		result = "[file content omitted]"
-	}
-	runes := []rune(result)
-	tail := ""
-	if len(runes) > 400 {
-		tail = string(runes[max(400, len(runes)-400):])
-	}
-	return boundedThinkingState(
+	// Contract §4/OL-1083: every field is capped on its own (thinkingPrefix
+	// for text, stepResultExcerpt for the result), so no whole-state trim is
+	// needed or wanted here — it could only cut goal or assistant.
+	return encodeThinkingState(
 		thinkingStateField{"step", input.Step},
 		thinkingStateField{"tool", thinkingPrefix(input.ToolName, 100)},
 		thinkingStateField{"is_error", input.ToolIsError},
@@ -246,17 +291,13 @@ func BuildStepThinkingState(input StepThinkingInput) string {
 		thinkingStateField{"error_features", thinkingPrefix(input.ErrorFeatures, 200)},
 		thinkingStateField{"repeated_errors", input.RepeatedErrors},
 		thinkingStateField{"tool_input_summary", thinkingPrefix(input.ToolInputSummary, 300)},
-		thinkingStateField{"result_head", thinkingPrefix(result, 400)},
-		thinkingStateField{"result_tail", tail},
+		thinkingStateField{"result", stepResultExcerpt(input.ToolResult)},
 		thinkingStateField{"assistant", thinkingPrefix(input.AssistantText, 500)},
 		thinkingStateField{"goal", thinkingPrefix(input.Goal, 500)},
 	)
 }
 
 func thinkingPrefix(value string, limit int) string {
-	// Redact before truncation: cutting through a credential first can make it
-	// unrecognizable to the redactor and leak a still-sensitive prefix.
-	value = redact.Text(value)
 	for i := range value {
 		if limit == 0 {
 			return value[:i]
@@ -286,7 +327,7 @@ func boundedThinkingState(fields ...thinkingStateField) string {
 			raw.Write(value)
 		}
 		raw.WriteByte('}')
-		if raw.Len() <= 4096 {
+		if raw.Len() <= runStateLimit {
 			return raw.String()
 		}
 		// Trim text from the end, keeping valid JSON and earlier diagnostic

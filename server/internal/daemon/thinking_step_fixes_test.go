@@ -16,34 +16,28 @@ import (
 
 // stepToolMaterial mirrors thinkingDecisionRequest.Tools in tests.
 type stepToolMaterial = struct {
-	Name          string `json:"name"`
-	IsError       bool   `json:"is_error"`
-	IsFileContent bool   `json:"is_file_content"`
-	InputSummary  string `json:"input_summary"`
-	ResultText    string `json:"result_text"`
-	InputOmitted  bool   `json:"input_summary_omitted"`
-	ResultOmitted bool   `json:"result_omitted"`
+	Name         string `json:"name"`
+	IsError      bool   `json:"is_error"`
+	InputSummary string `json:"input_summary"`
+	ResultText   string `json:"result_text"`
 }
 
-// TestStepStateOmitsFileContent locks the §4 boundary: a tool whose result is
-// file content (Read) never sends its body out — the state keeps only the
-// omission marker, even with a secret inside the file.
-func TestStepStateOmitsFileContent(t *testing.T) {
+// TestStepStateShipsReadResultUnredacted locks the OL-1083 boundary: a Read
+// result is tool material like any other — the body reaches the state, with
+// any secret it contains, exactly as the coding model already sees it.
+func TestStepStateShipsReadResultUnredacted(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
 	req := thinkingDecisionRequest{
 		Step: 2,
 		Tools: []stepToolMaterial{
-			{Name: "Read", IsFileContent: true, InputSummary: "config.go", ResultText: "dsn := \"postgres://app@db.internal:5432/orders\""},
+			{Name: "Read", InputSummary: "config.go", ResultText: "dsn := \"postgres://app@db.internal:5432/orders\""},
 		},
 	}
 	jevReq, _ := run.buildStepRequest(req)
 	state, _ := jevReq.State.(string)
-	if strings.Contains(state, "postgres://") || strings.Contains(state, "db.internal") {
-		t.Fatalf("file content leaked into state: %s", state)
-	}
-	if !strings.Contains(state, "[file content omitted]") {
-		t.Fatalf("state missing the omission marker: %s", state)
+	if !strings.Contains(state, "postgres://app@db.internal:5432/orders") {
+		t.Fatalf("file content missing from state: %s", state)
 	}
 	if !strings.Contains(state, `"tool":"Read"`) {
 		t.Fatalf("state missing the tool name: %s", state)
@@ -346,33 +340,35 @@ func TestTagThinkingMessageWiring(t *testing.T) {
 	}
 }
 
-// TestStepStateRedactsBeforeNormalizationAndKeepsTail locks the outbound
-// boundary (second review #31/#32): error features are redacted before
-// normalization, and a tool result's tail error survives the state builder's
-// head/tail split.
-func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
+// TestStepStateShipsErrorMaterialUnredacted locks the OL-1083 boundary: tool
+// error material crosses to the decision engine unredacted, and a tail error
+// survives the state builder's head+tail excerpt.
+func TestStepStateShipsErrorMaterialUnredacted(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
 
-	// #31: a credential the raw text's redactor recognizes must not survive
-	// into error_features through normalization.
-	const conn = "postgres://app:reviewcanary@db.internal:5432/orders"
+	// A credential in the error text ships verbatim; the feature keeps it
+	// recognizable too (the engine sees what the coding model sees) —
+	// NormalizedErrorFeature no longer redacts before normalizing.
+	const conn = "postgres://app:secret@db.internal:5432/orders"
 	jevReq, input := run.buildStepRequest(thinkingDecisionRequest{
 		Step:      2,
 		ErrorText: "dial " + conn + ": connection refused",
 		Tools:     []stepToolMaterial{{Name: "Bash", IsError: true, InputSummary: "psql", ResultText: "Exit code 1\ndial " + conn + ": connection refused"}},
 	})
-	if strings.Contains(input.ErrorFeatures, "reviewcanary") {
-		t.Fatalf("error feature leaked the credential: %q", input.ErrorFeatures)
+	if !strings.Contains(input.ErrorFeatures, "connection refused") {
+		t.Fatalf("error feature lost the failure: %q", input.ErrorFeatures)
+	}
+	if !strings.Contains(input.ErrorFeatures, "app_secret@") {
+		t.Fatalf("error feature redacted the credential: %q", input.ErrorFeatures)
 	}
 	state, _ := jevReq.State.(string)
-	if strings.Contains(state, "reviewcanary") {
-		t.Fatalf("state leaked the credential: %s", state)
+	if !strings.Contains(state, conn) {
+		t.Fatalf("state missing the raw error material: %s", state)
 	}
 
-	// #32: a long tool result whose error sits at the tail must keep it in
-	// result_tail (the mod ships whole lines; the daemon's head/tail split
-	// owns the truncation).
+	// A long tool result whose error sits at the tail keeps head and tail
+	// in the result excerpt.
 	var head strings.Builder
 	for head.Len() < 640 {
 		head.WriteString("progress: step done\n")
@@ -386,17 +382,14 @@ func TestStepStateRedactsBeforeNormalizationAndKeepsTail(t *testing.T) {
 		t.Fatalf("input lost the tail error before the state builder")
 	}
 	state2 := BuildStepThinkingState(input)
-	if !strings.Contains(state2, "result_tail") || !strings.Contains(state2, "TAIL_CANARY") {
-		t.Fatalf("state lost the tail error: %.300s", state2[len(state2)-300:])
-	}
-	if strings.Contains(state2, "reviewcanary") {
-		t.Fatalf("state leaked a credential: %s", state2)
+	if !strings.Contains(state2, "progress: step done") || !strings.Contains(state2, "TAIL_CANARY") {
+		t.Fatalf("state lost the result head or tail: %.300s", state2[len(state2)-300:])
 	}
 }
 
-// TestStepStateKeepsTailErrorOfLongOutput locks acceptance #1 of #32: a
-// 5000+ char failing Bash output arrives whole (the mod no longer clips),
-// and the daemon's §4 head/tail split keeps the closing error in result_tail.
+// TestStepStateKeepsTailErrorOfLongOutput locks the long-output boundary: a
+// 5000+ char failing Bash output keeps both its head and its closing error
+// in the state's result excerpt.
 func TestStepStateKeepsTailErrorOfLongOutput(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
@@ -415,25 +408,28 @@ func TestStepStateKeepsTailErrorOfLongOutput(t *testing.T) {
 		ErrorText: "Exit code 1\n" + result,
 	})
 	state := BuildStepThinkingState(input)
+	if !strings.Contains(state, "progress line ") {
+		t.Fatalf("result head lost from state: %s", state[:200])
+	}
 	if !strings.Contains(state, "TAIL_CANARY") {
 		t.Fatalf("tail error lost from state: %s", state)
 	}
-	if i := strings.Index(state, "result_tail"); i < 0 {
-		t.Fatalf("state missing result_tail: %s", state)
+	if !strings.Contains(state, "bytes elided") {
+		t.Fatalf("state missing the elision marker: %s", state[:200])
 	}
 }
 
-// TestStepStateRedactsPEMPrivateKeyWhole locks acceptance #2 of #32: a
-// multi-line PEM private key (BEGIN...END, >2000 chars) arriving whole is
-// redacted by the daemon — no key body ships, only the redaction marker.
-func TestStepStateRedactsPEMPrivateKeyWhole(t *testing.T) {
+// TestStepStateShipsPrivateKeyWhole locks OL-1083: a multi-line PEM private
+// key (>2000 chars) arriving in tool output ships to the decision engine as
+// material the coding model already sees — head and tail in the excerpt.
+func TestStepStateShipsPrivateKeyWhole(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
-	pem := []string{"-----BEGIN RSA PRIVATE KEY-----"}
-	for i := 0; i < 30; i++ {
-		pem = append(pem, "MIIE"+strings.Repeat("A", 64))
+	pem := []string{"-----BEGIN PRIVATE KEY-----"}
+	for i := 0; i < 40; i++ {
+		pem = append(pem, "MIIE"+strings.Repeat("A", 60))
 	}
-	pem = append(pem, "-----END RSA PRIVATE KEY-----")
+	pem = append(pem, "-----END PRIVATE KEY-----")
 	key := strings.Join(pem, "\n")
 	if len(key) <= 2000 {
 		t.Fatalf("fixture too short: %d", len(key))
@@ -444,54 +440,23 @@ func TestStepStateRedactsPEMPrivateKeyWhole(t *testing.T) {
 		ErrorText: key,
 	})
 	state := BuildStepThinkingState(input)
-	if strings.Contains(state, "MIIE") {
-		t.Fatalf("private key body leaked into state: %s", state)
+	if !strings.Contains(state, "BEGIN PRIVATE KEY") {
+		t.Fatalf("state missing the key head: %s", state[:200])
 	}
-	if !strings.Contains(state, "[REDACTED PRIVATE KEY]") {
-		t.Fatalf("state missing the PEM redaction marker: %s", state)
-	}
-}
-
-// TestStepStateMarksOmittedFields locks acceptance #3 of #32: a field the
-// mod omitted whole shows the omission marker, never a partial body.
-func TestStepStateMarksOmittedFields(t *testing.T) {
-	t.Parallel()
-	_, run := newStepEffortTestDaemon(t)
-	jevReq, _ := run.buildStepRequest(thinkingDecisionRequest{
-		Step:             2,
-		AssistantOmitted: true,
-		Tools: []stepToolMaterial{{
-			Name: "Bash", IsError: true,
-			InputSummary: "", InputOmitted: true,
-			ResultText: "", ResultOmitted: true,
-		}},
-		ErrorOmitted: true,
-	})
-	state, _ := jevReq.State.(string)
-	if !strings.Contains(state, "[omitted: over limit]") {
-		t.Fatalf("state missing the omission marker: %s", state)
-	}
-	if strings.Count(state, "[omitted: over limit]") < 3 {
-		t.Fatalf("expected tool input, tool result and error marked omitted: %s", state)
-	}
-	feature, repeats := run.Errors.Observe("", true)
-	if feature != "[omitted]" {
-		t.Fatalf("omitted error feature: %q", feature)
-	}
-	if repeats != 0 {
-		t.Fatalf("omitted error must not advance the repeat count: %d", repeats)
+	if !strings.Contains(state, "END PRIVATE KEY") {
+		t.Fatalf("state missing the key tail: %s", state)
 	}
 }
 
-// TestStepStateKeepsReadFailureError locks the file-content boundary: a Read
-// FAILURE is an error message, not file content — it feeds error_text and
-// error_features; only successful bodies stay omitted.
-func TestStepStateKeepsReadFailureError(t *testing.T) {
+// TestStepStateReadFailureFeedsErrors locks the tool boundary: a Read
+// FAILURE is an error message like any other — it feeds error_text and
+// error_features.
+func TestStepStateReadFailureFeedsErrors(t *testing.T) {
 	t.Parallel()
 	_, run := newStepEffortTestDaemon(t)
 	_, input := run.buildStepRequest(thinkingDecisionRequest{
 		Step:      2,
-		Tools:     []stepToolMaterial{{Name: "Read", IsError: true, IsFileContent: true, InputSummary: "a.go", ResultText: "File does not exist."}},
+		Tools:     []stepToolMaterial{{Name: "Read", IsError: true, InputSummary: "a.go", ResultText: "File does not exist."}},
 		ErrorText: "File does not exist.",
 	})
 	state := BuildStepThinkingState(input)
