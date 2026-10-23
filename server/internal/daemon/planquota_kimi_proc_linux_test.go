@@ -56,16 +56,17 @@ print(json.dumps({"received": len(data), "authenticated": b"Authorization: Beare
 		name              string
 		uid               uint32
 		acceptBeforeProof bool
+		acceptMidWindow   bool
 		wantSuccess       bool
 	}{
-		{"root accepted", 0, true, true},
-		{"root unaccepted", 0, false, false},
-		{"foreign accepted", 65534, true, false},
-		{"foreign delayed accept", 65534, false, false},
+		{"root accepted", 0, true, false, true},
+		{"root unaccepted", 0, false, false, false},
+		{"foreign accepted", 65534, true, false, false},
+		{"foreign delayed accept", 65534, false, false, false},
 		// OL-960 retry window: the foreign accept lands BETWEEN the
 		// proof's first consult and its retries — every consult after
 		// the accept must still refuse, and the peer gets 0 bytes.
-		{"foreign accepts mid-window", 65534, false, false},
+		{"foreign accepts mid-window", 65534, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -122,7 +123,7 @@ print(json.dumps({"received": len(data), "authenticated": b"Authorization: Beare
 			}
 			verify := collector.verifyConnPeer
 			proofs := make(chan error, 1)
-			midWindow := tc.name == "foreign accepts mid-window"
+			midWindow := tc.acceptMidWindow
 			collector.verifyConnPeer = func(conn net.Conn) bool {
 				if tc.acceptBeforeProof {
 					if err := accept(); err != nil {

@@ -87,16 +87,16 @@ func (h *Handler) prepareIssueUpdate(w http.ResponseWriter, r *http.Request, bod
 	if !ok {
 		return r, false
 	}
-	// Runs after dependency-write parsing so the error precedence matches the
-	// previous inline placement at the top of UpdateIssue.
-	return r, labrastroRejectExternalConversationCancel(w, r, body)
+	// Dependency-write errors take precedence over the external-conversation
+	// cancel rejection below.
+	return r, labrastroAllowExternalConversationUpdate(w, r, body)
 }
 
 // labrastro: cancellation is not part of external conversation authority,
 // including when requested through an otherwise allowed issue collaboration
 // route. Case-insensitive because encoding/json matches struct tags that way;
 // explicit false/null is rejected along with true.
-func labrastroRejectExternalConversationCancel(w http.ResponseWriter, r *http.Request, body []byte) bool {
+func labrastroAllowExternalConversationUpdate(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	if _, external := channel.ConversationTaskFromContext(r.Context()); !external {
 		return true
 	}

@@ -117,10 +117,16 @@ as an unknown ID, even when the frozen grantor belongs to both workspaces.
 Client workspace headers and query parameters cannot widen the token binding.
 `/download-metadata` remains denied for external conversations. Member sessions
 retain MUL-3130's cross-workspace Markdown links, including native browser loads
-without workspace headers; first-party task tokens also keep upstream behavior.
-The real-router regression covers proxy and S3 presign modes, all four lineage
-fixtures (root, delegation, retry and pruned intermediate parent), warm membership
-caches and forged workspace selectors.
+without workspace headers; first-party task tokens also keep upstream behavior,
+with one residual surface retained after the OL-958 evaluation: a
+first-party task token authenticates as the runtime owner (`UserID: rt.OwnerID`
+in `server/internal/handler/daemon.go`), not as the member who triggered the
+task. Any member who can invoke the agent can therefore direct it, by attachment
+ID, to read the owner's attachments in other workspaces. The real-router
+regression covers proxy and S3 presign modes, all four lineage fixtures (root,
+delegation, retry and pruned intermediate parent), warm membership caches
+(grantor's other-workspace membership key pre-warmed before the out-of-bounds
+request, asserted unconsumed) and forged workspace selectors.
 
 An additional real-router regression found that assigning an existing
 member-created issue from an external task lost its ancestry: the new run had a

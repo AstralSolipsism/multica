@@ -70,8 +70,8 @@ import (
 // Cost discipline: each round enumerates this user's loopback LISTEN ports
 // ONCE (one /proc read pair on Linux, one lsof run on macOS) and filters
 // candidates in memory; the per-connection proof is one table lookup per
-// consult, retried within a bounded window while the server has not
-// accepted yet.
+// consult, retried within a bounded window whenever a consult comes back
+// unproven — including a connection already accepted by a foreign uid.
 //
 // The API is marked experimental, so every step is fail-soft: a missing
 // token file, a dead local server, or a drifted response shape ends the
@@ -116,6 +116,7 @@ type kimiPlanQuotaCollector struct {
 	enumerateOwnedListenPorts func() map[int]struct{}
 	// verifyConnPeer is the full credential gate for one connection: the
 	// single-consult platform proof retried within a bounded window.
+	// A nil gate fails closed — the dial rejects the connection.
 	verifyConnPeer func(conn net.Conn) bool
 	// proveConnPeerOnce is ONE platform proof consult: whether the
 	// accepting process of the established connection belongs to this
@@ -222,7 +223,7 @@ func (c *kimiPlanQuotaCollector) dial(ctx context.Context, network, addr string)
 	if err != nil {
 		return nil, err
 	}
-	if c.verifyConnPeer != nil && !c.verifyConnPeer(conn) {
+	if c.verifyConnPeer == nil || !c.verifyConnPeer(conn) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("plan quota: cannot prove the peer of the connection to %s belongs to this user", addr)
 	}
