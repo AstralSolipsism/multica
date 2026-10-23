@@ -11,7 +11,7 @@ are separate work after this change and OL-1083 have both merged.
 | Upstream release commit, `v0.6.5^{}` | `654b8ca954034f8181eb6bbb4fc298dede760156` |
 | Previous upstream release / merge base | `18fa9f728a9e25f2465df2789631edb2a75442ad` |
 | Two-parent merge | `89e2a1958887d9bd8553b3b4d99a436c550a3aba` |
-| Main refreshed before review | `fe974c9dec375ae2c58c26dc15ecd694a69f4f95` |
+| Main refreshed before review | `b8b17d477b343ced3eb02091c0d366faa09ea714` |
 | Production migration starting point | `f83c9753bbf1c52690bee642b94af18b7d60c6b3` (`v0.6.1-labrastro.6`) |
 
 The release contributes 55 commits. No commits from the post-release upstream
@@ -21,7 +21,11 @@ updates must be merged, not rebased across this merge. Before review, main
 advanced through PR #147 and was merged without conflicts. That refresh contains
 review cleanup for Kimi quota sampling, attachment UUID handling, dependency
 error wording and a Desktop CLI-cache test; its migration directory is unchanged.
-It does not contain OL-1083.
+Main then advanced through PR #183 (OL-1083) and was merged without conflicts.
+The approved per-field decision bounds and untrimmed step-state behavior are
+retained byte-for-byte; the overlapping environment-variable documents preserve
+both its guidance and this sync's `gpt-5.6-luna` default. Neither refresh changes
+migration files. Daemon, hook and affected UI tests are rerun after this merge.
 
 The live upstream tag lookup on 2026-10-23 reports annotation object
 `8a4d3eeb521e699eb977a6a5709bc834bb1927bb`, unlike the annotation recorded in the
