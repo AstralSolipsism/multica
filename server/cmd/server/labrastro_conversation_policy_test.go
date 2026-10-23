@@ -176,6 +176,27 @@ func TestExternalConversationUsesGrantorIdentity(t *testing.T) {
 	}
 }
 
+func TestExternalConversationOwnerGrantorCannotEditOthersComments(t *testing.T) {
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	grantor := fx.User(t, "Conversation owner grantor", "policy-owner-grantor@example.test")
+	fx.Member(t, testWorkspaceID, grantor, "owner")
+	for _, lineage := range []string{"root", "delegation", "retry", "deleted-parent"} {
+		t.Run(lineage, func(t *testing.T) {
+			f := externalPolicyFixtureForGrantor(t, lineage, grantor)
+			issue := fx.Issue(t, "Owner grantor edit boundary")
+			other := fx.Comment(t, issue, "Another member's comment")
+			own := fx.Comment(t, issue, "Agent's own comment", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
+			for _, tc := range []struct {
+				id     string
+				status int
+			}{{other, 403}, {own, 200}} {
+				req := testutil.WithHeaders(testutil.JSONRequest("PUT", "/api/comments/"+tc.id, map[string]any{"content": "changed"}), "Authorization", "Bearer "+f.token)
+				testutil.Call(t, testServer.Config.Handler.ServeHTTP, req).Want(tc.status)
+			}
+		})
+	}
+}
+
 func TestExternalConversationInactiveInstallationAtRouter(t *testing.T) {
 	f := newExternalPolicyFixture(t, "root")
 	if w := policyRequest(t, f.token, "GET", "/api/issues", nil); w.Code != 200 {
