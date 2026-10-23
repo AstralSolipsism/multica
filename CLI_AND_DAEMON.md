@@ -179,7 +179,7 @@ hint when nothing is registered, and otherwise stays out of the way.
 
 | Platform | Mechanism | Where |
 | --- | --- | --- |
-| Windows | Per-user Run key | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Multica` |
+| Windows | Per-user Run key | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Labrastro` |
 | macOS | launchd LaunchAgent | `~/Library/LaunchAgents/ai.multica.daemon.plist` (runs at login) |
 | Linux | systemd user unit | `~/.config/systemd/user/multica-daemon.service`; without systemd, an XDG autostart entry under `~/.config/autostart/` |
 
@@ -201,14 +201,24 @@ multica daemon autostart status --output json
 multica daemon autostart disable        # remove the registration
 ```
 
-Refresh: while an entry exists and carries Multica's ownership marker,
+Refresh: while an entry exists and carries Labrastro's ownership marker,
 `daemon start` silently rewrites it so a moved executable (a Homebrew
-upgrade, a self-update) heals. An entry at the same path that Multica did
+upgrade, a self-update) heals. An entry at the same path that Labrastro did
 not create — your own systemd unit, a hand-written LaunchAgent — is never
 refreshed and never overwritten: `enable`/`disable` refuse it and say which
 file is in the way, and the refresh is additionally skipped when the daemon
 was launched by an external supervisor (systemd `INVOCATION_ID` for a unit
 that is not ours).
+
+Coexisting with upstream Multica on the same machine: the macOS and Linux
+entries live at the exact paths upstream uses, and each side only touches an
+entry carrying its own marker (a `ManagedBy` value in the plist, a
+`# Managed by …` comment line in the unit/.desktop). Whoever enables first
+owns the entry; the other CLI refuses to enable, disable, or refresh it
+(Labrastro reports "not created by Labrastro", upstream reports "not created
+by Multica"). On Windows the Run value names differ (`Labrastro` vs
+upstream's `Multica`), so both CLIs can register at once and both entries
+start a daemon for the same profile at login; keep only one of them enabled.
 
 `daemon stop` stops the daemon but keeps the registration — it says nothing
 about the next boot; `autostart disable` is what turns that off. Disabling

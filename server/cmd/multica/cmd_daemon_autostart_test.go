@@ -164,6 +164,24 @@ func TestLaunchAgentPlistContent(t *testing.T) {
 	}
 }
 
+// TestLaunchAgentAutostartMarkerRejectsUpstream pins the coexistence fix:
+// upstream Multica writes the same ManagedBy key with "multica-daemon-
+// autostart" at the same plist path. That file must read as foreign —
+// enable/disable refuse it and the refresh skips it — or each CLI would
+// treat the other's LaunchAgent as its own and silently rewrite it. The
+// upstream value is a literal here, not the production constant, so this
+// expectation cannot drift with the code it guards.
+func TestLaunchAgentAutostartMarkerRejectsUpstream(t *testing.T) {
+	t.Parallel()
+
+	upstreamPlist := `<?xml version="1.0"?><plist version="1.0"><dict>` +
+		`<key>ManagedBy</key><string>multica-daemon-autostart</string>` +
+		`<key>Label</key><string>x</string></dict></plist>`
+	if launchAgentManaged([]byte(upstreamPlist)) {
+		t.Errorf("launchAgentManaged() = true for an upstream Multica plist; the marker values must stay distinct")
+	}
+}
+
 func TestLaunchAgentPlistContentEscapesXML(t *testing.T) {
 	t.Parallel()
 
