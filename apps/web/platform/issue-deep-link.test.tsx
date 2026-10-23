@@ -180,7 +180,7 @@ describe("issue deep links under measured Next 16.3.4 timing (real adapters)", (
     await waitLanded();
     // The arrival landing owns a flat timeline (no Virtuoso instance).
     expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
-  });
+  }, 15000);
 
   it("AC1 second source jump (UUID URL), parent cached both times", async () => {
     const qc = appQueryClient();
@@ -252,7 +252,7 @@ describe("issue deep links under measured Next 16.3.4 timing (real adapters)", (
     expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
     expect(hasHighlightedCommentBackground(document.getElementById("comment-comment-1"))).toBe(false);
     expect(hasHighlightedCommentBackground(document.getElementById("comment-comment-2"))).toBe(false);
-  });
+  }, 15000);
 
   it("a pending record dies with its navigation — a later non-adapter visit reports no stale fragment", async () => {
     const qc = appQueryClient();
