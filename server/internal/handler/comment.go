@@ -3346,7 +3346,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	// the conversation root (OL-1092). External conversations may edit only
 	// their own comments.
 	if _, external := channel.ConversationTaskFromContext(r.Context()); external && !isAuthor {
-		writeError(w, http.StatusForbidden, "external conversations may only edit their own comments")
+		writeErrorCode(w, http.StatusForbidden, "external_conversation_forbidden", "external conversations may only edit their own comments")
 		return
 	}
 	isAdmin := roleAllowed(member.Role, "owner", "admin")

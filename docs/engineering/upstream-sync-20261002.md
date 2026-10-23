@@ -79,6 +79,9 @@ own authorship or the grantor's admin role. Attachment deletion uses the
 grantor's role and the existing member-uploader check. That endpoint does not
 recognize agent uploaders, so a non-admin grantor cannot delete even an agent's
 own upload; uploads and downloads still work and retain agent authorship.
+OL-1092 later removed the grantor's admin role from comment EDITS: an external
+conversation may now edit only comments its own agent authored. The deletion
+rules above are unchanged.
 
 Workspace administration does not authorize private-agent invocation. The
 existing ownership/`public_to` rules are retained for the grantor rather than

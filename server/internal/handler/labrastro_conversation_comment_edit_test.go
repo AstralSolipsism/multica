@@ -31,6 +31,9 @@ func TestConversationEditOthersCommentRejected(t *testing.T) {
 	target := dbfx.Agent(t, "OL-1092 target", f.runtime)
 	mention := fmt.Sprintf("[@Target](mention://agent/%s) please run this", target)
 	commentID := dbfx.Comment(t, f.issue, "original member content", testutil.Cols{"author_type": "member", "author_id": member})
+	// A queued run this comment already triggered must survive the rejected
+	// edit: the guard returns before any cancellation side effect.
+	triggered := dbfx.Task(t, target, testutil.Cols{"issue_id": f.issue, "trigger_comment_id": commentID, "runtime_id": f.runtime, "originator_source": "direct_human", "originator_user_id": member, "accountable_user_id": member})
 
 	put := func(token, id, content string) *testutil.Response {
 		req := httptest.NewRequest(http.MethodPut, "/api/comments/"+id, strings.NewReader(fmt.Sprintf(`{"content":%q}`, content)))
@@ -47,8 +50,13 @@ func TestConversationEditOthersCommentRejected(t *testing.T) {
 	if content != "original member content" {
 		t.Fatalf("rejected edit mutated content: %q", content)
 	}
-	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1`, target); n != 0 {
+	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND id!=$2`, target, triggered); n != 0 {
 		t.Fatalf("rejected edit enqueued %d tasks for mentioned agent", n)
+	}
+	var status string
+	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id=$1`, triggered).Scan(&status)
+	if status != "queued" {
+		t.Fatalf("rejected edit cancelled the run this comment had triggered: %q", status)
 	}
 
 	// The same human, on first-party member credentials, still may edit.
