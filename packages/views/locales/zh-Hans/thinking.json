@@ -27,6 +27,5 @@
     "fallback_count_other": "回退 {{count}} 次",
     "carried_over": "沿用上一步的挡位：{{reason}}",
     "step_carried": "沿用"
-  },
-  "source_self_hosted": "自部署"
+  }
 }

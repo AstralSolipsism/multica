@@ -26,9 +26,9 @@
     "unavailable": "利用不可（適応は CLI のデフォルトレベルにフォールバック）",
     "idle": "未使用",
     "status_unknown": "ステータス不明",
-    "source_opencode_free": "OpenCode Zen",
+    "source_opencode_free": "OpenCode Zen（無料）",
     "source_opencode": "OpenCode Zen",
-    "source_dashscope": "DashScope",
+    "source_dashscope": "Alibaba Cloud Model Studio",
     "source_self_hosted": "セルフホスト",
     "counts": "デーモン起動以降：成功 {{success}} 回、フォールバック {{fallback}} 回"
   },

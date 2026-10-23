@@ -124,7 +124,13 @@ describe("ThinkingPicker", () => {
 
     const items = document.querySelectorAll("button[data-picker-item]");
     expect(items[0]).toHaveTextContent("Adapt");
-    expect(screen.getByText(/run summary including raw tool output/)).toBeInTheDocument();
+    // The disclosure names possible destinations without pinning a default,
+    // since the daemon's MULTICA_JEV_SOURCES decides what actually runs.
+    expect(
+      screen.getByText(
+        /run summary including raw tool output is sent to an external decision service configured on this machine, such as OpenCode Zen or Alibaba Cloud Model Studio/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("omits Adapt when fewer than two candidates remain", () => {
@@ -184,6 +190,9 @@ describe("ThinkingPicker", () => {
   });
 
   it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen (free)"],
+    ["dashscope", "Alibaba Cloud Model Studio"],
     ["self-hosted", "Self-hosted"],
     ["decision.internal", "decision.internal"],
   ])("shows the %s decision source in the subtitle", (source, label) => {

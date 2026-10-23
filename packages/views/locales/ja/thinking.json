@@ -27,6 +27,5 @@
     "fallback_count_other": "フォールバック {{count}} 回",
     "carried_over": "前のステップのレベルを継続使用：{{reason}}",
     "step_carried": "継続"
-  },
-  "source_self_hosted": "セルフホスト"
+  }
 }

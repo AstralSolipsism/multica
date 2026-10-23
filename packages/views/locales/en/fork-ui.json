@@ -2,7 +2,7 @@
   "agents": {
     "thinking_adapt": {
       "label": "Adapt",
-      "description": "When selected, a run summary including raw tool output is sent to an external decision service. The default is OpenCode Zen's free channel.",
+      "description": "When selected, a run summary including raw tool output is sent to an external decision service configured on this machine, such as OpenCode Zen or Alibaba Cloud Model Studio.",
       "upgrade_required": "This daemon is too old for Adapt. Upgrade the daemon to enable it."
     }
   },

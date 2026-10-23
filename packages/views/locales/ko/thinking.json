@@ -27,6 +27,5 @@
     "fallback_count_other": "폴백 {{count}}회",
     "carried_over": "이전 단계의 레벨을 그대로 사용: {{reason}}",
     "step_carried": "유지"
-  },
-  "source_self_hosted": "자체 호스팅"
+  }
 }

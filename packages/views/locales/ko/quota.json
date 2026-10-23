@@ -26,9 +26,9 @@
     "unavailable": "사용할 수 없음(적응이 CLI 기본 레벨로 폴백됨)",
     "idle": "아직 사용하지 않음",
     "status_unknown": "상태 알 수 없음",
-    "source_opencode_free": "OpenCode Zen",
+    "source_opencode_free": "OpenCode Zen(무료)",
     "source_opencode": "OpenCode Zen",
-    "source_dashscope": "DashScope",
+    "source_dashscope": "Alibaba Cloud Model Studio",
     "source_self_hosted": "자체 호스팅",
     "counts": "데몬 시작 이후: 성공 {{success}}회, 폴백 {{fallback}}회"
   },

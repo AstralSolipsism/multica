@@ -2,7 +2,7 @@
   "agents": {
     "thinking_adapt": {
       "label": "Adaptatif",
-      "description": "Si cette option est sélectionnée, un résumé d'exécution incluant la sortie brute des outils est envoyé à un service de décision externe. Le canal gratuit d'OpenCode Zen est utilisé par défaut.",
+      "description": "Si cette option est sélectionnée, un résumé d'exécution incluant la sortie brute des outils est envoyé à un service de décision externe configuré sur cette machine, par exemple OpenCode Zen ou Alibaba Cloud Model Studio.",
       "upgrade_required": "Ce daemon est trop ancien pour Adaptatif. Mettez à niveau le daemon pour l'activer."
     }
   },

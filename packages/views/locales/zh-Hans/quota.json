@@ -26,9 +26,9 @@
     "unavailable": "暂不可用（自适应已回退默认挡位）",
     "idle": "尚未使用",
     "status_unknown": "状态未知",
-    "source_opencode_free": "OpenCode Zen",
+    "source_opencode_free": "OpenCode Zen 免费通道",
     "source_opencode": "OpenCode Zen",
-    "source_dashscope": "DashScope",
+    "source_dashscope": "阿里云百炼",
     "source_self_hosted": "自部署",
     "counts": "自守护进程启动以来：成功 {{success}} 次，回退 {{fallback}} 次"
   },

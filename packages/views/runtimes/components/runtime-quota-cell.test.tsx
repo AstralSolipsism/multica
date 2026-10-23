@@ -359,7 +359,7 @@ describe("unmeasured windows", () => {
 
 describe("thinking Adapt engine status", () => {
   it.each([
-    ["available", "Adapt · OpenCode Zen · 290ms", "bg-success"],
+    ["available", "Adapt · OpenCode Zen (free) · 290ms", "bg-success"],
     [
       "degraded",
       "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
@@ -407,7 +407,7 @@ describe("thinking Adapt engine status", () => {
   );
 
   it.each([
-    ["available", "Adapt · OpenCode Zen · 290ms"],
+    ["available", "Adapt · OpenCode Zen (free) · 290ms"],
     [
       "degraded",
       "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
@@ -443,7 +443,7 @@ describe("thinking Adapt engine status", () => {
       />,
     );
 
-    await userEvent.hover(screen.getByText("Adapt · OpenCode Zen · 290ms"));
+    await userEvent.hover(screen.getByText("Adapt · OpenCode Zen (free) · 290ms"));
     expect(
       await screen.findByText(
         "Since daemon started: 12 successful, 3 fallbacks",
@@ -452,6 +452,9 @@ describe("thinking Adapt engine status", () => {
   });
 
   it.each([
+    ["opencode", "OpenCode Zen"],
+    ["opencode-free", "OpenCode Zen (free)"],
+    ["dashscope", "Alibaba Cloud Model Studio"],
     ["self-hosted", "Self-hosted"],
     ["decision.internal", "decision.internal"],
   ])("labels the %s source", (source, label) => {
@@ -467,6 +470,20 @@ describe("thinking Adapt engine status", () => {
     expect(screen.getByText(`Adapt · ${label} · 290ms`)).toBeInTheDocument();
   });
 
+  it("labels the dashscope source as 阿里云百炼 in zh-Hans", () => {
+    const runtime = quotaRuntime("claude", {});
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={runtime}
+        now={NOW}
+        thinkingAdapt={adaptSnapshot("available", { active_source: "dashscope" })}
+      />,
+      { locale: "zh-Hans" },
+    );
+
+    expect(screen.getByText("自适应 · 阿里云百炼 · 290ms")).toBeInTheDocument();
+  });
+
   it("reads the runtime snapshot by default without plan quota", () => {
     const runtime = quotaRuntime("claude", {});
     runtime.plan_quota = null;
@@ -475,12 +492,12 @@ describe("thinking Adapt engine status", () => {
       <RuntimeQuotaCell runtime={runtime} now={NOW} />,
     );
 
-    expect(screen.getByText("Adapt · OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
     expect(screen.getByText("Not reported")).toBeInTheDocument();
     cell.unmount();
 
     renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("Adapt · OpenCode Zen · 290ms")).toBeInTheDocument();
+    expect(screen.getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
     expect(screen.getByText("Not reported")).toBeInTheDocument();
   });
 

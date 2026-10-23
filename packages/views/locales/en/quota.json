@@ -26,9 +26,9 @@
     "unavailable": "Unavailable (Adapt has fallen back to the CLI default level)",
     "idle": "Not used yet",
     "status_unknown": "Status unknown",
-    "source_opencode_free": "OpenCode Zen",
+    "source_opencode_free": "OpenCode Zen (free)",
     "source_opencode": "OpenCode Zen",
-    "source_dashscope": "DashScope",
+    "source_dashscope": "Alibaba Cloud Model Studio",
     "source_self_hosted": "Self-hosted",
     "counts": "Since daemon started: {{success}} successful, {{fallback}} fallbacks"
   },
