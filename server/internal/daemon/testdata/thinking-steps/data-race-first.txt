@@ -1,0 +1,32 @@
+Exit code 1
+==================
+WARNING: DATA RACE
+Write at 0x00c000294168 by goroutine 8:
+  ol1011/race.TestCounter.func1()
+      /workspaces/outlune-517a07208fea/ol-1106-b142db50e287/workdir/race-fixture/counter_test.go:15 +0xab
+
+Previous read at 0x00c000294168 by goroutine 9:
+  ol1011/race.TestCounter.func2()
+      /workspaces/outlune-517a07208fea/ol-1106-b142db50e287/workdir/race-fixture/counter_test.go:21 +0xca
+
+Goroutine 8 (running) created at:
+  ol1011/race.TestCounter()
+      /workspaces/outlune-517a07208fea/ol-1106-b142db50e287/workdir/race-fixture/counter_test.go:12 +0x126
+  testing.tRunner()
+      /usr/local/go/src/testing/testing.go:2193 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/local/go/src/testing/testing.go:2258 +0x38
+
+Goroutine 9 (finished) created at:
+  ol1011/race.TestCounter()
+      /workspaces/outlune-517a07208fea/ol-1106-b142db50e287/workdir/race-fixture/counter_test.go:18 +0x204
+  testing.tRunner()
+      /usr/local/go/src/testing/testing.go:2193 +0x21c
+  testing.(*T).Run.gowrap1()
+      /usr/local/go/src/testing/testing.go:2258 +0x38
+==================
+--- FAIL: TestCounter (0.00s)
+    testing.go:1865: race detected during execution of test
+FAIL
+FAIL	ol1011/race	0.029s
+FAIL

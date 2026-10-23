@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -18,11 +19,31 @@ func TestNormalizedErrorFeature(t *testing.T) {
 		{"quotes dropped", `exec: "bash": exit status 127`, "exec_ bash_ exit status 0"},
 		{"empty stays empty", "", ""},
 		{"whitespace only stays empty", "\n \n", ""},
+		{"separators only stay empty", "====\n----\n***\n123:456", ""},
+		{"separators before unicode error", "====\n错误：连接失败", "错误：连接失败"},
 	}
 	for _, tc := range cases {
 		if got := NormalizedErrorFeature(tc.in); got != tc.want {
 			t.Errorf("%s: NormalizedErrorFeature(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestNormalizedErrorFeatureRealDataRace(t *testing.T) {
+	var tracker ErrorFeatureTracker
+	for i, name := range []string{"data-race-first.txt", "data-race-repeated.txt"} {
+		raw, err := os.ReadFile("testdata/thinking-steps/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		feature, repeats := tracker.Observe(string(raw))
+		if feature != "warning_ data race" || repeats != i+1 {
+			t.Errorf("%s: feature=%q repeats=%d, want warning_ data race/%d", name, feature, repeats, i+1)
+		}
+	}
+	feature, repeats := tracker.Observe("==================\nFAIL: TestCommitAtomicity\nassertion failed")
+	if feature == "warning_ data race" || repeats != 1 {
+		t.Fatalf("different errors after the same separator must not collide: %q/%d", feature, repeats)
 	}
 }
 

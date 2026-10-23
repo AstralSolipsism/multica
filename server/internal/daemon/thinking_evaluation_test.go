@@ -89,6 +89,43 @@ func TestThinkingFixtureWireParity(t *testing.T) {
 	}
 }
 
+func TestThinkingFixtureRealEvidence(t *testing.T) {
+	want := map[string]struct {
+		step, repeats int
+		tool, feature string
+		isError       bool
+	}{
+		"before-read":        {2, 0, "Bash", "", false},
+		"concurrent-code":    {3, 0, "Read", "", false},
+		"wrap-up":            {4, 0, "Write", "", false},
+		"data-race":          {3, 1, "Bash", "warning_ data race", true},
+		"repeated-data-race": {6, 2, "Bash", "warning_ data race", true},
+		// The real command ended in echo exit=$?: Bash succeeded despite
+		// the compiler error in stdout. Preserve that production input.
+		"unused-import": {3, 0, "Bash", "", false},
+	}
+	fixtures := StepThinkingFixtures()
+	if len(fixtures) != len(want) {
+		t.Fatalf("got %d fixtures, want %d", len(fixtures), len(want))
+	}
+	for _, fixture := range fixtures {
+		input := fixture.Input
+		w, ok := want[fixture.ID]
+		if !ok {
+			t.Fatalf("unexpected fixture %s", fixture.ID)
+		}
+		if input.AssistantText != "" {
+			t.Errorf("%s: original assistant was empty, got %q", fixture.ID, input.AssistantText)
+		}
+		if input.Step != w.step || input.ToolName != w.tool || input.ToolIsError != w.isError || input.ErrorFeatures != w.feature || input.RepeatedErrors != w.repeats {
+			t.Errorf("%s: step/tool/error/feature/repeats=%d/%s/%v/%q/%d, want %+v", fixture.ID, input.Step, input.ToolName, input.ToolIsError, input.ErrorFeatures, input.RepeatedErrors, w)
+		}
+		if input.ToolIsError && input.ExitCode != 1 {
+			t.Errorf("%s: exit code=%d, want 1", fixture.ID, input.ExitCode)
+		}
+	}
+}
+
 type thinkingEvaluationResult struct {
 	ID               string             `json:"id"`
 	Scope            string             `json:"scope"`
