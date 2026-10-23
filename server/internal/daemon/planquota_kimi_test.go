@@ -607,6 +607,25 @@ func TestKimiCollect_EstablishedPeerMustMatchProof(t *testing.T) {
 	}
 }
 
+// A nil proof gate fails closed: the dial returns the proof error instead of
+// skipping the credential check.
+func TestKimiCollect_NilConnPeerProofFailsClosed(t *testing.T) {
+	var gotAuth string
+	srv := newKimiTestServer(t, kimiLimitsJSON(), 0, &gotAuth)
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	collector := newKimiTestCollector(kimiTestHomeNoRegistry(t), port)
+	collector.verifyConnPeer = nil
+	_, err := collector.collect(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cannot prove the peer") {
+		t.Fatalf("nil proof gate must fail the dial with a proof error, got %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("credential delivered without a proof gate: %q", gotAuth)
+	}
+}
+
 // Same for a registry-discovered port: discovery is not identity.
 func TestKimiCollect_RegistryPortForeignPeerGetsNoToken(t *testing.T) {
 	var gotAuth string
@@ -858,8 +877,8 @@ func TestKimiProveConnPeerWithRetry(t *testing.T) {
 			t.Fatalf("failed after %v, before the budget %v", elapsed, kimiProofRetryBudget)
 		}
 		// budget/pause + a little slack for the first consult and scheduling.
-		if max := int(kimiProofRetryBudget/kimiProofRetryPause) + 2; consults > max {
-			t.Fatalf("consults = %d, want <= %d (missing sleep between retries)", consults, max)
+		if maxConsults := int(kimiProofRetryBudget/kimiProofRetryPause) + 2; consults > maxConsults {
+			t.Fatalf("consults = %d, want <= %d (missing sleep between retries)", consults, maxConsults)
 		}
 	})
 }
