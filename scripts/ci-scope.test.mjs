@@ -41,6 +41,7 @@ for (const [name, files, selected] of [
   ["DAG browser regression", ["e2e/dag-task-lines.spec.ts"], ["e2e"]],
   ["browser fixtures", ["e2e/fixtures.ts"], ["e2e"]],
   ["cleanup script", ["scripts/drop-database.sh"], ["scripts"]],
+  ["check script regression tests", ["scripts/check.test.sh"], ["scripts"]],
   ["performance harness", ["scripts/perf-compare.test.sh"], ["scripts"]],
   ["reserved slug source", ["server/internal/handler/reserved_slugs.json"], ["backend", "runtime", "scripts", "e2e"]],
   ["reserved slug output", ["packages/core/paths/reserved-slugs.ts"], ["frontend", "quality", "scripts", "e2e"]],

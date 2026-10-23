@@ -14,7 +14,7 @@ import (
 
 const (
 	claudeSupplementInitializeID     = "multica-supplement-initialize"
-	claudeSupplementHandshakeTimeout = 3 * time.Second
+	claudeSupplementHandshakeTimeout = 60 * time.Second
 )
 
 // All four context events support additionalContext; Stop uses decision/reason.
@@ -52,7 +52,7 @@ func newClaudeSupplementSession(ctx context.Context) *claudeSupplementSession {
 
 func (s *claudeSupplementSession) initialize(w io.Writer, timeout time.Duration, installHooks bool) error {
 	if timeout <= 0 {
-		timeout = 60 * time.Second
+		timeout = claudeSupplementHandshakeTimeout
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
