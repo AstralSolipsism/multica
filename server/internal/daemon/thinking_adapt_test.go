@@ -156,15 +156,17 @@ func TestThinkingStatePrivacyAndBounds(t *testing.T) {
 	task := Task{ID: "private-task-id", ThreadName: "title", IssueDescription: strings.Repeat("界", 1600) + secret, TriggerCommentContent: "Previous fix failed " + secret,
 		WorkspaceContext: "PRIVATE WORKSPACE", AuthToken: "PRIVATE AUTH", Agent: &AgentData{Instructions: "PRIVATE INSTRUCTIONS", CustomEnv: map[string]string{"PRIVATE ENV": secret}}}
 	state := BuildRunThinkingState(task, "claude", "test/model")
-	for _, bad := range []string{secret, "PRIVATE", "private-task-id"} {
+	// The run state selects only the business fields (§4): instructions,
+	// workspace context and auth never enter it.
+	for _, bad := range []string{"PRIVATE", "private-task-id"} {
 		if strings.Contains(state, bad) {
 			t.Fatalf("leaked %s", bad)
 		}
 	}
-	if len(state) > 4096 || !utf8.ValidString(state) || !json.Valid([]byte(state)) {
+	if len(state) > runStateLimit || !utf8.ValidString(state) || !json.Valid([]byte(state)) {
 		t.Fatalf("invalid bounded state (%d bytes)", len(state))
 	}
-	if !strings.Contains(state, "Previous fix failed") || !strings.Contains(state, "REDACTED") {
+	if !strings.Contains(state, "Previous fix failed") {
 		t.Fatal("lost short trigger evidence")
 	}
 	for _, tc := range []struct {
@@ -179,15 +181,12 @@ func TestThinkingStatePrivacyAndBounds(t *testing.T) {
 			t.Fatal(state)
 		}
 	}
+	// The step state carries tool output verbatim (OL-1083): a secret inside
+	// a tool result ships; every field is capped on its own, no whole-state
+	// trim (the uncapped size is bounded by the per-field caps).
 	step := BuildStepThinkingState(StepThinkingInput{Goal: strings.Repeat("界", 1000), AssistantText: strings.Repeat("字", 1000), ToolResult: secret + "\n" + strings.Repeat("X", 1000) + "\nDATA RACE", Step: 3, RepeatedErrors: 2})
-	if len(step) > 4096 || !json.Valid([]byte(step)) || strings.Contains(step, secret) || !strings.Contains(step, "DATA RACE") {
-		t.Fatal("step state lost tail, bound or redaction")
-	}
-	if state := BuildStepThinkingState(StepThinkingInput{FileContent: true, ToolResult: "whole file body"}); strings.Contains(state, "whole file body") {
-		t.Fatal("file contents left daemon")
-	}
-	if got := thinkingPrefix("prefix "+secret, 20); strings.Contains(got, "sk-") {
-		t.Fatal("redaction ran after truncation")
+	if !json.Valid([]byte(step)) || !strings.Contains(step, "DATA RACE") {
+		t.Fatal("step state lost its tail")
 	}
 }
 
@@ -200,26 +199,48 @@ func TestThinkingStateOrderAndTailTruncation(t *testing.T) {
 	}
 	step := BuildStepThinkingState(StepThinkingInput{
 		Step: 9, ToolName: "exec_command", ToolIsError: true, ExitCode: 1, ErrorFeatures: "DATA RACE scheduler.go", RepeatedErrors: 2,
-		ToolInputSummary: "go test -race ./...", ToolResult: strings.Repeat("首", 400) + strings.Repeat("尾", 400),
+		ToolInputSummary: "go test -race ./...", ToolResult: strings.Repeat("首", 1000) + strings.Repeat("尾", 1000),
 		AssistantText: strings.Repeat("助", 500), Goal: strings.Repeat("目", 500),
 	})
-	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result_head":"` + strings.Repeat("首", 400) + `","result_tail":"` + strings.Repeat("尾", 400) + `","assistant":"`
+	wantPrefix = `{"step":9,"tool":"exec_command","is_error":true,"exit_code":1,"error_features":"DATA RACE scheduler.go","repeated_errors":2,"tool_input_summary":"go test -race ./...","result":"` + strings.Repeat("首", 66)
 	if !strings.HasPrefix(step, wantPrefix) {
-		t.Fatal("step state reordered fields or truncated error evidence before trailing text")
+		t.Fatal("step state reordered fields or lost the result head")
 	}
-	for _, state := range []string{run, step} {
+	if !(strings.Index(step, `"result"`) < strings.Index(step, `"assistant"`) && strings.Index(step, `"assistant"`) < strings.Index(step, `"goal"`)) {
+		t.Fatal("step state long fields out of order")
+	}
+	var stepFields map[string]any
+	if err := json.Unmarshal([]byte(step), &stepFields); err != nil {
+		t.Fatal(err)
+	}
+	// The result never squeezes out assistant or goal (OL-1083): both ship
+	// complete, and a result over budget keeps head, tail and marker.
+	result, _ := stepFields["result"].(string)
+	if !strings.Contains(result, "bytes elided") || !strings.Contains(result, "尾") {
+		t.Fatalf("result lost its tail or marker: %.200s", result)
+	}
+	if assistant, _ := stepFields["assistant"].(string); assistant != strings.Repeat("助", 500) {
+		t.Fatalf("assistant truncated: %d runes", len([]rune(assistant)))
+	}
+	if goal, _ := stepFields["goal"].(string); goal != strings.Repeat("目", 500) {
+		t.Fatalf("goal truncated: %d runes", len([]rune(goal)))
+	}
+	if len(run) > runStateLimit || !utf8.ValidString(run) {
+		t.Fatalf("invalid bounded run state (%d bytes)", len(run))
+	}
+	if !utf8.ValidString(step) {
+		t.Fatal("invalid step state")
+	}
+	{
 		var fields map[string]any
-		if len(state) > 4096 || !utf8.ValidString(state) || json.Unmarshal([]byte(state), &fields) != nil {
-			t.Fatalf("invalid bounded state (%d bytes)", len(state))
-		}
-		if fields["step"] != nil && fields["goal"] != "" {
-			t.Fatal("long goal should be removed before assistant text is shortened")
+		if json.Unmarshal([]byte(run), &fields) != nil || json.Unmarshal([]byte(step), &fields) != nil {
+			t.Fatal("invalid JSON")
 		}
 	}
-	// Escaping can expand one character to six JSON bytes; the bound is on
-	// encoded UTF-8 bytes, not the original character count.
+	// Escaping can expand one character to six JSON bytes; the run-state
+	// bound is on encoded UTF-8 bytes, not the original character count.
 	escaped := BuildRunThinkingState(Task{TriggerCommentContent: strings.Repeat("<", 1000), IssueDescription: strings.Repeat("界", 1500)}, "claude", "model")
-	if len(escaped) > 4096 || !json.Valid([]byte(escaped)) {
+	if len(escaped) > runStateLimit || !json.Valid([]byte(escaped)) {
 		t.Fatal("escaped state exceeded byte bound")
 	}
 }

@@ -217,19 +217,22 @@ func TestStepOutcomesFallbackAndReplay(t *testing.T) {
 	assertStepFields(t, outcomes[3], map[string]any{"prev_action_kind": "edit_or_exec", "prev_outcome_ok": true, "action_kind": "final_text"})
 }
 
-func TestStepOutcomesOmittedError(t *testing.T) {
+func TestStepOutcomesErrorWithoutNormalizableFeature(t *testing.T) {
 	f := newStepSampleFixture(t)
+	// OL-1083 removed whole-field omission: error_text always arrives.
+	// An error without a normalizable feature yields an empty sig, and an
+	// empty sig never counts as a repeat of a real error.
 	materials := []string{"", `,"tools":[{"name":"Bash","is_error":true}],"error_text":"error X"`,
-		`,"tools":[{"name":"Bash","is_error":true}],"error_omitted":true`, `,"tools":[{"name":"Edit"}]`,
+		`,"tools":[{"name":"Bash","is_error":true}],"error_text":""`, `,"tools":[{"name":"Edit"}]`,
 		`,"tools":[{"name":"Bash","is_error":true}],"error_text":"error X"`}
 	for i, material := range materials {
 		f.request(t, i+1, material)
 	}
 	f.effect(5, "")
 	_, outcomes := pairedStepSamples(t, f.records(t))
-	assertStepFields(t, outcomes[1], map[string]any{"repeated_error_next": nil})
-	assertStepFields(t, outcomes[2], map[string]any{"error_sig": nil, "outcome_ok": false, "repeated_error_next": nil})
-	assertStepFields(t, outcomes[3], map[string]any{"error_sig": "", "outcome_ok": true, "repeated_error_next": nil})
+	assertStepFields(t, outcomes[1], map[string]any{"repeated_error_next": false})
+	assertStepFields(t, outcomes[2], map[string]any{"error_sig": "", "outcome_ok": false, "repeated_error_next": false})
+	assertStepFields(t, outcomes[3], map[string]any{"error_sig": "", "outcome_ok": true, "repeated_error_next": false})
 	assertStepFields(t, outcomes[4], map[string]any{"repeated_error_next": false})
 }
 
@@ -265,7 +268,7 @@ func TestStepOutcomesTerminalPaths(t *testing.T) {
 				f.d.perTurnEffortCallback(f.run.TaskID)(false)
 			}
 			if scenario == "revoked-request" {
-				resp := f.request(t, 3, `,"tools":[{"name":"Bash","is_error":true}],"error_omitted":true`)
+				resp := f.request(t, 3, `,"tools":[{"name":"Bash","is_error":true}],"error_text":""`)
 				if resp.Enabled == nil || *resp.Enabled {
 					t.Fatalf("not revoked: %+v", resp)
 				}
@@ -280,7 +283,7 @@ func TestStepOutcomesTerminalPaths(t *testing.T) {
 				want["tools"], want["action_kind"], want["outcome_ok"], want["error_sig"] = []any{}, "final_text", true, ""
 			}
 			if scenario == "revoked-request" {
-				want["tools"], want["action_kind"], want["outcome_ok"] = []any{"Bash"}, "edit_or_exec", false
+				want["tools"], want["action_kind"], want["outcome_ok"], want["error_sig"] = []any{"Bash"}, "edit_or_exec", false, ""
 			}
 			assertStepFields(t, outcomes[2], want)
 			assertStepFields(t, outcomes[1], map[string]any{"action_kind": "read_only", "outcome_ok": true, "next_outcome_ok": want["outcome_ok"]})

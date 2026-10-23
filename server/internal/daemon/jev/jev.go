@@ -168,7 +168,7 @@ type Option struct {
 }
 
 // Request is one decision question. State is a string or a JSON-marshalable
-// object, already redacted and truncated by the caller (contract §4).
+// object, already sized by the caller (contract §4).
 type Request struct {
 	State        any
 	Instructions string

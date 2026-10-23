@@ -4,8 +4,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // Step error material for adaptive thinking (contract §4, §6): the mod uploads
@@ -18,11 +16,8 @@ import (
 // lines name no failure and are skipped: Claude Code's Bash header
 // "Exit code N" (ParseExitCode reads it) and Go compiler package headers
 // "# pkg/path" (the actual error follows on the next line). Exported for
-// OL-1019's sample collection. The input is redacted here, before
-// normalization: rewriting URLs and colons first would break the redactor's
-// pattern match and leak the credential into the feature (#31).
+// OL-1019's sample collection.
 func NormalizedErrorFeature(errorText string) string {
-	errorText = redact.Text(errorText)
 	for _, rawLine := range strings.Split(errorText, "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" || isExitCodeLine(line) || isPackageHeaderLine(line) {
@@ -114,19 +109,10 @@ type ErrorFeatureTracker struct {
 	repeats  int
 }
 
-// omittedErrorFeature is the feature recorded when the mod omitted the
-// error text whole (over the byte limit): no partial body ever ships (#32).
-const omittedErrorFeature = "[omitted]"
-
 // Observe counts steps with the same normalized error feature in the last
 // errorFeatureWindowSize main-thread steps, including this one. Error-free
-// steps occupy window positions but return ""/0. Omitted error text returns
-// "[omitted]" and the previous count without entering the window: there is
-// no raw text to normalize (#32).
-func (t *ErrorFeatureTracker) Observe(errorText string, omitted bool) (feature string, repeats int) {
-	if omitted {
-		return omittedErrorFeature, t.repeats
-	}
+// steps occupy window positions but return ""/0.
+func (t *ErrorFeatureTracker) Observe(errorText string) (feature string, repeats int) {
 	feature = NormalizedErrorFeature(errorText)
 	copy(t.features[:], t.features[1:])
 	t.features[len(t.features)-1] = feature

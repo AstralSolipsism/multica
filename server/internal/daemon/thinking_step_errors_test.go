@@ -30,91 +30,57 @@ func TestErrorFeatureTrackerCountsWindowedRepeats(t *testing.T) {
 	t.Parallel()
 	const race = "WARNING: DATA RACE\nRead at scheduler.go:178 by goroutine 41"
 	const other = "exec: bash: exit status 3"
-	type observation struct {
-		text    string
-		omitted bool
-		want    int
-	}
 	cases := []struct {
 		name  string
-		steps []observation
+		steps []string
+		want  []int
 	}{
 		{
-			name: "consecutive and normalized repeats",
-			steps: []observation{
-				{race, false, 1}, {race, false, 2},
-				{other, false, 1}, {other, false, 2}, {"exec: bash: exit status 7", false, 3},
-			},
+			name:  "consecutive and normalized repeats",
+			steps: []string{race, race, other, other, "exec: bash: exit status 7"},
+			want:  []int{1, 2, 1, 2, 3},
 		},
 		{
-			name: "error-free step returns zero and preserves history",
-			steps: []observation{
-				{"", false, 0}, {race, false, 1}, {"", false, 0}, {race, false, 2},
-			},
+			name:  "error-free step returns zero and preserves history",
+			steps: []string{"", race, "", race},
+			want:  []int{0, 1, 0, 2},
 		},
 		{
-			name: "different errors preserve each others history",
-			steps: []observation{
-				{race, false, 1}, {other, false, 1}, {race, false, 2}, {other, false, 2},
-			},
+			name:  "different errors preserve each others history",
+			steps: []string{race, other, race, other},
+			want:  []int{1, 1, 2, 2},
 		},
 		{
-			name: "oldest of six steps is included",
-			steps: []observation{
-				{race, false, 1}, {"", false, 0}, {"", false, 0},
-				{"", false, 0}, {"", false, 0}, {race, false, 2},
-			},
+			name:  "oldest of six steps is included",
+			steps: []string{race, "", "", "", "", race},
+			want:  []int{1, 0, 0, 0, 0, 2},
 		},
 		{
-			name: "error-free steps expire old errors",
-			steps: []observation{
-				{race, false, 1}, {"", false, 0}, {"", false, 0},
-				{"", false, 0}, {"", false, 0}, {"", false, 0}, {race, false, 1},
-			},
+			name:  "error-free steps expire old errors",
+			steps: []string{race, "", "", "", "", "", race},
+			want:  []int{1, 0, 0, 0, 0, 0, 1},
 		},
 		{
-			name: "different errors expire old errors",
-			steps: []observation{
-				{race, false, 1}, {other, false, 1}, {other, false, 2},
-				{other, false, 3}, {other, false, 4}, {other, false, 5}, {race, false, 1},
-			},
+			name:  "different errors expire old errors",
+			steps: []string{race, other, other, other, other, other, race},
+			want:  []int{1, 1, 2, 3, 4, 5, 1},
 		},
 		{
-			name: "count never exceeds six steps",
-			steps: []observation{
-				{race, false, 1}, {race, false, 2}, {race, false, 3}, {race, false, 4},
-				{race, false, 5}, {race, false, 6}, {race, false, 6}, {race, false, 6},
-			},
-		},
-		{
-			name: "omitted steps preserve the previous count",
-			steps: []observation{
-				{"", true, 0}, {race, false, 1}, {race, true, 1}, {other, true, 1},
-				{race, false, 2}, {"", false, 0}, {"", true, 0}, {race, false, 3},
-			},
-		},
-		{
-			name: "omitted steps do not consume window positions",
-			steps: []observation{
-				{race, false, 1}, {"", false, 0}, {"", false, 0},
-				{"", false, 0}, {"", false, 0},
-				{"", true, 0}, {"", true, 0}, {"", true, 0},
-				{"", true, 0}, {"", true, 0}, {"", true, 0},
-				{race, false, 2}, {race, false, 2},
-			},
+			name:  "count never exceeds six steps",
+			steps: []string{race, race, race, race, race, race, race, race},
+			want:  []int{1, 2, 3, 4, 5, 6, 6, 6},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var tracker ErrorFeatureTracker
-			for i, step := range tc.steps {
-				wantFeature := NormalizedErrorFeature(step.text)
-				if step.omitted {
-					wantFeature = "[omitted]"
+			for i, text := range tc.steps {
+				feature, repeats := tracker.Observe(text)
+				if want := NormalizedErrorFeature(text); feature != want {
+					t.Fatalf("observation %d: feature=%q want %q", i+1, feature, want)
 				}
-				feature, repeats := tracker.Observe(step.text, step.omitted)
-				if feature != wantFeature || repeats != step.want {
-					t.Fatalf("observation %d: feature=%q repeats=%d, want %q/%d", i+1, feature, repeats, wantFeature, step.want)
+				if repeats != tc.want[i] {
+					t.Fatalf("observation %d: repeats=%d want %d", i+1, repeats, tc.want[i])
 				}
 			}
 		})

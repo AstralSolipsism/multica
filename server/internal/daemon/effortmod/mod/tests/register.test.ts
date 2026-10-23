@@ -1,5 +1,5 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
-import { byteLength, effectRecord, FIELD_LIMIT_BYTES, fitRequest, parseContext, pluginDirsWithout, stepPayload, wholeOrOmitted, type SessionMessages, type StepPayload } from '../hooks/register'
+import { byteLength, effectRecord, FIELD_LIMIT_BYTES, fitRequest, parseContext, pluginDirsWithout, stepPayload, clipMiddle, type SessionMessages, type StepPayload } from '../hooks/register'
 import type { On, TurnStepResult } from 'claude-code'
 
 // The hooks against the engine: the test's own hooks stand for the daemon's
@@ -159,8 +159,8 @@ describe('labrastro-effort hooks', () => {
     expect(body.step).toBe(2)
     expect(body.assistant_text).toBe('先跑测试，再读一下 a.go。')
     expect(body.tools).toEqual([
-      { name: 'Bash', is_error: true, is_file_content: false, input_summary: 'go test ./...', result_text: 'Exit code 1\nFAIL: build failed', input_summary_omitted: false, result_omitted: false },
-      { name: 'Read', is_error: false, is_file_content: true, input_summary: 'a.go', result_text: '', input_summary_omitted: false, result_omitted: false },
+      { name: 'Bash', is_error: true, input_summary: 'go test ./...', result_text: 'Exit code 1\nFAIL: build failed' },
+      { name: 'Read', is_error: false, input_summary: 'a.go', result_text: 'package a' },
     ])
     expect(body.error_text).toBe('Exit code 1\nFAIL: build failed')
     const record = JSON.parse(world.logs[0] ?? '{}')
@@ -329,11 +329,11 @@ describe('labrastro-effort helpers', () => {
     expect(payload.assistant_text).toBe('先跑测试，再读一下 a.go。')
     expect(payload.tools).toHaveLength(2)
     expect(payload.tools[0]).toMatchObject({ name: 'Bash', is_error: true })
-    expect(payload.tools[1]).toMatchObject({ name: 'Read', is_file_content: true })
+    expect(payload.tools[1]).toMatchObject({ name: 'Read', is_error: false, result_text: 'package a' })
     expect(payload.error_text).toBe('Exit code 1\nFAIL: build failed')
   })
 
-  test('stepPayload marks file-content tools and stops before earlier steps', () => {
+  test('stepPayload stops before earlier steps', () => {
     // An earlier step's entries stay out.
     const payload = stepPayload(4, [{ role: 'assistant', text: 'old' }, ...LAST_STEP])
     expect(payload.assistant_text).toBe('先跑测试，再读一下 a.go。')
@@ -351,14 +351,14 @@ describe('labrastro-effort helpers', () => {
     ]
     const payload = stepPayload(2, interleaved)
     expect(payload.tools.map((t) => t.name)).toEqual(['Read', 'Bash'])
-    expect(payload.tools[0]).toMatchObject({ is_file_content: true })
+    expect(payload.tools[0]).toMatchObject({ is_error: false })
     expect(payload.tools[1]).toMatchObject({ is_error: true })
     expect(payload.error_text).toBe('FAIL')
   })
 
-  test('stepPayload ships whole lines: no partial credentials, tail errors survive', () => {
-    const conn = 'postgres://app:reviewcanary@db.internal:5432/orders'
-    // A credential line inside a long result crosses no line boundary.
+  test('stepPayload ships tool output verbatim, tail errors survive', () => {
+    const conn = 'postgres://app:secret@db.internal:5432/orders'
+    // A credential line inside a long result crosses unredacted (OL-1083).
     const long: string[] = []
     for (let i = 0; i < 40; i++) long.push(`progress line ${i} done`)
     const result = long.concat([conn, 'Exit code 1', 'FAIL: TAIL_CANARY missing']).join('\n')
@@ -368,21 +368,21 @@ describe('labrastro-effort helpers', () => {
       { role: 'user', toolResults: [{ tool_use_id: 't1' }] },
     ])
     const text = payload.tools[0]?.result_text ?? ''
-    // The whole credential line ships (the daemon redacts it); it is never cut.
+    // The whole credential line ships unredacted; the daemon no longer redacts.
     expect(text).toContain(conn)
-    // The tail error survives the mod's budget; the daemon keeps it in result_tail.
+    // The tail error survives the mod's budget.
     expect(text).toContain('FAIL: TAIL_CANARY missing')
     expect(payload.error_text).toContain('TAIL_CANARY')
   })
 
   test('stepPayload with no assistant material stays empty', () => {
-    const empty = { step: 2, assistant_text: '', tools: [], error_text: '', assistant_omitted: false, error_omitted: false }
+    const empty = { step: 2, assistant_text: '', tools: [], error_text: '' }
     expect(stepPayload(2, [{ role: 'user', text: 'hi' }])).toEqual(empty)
     expect(stepPayload(2, undefined)).toEqual(empty)
   })
 
 
-  // Regression tests for the whole-or-omitted boundary (#37): each rule the
+  // Regression tests for the clip-only boundary (OL-1083): each rule the
   // daemon relies on must fail here if the mod changes it.
   const pemBody = Array.from({ length: 50 }, (_, i) => `PEMCANARY${String(i).padStart(2, '0')}` + 'A'.repeat(53))
   const pem = ['-----BEGIN PRIVATE KEY-----', ...pemBody, '-----END PRIVATE KEY-----'].join('\n')
@@ -393,46 +393,120 @@ describe('labrastro-effort helpers', () => {
     { role: 'user', toolResults: [{ tool_use_id: 't1' }] },
   ]
 
-  test('a long failing output crosses whole, tail error included', () => {
+  test('a long failing output crosses with head and tail error', () => {
     const out = `Exit code 2\n${progress}\n--- FAIL: TestTail (0.00s)\n    tail_test.go:9: TAIL_CANARY assertion failed\nFAIL`
     const p = stepPayload(2, stepWindow(out, true))
     expect(p.tools[0]?.result_text).toBe(out)
     expect(p.error_text).toContain('TAIL_CANARY')
   })
 
-  test('a multi-line PEM private key crosses whole', () => {
+  test('a multi-line PEM private key crosses whole under the limit', () => {
     const out = `config dump:\n${pem}\ndone`
     expect(stepPayload(2, stepWindow(out, false)).tools[0]?.result_text).toBe(out)
   })
 
-  test('a field over 64 KiB is omitted whole', () => {
-    const p = stepPayload(2, stepWindow('x'.repeat(70 * 1024), true))
-    expect(p.tools[0]?.result_text).toBe('')
-    expect(p.tools[0]?.result_omitted).toBe(true)
-    // The omitted error body must not read as "no error" (#38): the daemon
-    // would reset the repeat count instead of holding it.
-    expect(p.error_omitted).toBe(true)
+  test('a field over 64 KiB is clipped middle-out, never emptied', () => {
+    const out = `HEAD_CANARY\n${'x'.repeat(70 * 1024)}\nTAIL_CANARY`
+    const p = stepPayload(2, stepWindow(out, true))
+    const text = p.tools[0]?.result_text ?? ''
+    // Head and tail survive; the middle is marked with the elided byte count.
+    expect(text).toContain('HEAD_CANARY')
+    expect(text).toContain('TAIL_CANARY')
+    expect(text).toMatch(/\[\.\.\. \d+ bytes elided \.\.\.\]/)
+    expect(byteLength(text)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
+    // The error body still reads as an error, never as an empty body.
+    expect(p.error_text).toContain('HEAD_CANARY')
+    expect(p.error_text).toContain('TAIL_CANARY')
   })
 
-  test('a Read failure reaches error_text; a Read success ships no body', () => {
+  test('a Read success ships its body like any other tool', () => {
+    expect(stepPayload(2, stepWindow('package a', false, 'Read')).tools[0]?.result_text).toBe('package a')
     expect(stepPayload(2, stepWindow('File does not exist.', true, 'Read')).error_text).toBe('File does not exist.')
-    expect(stepPayload(2, stepWindow('package a', false, 'Read')).tools[0]?.result_text).toBe('')
   })
 
-  test('fitRequest drops the earliest tools first and keeps the last failed tool', () => {
+  test('clipMiddle keeps head and tail and marks the elided middle', () => {
+    // At the 64 KiB field limit the split is ~63 KiB head + 1 KiB tail;
+    // a small limit keeps at least 1 byte on each end.
+    const clipped = clipMiddle('A'.repeat(100) + 'MIDDLE' + 'B'.repeat(100), 50)
+    expect(clipped.startsWith('A')).toBe(true)
+    expect(clipped.endsWith('B')).toBe(true)
+    expect(clipped).toContain('bytes elided')
+    expect(byteLength(clipped)).toBeLessThanOrEqual(50 + 64)
+    // Within the limit: untouched.
+    expect(clipMiddle('short', 50)).toBe('short')
+  })
+
+  test('clipMiddle counts UTF-8 bytes, not UTF-16 code units', () => {
+    // 40000 CJK chars = 120000 UTF-8 bytes: over the 64 KiB field limit, must clip.
+    const cjk = '\u4e2d'.repeat(40000)
+    const clipped = clipMiddle(`HEAD\n${cjk}\nTAIL`, FIELD_LIMIT_BYTES)
+    expect(clipped).toContain('HEAD')
+    expect(clipped).toContain('TAIL')
+    expect(byteLength(clipped)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
+    // The marked count is exact: total bytes minus the kept head and tail
+    // slices, measured independently from the clipped output itself.
+    const m = /\[\.\.\. (\d+) bytes elided \.\.\.\]/.exec(clipped)
+    const elided = Number(m?.[1] ?? -1)
+    const [headPart, tailPart] = clipped.split(/\n\[\.\.\. \d+ bytes elided \.\.\.\]\n/)
+    // headPart/tailPart are exactly the kept slices; the count is their
+    // combined bytes missing from the original.
+    expect(elided).toBe(byteLength(`HEAD\n${cjk}\nTAIL`) - byteLength(headPart) - byteLength(tailPart))
+    // The kept slices fit the limit split: head = limit-1024, tail = 1024,
+    // each within one code point of rune-boundary rounding.
+    expect(byteLength(headPart)).toBeGreaterThan(FIELD_LIMIT_BYTES - 1024 - 4)
+    expect(byteLength(headPart)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES - 1024)
+    expect(byteLength(tailPart)).toBeGreaterThan(1024 - 4)
+    expect(byteLength(tailPart)).toBeLessThanOrEqual(1024)
+    // Cut lands on code-point boundaries: no lone surrogates and no
+    // mid-emoji corruption — every remaining char is a full emoji or marker.
+    const emoji = '\u{1F600}'.repeat(30000) // 4 bytes each = 120000 bytes
+    const clippedEmoji = clipMiddle(emoji, FIELD_LIMIT_BYTES)
+    expect(clippedEmoji).toContain('\u{1F600}')
+    expect(byteLength(clippedEmoji)).toBeLessThanOrEqual(FIELD_LIMIT_BYTES + 64)
+    const stripped = clippedEmoji.replace(/\[\.\.\. \d+ bytes elided \.\.\.\]/g, '').replaceAll('\n', '')
+    for (const ch of stripped) expect(ch.codePointAt(0)).toBe(0x1f600)
+  })
+
+  test('fitRequest clips the earliest tools first and keeps the last failed tool', () => {
     const big = 'y'.repeat(60 * 1024)
     const mk = (i: number) => ({
-      name: `T${i}`, is_error: i === 14, is_file_content: false,
-      input_summary: big, result_text: big, input_summary_omitted: false, result_omitted: false,
+      name: `T${i}`, is_error: i === 14,
+      input_summary: big, result_text: big,
     })
     const out = fitRequest({
       step: 2, assistant_text: '', tools: Array.from({ length: 16 }, (_, i) => mk(i)),
-      error_text: '', assistant_omitted: false, error_omitted: false,
+      error_text: '',
     })
     expect(byteLength(JSON.stringify(out))).toBeLessThanOrEqual(768 * 1024)
     expect(out.tools[14]?.result_text).toBe(big)
-    expect(out.tools[0]?.result_text).toBe('')
+    expect(out.tools[0]?.result_text.length).toBeLessThanOrEqual(2 * 1024 + 64)
     expect(out.tools.every((t) => t.name !== '')).toBe(true)
+  })
+
+  test('fitRequest only ever clips: kept tool, other errors, assistant and error_text survive', () => {
+    // Two failing tools plus non-empty assistant/error_text: the LAST
+    // failed tool ships whole, everything else is clipped, never emptied.
+    const big = 'y'.repeat(200 * 1024)
+    const out = fitRequest({
+      step: 2,
+      assistant_text: big,
+      tools: [
+        { name: 'ERR1', is_error: true, input_summary: big, result_text: big },
+        { name: 'T1', is_error: false, input_summary: big, result_text: big },
+        { name: 'ERR2', is_error: true, input_summary: big, result_text: big },
+      ],
+      error_text: big,
+    })
+    expect(byteLength(JSON.stringify(out))).toBeLessThanOrEqual(768 * 1024)
+    expect(out.tools[2]?.result_text).toBe(big)
+    expect(out.tools.every((tool) => tool.name !== '')).toBe(true)
+    expect(out.tools.map((tool) => tool.is_error)).toEqual([true, false, true])
+    for (const tool of out.tools.slice(0, 2)) {
+      expect(tool.result_text.length).toBeGreaterThan(0)
+      expect(tool.input_summary.length).toBeGreaterThan(0)
+    }
+    expect(out.assistant_text.length).toBeGreaterThan(0)
+    expect(out.error_text.length).toBeGreaterThan(0)
   })
 
   test('parseContext accepts version 1 and rejects the rest', () => {
