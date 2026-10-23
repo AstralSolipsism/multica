@@ -179,7 +179,7 @@ hint when nothing is registered, and otherwise stays out of the way.
 
 | Platform | Mechanism | Where |
 | --- | --- | --- |
-| Windows | Per-user Run key | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Multica` |
+| Windows | Per-user Run key | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Labrastro` |
 | macOS | launchd LaunchAgent | `~/Library/LaunchAgents/ai.multica.daemon.plist` (runs at login) |
 | Linux | systemd user unit | `~/.config/systemd/user/multica-daemon.service`; without systemd, an XDG autostart entry under `~/.config/autostart/` |
 
@@ -209,6 +209,16 @@ refreshed and never overwritten: `enable`/`disable` refuse it and say which
 file is in the way, and the refresh is additionally skipped when the daemon
 was launched by an external supervisor (systemd `INVOCATION_ID` for a unit
 that is not ours).
+
+Coexisting with upstream Multica on the same machine: the macOS and Linux
+entries live at the exact paths upstream uses, and each side only touches an
+entry carrying its own marker (a `ManagedBy` value in the plist, a first-line
+comment in the unit/.desktop; on Windows the Run value name `Labrastro` is
+ours alone, upstream uses `Multica`, so the two never collide). Whoever
+enables first owns the file; the other CLI reports "not created by
+Labrastro" and refuses to enable, disable, or refresh it. Two daemons can
+still be registered at once if you enable one per CLI, but neither silently
+rewrites the other's entry anymore.
 
 `daemon stop` stops the daemon but keeps the registration — it says nothing
 about the next boot; `autostart disable` is what turns that off. Disabling

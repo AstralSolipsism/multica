@@ -71,9 +71,18 @@ const (
 	// .desktop file Labrastro writes.
 	autostartManagedComment = "# Managed by Labrastro (multica daemon autostart); remove with 'multica daemon autostart disable'"
 	// autostartPlistMarkerKey/Value are a key/value pair Labrastro writes into
-	// every LaunchAgent; launchd ignores unknown plist keys.
+	// every LaunchAgent; launchd ignores unknown plist keys. The value is
+	// deliberately ours alone: upstream Multica writes the same key with
+	// "multica-daemon-autostart" at the same plist path, and sharing the value
+	// made each side treat the other's LaunchAgent as its own and silently
+	// rewrite it. With distinct values the same-path rule matches Linux:
+	// whoever enabled first owns the file, the other side refuses to touch it.
 	autostartPlistMarkerKey   = "ManagedBy"
-	autostartPlistMarkerValue = "multica-daemon-autostart"
+	autostartPlistMarkerValue = "labrastro-daemon-autostart"
+	// upstreamPlistMarkerValue is the ManagedBy value upstream Multica writes.
+	// A plist carrying it is foreign: enable/disable refuse it and the
+	// `daemon start` refresh skips it.
+	upstreamPlistMarkerValue = "multica-daemon-autostart"
 )
 
 // daemonSystemdHandoffExitStatus is what the foreground daemon exits with
