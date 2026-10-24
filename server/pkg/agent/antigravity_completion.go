@@ -28,8 +28,10 @@ type antigravityTurn struct {
 }
 
 type antigravityTurnStep struct {
-	kind, state, lastDelta string
-	text                   *strings.Builder
+	kind, state string
+	text        *strings.Builder
+	terminal    bool    // Remembers DONE/ERROR even across unknown future states.
+	doneDelta   *string // The first DONE delta, for replay consistency and deduplication.
 }
 
 func newAntigravityTurn(resumeSessionID string) *antigravityTurn {
@@ -47,6 +49,9 @@ func newAntigravityTurn(resumeSessionID string) *antigravityTurn {
 // boundary the held snapshots are released at the result, but they cannot
 // prove completion.
 func (t *antigravityTurn) admit(step *antigravityStreamStepUpdate) bool {
+	// Even a historical snapshot must belong to this conversation. Check before
+	// buffering, since the boundary may discard it without calling observe.
+	t.observeConversation(step.ConversationID)
 	if !t.resumed || t.start != nil {
 		return true
 	}
@@ -107,26 +112,32 @@ func (t *antigravityTurn) observe(step *antigravityStreamStepUpdate) bool {
 	}
 	previous, exists := t.steps[index]
 	state := strings.ToUpper(step.State)
-	if (state != "ACTIVE" && state != "DONE") || (exists && previous.kind != step.StepType) {
+	if exists && previous.kind != step.StepType {
 		t.invalid = true
 	}
-	if exists && previous.state == "DONE" {
-		if state != "DONE" || (step.TextDelta != "" && step.TextDelta != previous.lastDelta) {
-			// Without a sequence number, a regressing state or a different
-			// terminal delta cannot be resolved. Fail closed instead of guessing.
-			t.invalid = true
-		}
-		return false
+	if previous.terminal && state == "ACTIVE" {
+		t.invalid = true
 	}
-	previous.kind, previous.state, previous.lastDelta = step.StepType, state, step.TextDelta
-	if step.StepType == "agent_response" {
+	newDelta := previous.doneDelta == nil
+	if !newDelta && step.TextDelta != "" && step.TextDelta != *previous.doneDelta {
+		// Without a sequence number, a different terminal delta cannot be
+		// resolved. Business states themselves are not protocol corruption.
+		t.invalid = true
+	}
+	if newDelta && state == "DONE" {
+		delta := step.TextDelta
+		previous.doneDelta = &delta
+	}
+	previous.terminal = previous.terminal || antigravityStepTerminal(state)
+	previous.kind, previous.state = step.StepType, state
+	if newDelta && step.StepType == "agent_response" {
 		if previous.text == nil {
 			previous.text = &strings.Builder{}
 		}
 		previous.text.WriteString(step.TextDelta)
 	}
 	t.steps[index] = previous
-	return true
+	return newDelta
 }
 
 // historical reports whether a snapshot precedes this turn's boundary.
@@ -169,12 +180,10 @@ func (t *antigravityTurn) answer(response string) antigravityAnswer {
 }
 
 // settled requires the latest response after start to be DONE and to match the
-// canonical response, followed by nothing but DONE checkpoints: a later error or
-// tool belongs to this turn and was never answered. An earlier error may have
-// been recovered by the answer, unless response text precedes it. The answer
-// could then continue an interrupted reply, and the protocol does not tell
-// narration from a partial answer. Earlier unfinished steps are allowed: agy
-// leaves a background command ACTIVE when a separate step cancels it.
+// canonical response, followed only by DONE metadata. A later error or action
+// belongs to this turn and was never answered. Earlier errors, narration and
+// unfinished steps are allowed: retries can recover, and agy can leave a
+// background command ACTIVE when a separate step cancels it.
 func (t *antigravityTurn) settled(start int, response string) bool {
 	latest := t.latest("agent_response", start)
 	if latest < 0 || t.steps[latest].state != "DONE" {
@@ -184,13 +193,15 @@ func (t *antigravityTurn) settled(start int, response string) bool {
 	if strings.TrimSuffix(t.steps[latest].text.String(), "\n") != strings.TrimSuffix(response, "\n") {
 		return false
 	}
-	lastError := t.latest("error_message", start)
 	for index, step := range t.steps {
-		switch {
-		case index <= start: // the boundary and anything before it
-		case index > latest && (step.kind != "checkpoint" || step.state != "DONE"):
+		if index <= latest {
+			continue
+		}
+		if step.state != "DONE" {
 			return false
-		case index < lastError && step.kind == "agent_response" && step.text.Len() > 0:
+		}
+		switch step.kind {
+		case "error_message", "tool", "subagent", "agent_response", "user_input":
 			return false
 		}
 	}

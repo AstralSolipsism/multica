@@ -144,7 +144,7 @@ func TestAntigravityToolInputNormalization(t *testing.T) {
 		{"missing parameters", "run_command", nil, nil},
 	}
 	for _, tt := range tests {
-		for _, state := range []string{"ACTIVE", "DONE"} {
+		for _, state := range []string{"ACTIVE", "DONE", "ERROR"} {
 			t.Run(tt.name+"/"+state, func(t *testing.T) {
 				before, err := json.Marshal(tt.input)
 				if err != nil {
@@ -198,6 +198,49 @@ func TestAntigravityToolMessages(t *testing.T) {
 				{Type: MessageToolUse, CallID: "agy-step-1", Tool: "run_command"},
 				{Type: MessageToolResult, CallID: "agy-step-1", Tool: "run_command", Output: "ok"},
 				{Type: MessageToolResult, CallID: "agy-step-0", Tool: "read_file", Output: `{"text":"source"}`},
+			},
+		},
+		{
+			name: "active to error closes once",
+			steps: []string{
+				`{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"run_command"}`,
+				`{"step_index":2,"state":"ERROR","step_type":"tool","tool_info":{"output":"partial","error":{"type":"exit","message":"exit 1"}}}`,
+				`{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"error":{"message":"repeated"}}}`,
+				`{"step_index":2,"state":"DONE","step_type":"tool","tool_name":"run_command"}`,
+			},
+			want: []Message{
+				{Type: MessageToolUse, CallID: "agy-step-2", Tool: "run_command"},
+				{Type: MessageToolResult, CallID: "agy-step-2", Tool: "run_command", Output: "Tool error: exit: exit 1\npartial"},
+			},
+		},
+		{
+			name: "single error snapshot closes once",
+			steps: []string{
+				`{"step_index":2,"state":"error","step_type":"tool","tool_info":{"name":"run_command","error":{"message":"exit 1"}}}`,
+				`{"step_index":2,"state":"error","step_type":"tool","tool_info":{"name":"run_command","error":{"message":"exit 1"}}}`,
+			},
+			want: []Message{
+				{Type: MessageToolUse, CallID: "agy-step-2", Tool: "run_command"},
+				{Type: MessageToolResult, CallID: "agy-step-2", Tool: "run_command", Output: "Tool error: exit 1"},
+			},
+		},
+		{
+			name: "error without details or output",
+			steps: []string{
+				`{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"run_command"}`,
+				`{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"run_command"}`,
+			},
+			want: []Message{
+				{Type: MessageToolUse, CallID: "agy-step-2", Tool: "run_command"},
+				{Type: MessageToolResult, CallID: "agy-step-2", Tool: "run_command", Output: "Tool error: tool failed"},
+			},
+		},
+		{
+			name:  "error with output and no details",
+			steps: []string{`{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"output":{"reason":"failed"}}}`},
+			want: []Message{
+				{Type: MessageToolUse, CallID: "agy-step-2", Tool: "run_command"},
+				{Type: MessageToolResult, CallID: "agy-step-2", Tool: "run_command", Output: `{"reason":"failed"}`},
 			},
 		},
 		{
