@@ -366,6 +366,10 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 		{name: "plain line", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{"plain diagnostic"}}},
 		{name: "empty canonical response", run: agyRun{steps: agyFixtureTurn(), response: agyString("")}},
 		{name: "index reused by another step type", run: agyRun{steps: agyFixtureTurn(`{"step_index":104,"state":"DONE","step_type":"error_message"}`)}},
+		// These mutations leave a matching answer and a settled suffix, so
+		// only step-type integrity can prevent an incorrect recovery.
+		{name: "tool changes to metadata after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"tool"}`, `{"step_index":105,"state":"DONE","step_type":"checkpoint"}`)}},
+		{name: "error changes to metadata before answer", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":103,"state":"ERROR","step_type":"error_message"}`, `{"step_index":103,"state":"DONE","step_type":"system_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "done answer regresses to active", run: agyRun{steps: agyFixtureTurn(agyFixtureAnswerActive)}},
 		{name: "failed tool regresses to active", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolError, agyFixtureToolActive, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "conflicting done delta", run: agyRun{steps: agyFixtureTurn(`{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"other"}`)}},
@@ -373,6 +377,8 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 		{name: "missing step index", run: agyRun{steps: agyFixtureTurn(`{"state":"DONE","step_type":"checkpoint"}`)}},
 		{name: "negative step index", run: agyRun{steps: agyFixtureTurn(`{"step_index":-1,"state":"DONE","step_type":"checkpoint"}`)}},
 		{name: "conversation changes", run: agyRun{steps: agyFixtureTurn(`{"conversation_id":"other-conversation","step_index":105,"state":"DONE","step_type":"checkpoint"}`)}},
+		{name: "step event top level conversation conflicts", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update","conversation_id":"other-conversation","step_update":{"step_index":105,"state":"DONE","step_type":"checkpoint"}}`}}},
+		{name: "unknown event top level conversation conflicts", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"future_event","conversation_id":"other-conversation"}`}}},
 		{name: "historical snapshot conversation conflicts", run: agyRun{steps: agyFixtureSteps([]string{`{"conversation_id":"other-conversation","step_index":90,"state":"DONE","step_type":"checkpoint"}`}, agyFixtureTurn())}},
 		{name: "null step payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update"}`}}},
 		{name: "explicit null step payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update","step_update":null}`}}},
