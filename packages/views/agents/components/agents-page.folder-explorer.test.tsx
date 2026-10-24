@@ -457,6 +457,24 @@ describe("AgentsPage folder hierarchy", () => {
     ).toBeTruthy();
   });
 
+  it("renders four preview avatars and responsive overflow for a seven-member squad", async () => {
+    const extra = Array.from({ length: 4 }, (_, index) => makeAgent(`extra-${index}`, `Extra ${index}`));
+    mocks.agents = [...mocks.agents, ...extra];
+    mocks.folderTree = {
+      ...folderTree,
+      squads: folderTree.squads.map((squad) => squad.squadId === "sq-game"
+        ? { ...squad, agentIds: [...squad.agentIds, ...extra.map((agent) => agent.id)] }
+        : squad),
+    };
+    renderPage();
+    const directory = await screen.findByRole("button", { name: "Open Game design" });
+    expect([...directory.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
+      .toEqual(["squad-leader", "squad-member", "dual-agent", "Extra 0"]);
+    expect(within(directory).getByText("+3").className).toContain("hidden @2xl:inline-flex");
+    expect(within(directory).getByText("+4").className).toContain("@2xl:hidden");
+    expect(directory.textContent).toContain("7 agents");
+  });
+
   it("shows an agent belonging to two squads in each squad folder (M20)", async () => {
     renderPage("/acme/agents?folder=sq-growth");
     expect(await screen.findByText("dual-agent")).toBeTruthy();

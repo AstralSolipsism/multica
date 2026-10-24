@@ -6,7 +6,7 @@ import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { cn } from "@multica/ui/lib/utils";
 
 export function AgentFolderAvatars({ agents, count, emptyLabel }: {
-  /** At most four scoped agents, in preview order. */
+  /** Scoped members in preview order; this component owns the responsive limit. */
   agents: readonly Agent[];
   count: number;
   emptyLabel: string;
@@ -20,7 +20,7 @@ export function AgentFolderAvatars({ agents, count, emptyLabel }: {
   return (
     <span className="flex shrink-0 items-center -space-x-1.5">
       {agents.slice(0, 4).map((agent, index) => (
-        <span key={agent.id} title={agent.name} className={cn("rounded-full", ring, index === 3 && "hidden @2xl:inline-flex")}>
+        <span key={agent.id} title={agent.name} className={cn("inline-flex rounded-full", ring, index === 3 && "hidden @2xl:inline-flex")}>
           <ActorAvatar
             name={agent.name}
             initials={agent.name.slice(0, 1)}

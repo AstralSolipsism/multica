@@ -11,6 +11,9 @@ const agents = [
   { id: "emoji", name: "Emoji agent", avatar_url: "emoji:🚀" },
   { id: "default", name: "Default agent", avatar_url: null },
   { id: "fourth", name: "Fourth agent", avatar_url: null },
+  { id: "fifth", name: "Fifth agent", avatar_url: null },
+  { id: "sixth", name: "Sixth agent", avatar_url: null },
+  { id: "seventh", name: "Seventh agent", avatar_url: null },
 ] as Agent[];
 
 describe("AgentFolderAvatars", () => {
@@ -21,6 +24,7 @@ describe("AgentFolderAvatars", () => {
     expect(screen.getByRole("img", { name: "Emoji agent" }).textContent).toBe("🚀");
     expect(screen.getByTitle("Default agent").querySelector("svg")).toBeTruthy();
     expect(screen.getByTitle("Fourth agent").className).toContain("hidden @2xl:inline-flex");
+    expect(screen.queryByTitle("Fifth agent")).toBeNull();
     expect(screen.getByText("+4").className).toContain("@2xl:hidden");
     expect(screen.getByText("+3").className).toContain("hidden @2xl:inline-flex");
     fireEvent.error(image);

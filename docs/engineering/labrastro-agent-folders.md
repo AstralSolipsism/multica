@@ -219,7 +219,11 @@ agents.
 ## Directory rows and member previews (OL-1110)
 
 The agents explorer opts into `FolderExplorerRow layout="container"`. Its single
-flex cell spans the table, with no data-column placeholders. Directory rows are
+flex cell spans the table, with no data-column placeholders. When data columns
+overflow horizontally, the directory cell stays pinned to the scroll viewport's
+left edge and width; previews, counts, menus, chevrons and the hover edge remain
+visible throughout scrolling. Directory icons align with the name-column avatars
+at the initial scroll position. Directory rows are
 56px; agent rows remain 64px. The virtualizer uses the matching per-kind estimate
 and stable folder/agent keys so scope changes and navigation do not reuse the
 wrong height. Initial tree loading uses matching 56px directory skeletons.
@@ -240,7 +244,9 @@ the page's agent order, deduplicating agents with multiple placements. Squad
 previews use server member order, moving the leader first only when present in
 that scoped membership. Human members never enter the collection.
 
-Each preview shows 24px image, emoji or fallback avatars with name titles. At
+Each preview shows 24px image, emoji or fallback avatars with name titles and
+inline-flex wrappers so all rings stay circular and vertically aligned. The avatar
+component owns truncation; the page passes its full scoped membership. At
 container widths >= `@2xl`, four avatars precede overflow and a right-aligned
 count; below that breakpoint, three precede recalculated overflow and the count
 moves under the name. Empty folders show a dashed localized badge and zero count.

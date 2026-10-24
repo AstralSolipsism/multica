@@ -42,13 +42,14 @@ export function FolderExplorerRow({
         role="row"
         onClick={onOpen}
         className={cn(
-          "group/row relative col-span-full flex h-14 cursor-pointer items-center border-b bg-muted/40 transition-colors hover:bg-muted/70 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-warning before:opacity-0 before:transition-opacity hover:before:opacity-100",
+          "group/row relative col-span-full flex h-14 cursor-pointer items-center border-b bg-muted/40 transition-colors hover:bg-muted/70",
           // Opaque composites match the translucent row fill in either theme.
           "[--folder-row-background:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--folder-row-background:color-mix(in_oklab,var(--muted)_70%,var(--background))]",
           className,
         )}
       >
-        <ListGridCell className="h-full w-full gap-3 px-4 @2xl:px-6">
+        {/* Keep directory controls within the scroll container, even when data columns overflow. */}
+        <ListGridCell className="sticky left-0 h-full w-[100cqw] shrink-0 gap-3 pl-8 pr-4 @2xl:pl-15 @2xl:pr-6 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-warning before:opacity-0 before:transition-opacity group-hover/row:before:opacity-100">
           <button
             type="button"
             aria-label={openLabel}

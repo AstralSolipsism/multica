@@ -376,7 +376,7 @@ export function useAgentsPageFolderExplorer({
         kind: "folder",
         folder,
         entryCount: members.get(folder.id)?.length ?? 0,
-        previewAgents: members.get(folder.id)?.slice(0, 4) ?? [],
+        previewAgents: members.get(folder.id) ?? [],
       }));
       const leaderLabel = tFolder(($) => $.tree.leader_label);
       const agentListRows: AgentExplorerListRow[] = agentRows.map((row) => ({
