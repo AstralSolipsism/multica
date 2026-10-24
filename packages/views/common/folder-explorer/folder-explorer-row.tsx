@@ -49,7 +49,7 @@ export function FolderExplorerRow({
         )}
       >
         {/* Keep directory controls within the scroll container, even when data columns overflow. */}
-        <ListGridCell className="sticky left-0 h-full w-[100cqw] shrink-0 gap-3 pl-8 pr-4 @2xl:pl-15 @2xl:pr-6 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-warning before:opacity-0 before:transition-opacity group-hover/row:before:opacity-100">
+        <ListGridCell className="sticky left-0 h-full w-full max-w-[100cqw] shrink-0 gap-3 pl-8 pr-4 @2xl:pl-15 @2xl:pr-6 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-warning before:opacity-0 before:transition-opacity group-hover/row:before:opacity-100">
           <button
             type="button"
             aria-label={openLabel}

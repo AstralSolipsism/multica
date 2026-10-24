@@ -220,9 +220,8 @@ agents.
 
 The agents explorer opts into `FolderExplorerRow layout="container"`. Its single
 flex cell spans the table, with no data-column placeholders. When data columns
-overflow horizontally, the directory cell stays pinned to the scroll viewport's
-left edge and width; previews, counts, menus, chevrons and the hover edge remain
-visible throughout scrolling. Directory icons align with the name-column avatars
+overflow horizontally, the directory row keeps its previews, counts, menus and
+chevrons visible throughout scrolling. Directory icons align with the name-column avatars
 at the initial scroll position. Directory rows are
 56px; agent rows remain 64px. The virtualizer uses the matching per-kind estimate
 and stable folder/agent keys so scope changes and navigation do not reuse the
