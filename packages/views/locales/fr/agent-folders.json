@@ -6,6 +6,7 @@
     "squad_new_folder_hint": "Les dossiers de squad listent les membres de la squad. Gérez les membres sur la page Squads.",
     "flat_results": "Résultats de tous les dossiers",
     "flat_archived": "Agents archivés de tous les dossiers",
+    "empty_label": "Vide",
     "empty_folder": "Ce dossier est vide.",
     "unavailable": "Les dossiers sont indisponibles. Les agents sont affichés dans une liste plate.",
     "retry": "Réessayer",

@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   currentUserId: "user-1",
   members: [] as { user_id: string; role: string }[],
   virtualizerCount: 0,
+  rowSizes: [] as number[],
   viewState: {
     scope: "all",
     sortField: "name",
@@ -82,7 +83,8 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => {
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: (index: number) => number }) => {
+    mocks.rowSizes = Array.from({ length: count }, (_, index) => estimateSize(index));
     mocks.virtualizerCount = count;
     return {
       getVirtualItems: () =>
@@ -424,7 +426,13 @@ describe("AgentsPage folder hierarchy", () => {
     const squadOpen = screen.getByRole("button", { name: "Open Game design" });
     expect(squadOpen.textContent).toContain("Squad");
     expect(squadOpen.textContent).toContain("3 agents");
-    expect(within(squadOpen).getByTestId("folder-avatar")).toBeTruthy();
+    expect(within(squadOpen).getAllByTestId("folder-avatar")[0]).toBeTruthy();
+    expect(mocks.rowSizes.slice(0, 5)).toEqual([56, 56, 56, 56, 56]);
+    expect(mocks.rowSizes.slice(5)).toEqual([64, 64]);
+    const directory = squadOpen.closest('[role="row"]') as HTMLElement;
+    expect(within(directory).getAllByRole("cell")).toHaveLength(1);
+    expect([...squadOpen.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
+      .toEqual(["squad-leader", "squad-member", "dual-agent"]);
     // Empty squad still shows, with zero members.
     expect(screen.getByRole("button", { name: "Open Ops" }).textContent).toContain("0 agents");
     expect(screen.getByRole("button", { name: "Open Design" })).toBeTruthy();
@@ -447,6 +455,24 @@ describe("AgentsPage folder hierarchy", () => {
       folderRow.compareDocumentPosition(agentRow) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("renders four preview avatars and responsive overflow for a seven-member squad", async () => {
+    const extra = Array.from({ length: 4 }, (_, index) => makeAgent(`extra-${index}`, `Extra ${index}`));
+    mocks.agents = [...mocks.agents, ...extra];
+    mocks.folderTree = {
+      ...folderTree,
+      squads: folderTree.squads.map((squad) => squad.squadId === "sq-game"
+        ? { ...squad, agentIds: [...squad.agentIds, ...extra.map((agent) => agent.id)] }
+        : squad),
+    };
+    renderPage();
+    const directory = await screen.findByRole("button", { name: "Open Game design" });
+    expect([...directory.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
+      .toEqual(["squad-leader", "squad-member", "dual-agent", "Extra 0"]);
+    expect(within(directory).getByText("+3").className).toContain("hidden @2xl:inline-flex");
+    expect(within(directory).getByText("+4").className).toContain("@2xl:hidden");
+    expect(directory.textContent).toContain("7 agents");
   });
 
   it("shows an agent belonging to two squads in each squad folder (M20)", async () => {

@@ -4,7 +4,7 @@ The agent page uses a workspace-shared custom folder tree. Squad folders are
 derived from active squads and their agent members, never stored as folder
 rows. Terminology and the storage decision are defined in `GLOSSARY.md` and
 `docs/adr/0003-agent-folders-separate-tree-squad-folders-derived.md` (PR #157).
-This change provides the server and core client; OL-1030 owns the page.
+OL-1030 adds the page explorer; OL-1110 adds directory rows and avatar previews.
 
 ## API
 
@@ -34,6 +34,12 @@ All three collections and every `agent_ids` are arrays, including when empty.
 squad, including empty squads and squads with no visible members. `parent_id`
 is a custom folder ID or `null` for root; a dangling squad placement reads as
 root. Squad folders use the squad ID as their identity.
+
+`squads[].avatar_url` uses the same `resolveAvatarURLPtr` response mapping as
+squad detail/list endpoints. Private storage objects become signed
+`/api/avatars/<signature>/<key>` URLs (absolute when `PublicURL` is configured).
+Missing avatars remain `null`; emoji and external public avatars pass through.
+The response schema and stored object reference are unchanged.
 
 | Method and route | Request | Result |
 | --- | --- | --- |
@@ -177,9 +183,8 @@ and sets `refetchOnWindowFocus: "always"`.
 | `packages/core/realtime/use-realtime-sync.ts` | Import and two prefix invalidation calls |
 
 The API installer and migration registrations use existing fork modules.
-Generated sqlc models/queries are derived output. No upstream agent or squad
-write path changes, new WebSocket event, or front-end page is included. OL-1030
-will append its page mount points here.
+Generated sqlc models/queries are derived output. The server does not change
+upstream agent/squad write paths or add WebSocket events. Page mounts follow.
 
 ## Front-end page (OL-1030)
 
@@ -210,6 +215,52 @@ place → move agent → squad folder appears on squad creation → move squad
 folder into a custom folder → place a squad member additionally → breadcrumb
 back to root) with `TestApiClient` plus direct DB seeding for runtimes and
 agents.
+
+## Directory rows and member previews (OL-1110)
+
+The agents explorer opts into `FolderExplorerRow layout="container"`. Its single
+flex cell spans the table, with no data-column placeholders. When data columns
+overflow horizontally, the directory row keeps its previews, counts, menus and
+chevrons visible throughout scrolling. Directory icons align with the name-column avatars
+at the initial scroll position. Directory rows are
+56px; agent rows remain 64px. The virtualizer uses the matching per-kind estimate
+and stable folder/agent keys so scope changes and navigation do not reuse the
+wrong height. Initial tree loading uses matching 56px directory skeletons.
+Skills keeps the default grid row and its existing slots.
+
+Directory colors use shared muted, background, border and warning tokens.
+The row fill is `bg-muted/40`, becoming `/70` on hover, with a 2px warning-color
+edge and an entering chevron. A 32px custom-folder tile or 32px squad avatar
+with a 16px folder badge preserves directory identity even on avatar failure.
+Badge and member rings use an opaque composite of the row and background tokens,
+including hover and dark mode. The open button supports keyboard navigation;
+the separate menu prevents its clicks from opening the directory.
+
+`folderEntryIds` is the shared deduplicated subtree-membership source for both
+counts and previews. Only agents already present in the page's current scope
+are eligible. Custom folders include descendant custom/squad folders and keep
+the page's agent order, deduplicating agents with multiple placements. Squad
+previews use server member order, moving the leader first only when present in
+that scoped membership. Human members never enter the collection.
+
+Each preview shows 24px image, emoji or fallback avatars with name titles and
+inline-flex wrappers so all rings stay circular and vertically aligned. The avatar
+component owns truncation; the page passes its full scoped membership. At
+container widths >= `@2xl`, four avatars precede overflow and a right-aligned
+count; below that breakpoint, three precede recalculated overflow and the count
+moves under the name. Empty folders show a dashed localized badge and zero count.
+Search/filter/archived flat views, selection, placement permissions, breadcrumbs
+and detail return paths retain their existing behavior.
+
+Squad detail mutations invalidate `agentFolderKeys.tree(wsId)` after successful
+updates (including avatar/name and the separate leader action), member add/remove
+and archive, in addition to existing squad queries. Invalidation stays scoped
+to that workspace and complements realtime/focus refreshes.
+
+Regression coverage: handler avatar signing/null/external cases; core signed URL
+parsing; shared membership and Skills tests; scoped/deduplicated/leader-first
+previews; responsive overflow and avatar fallback; directory Enter/menu behavior;
+and real QueryClient invalidation driven by squad detail controls.
 
 ## Rollback
 

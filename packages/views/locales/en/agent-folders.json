@@ -6,6 +6,7 @@
     "squad_new_folder_hint": "Squad folders list the squad's members. Manage members on the Squads page.",
     "flat_results": "Results from all folders",
     "flat_archived": "Archived agents from all folders",
+    "empty_label": "Empty",
     "empty_folder": "This folder is empty.",
     "unavailable": "Folders are unavailable. Showing agents in a flat list.",
     "retry": "Retry",

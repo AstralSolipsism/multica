@@ -33,7 +33,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
-import { ListGridCell } from "@multica/ui/components/ui/list-grid";
 import {
   FolderExplorerBreadcrumbs,
   FolderExplorerRow,
@@ -41,7 +40,6 @@ import {
   directChildFolders,
   directEntries,
   entryPathHints,
-  folderEntryCounts,
   folderLocationPath,
   folderPath,
   isManagedLocation,
@@ -55,6 +53,7 @@ import {
   agentEntryFolderIds,
   agentMoveDestinations,
   explorerFolders,
+  folderAgents,
   folderMoveDestinations,
   placementFolderByAgentId,
   squadById,
@@ -68,6 +67,7 @@ import {
   MoveAgentsDialog,
   type AgentFolderFormState,
 } from "./agent-folder-dialogs";
+import { AgentFolderAvatars } from "./agent-folder-avatars";
 import type { AgentTreeActions } from "./agent-tree-actions";
 import type { AgentListRow } from "./agents-page";
 import type { AgentsScope } from "@multica/core/agents/stores";
@@ -81,7 +81,7 @@ export type AgentExplorerListRow =
       /** Set when the row is the leader of the squad folder being viewed. */
       leaderLabel?: string;
     }
-  | { kind: "folder"; folder: FolderExplorerFolder; entryCount: number };
+  | { kind: "folder"; folder: FolderExplorerFolder; entryCount: number; previewAgents: Agent[] };
 
 export type AgentExplorerAuxRow = Exclude<
   AgentExplorerListRow,
@@ -105,23 +105,6 @@ export interface AgentsPageFolderExplorer {
   treeLoading: boolean;
   treeReady: boolean;
   hasFolders: boolean;
-}
-
-// Placeholder cells so folder rows land on the same subgrid tracks as agent
-// rows: status stays visible on narrow containers, the rest are wide-only.
-function AgentGridTrailingCells() {
-  return (
-    <>
-      <ListGridCell className="px-0" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-      <ListGridCell className="hidden px-0 @2xl:flex" />
-    </>
-  );
 }
 
 function AgentFolderRowMenu({
@@ -385,14 +368,15 @@ export function useAgentsPageFolderExplorer({
         ),
       );
       const agentRows = rows.filter((row) => directIds.has(row.agent.id));
-      const counts = folderEntryCounts(folders, entries);
+      const members = folderAgents(folders, entries, rows.map((row) => row.agent), squads);
       const folderRows: AgentExplorerListRow[] = directChildFolders(
         folders,
         resolvedFolderId,
       ).map((folder) => ({
         kind: "folder",
         folder,
-        entryCount: counts.get(folder.id) ?? 0,
+        entryCount: members.get(folder.id)?.length ?? 0,
+        previewAgents: members.get(folder.id) ?? [],
       }));
       const leaderLabel = tFolder(($) => $.tree.leader_label);
       const agentListRows: AgentExplorerListRow[] = agentRows.map((row) => ({
@@ -419,6 +403,7 @@ export function useAgentsPageFolderExplorer({
       folders,
       resolvedFolderId,
       currentSquad,
+      squads,
       tFolder,
     ],
   );
@@ -434,7 +419,7 @@ export function useAgentsPageFolderExplorer({
       return (
         <FolderExplorerRow
           key={`folder-${folder.id}`}
-          className="h-16"
+          layout="container"
           name={folder.name}
           typeLabel={squad ? tFolder(($) => $.tree.squad_label) : undefined}
           countLabel={tFolder(($) => $.tree.folder_agent_count, {
@@ -444,20 +429,28 @@ export function useAgentsPageFolderExplorer({
           onOpen={() => navigateFolder(folder.id)}
           icon={
             squad ? (
-              <ActorAvatar
-                name={squad.name}
-                initials={squad.name.slice(0, 2).toUpperCase()}
-                avatarUrl={resolvePublicFileUrl(squad.avatarUrl)}
-                isSquad
-                size="sm"
-                className="shrink-0"
-              />
+              <span className="relative size-8 shrink-0">
+                <ActorAvatar
+                  name={squad.name}
+                  initials={squad.name.slice(0, 2).toUpperCase()}
+                  avatarUrl={resolvePublicFileUrl(squad.avatarUrl)}
+                  isSquad
+                  size="lg"
+                  className="shrink-0"
+                />
+                <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-xs bg-warning/15 text-warning ring-2 ring-[var(--folder-row-background)]">
+                  <Folder aria-hidden="true" className="size-3 fill-current" />
+                </span>
+              </span>
             ) : undefined
           }
-          leading={
-            <ListGridCell className="hidden justify-center px-0 @2xl:flex" />
+          preview={
+            <AgentFolderAvatars
+              agents={row.previewAgents}
+              count={row.entryCount}
+              emptyLabel={tFolder(($) => $.tree.empty_label)}
+            />
           }
-          trailing={<AgentGridTrailingCells />}
           actions={
             <AgentFolderRowMenu
               folder={folder}

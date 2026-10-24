@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Folder } from "lucide-react";
+import { ChevronRight, Folder } from "lucide-react";
 import { ListGridCell, ListGridRow } from "@multica/ui/components/ui/list-grid";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -16,6 +16,8 @@ export function FolderExplorerRow({
   leading,
   trailing,
   actions,
+  layout = "grid",
+  preview,
 }: {
   name: string;
   typeLabel?: string;
@@ -30,7 +32,64 @@ export function FolderExplorerRow({
   leading?: ReactNode;
   trailing?: ReactNode;
   actions?: ReactNode;
+  /** Opt-in full-width directory row; grid layout remains the Skills default. */
+  layout?: "grid" | "container";
+  preview?: ReactNode;
 }) {
+  if (layout === "container") {
+    return (
+      <div
+        role="row"
+        onClick={onOpen}
+        className={cn(
+          "group/row relative col-span-full flex h-14 cursor-pointer items-center border-b bg-muted/40 transition-colors hover:bg-muted/70",
+          // Opaque composites match the translucent row fill in either theme.
+          "[--folder-row-background:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--folder-row-background:color-mix(in_oklab,var(--muted)_70%,var(--background))]",
+          className,
+        )}
+      >
+        {/* Keep directory controls within the scroll container, even when data columns overflow. */}
+        <ListGridCell className="sticky left-0 h-full w-full max-w-[100cqw] shrink-0 gap-3 pl-8 pr-4 @2xl:pl-15 @2xl:pr-6 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-warning before:opacity-0 before:transition-opacity group-hover/row:before:opacity-100">
+          <button
+            type="button"
+            aria-label={openLabel}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen();
+            }}
+            className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-xs text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            {icon ?? (
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning">
+                <Folder aria-hidden="true" className="size-5 fill-current" />
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-body font-semibold">{name}</span>
+                {typeLabel && (
+                  <span className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption text-muted-foreground">
+                    {typeLabel}
+                  </span>
+                )}
+              </span>
+              <span className="block text-caption tabular-nums text-muted-foreground @2xl:hidden">
+                {countLabel}
+              </span>
+            </span>
+            {preview}
+            <span className="hidden min-w-16 shrink-0 text-right text-caption tabular-nums text-muted-foreground @2xl:block">
+              {countLabel}
+            </span>
+          </button>
+          <div className="flex size-7 shrink-0 items-center justify-center" onClick={(event) => event.stopPropagation()}>
+            {actions}
+          </div>
+          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-hover/row:translate-x-0.5 group-hover/row:text-foreground motion-reduce:transition-none" />
+        </ListGridCell>
+      </div>
+    );
+  }
   return (
     <ListGridRow className={cn("cursor-pointer", className)} onClick={onOpen}>
       {leading}

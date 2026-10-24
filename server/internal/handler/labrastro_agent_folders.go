@@ -136,7 +136,7 @@ func (h *Handler) labrastroAgentFolderTx(ctx context.Context, a labrastroSkillAc
 type LabrastroAgentSquadFolder struct {
 	SquadID   pgtype.UUID `json:"squad_id"`
 	Name      string      `json:"name"`
-	AvatarURL pgtype.Text `json:"avatar_url"`
+	AvatarURL *string     `json:"avatar_url"`
 	LeaderID  pgtype.UUID `json:"leader_id"`
 	CreatorID pgtype.UUID `json:"creator_id"`
 	ParentID  pgtype.UUID `json:"parent_id"`
@@ -233,7 +233,12 @@ func (h *Handler) labrastroReadAgentFolderTree(ctx context.Context, r *http.Requ
 		if agentIDs == nil {
 			agentIDs = []string{}
 		}
-		out.Squads = append(out.Squads, LabrastroAgentSquadFolder{s.SquadID, s.Name, s.AvatarUrl, s.LeaderID, s.CreatorID, s.ParentID, agentIDs})
+		out.Squads = append(out.Squads, LabrastroAgentSquadFolder{
+			SquadID: s.SquadID, Name: s.Name,
+			AvatarURL: h.resolveAvatarURLPtr(textToPtr(s.AvatarUrl)),
+			LeaderID:  s.LeaderID, CreatorID: s.CreatorID, ParentID: s.ParentID,
+			AgentIDs: agentIDs,
+		})
 	}
 	placements, err := q.LabrastroListAgentPlacements(ctx, a.ws)
 	if err != nil {

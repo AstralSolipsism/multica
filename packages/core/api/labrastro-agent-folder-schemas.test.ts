@@ -19,11 +19,17 @@ describe("agent folder response boundary", () => {
     expect(AgentFolderTreeSchema.parse({ folders: [], placements: [], squads: [] })).toEqual({ folders: [], placements: [], squads: [] });
   });
 
+  it("preserves signed squad avatar paths", () => {
+    const signed = `/api/avatars/signature/workspaces/${id}/squad.png`;
+    expect(AgentFolderTreeSchema.parse({ ...tree, squads: [{ ...squad, avatar_url: signed }] }).squads[0]?.avatarUrl).toBe(signed);
+  });
+
   it.each([
     null, {}, { ...tree, folders: null }, { ...tree, squads: undefined },
     { ...tree, placements: [{ agent_id: id, folder_id: "broken" }] },
     { ...tree, folders: [{ ...folder, parent_id: undefined }] },
     { ...tree, squads: [{ ...squad, agent_ids: null }] },
+    { ...tree, squads: [{ ...squad, avatar_url: 42 }] },
     { ...tree, squads: [{ ...squad, creator_id: undefined }] },
   ])("keeps a malformed tree indeterminate: %j", (raw) => {
     expect(parse(raw, AgentFolderTreeSchema)).toBeNull();

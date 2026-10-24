@@ -51,6 +51,25 @@ describe("folder explorer components", () => {
     expect(button.closest(".h-12")).toBeTruthy();
   });
 
+  it("opens a full-width directory with Enter and isolates its action button", async () => {
+    const onOpen = vi.fn();
+    const onAction = vi.fn();
+    render(<ListGrid>
+      <FolderExplorerRow layout="container" name="Design" countLabel="2 agents"
+        openLabel="Open Design" onOpen={onOpen} actions={<button onClick={onAction}>Actions</button>} />
+    </ListGrid>);
+    const open = screen.getByRole("button", { name: "Open Design" });
+    open.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("row"));
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByRole("cell")).toHaveLength(1);
+  });
+
   it("keeps the managed-folder reason visible beside the disabled action", () => {
     render(
       <NewFolderButton
