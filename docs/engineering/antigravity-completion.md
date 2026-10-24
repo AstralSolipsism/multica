@@ -47,29 +47,42 @@ The recovery warning is
 ## Turn evidence (row 3)
 
 A completed `user_input` step marks where the invocation's turn begins. The
-error's wording plays no part. The evidence requires all of the following:
+error's wording plays no part. Completion has three anchors:
 
-1. The boundary exists and is `DONE`. A resumed run without a boundary has no
-   evidence.
-2. The highest-index `agent_response` after the boundary is `DONE`, and its
-   deltas equal the nonempty `result.response`. One terminal LF on either side
-   is ignored, as PR 8983's capture shows agy appending one; no other difference
-   is.
-3. Only `DONE` checkpoints follow that response. A later error, tool, unknown
-   step or `ACTIVE` checkpoint belongs to this turn and was never answered.
-4. When an `error_message` step precedes the response, no response text lies
-   between the boundary and the last such error. The final response could
-   otherwise continue an interrupted one, and the protocol does not tell
-   narration from a partial answer. Earlier unfinished steps are allowed,
-   because agy leaves a background command `ACTIVE` when a separate step
-   cancels it.
-5. The stream is consistent. It has no malformed or plain lines, scanner
-   errors or unknown events. No `init`, `step_update` or `result` event has a
-   null or missing payload; a stream may omit `init` entirely, and its model is
-   optional. No step lacks an index or has a negative one, has a state other
-   than `ACTIVE`/`DONE` or changes kind, and no `DONE` step regresses or changes
-   its delta. There is one boundary, the conversation ID matches the resumed one
-   throughout, and nothing follows the result.
+1. **Start:** the boundary at `start` exists and is `DONE`. A resumed run
+   without a boundary has no evidence.
+2. **Answer:** the highest-index `agent_response` with `index > start`
+   (`latest`) is `DONE`, and its accumulated deltas equal the nonempty
+   `result.response`. One terminal LF on either side is ignored; no other
+   difference is. An earlier matching answer cannot substitute for a later
+   unfinished, empty or mismatched response.
+3. **Settled suffix:** every step with `index > latest` must be `DONE` and
+   must not be `error_message`, `tool`, `subagent`, `agent_response` or
+   `user_input`. Only completed metadata, such as `checkpoint`, `finish` or
+   future metadata types, may follow the answer.
+
+Before `latest`, tool failures, `error_message` steps, narration before a retry,
+system messages, unfinished background tools and unknown intermediate types or
+states do not veto completion. The final matching answer establishes recovery
+of those earlier steps. Position is determined by `step_index`, not arrival
+order.
+
+Protocol integrity is separate from these business states. `invalid` is reserved
+for malformed/plain lines or scanner errors; missing/null payloads on `init`,
+`step_update` or `result`; events after `result`; missing/negative step indices;
+conflicting conversation IDs (including buffered history); multiple distinct
+`user_input` boundaries; or resumed snapshots at/above `start` that arrived
+before the boundary. Changing a step's type, returning to `ACTIVE` after either
+`DONE` or `ERROR`, or changing a nonempty delta after `DONE` also invalidates
+the evidence. Terminal history is retained across future states, so an unknown
+transition cannot conceal a regression or a conflicting repeated delta.
+
+Open-world tolerance means `ERROR` and unknown nonempty business states do not
+themselves make the stream invalid. Unknown step types and top-level events are
+also accepted; unknown events are logged at debug level. A stream may omit
+`init`, and its model is optional. These allowances do not relax the three
+anchors: for example, an unknown unfinished suffix step still prevents
+completion without being protocol corruption.
 
 ## Legacy streams (row 4)
 
@@ -77,10 +90,10 @@ Streams from agy releases without `user_input` steps cannot show where a turn
 began. For a fresh conversation, which has no history to replay, the adapter
 keeps the transport-error wordings it accepted before OL-1074. These are the
 network-issue sentence and the Go transport causes of upstream #8983
-(`antigravityTransportErrorRe`). The answer must meet conditions 2–5, with the
-whole stream as the turn. This compatibility path is the only wording-based
-rule, and no wording may be added to it. A resumed stream without a boundary
-never recovers.
+(`antigravityTransportErrorRe`). The answer must meet anchors 2–3 and protocol
+integrity, with `start = -1` and the whole stream as the turn. This compatibility
+path is the only wording-based rule, and no wording may be added to it. A resumed
+stream without a boundary never recovers.
 
 ## Output and usage
 
@@ -90,8 +103,18 @@ transcript, tool events or usage. A held snapshot at or above the boundary
 arrived out of order. It invalidates the evidence but is released after the
 boundary, so this turn's output survives. When no boundary arrives at all, the
 held snapshots are released at the result: their output survives, but cannot
-prove completion. Repeated `DONE` text is emitted once, and repeated `DONE`
-usage replaces that step's snapshot.
+prove completion. Repeated `DONE` text is emitted once. Non-null usage on either
+`DONE` or `ERROR` replaces that step's snapshot by index, including a reported
+zero; missing usage does not erase an earlier snapshot.
+
+Tool `DONE` and `ERROR` both close the tool lifecycle. A terminal-only snapshot
+first emits `MessageToolUse` when the tool name is available, then
+`MessageToolResult`; repeated snapshots emit neither again. The result preserves
+`tool_info.output` and prefixes `tool_info.error` with `Tool error:`, keeping the
+error visible even if verbose output is truncated downstream. An `ERROR` with
+neither error details nor output gets `Tool error: tool failed`. As with `DONE`,
+a snapshot without a tool name waits for later metadata rather than inventing
+a tool identity.
 
 A step's text and usage are recorded before its tool events, which may wait for
 the consumer while the run is live. Cancellation or a timeout therefore never
@@ -101,7 +124,7 @@ message buffer; once one does not fit, the rest are dropped too, so no
 `tool_result` arrives without its `tool_use`.
 
 `result.response` and the conversation ID still drive the final result. Usage
-sums this turn's completed steps, including a reported zero. A resumed run never
+sums this turn's terminal steps, including a reported zero. A resumed run never
 falls back to the conversation-wide aggregate.
 
 ## Assumptions and evidence
@@ -111,6 +134,12 @@ documents indexed `user_input`, `agent_response`, tool and checkpoint updates,
 including a single `DONE` response without an earlier `ACTIVE`. No raw stdout
 of the OL-910 or OL-1074 runs was retained. Their step facts come from
 read-only views of agy's conversation store.
+
+The public protocol describes `ACTIVE`/`DONE` and tool error payloads, but is not
+treated as an exhaustive business-state enum. OL-1112's confirmed contract also
+covers tool `ERROR` snapshots and future extensions. Completion uses only public
+stream fields; private transcripts remain solely the existing empty-output text
+fallback after the outcome decision.
 
 Message timing supports the boundary assumption. The v0.6.1-labrastro.6 adapter
 holds a resumed run's steps until the boundary arrives. Even so, the tool events
@@ -133,12 +162,18 @@ reads production data. It covers:
 - each table row (`TestDecideAntigravityOutcome`);
 - completion despite five stale wordings
   (`TestAntigravityTurnEvidenceOverridesStaleError`);
+- recovered tool failures (direct `ERROR` and `ACTIVE -> ERROR`), narration
+  before a recovered error, and open-world intermediate/suffix metadata;
 - every counterexample above, under both a new wording and a legacy one;
+- scanner failure, terminal regressions through unknown states, and deduplicated
+  `ERROR` usage including reported zero and missing snapshots;
 - context precedence, legacy streams and output scoping;
 - held steps surviving cancellation and a timeout
   (`TestAntigravityHeldStepsSurviveCancellation`).
 
-The upstream classifier and backend cases in `antigravity_test.go` remain.
+`antigravity_tools_test.go` checks paired, deduplicated `ERROR` tool messages,
+error/output formatting and missing-detail fallback. The upstream classifier
+and backend cases in `antigravity_test.go` remain.
 
 ```sh
 cd server

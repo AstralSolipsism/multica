@@ -33,6 +33,7 @@ const (
 var agyFixtureHistory = []string{
 	`{"step_index":90,"state":"DONE","step_type":"agent_response","text_delta":"Historical answer.\n","usage":{"input_tokens":9000,"output_tokens":900}}`,
 	`{"step_index":91,"state":"DONE","step_type":"tool","tool_name":"read_file","usage":{"input_tokens":2000}}`,
+	`{"step_index":92,"state":"ERROR","step_type":"tool","tool_name":"run_command","usage":{"input_tokens":3000}}`,
 	`{"step_index":95,"state":"DONE","step_type":"error_message"}`,
 }
 
@@ -40,6 +41,7 @@ const (
 	agyFixtureBoundary     = `{"step_index":100,"state":"DONE","step_type":"user_input"}`
 	agyFixtureToolActive   = `{"step_index":102,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"go test ./..."}}}`
 	agyFixtureToolDone     = `{"step_index":102,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"output":"ok"},"usage":{"input_tokens":30,"output_tokens":3}}`
+	agyFixtureToolError    = `{"step_index":102,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"output":"partial","error":{"message":"exit 1"}},"usage":{"input_tokens":30,"output_tokens":3}}`
 	agyFixtureAnswerActive = `{"step_index":104,"state":"ACTIVE","step_type":"agent_response","text_delta":"Current "}`
 	agyFixtureAnswerDone   = `{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"answer.\n","usage":{"input_tokens":20,"output_tokens":5,"cache_read_tokens":7}}`
 	agyFixtureCheckpoint   = `{"step_index":105,"state":"DONE","step_type":"checkpoint"}`
@@ -230,6 +232,11 @@ func TestAntigravityTurnEvidenceCompletes(t *testing.T) {
 		{name: "error recovered before the answer", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolActive, agyFixtureToolDone, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "earlier tool never finished", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolActive, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "narration without an error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
+		{name: "narration and tools before recovered error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureToolActive, agyFixtureToolDone, `{"step_index":103,"state":"ERROR","step_type":"error_message"}`, `{"step_index":104,"state":"DONE","step_type":"tool","tool_name":"read_file"}`, `{"step_index":105,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`}}},
+		{name: "open world intermediate steps", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"system_message"}`, agyFixtureToolActive, `{"step_index":103,"state":"WAITING_FOR_EXTENSION","step_type":"future_step","future_field":{"value":true}}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
+		{name: "future tool state before answer", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":102,"state":"QUEUED","step_type":"tool"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
+		{name: "done metadata after answer", run: agyRun{steps: agyFixtureTurn(agyFixtureCheckpoint, `{"step_index":106,"state":"DONE","step_type":"finish"}`, `{"step_index":107,"state":"DONE","step_type":"future_metadata"}`, `{"step_index":108,"state":"DONE","step_type":"system_message"}`)}},
+		{name: "unknown event", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"future_event","future_payload":{"value":true}}`}}},
 		{name: "single done snapshot", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`}}},
 		{name: "result adds one terminal newline", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"Current answer."}`}}},
 		{name: "answer has one terminal newline more", run: agyRun{steps: agyFixtureTurn(), response: agyString("Current answer.")}},
@@ -256,6 +263,76 @@ func TestAntigravityTurnEvidenceCompletes(t *testing.T) {
 	}
 }
 
+// Tool failures are business outcomes. Later tools and the final answer can
+// settle the turn, while ERROR usage must still be counted exactly once.
+func TestAntigravityTurnRecoversToolError(t *testing.T) {
+	t.Parallel()
+	for _, activeFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("active_first=%v", activeFirst), func(t *testing.T) {
+			t.Parallel()
+			steps := agyFixtureSteps(agyFixtureHistory, []string{agyFixtureBoundary})
+			if activeFirst {
+				steps = append(steps, agyFixtureToolActive)
+			}
+			steps = append(steps, agyFixtureToolError, agyFixtureToolError,
+				`{"step_index":103,"state":"DONE","step_type":"tool","tool_name":"read_file","tool_info":{"output":"recovered"},"usage":{"input_tokens":5,"output_tokens":1}}`,
+				agyFixtureAnswerActive, agyFixtureAnswerDone)
+			out := runAgyFixture(t, agyRun{steps: steps, err: "unrecognized historical failure"})
+			if out.result.Status != "completed" || out.result.Error != "" || out.result.Output != agyFixtureAnswer || out.streamed != agyFixtureAnswer {
+				t.Fatalf("unexpected outcome: %+v, streamed %q", out.result, out.streamed)
+			}
+			wantUsage := TokenUsage{InputTokens: 55, OutputTokens: 9, CacheReadTokens: 7}
+			if len(out.result.Usage) != 1 || out.result.Usage["fixture-model"] != wantUsage {
+				t.Errorf("usage = %+v, want %+v", out.result.Usage, wantUsage)
+			}
+			if len(out.tools) != 4 {
+				t.Fatalf("tools = %+v, want two paired tool lifecycles", out.tools)
+			}
+			for i := 0; i < len(out.tools); i += 2 {
+				use, result := out.tools[i], out.tools[i+1]
+				if use.Type != MessageToolUse || result.Type != MessageToolResult || use.CallID != result.CallID {
+					t.Errorf("unpaired tool lifecycle: %+v", out.tools[i:i+2])
+				}
+			}
+			if out.tools[1].Output != "Tool error: exit 1\npartial" {
+				t.Errorf("tool failure output = %q", out.tools[1].Output)
+			}
+		})
+	}
+}
+
+// Distinguish protocol corruption from a business state that simply cannot
+// prove completion. Unknown transitions must not erase prior terminal evidence.
+func TestAntigravityTurnStateIntegrity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		states  []string
+		invalid bool
+	}{
+		{"direct error", []string{"ERROR"}, false},
+		{"active to error", []string{"ACTIVE", "ERROR"}, false},
+		{"future state", []string{"QUEUED", "ACTIVE", "ERROR"}, false},
+		{"future state after done", []string{"DONE", "ARCHIVED"}, false},
+		{"future state after error", []string{"ERROR", "ARCHIVED"}, false},
+		{"done to active", []string{"DONE", "ACTIVE"}, true},
+		{"error to active", []string{"ERROR", "ACTIVE"}, true},
+		{"done through future state to active", []string{"DONE", "ARCHIVED", "ACTIVE"}, true},
+		{"error through future state to active", []string{"ERROR", "ARCHIVED", "ACTIVE"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := newAntigravityTurn("")
+			index := 0
+			for _, state := range tc.states {
+				turn.observe(&antigravityStreamStepUpdate{StepIndex: &index, StepType: "future_step", State: state})
+			}
+			if turn.invalid != tc.invalid || turn.steps[index].state != tc.states[len(tc.states)-1] {
+				t.Fatalf("invalid=%v, state=%s; want invalid=%v, state=%s", turn.invalid, turn.steps[index].state, tc.invalid, tc.states[len(tc.states)-1])
+			}
+		})
+	}
+}
+
 // Missing or contradicting evidence keeps agy's structured failure, whether its
 // wording is new or one the legacy row knows.
 func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
@@ -270,28 +347,47 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 		{name: "two terminal newlines", run: agyRun{steps: agyFixtureTurn(), response: agyString("Current answer.\n\n")}},
 		{name: "terminal whitespace", run: agyRun{steps: agyFixtureTurn(), response: agyString("Current answer. \n")}},
 		{name: "newer active answer after done", run: agyRun{steps: agyFixtureTurn(`{"step_index":106,"state":"ACTIVE","step_type":"agent_response","text_delta":"More"}`)}},
+		{name: "newer empty done answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":106,"state":"DONE","step_type":"agent_response"}`)}},
+		{name: "answer changes to error", run: agyRun{steps: agyFixtureTurn(`{"step_index":104,"state":"ERROR","step_type":"agent_response"}`)}},
 		{name: "historical done only", run: agyRun{steps: agyFixtureSteps(agyFixtureHistory, []string{agyFixtureBoundary})}},
+		{name: "only current error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"ERROR","step_type":"error_message"}`}}},
 		{name: "error step after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"error_message"}`)}},
 		{name: "tool step after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"tool"}`)}},
-		{name: "unknown step after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"system_message"}`)}},
+		{name: "subagent after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"subagent"}`)}},
+		{name: "failed tool after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"ERROR","step_type":"tool"}`)}},
+		{name: "failed checkpoint after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"ERROR","step_type":"checkpoint"}`)}},
+		{name: "future unfinished metadata after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"QUEUED","step_type":"future_metadata"}`)}},
 		{name: "active checkpoint after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"ACTIVE","step_type":"checkpoint"}`)}},
-		{name: "answer text before the last error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "resumed without boundary", run: agyRun{steps: []string{agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "boundary after the answer", run: agyRun{steps: []string{agyFixtureAnswerActive, agyFixtureAnswerDone, agyFixtureBoundary}}},
 		{name: "boundary not completed", run: agyRun{steps: []string{`{"step_index":100,"state":"ACTIVE","step_type":"user_input"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "second boundary", run: agyRun{steps: agyFixtureTurn(`{"step_index":106,"state":"DONE","step_type":"user_input"}`, `{"step_index":107,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`)}},
 		{name: "malformed line", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{"{bad-json"}}},
+		{name: "plain line", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{"plain diagnostic"}}},
+		{name: "empty canonical response", run: agyRun{steps: agyFixtureTurn(), response: agyString("")}},
 		{name: "index reused by another step type", run: agyRun{steps: agyFixtureTurn(`{"step_index":104,"state":"DONE","step_type":"error_message"}`)}},
+		// These mutations leave a matching answer and a settled suffix, so
+		// only step-type integrity can prevent an incorrect recovery.
+		{name: "tool changes to metadata after answer", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"DONE","step_type":"tool"}`, `{"step_index":105,"state":"DONE","step_type":"checkpoint"}`)}},
+		{name: "error changes to metadata before answer", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":103,"state":"ERROR","step_type":"error_message"}`, `{"step_index":103,"state":"DONE","step_type":"system_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "done answer regresses to active", run: agyRun{steps: agyFixtureTurn(agyFixtureAnswerActive)}},
+		{name: "failed tool regresses to active", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolError, agyFixtureToolActive, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "conflicting done delta", run: agyRun{steps: agyFixtureTurn(`{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"other"}`)}},
 		{name: "unknown step state", run: agyRun{steps: agyFixtureTurn(`{"step_index":105,"state":"PENDING","step_type":"checkpoint"}`)}},
 		{name: "missing step index", run: agyRun{steps: agyFixtureTurn(`{"state":"DONE","step_type":"checkpoint"}`)}},
+		{name: "negative step index", run: agyRun{steps: agyFixtureTurn(`{"step_index":-1,"state":"DONE","step_type":"checkpoint"}`)}},
 		{name: "conversation changes", run: agyRun{steps: agyFixtureTurn(`{"conversation_id":"other-conversation","step_index":105,"state":"DONE","step_type":"checkpoint"}`)}},
+		{name: "step event top level conversation conflicts", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update","conversation_id":"other-conversation","step_update":{"step_index":105,"state":"DONE","step_type":"checkpoint"}}`}}},
+		{name: "unknown event top level conversation conflicts", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"future_event","conversation_id":"other-conversation"}`}}},
+		{name: "historical snapshot conversation conflicts", run: agyRun{steps: agyFixtureSteps([]string{`{"conversation_id":"other-conversation","step_index":90,"state":"DONE","step_type":"checkpoint"}`}, agyFixtureTurn())}},
 		{name: "null step payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update"}`}}},
+		{name: "explicit null step payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"step_update","step_update":null}`}}},
+		{name: "null result payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"result","result":null}`}}},
+		{name: "missing result payload", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"result"}`}}},
 		{name: "null init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation","init":null}`, steps: agyFixtureTurn()}},
 		{name: "missing init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation"}`, steps: agyFixtureTurn()}},
-		{name: "unknown event", run: agyRun{steps: agyFixtureTurn(), beforeResult: []string{`{"event":"unknown"}`}}},
 		{name: "event after result", run: agyRun{steps: agyFixtureTurn(), afterResult: []string{`{"event":"step_update","step_update":{"step_index":105,"state":"DONE","step_type":"checkpoint"}}`}}},
+		{name: "unknown event after result", run: agyRun{steps: agyFixtureTurn(), afterResult: []string{`{"event":"future_event"}`}}},
 		{name: "other exit code", run: agyRun{steps: agyFixtureTurn(), exit: 2}},
 		{name: "signal", run: agyRun{steps: agyFixtureTurn(), kill: true}},
 		{name: "print timeout in log", run: agyRun{steps: agyFixtureTurn(), log: "Print mode: timed out after 100 polls"}},
@@ -313,7 +409,7 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 				if wantStatus == "" {
 					wantStatus = "failed"
 				}
-				if run.response != nil {
+				if run.response != nil && *run.response != "" {
 					wantOutput = *run.response
 				}
 				// The structured error keeps precedence over exit, log and stream
@@ -326,6 +422,46 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAntigravityScannerErrorKeepsFailure(t *testing.T) {
+	out := runAgyFixture(t, agyRun{
+		steps: agyFixtureTurn(), err: agyIdleTimeoutError,
+		// The complete result is already read. Only scanner.Err can reject
+		// recovery when the oversized trailing line never reaches the parser.
+		afterResult: []string{strings.Repeat("x", agentStreamMaxLineBytes+1)},
+	})
+	if out.result.Status != "failed" || out.result.Error != agyIdleTimeoutError || len(out.recovered) != 0 {
+		t.Fatalf("unexpected recovery after scanner error: %+v", out)
+	}
+}
+
+func TestAntigravityErrorStepUsageSnapshots(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, first, last string
+		want              TokenUsage
+		reported          bool
+	}{
+		{"replaces earlier snapshot", `{"input_tokens":8,"output_tokens":2}`, `{"input_tokens":12,"output_tokens":3}`, TokenUsage{InputTokens: 12, OutputTokens: 3}, true},
+		{"reported zero replaces earlier snapshot", `{"input_tokens":8}`, `{}`, TokenUsage{}, true},
+		{"absent snapshot keeps earlier usage", `{"input_tokens":8}`, `null`, TokenUsage{InputTokens: 8}, true},
+		{"absent usage stays absent", `null`, `null`, TokenUsage{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steps := agyFixtureSteps(agyFixtureHistory, []string{agyFixtureBoundary,
+				`{"step_index":102,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","usage":{"input_tokens":999}}`,
+				fmt.Sprintf(`{"step_index":102,"state":"ERROR","step_type":"tool","tool_name":"run_command","usage":%s}`, tc.first),
+				fmt.Sprintf(`{"step_index":102,"state":"error","step_type":"tool","tool_name":"run_command","usage":%s}`, tc.last),
+				`{"step_index":104,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`,
+			})
+			out := runAgyFixture(t, agyRun{steps: steps, err: agyIdleTimeoutError})
+			usage, reported := out.result.Usage["fixture-model"]
+			if out.result.Status != "completed" || usage != tc.want || reported != tc.reported || (!reported && len(out.result.Usage) != 0) {
+				t.Fatalf("result = %+v, want usage %+v (reported %v)", out.result, tc.want, tc.reported)
+			}
+		})
 	}
 }
 
@@ -451,7 +587,7 @@ func TestAntigravityLegacyFreshStream(t *testing.T) {
 		{name: "quota", run: agyRun{fresh: true, steps: answer, err: "RESOURCE_EXHAUSTED: synthetic quota"}, want: "failed"},
 		{name: "tool after answer", run: agyRun{fresh: true, steps: append(answer, `{"step_index":105,"state":"DONE","step_type":"tool"}`), err: eof}, want: "failed"},
 		{name: "answer differs from result", run: agyRun{fresh: true, steps: answer, err: eof, response: agyString("Other answer.\n")}, want: "failed"},
-		{name: "answer text before an error", run: agyRun{fresh: true, steps: []string{`{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}, err: eof}, want: "failed"},
+		{name: "answer after recovered error", run: agyRun{fresh: true, steps: []string{`{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}, err: eof}, want: "completed"},
 		{name: "signal", run: agyRun{fresh: true, steps: answer, err: eof, kill: true}, want: "failed"},
 		{name: "resumed", run: agyRun{steps: answer, err: eof, exit: 1}, want: "failed"},
 	} {

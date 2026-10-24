@@ -75,6 +75,10 @@ type antigravityToolState struct {
 	done bool
 }
 
+func antigravityStepTerminal(state string) bool {
+	return strings.EqualFold(state, "done") || strings.EqualFold(state, "error")
+}
+
 // Normalize the shared transcript input without duplicating commands or file
 // bodies. Preserve collisions and unknown fields, and do not mutate the snapshot.
 func antigravityToolInput(parameters map[string]any) map[string]any {
@@ -102,14 +106,14 @@ func antigravityToolInput(parameters map[string]any) map[string]any {
 }
 
 // Each step has one tool lifecycle, even when agy repeats state snapshots or
-// only emits DONE. The existing daemon uploader handles these normal messages;
+// only emits DONE/ERROR. The existing daemon uploader handles these messages;
 // tool output must never be appended to the assistant's final answer.
 func antigravityToolMessages(step *antigravityStreamStepUpdate, states map[int]antigravityToolState) []Message {
 	if step.StepType != "tool" || step.StepIndex == nil || *step.StepIndex < 0 {
 		return nil
 	}
 	active := strings.EqualFold(step.State, "active")
-	done := strings.EqualFold(step.State, "done")
+	done := antigravityStepTerminal(step.State)
 	if !active && !done {
 		return nil
 	}
@@ -159,6 +163,9 @@ func antigravityToolMessages(step *antigravityStreamStepUpdate, states map[int]a
 				}
 				output = "Tool error: " + detail + output
 			}
+		}
+		if output == "" && strings.EqualFold(step.State, "error") {
+			output = "Tool error: tool failed"
 		}
 		messages = append(messages, Message{Type: MessageToolResult, Tool: state.name, CallID: callID, Output: output})
 		state.done = true
@@ -378,9 +385,9 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				output.WriteString(step.TextDelta)
 				trySend(msgCh, Message{Type: MessageText, Content: step.TextDelta})
 			}
-			if strings.EqualFold(step.State, "done") && step.StepIndex != nil && *step.StepIndex >= 0 && step.Usage != nil {
+			if antigravityStepTerminal(step.State) && step.StepIndex != nil && *step.StepIndex >= 0 && step.Usage != nil {
 				// A step may be re-emitted as its state changes. Keying by
-				// index makes the final DONE snapshot replace, not duplicate,
+				// index makes the terminal snapshot replace, not duplicate,
 				// an earlier copy of the same step.
 				streamStepUsage[*step.StepIndex] = step.Usage.tokenUsage()
 			}
@@ -405,9 +412,9 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				if resultSeen {
 					turn.invalid = true // The terminal result must end the stream.
 				}
+				turn.observeConversation(event.ConversationID)
 				switch event.Event {
 				case "init":
-					turn.observeConversation(event.ConversationID)
 					streamSessionID = event.ConversationID
 					if event.Init == nil {
 						turn.invalid = true
@@ -442,7 +449,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 						streamResultUsage = event.Result.Usage
 					}
 				default:
-					turn.invalid = true
+					b.cfg.Logger.Debug("agy unknown stream event", "event", event.Event)
 				}
 				continue
 			}
