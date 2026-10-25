@@ -1950,3 +1950,11 @@ describe("formatTokens", () => {
     expect(formatTokens(999_999_999)).toBe("1B");
   });
 });
+
+
+describe("provider-reported zero cost", () => {
+  it("does not estimate tokens for a raw run explicitly billed at zero", () => {
+    expect(summarizeTaskUsage([{ model: "gpt-5.4", input_tokens: 1_000_000, output_tokens: 100,
+      cache_read_tokens: 200, cache_write_tokens: 300, cost_usd_ticks: 0 }])?.cost).toBe(0);
+  });
+});

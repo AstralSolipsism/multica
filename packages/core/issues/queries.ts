@@ -194,6 +194,7 @@ export const issueKeys = {
   subscribersAll: () => ["issues", "subscribers"] as const,
   subscribers: (issueId: string) =>
     [...issueKeys.subscribersAll(), issueId] as const,
+  workspaceUsage: (wsId: string) => [...issueKeys.all(wsId), "usage-summary"] as const,
   usageAll: () => ["issues", "usage"] as const,
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
@@ -670,6 +671,15 @@ export function issueSubscribersOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.subscribers(issueId),
     queryFn: () => api.listIssueSubscribers(issueId),
+  });
+}
+
+export function workspaceIssueUsageOptions(wsId: string) {
+  return queryOptions({
+    queryKey: issueKeys.workspaceUsage(wsId),
+    queryFn: async () => Object.groupBy(await api.listWorkspaceIssueUsage(), (row) => row.issue_id),
+    staleTime: 30_000,
+    enabled: !!wsId,
   });
 }
 

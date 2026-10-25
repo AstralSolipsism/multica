@@ -1064,6 +1064,10 @@ export interface RuntimeUsage {
   uncosted_cache_write_tokens?: number;
 }
 
+export type IssueUsageRow = Omit<RuntimeUsage, "runtime_id" | "date"> & {
+  issue_id: string;
+};
+
 export interface RuntimeHourlyActivity {
   hour: number;
   count: number;

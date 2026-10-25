@@ -7,6 +7,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { issueGraphReadiness } from "@multica/core/api";
 import type { IssueStatusCategory } from "@multica/core/types";
 import type { DagIssue } from "@multica/core/issues/dag";
+import { IssueCostBadge } from "../components/issue-cost-badge";
 import { PriorityIcon } from "../components/priority-icon";
 import { StatusIcon } from "../components/status-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -32,13 +33,13 @@ export function DagRunBadge({ issue }: { issue: DagIssue }) {
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-micro font-medium",
+        "inline-flex min-w-0 items-center gap-1 overflow-hidden rounded-full px-1.5 py-0.5 text-micro font-medium",
         running ? "bg-brand/10 text-brand" : "bg-muted/70 text-muted-foreground",
       )}
       title={running ? t(($) => $.run_active) : t(($) => $.run_queued)}
     >
-      <Loader2 className={cn("size-3", running && "animate-spin")} />
-      {running ? t(($) => $.run_active) : t(($) => $.run_queued)}
+      <Loader2 className={cn("size-3 shrink-0", running && "animate-spin")} />
+      <span className="truncate">{running ? t(($) => $.run_active) : t(($) => $.run_queued)}</span>
     </span>
   );
 }
@@ -107,8 +108,8 @@ export const DagTaskCard = memo(
         style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
         data-dag-task={issue.identifier}
       >
-        <div className="flex items-center gap-1.5">
-          <PriorityIcon priority={issue.priority} className="size-3.5" />
+        <div className="flex min-w-0 items-center gap-1.5">
+          <PriorityIcon priority={issue.priority} className="size-3.5 shrink-0" />
           <span className="shrink-0 text-caption text-muted-foreground tabular-nums">
             {issue.identifier}
           </span>
@@ -116,16 +117,17 @@ export const DagTaskCard = memo(
             status={issue.status}
             category={statusCategory}
             color={data.statusColor}
-            className="size-3.5"
+            className="size-3.5 shrink-0"
           />
+          <IssueCostBadge issueIds={issue.id} />
           <DagRunBadge issue={issue} />
           {task.cancelledBlocking ? (
-            <span className="ml-auto shrink-0 rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
+            <span className="ml-auto min-w-0 truncate rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
               {t(($) => $.cancelled_blocking)}
             </span>
           ) : (
             task.role === "context" && (
-              <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
+              <span className="ml-auto min-w-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
                 {t(($) => $.context_badge)}
               </span>
             )

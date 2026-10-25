@@ -2028,7 +2028,7 @@ export function IssueDisplayControls({
     project: "group_project",
     assignee: "group_assignee",
   };
-  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_start_date" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress"> = {
+  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_start_date" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress" | "card_cost"> = {
     priority: "card_priority",
     description: "card_description",
     assignee: "card_assignee",
@@ -2037,6 +2037,7 @@ export function IssueDisplayControls({
     project: "card_project",
     labels: "card_labels",
     childProgress: "card_child_progress",
+    cost: "card_cost",
   };
   const availableCardPropertyOptions = cardPropertyOptionsForView(viewMode);
   const availableSortOptions = sortOptionsForView(viewMode, grouping);
@@ -2389,7 +2390,7 @@ export function IssueDisplayControls({
                         {t(($) => $.display[CARD_PROPERTY_LABEL_KEY[opt.key]])}
                       </Toggle>
                     ))}
-                    {workspaceProperties.map((property) => (
+                    {viewMode !== "dag" && workspaceProperties.map((property) => (
                       <Toggle
                         key={property.id}
                         size="sm"

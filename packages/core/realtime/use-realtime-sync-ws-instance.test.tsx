@@ -745,3 +745,24 @@ describe("useRealtimeSync — member:removed", () => {
     await waitFor(() => expect(qc.getQueryData(workspaceKeys.list())).toEqual([]));
   });
 });
+
+
+it.each(["task:completed", "task:failed", "task:cancelled", "reconnect"])(
+  "invalidates card usage only in the active workspace on %s", (event) => {
+    vi.useFakeTimers();
+    const qc = new QueryClient();
+    const ws = createMockWs();
+    const key = issueKeys.workspaceUsage("ws-1");
+    const other = issueKeys.workspaceUsage("ws-other");
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    try {
+      qc.setQueryData(key, {});
+      qc.setQueryData(other, {});
+      if (event === "reconnect") void vi.mocked(ws.onReconnect).mock.calls[0]![0]();
+      else vi.mocked(ws.onAny).mock.calls[0]![0]({ type: event, payload: {} } as never);
+      vi.advanceTimersByTime(100);
+      expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+      expect(qc.getQueryState(other)?.isInvalidated).toBe(false);
+    } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+  },
+);

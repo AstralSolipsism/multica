@@ -122,6 +122,7 @@ export interface IssueDateFilter {
 export const SWIMLANE_GROUPINGS: SwimlaneGrouping[] = ["parent", "project", "assignee"];
 
 export interface CardProperties {
+  cost: boolean;
   priority: boolean;
   description: boolean;
   assignee: boolean;
@@ -191,6 +192,7 @@ export const GROUPING_OPTIONS: { value: StaticIssueGrouping; label: string }[] =
 ];
 
 export const CARD_PROPERTY_OPTIONS: { key: keyof CardProperties; label: string }[] = [
+  { key: "cost", label: "Cost" },
   { key: "priority", label: "Priority" },
   { key: "description", label: "Description" },
   { key: "assignee", label: "Assignee" },
@@ -202,6 +204,7 @@ export const CARD_PROPERTY_OPTIONS: { key: keyof CardProperties; label: string }
 ];
 
 export const DEFAULT_CARD_PROPERTIES: Readonly<CardProperties> = {
+  cost: true,
   priority: true,
   description: false,
   assignee: true,
@@ -224,7 +227,10 @@ export function defaultSortDirection(field: SortField): SortDirection {
 export function cardPropertyOptionsForView(viewMode: ViewMode) {
   if (!VIEW_MODE_CAPABILITIES[viewMode].cardProperties) return [];
   if (viewMode === "list") {
-    return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description");
+    return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description" && option.key !== "cost");
+  }
+  if (viewMode === "dag") {
+    return CARD_PROPERTY_OPTIONS.filter((option) => option.key === "cost");
   }
   return CARD_PROPERTY_OPTIONS;
 }

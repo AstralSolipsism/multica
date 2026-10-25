@@ -1841,6 +1841,17 @@ const CostSplitShape = {
   uncosted_cache_write_tokens: z.number().optional(),
 };
 
+export const IssueUsageListSchema = z.array(z.object({
+  issue_id: z.string().min(1),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  ...CostSplitShape,
+}).loose());
+
 const DashboardUsageDailySchema = z.object({
   date: z.string().default(""),
   provider: z.string().default(""),

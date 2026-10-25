@@ -806,7 +806,7 @@ function uncostedTokens(usage: Priceable): {
   cacheWrite: number;
 } {
   if (usage.uncosted_input_tokens === undefined) {
-    if ((usage.cost_usd_ticks ?? 0) > 0) {
+    if (usage.cost_usd_ticks !== undefined) {
       return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     }
     return {
