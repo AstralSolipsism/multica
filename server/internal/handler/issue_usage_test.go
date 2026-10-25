@@ -38,7 +38,7 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 	addUsage(child, "openai", "gpt-5.4", "completed", 500, int64(20_000_000_000))
 	addUsage(zero, "openai", "gpt-5.4", "completed", 0, int64(0))
 	addUsage(foreign, "openai", "gpt-5.4", "completed", 999, int64(99_000_000_000))
-	dbfx.Task(t, agentID, testutil.Cols{"issue_id": empty, "status": "completed"})
+	dbfx.Task(t, agentID, testutil.Cols{"issue_id": empty, "status": "completed", "runtime_id": runtimeID})
 
 	var rows []db.ListWorkspaceIssueUsageRow
 	testutil.Call(t, testHandler.ListWorkspaceIssueUsage, newRequest("GET", "/api/issues/usage-summary", nil)).Want(http.StatusOK).JSON(&rows)
