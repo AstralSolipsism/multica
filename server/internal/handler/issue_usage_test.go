@@ -14,6 +14,7 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 		t.Skip("database not available")
 	}
 	agentID := createHandlerTestAgent(t, "card usage", []byte("[]"))
+	runtimeID := handlerTestRuntimeID(t)
 	parent := dbfx.Issue(t, "parent usage")
 	child := dbfx.Issue(t, "child usage", testutil.Cols{"parent_issue_id": parent})
 	empty := dbfx.Issue(t, "no usage")
@@ -22,7 +23,7 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 	foreign := dbfx.Issue(t, "foreign usage", testutil.Cols{"workspace_id": foreignWS})
 	addUsage := func(issueID, provider, model, status string, tokens int64, cost any) {
 		t.Helper()
-		task := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "status": status})
+		task := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "status": status, "runtime_id": runtimeID})
 		dbfx.Insert(t, "task_usage", testutil.Cols{
 			"task_id": task, "provider": provider, "model": model,
 			"input_tokens": tokens, "output_tokens": tokens * 2,

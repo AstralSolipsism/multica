@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
 import { createStore } from "zustand/vanilla";
 import type { StoreApi } from "zustand/vanilla";
@@ -19,9 +21,14 @@ import { dagLineLayoutInput, dagOverviewLayoutInput } from "./dag-scene-inputs";
 import type { DagSceneGeometry } from "./dag-scene";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
 
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+
+let queryClient: QueryClient;
+
 // Only provide the geometry APIs missing in jsdom. React Flow, its provider,
 // store, selection events, renderer and pan/zoom implementation are all real.
 beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
     function (this: HTMLElement) {
       return this.style.width.endsWith("px") ? parseFloat(this.style.width) : 1400;
@@ -78,6 +85,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  queryClient.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -199,15 +207,21 @@ function harness(
     flowStore = useStoreApi();
     return null;
   }
-  const view = renderWithI18n(
+  const withQueryClient = (ui: ReactElement) => (
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+  );
+  const view = renderWithI18n(withQueryClient(
     <ViewStoreProvider store={store}>
       <ReactFlowProvider>
         <DagSceneCanvasInner {...props} />
         <Probe />
       </ReactFlowProvider>
     </ViewStoreProvider>,
-  );
-  return { store, props, flow: () => flow, flowStore: () => flowStore, ...view };
+  ));
+  return {
+    store, props, flow: () => flow, flowStore: () => flowStore, ...view,
+    rerender: (ui: ReactElement) => view.rerender(withQueryClient(ui)),
+  };
 }
 
 describe("DagSceneCanvas overview", () => {

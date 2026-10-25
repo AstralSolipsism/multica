@@ -250,6 +250,7 @@ GET	/api/issues/search	user-auth	allow
 POST	/api/issues/table/facets	user-auth	deny
 POST	/api/issues/table/groups	user-auth	deny
 POST	/api/issues/table/rows	user-auth	deny
+GET	/api/issues/usage-summary	user-auth	deny
 POST	/api/issues/with-dependencies	user-auth	allow
 DELETE	/api/issues/{id}/	user-auth	deny
 GET	/api/issues/{id}/	user-auth	allow

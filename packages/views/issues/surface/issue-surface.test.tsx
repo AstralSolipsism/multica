@@ -1191,3 +1191,52 @@ it("fetches one workspace usage batch for many board cards and none for list mod
   expect(listWorkspaceIssueUsage).toHaveBeenCalledTimes(1);
   view.unmount(); qc.clear(); pruneIssueSurfaceViewStates([]);
 });
+
+describe("workspace usage request gating on a cold cache", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    mockWsId.current = "ws-1";
+    pruneIssueSurfaceViewStates([]);
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+
+  afterEach(() => {
+    cleanup();
+    qc.clear();
+    pruneIssueSurfaceViewStates([]);
+  });
+
+  it.each([
+    { mode: "list" as const, showCost: true },
+    { mode: "board" as const, showCost: false },
+  ])("does not fetch when mounted with mode=$mode and cost=$showCost", async ({ mode, showCost }) => {
+    const listIssues = vi.fn(async () => ({
+      issues: [makeIssue("cold-cost", "Cold cost card", "cold-cost-project")], total: 1,
+    }));
+    const listWorkspaceIssueUsage = vi.fn(async () => []);
+    setApiInstance({
+      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listIssues, ...statusTableMethodsFromLegacy(listIssues), listWorkspaceIssueUsage,
+      listProjects: async () => [], getAgentTaskSnapshot: async () => [],
+      getChildIssueProgress: async () => [], listProperties: async () => ({ properties: [] }),
+      listMembers: async () => [], listAgents: async () => [], listSquads: async () => [],
+    } as unknown as ApiClient);
+    const store = getIssueSurfaceViewStore("project:cold-cost-project");
+    store.getState().setViewMode(mode);
+    if (!showCost) store.getState().toggleCardProperty("cost");
+
+    render(<QueryClientProvider client={qc}>
+      <IssueSurface scope={{ type: "project", projectId: "cold-cost-project" }} modes={["board", "list"]}
+        renderHeader={() => null} batchToolbar="never" />
+    </QueryClientProvider>);
+    await screen.findAllByText("Cold cost card");
+    expect(listWorkspaceIssueUsage).not.toHaveBeenCalled();
+
+    act(() => {
+      store.getState().setViewMode("board");
+      if (!showCost) store.getState().toggleCardProperty("cost");
+    });
+    await waitFor(() => expect(listWorkspaceIssueUsage).toHaveBeenCalledTimes(1));
+  });
+});
