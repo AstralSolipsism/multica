@@ -1,5 +1,6 @@
 import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, type IssueBatchUpdateResult, LarkInstallationsSchema, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
 export { ApiError, dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-api";
+import { IssueUsageListSchema } from "./schemas";
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
@@ -77,6 +78,7 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
+  IssueUsageRow,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
@@ -2829,6 +2831,13 @@ export class ApiClient {
   async retryTaskSupplement(issueId: string, taskId: string, commentId: string): Promise<void> {
     await this.fetch(`/api/issues/${issueId}/tasks/${taskId}/supplements/${commentId}/retry`, {
       method: "POST",
+    });
+  }
+
+  async listWorkspaceIssueUsage(): Promise<IssueUsageRow[]> {
+    const raw = await this.fetch<unknown>("/api/issues/usage-summary");
+    return parseWithFallback<IssueUsageRow[]>(raw, IssueUsageListSchema, [], {
+      endpoint: "GET /api/issues/usage-summary",
     });
   }
 

@@ -10,6 +10,7 @@ import { dagProjectColor } from "./dag-project-colors";
 import { DAG_OVERVIEW_SIZE } from "./dag-constants";
 import type { DagOverviewFlowNode } from "./dag-scene-flow";
 import type { IssueStatusCategory } from "@multica/core/types";
+import { IssueCostBadge } from "../components/issue-cost-badge";
 import { StatusIcon } from "../components/status-icon";
 import { DagRunBadge } from "./dag-task-card";
 
@@ -89,12 +90,12 @@ export const DagOverviewCardView = memo(
         <div className="flex h-4 items-center gap-1.5 text-micro text-muted-foreground">
           {card.project && <span className="truncate">{card.project.title}</span>}
           {card.role === "context" && !card.cancelledBlocking && (
-            <span className="ml-auto shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
+            <span className="ml-auto min-w-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
               {t(($) => $.context_badge)}
             </span>
           )}
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5">
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
           {issue && (
             <StatusIcon
               status={issue.status}
@@ -108,9 +109,10 @@ export const DagOverviewCardView = memo(
               {issue.identifier}
             </span>
           )}
+          <IssueCostBadge issueIds={card.memberIds} />
           {issue && <DagRunBadge issue={issue} />}
           {card.cancelledBlocking && (
-            <span className="ml-auto shrink-0 rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
+            <span className="ml-auto min-w-0 truncate rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
               {t(($) => $.cancelled_blocking)}
             </span>
           )}

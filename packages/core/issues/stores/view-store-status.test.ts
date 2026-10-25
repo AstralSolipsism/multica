@@ -107,6 +107,7 @@ describe("issue view defaults", () => {
 
     expect([state.sortBy, state.sortDirection]).toEqual(["created_at", "desc"]);
     expect(state.cardProperties).toEqual({
+      cost: true,
       priority: true,
       description: false,
       assignee: true,

@@ -40,7 +40,7 @@ export const VIEW_MODE_CAPABILITIES = {
   },
   dag: {
     ordering: false,
-    cardProperties: false,
+    cardProperties: true,
     batchSelection: false,
     graph: true,
   },

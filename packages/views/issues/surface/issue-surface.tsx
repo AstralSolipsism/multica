@@ -11,6 +11,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useQuery } from "@tanstack/react-query";
+import { workspaceIssueUsageOptions } from "@multica/core/issues/queries";
 import { workspaceWakeupSummariesOptions } from "@multica/core/issues/wakeups";
 import {
   useViewStore,
@@ -241,6 +242,11 @@ function IssueSurfaceContent({
     modes,
     createDefaults,
     search,
+  });
+  const showCost = useViewStore((state) => state.cardProperties.cost);
+  useQuery({
+    ...workspaceIssueUsageOptions(workspaceId),
+    enabled: !!workspaceId && showCost && ["board", "swimlane", "dag"].includes(controller.viewMode),
   });
   useEffect(() => { preloadIssueView(controller.viewMode); }, [controller.viewMode]);
   const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);

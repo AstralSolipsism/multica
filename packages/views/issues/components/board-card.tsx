@@ -27,6 +27,7 @@ import { ProgressRing } from "./progress-ring";
 import type { ChildProgress } from "./list-row";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
+import { IssueCostBadge } from "./issue-cost-badge";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { CustomStatusChip, useIsCustomStatus } from "./custom-status-chip";
 import { IssueDuplicateOfMarker } from "./issue-duplicates";
@@ -205,12 +206,13 @@ export const BoardCardContent = memo(function BoardCardContent({
     <div className="rounded-lg border-[0.5px] border-surface-border bg-surface py-3 px-2.5 shadow-[var(--surface-shadow)] transition-colors group-hover/card:border-foreground/15 group-hover/card:bg-surface-hover group-data-[popup-open]/card:border-foreground/15 group-data-[popup-open]/card:bg-surface-hover group-data-[peeked]/card:ring-2 group-data-[peeked]/card:ring-brand/50">
       {/* Row 1: priority + identifier (left), agent activity + assignee (right) */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex shrink-0 items-center gap-1.5">
           {priorityIconNode}
-          <p className="text-caption text-muted-foreground truncate">{issue.identifier}</p>
+          <p className="shrink-0 text-caption text-muted-foreground tabular-nums">{issue.identifier}</p>
+          <IssueCostBadge issueIds={issue.id} />
           <IssueDuplicateOfMarker issue={issue} insideLink />
         </div>
-        <IssueAgentActivityIndicator issueId={issue.id} tipAnchor={tipAnchor} />
+        <IssueAgentActivityIndicator issueId={issue.id} tipAnchor={tipAnchor} className="min-w-0 shrink overflow-hidden" />
       </div>
 
       {/* Row 2: Title */}

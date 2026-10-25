@@ -1701,3 +1701,26 @@ describe("workspace subscription contract", () => {
     );
   });
 });
+
+
+describe("workspace issue usage schema", () => {
+  it("keeps the accounting split, including an authoritative zero", async () => {
+    const row = { issue_id: "issue-1", provider: "openai", model: "gpt-5.4", input_tokens: 100,
+      output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd_ticks: 0,
+      uncosted_input_tokens: 0, uncosted_output_tokens: 0, uncosted_cache_read_tokens: 0, uncosted_cache_write_tokens: 0 };
+    stubFetchJson([row]);
+    await expect(new ApiClient("https://api.example.test").listWorkspaceIssueUsage()).resolves.toEqual([row]);
+  });
+  it("defaults omitted counters without inventing a split for old responses", async () => {
+    stubFetchJson([{ issue_id: "issue-1" }]);
+    const rows = await new ApiClient("https://api.example.test").listWorkspaceIssueUsage();
+    expect(rows[0]).toMatchObject({ issue_id: "issue-1", input_tokens: 0, provider: "" });
+    expect(rows[0]).not.toHaveProperty("uncosted_input_tokens");
+  });
+  it.each([null, {}, [{ model: "missing-issue" }], [{ issue_id: "issue-1", cost_usd_ticks: "bad" }]])(
+    "degrades malformed responses to an empty list: %j", async (body) => {
+      stubFetchJson(body);
+      await expect(new ApiClient("https://api.example.test").listWorkspaceIssueUsage()).resolves.toEqual([]);
+    },
+  );
+});

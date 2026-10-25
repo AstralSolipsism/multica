@@ -45,6 +45,7 @@ const CLOSE_DELAY_MS = 150;
 
 interface IssueAgentActivityIndicatorProps {
   issueId: string;
+  className?: string;
   // Avatar tier. Kept very small — this is a corner-of-card cue, not a
   // primary control. Default xs (16 px) reads as a dot at typical board
   // densities while still showing the agent's face on hover-zoom.
@@ -99,6 +100,7 @@ interface IssueAgentActivityIndicatorProps {
 export const IssueAgentActivityIndicator = memo(
   function IssueAgentActivityIndicator({
     issueId,
+    className,
     size = "xs",
     hoverCard = true,
     tipAnchor = false,
@@ -186,7 +188,7 @@ export const IssueAgentActivityIndicator = memo(
         />
         <ShimmerText
           active={isRunning}
-          className="text-micro text-muted-foreground"
+          className="min-w-0 truncate text-micro text-muted-foreground"
         >
           {isRunning
             ? t(($) => $.agent_activity.status_running)
@@ -230,7 +232,7 @@ export const IssueAgentActivityIndicator = memo(
 
     if (!hoverCard) {
       return (
-        <span className="inline-flex shrink-0 items-center gap-1">{badge}</span>
+        <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>{badge}</span>
       );
     }
 
@@ -245,7 +247,7 @@ export const IssueAgentActivityIndicator = memo(
               aria-label={`${label}${wakeupTriggered ? ` · ${t(($) => $.wakeups.triggered_by_wakeup)}` : ""}${wakeupCount ? ` · ${t(($) => $.wakeups.upcoming, { count: wakeupCount })}` : ""}`}
               onFocus={() => setOpen(true)}
               onBlur={() => setOpen(false)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+              className={cn("inline-flex shrink-0 items-center gap-1 rounded-sm focus-visible:outline-2 focus-visible:outline-ring", className)}
             />
           }
         >

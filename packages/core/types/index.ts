@@ -111,6 +111,7 @@ export type {
   RuntimeLocalSkillsResult,
   RuntimeLocalSkillImportResult,
   IssueUsageSummary,
+  IssueUsageRow,
   MikaBootstrapResponse,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES, RUNTIME_PROFILE_RUNTIME_TYPES } from "./agent";
