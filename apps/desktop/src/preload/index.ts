@@ -23,6 +23,7 @@ import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
 import type {
   DaemonStatus,
   LocalRuntimeProbe,
+  WorkspacesRootInfo,
 } from "../shared/daemon-types";
 import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
@@ -300,6 +301,18 @@ const daemonAPI = {
     ipcRenderer.invoke("daemon:is-cli-installed"),
   getPrefs: (): Promise<{ autoStart: boolean; autoStop: boolean }> =>
     ipcRenderer.invoke("daemon:get-prefs"),
+  /** Effective workspaces root for the Desktop-owned daemon profile —
+   *  persisted custom path, env override, and default — or null until the
+   *  profile is resolved. */
+  getWorkspacesRoot: (): Promise<WorkspacesRootInfo | null> =>
+    ipcRenderer.invoke("daemon:get-workspaces-root"),
+  /** Persist `workspaces_root` via the bundled CLI (`config set`). Pass "" to
+   *  clear the custom path and restore the default. Takes effect on the next
+   *  daemon start — restart separately. */
+  setWorkspacesRoot: (
+    path: string,
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("daemon:set-workspaces-root", path),
   setPrefs: (prefs: Partial<{ autoStart: boolean; autoStop: boolean }>): Promise<{ autoStart: boolean; autoStop: boolean }> =>
     ipcRenderer.invoke("daemon:set-prefs", prefs),
   autoStart: (): Promise<void> =>

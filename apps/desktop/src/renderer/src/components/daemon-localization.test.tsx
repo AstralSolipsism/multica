@@ -16,6 +16,13 @@ vi.mock("../platform/daemon-reauth", () => ({
   reauthenticateDaemon: vi.fn(),
 }));
 
+// The workspaces-root row's activity join is covered by daemon-activity.test
+// and daemon-workspaces-root-row.test; these tests render the whole tab for
+// locale fidelity and don't care about run counts.
+vi.mock("./daemon-activity", () => ({
+  useLocalDaemonActivity: () => ({ runtimeCount: 0, affectedTasks: [] }),
+}));
+
 let emitLogLine: (line: string) => void = () => {};
 
 function installDaemonAPI(status: DaemonStatus) {
@@ -27,6 +34,9 @@ function installDaemonAPI(status: DaemonStatus) {
       isCliInstalled: vi.fn().mockResolvedValue(true),
       getStatus: vi.fn().mockResolvedValue(status),
       onStatusChange: vi.fn(() => () => {}),
+      getWorkspacesRoot: vi.fn().mockResolvedValue(null),
+      setWorkspacesRoot: vi.fn().mockResolvedValue({ success: true }),
+      restart: vi.fn().mockResolvedValue({ success: true }),
       startLogStream: vi.fn(),
       stopLogStream: vi.fn(),
       onLogLine: vi.fn((handler: (line: string) => void) => {

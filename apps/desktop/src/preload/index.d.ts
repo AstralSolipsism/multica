@@ -15,6 +15,7 @@ import type {
   DaemonStatus,
   DaemonPrefs,
   LocalRuntimeProbe,
+  WorkspacesRootInfo,
 } from "../shared/daemon-types";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 import type {
@@ -159,6 +160,14 @@ interface DaemonAPI {
   isCliInstalled: () => Promise<boolean>;
   getPrefs: () => Promise<DaemonPrefs>;
   setPrefs: (prefs: Partial<DaemonPrefs>) => Promise<DaemonPrefs>;
+  /** Effective workspaces root of the Desktop-owned daemon profile, or null
+   *  until the profile is resolved (target API URL not reported yet). */
+  getWorkspacesRoot: () => Promise<WorkspacesRootInfo | null>;
+  /** Persist `workspaces_root` via the bundled CLI; "" restores the default.
+   *  Takes effect on the next daemon start — restart separately. */
+  setWorkspacesRoot: (
+    path: string,
+  ) => Promise<{ success: boolean; error?: string }>;
   autoStart: () => Promise<void>;
   retryInstall: () => Promise<void>;
   startLogStream: () => void;
