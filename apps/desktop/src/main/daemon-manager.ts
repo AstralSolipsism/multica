@@ -20,10 +20,12 @@ import type {
   DaemonStatus,
   DaemonPrefs,
   LocalRuntimeProbe,
+  WorkspacesRootInfo,
 } from "../shared/daemon-types";
 import { daemonStatusAlive } from "../shared/daemon-types";
 import { ensureManagedCli, managedCliPath } from "./cli-bootstrap";
 import { decideVersionAction } from "./version-decision";
+import { resolveWorkspacesRootInfoFromEnv } from "./daemon-workspaces-root";
 import {
   deriveProfileName,
   profileArgs,
@@ -944,6 +946,59 @@ function desktopSpawnEnv(): NodeJS.ProcessEnv {
   return { ...process.env, MULTICA_LAUNCHED_BY: "desktop" };
 }
 
+/**
+ * Reads the effective workspaces root for the active Desktop-owned profile —
+ * the persisted config value, a MULTICA_WORKSPACES_ROOT env override visible
+ * to every CLI/daemon child we spawn, and the built-in default — so the
+ * Settings UI can render the path and decide whether editing is meaningful.
+ * Returns null until the renderer has reported the target API URL (there is
+ * no Desktop-owned profile to read before that).
+ */
+async function getWorkspacesRootInfo(): Promise<WorkspacesRootInfo | null> {
+  const active = await ensureActiveProfile();
+  if (!active) return null;
+  const cfg = await readProfileConfig(active.name);
+  return resolveWorkspacesRootInfoFromEnv(active.name, cfg);
+}
+
+/**
+ * Persists `workspaces_root` for the active profile by shelling out to the
+ * CLI (`multica --profile <p> config set workspaces_root <path>`). The CLI
+ * owns validation (trim, absolute-path resolution, empty string = clear) and
+ * the atomic config write, so Desktop doesn't reimplement them here. The
+ * caller restarts the daemon separately — config changes only take effect on
+ * daemon start.
+ */
+async function setWorkspacesRoot(
+  path: string,
+): Promise<{ success: boolean; error?: string }> {
+  const bin = await resolveCliBinary();
+  if (!bin) return { success: false, error: "multica CLI is not installed" };
+  const active = await ensureActiveProfile();
+  if (!active) return { success: false, error: "Waiting for the service address" };
+
+  return new Promise((resolvePromise) => {
+    execFile(
+      bin,
+      ["config", "set", "workspaces_root", path, ...profileArgs(active.name)],
+      { timeout: 15_000, env: desktopSpawnEnv() },
+      (err, _stdout, stderr) => {
+        if (err) {
+          // The CLI prints its validation message on stderr; that text is far
+          // more useful than node's "Command failed" wrapper.
+          const detail =
+            typeof stderr === "string" && stderr.trim().length > 0
+              ? stderr.trim()
+              : err.message;
+          resolvePromise({ success: false, error: detail });
+          return;
+        }
+        resolvePromise({ success: true });
+      },
+    );
+  });
+}
+
 function scheduleStatusRefresh(): void {
   setTimeout(() => void pollOnce(), 0);
 }
@@ -1422,6 +1477,10 @@ export function setupDaemonManager(
     await lifecycleOperations.runForeground(() => bootstrapCli());
   });
   ipcMain.handle("daemon:get-prefs", () => loadPrefs());
+  ipcMain.handle("daemon:get-workspaces-root", () => getWorkspacesRootInfo());
+  ipcMain.handle("daemon:set-workspaces-root", (_event, path: string) =>
+    setWorkspacesRoot(typeof path === "string" ? path : ""),
+  );
   ipcMain.handle(
     "daemon:set-prefs",
     (_event, prefs: Partial<DaemonPrefs>) =>

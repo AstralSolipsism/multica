@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   AlertCircle,
   Play,
@@ -9,10 +9,6 @@ import {
   LogIn,
   Info,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
-import { runtimeListOptions } from "@multica/core/runtimes";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -25,6 +21,7 @@ import {
 import { toast } from "sonner";
 import { useT } from "@multica/views/i18n";
 import { DaemonPanel } from "./daemon-panel";
+import { useLocalDaemonActivity } from "./daemon-activity";
 import { reauthenticateDaemon } from "../platform/daemon-reauth";
 import type { DaemonStatus } from "../../../shared/daemon-types";
 import { daemonStateLabel } from "./daemon-i18n";
@@ -40,29 +37,8 @@ export function DaemonRuntimeActions() {
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
 
-  const wsId = useWorkspaceId();
-  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-
-  const localRuntimeIds = useMemo(() => {
-    if (!status.daemonId) return new Set<string>();
-    return new Set(
-      runtimes
-        .filter((r) => r.daemon_id === status.daemonId)
-        .map((r) => r.id),
-    );
-  }, [runtimes, status.daemonId]);
-
-  const runtimeCount = localRuntimeIds.size;
-
-  const affectedTasks = useMemo(
-    () =>
-      snapshot.filter(
-        (t) =>
-          localRuntimeIds.has(t.runtime_id) &&
-          (t.status === "running" || t.status === "dispatched"),
-      ),
-    [snapshot, localRuntimeIds],
+  const { runtimeCount, affectedTasks } = useLocalDaemonActivity(
+    status.daemonId,
   );
 
   useEffect(() => {

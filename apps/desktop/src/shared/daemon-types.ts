@@ -42,6 +42,26 @@ export interface DaemonPrefs {
   autoStop: boolean;
 }
 
+/**
+ * Where the daemon places task execution environments, as Desktop sees it.
+ * Mirrors the Go resolution order in
+ * server/internal/daemon/config.go ResolveWorkspacesRoot:
+ * MULTICA_WORKSPACES_ROOT env > profile config.json > built-in default
+ * (~/multica_workspaces_<profile>).
+ */
+export interface WorkspacesRootInfo {
+  /** Effective absolute path a restarted daemon will use. */
+  effectivePath: string;
+  /** Path persisted in the profile config.json; null when unset. */
+  customPath: string | null;
+  /** MULTICA_WORKSPACES_ROOT value in the daemon's spawn environment; null
+   *  when unset. When present it wins over customPath, so the setting row is
+   *  read-only. */
+  envOverride: string | null;
+  /** Built-in default root for this profile. */
+  defaultPath: string;
+}
+
 export type LocalRuntimeProbe =
   | {
       probeResult: "success";
