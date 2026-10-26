@@ -44,7 +44,7 @@ func TestHeartbeatAcceptsUnnamedAntigravityGroups(t *testing.T) {
 					},
 				}
 				if transport == "http" {
-					req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-compat-daemon")
+					req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 					testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 				} else {
 					raw, err := json.Marshal(body)

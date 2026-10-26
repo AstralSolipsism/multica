@@ -2,7 +2,7 @@
   "settings": {
     "notifications": {
       "system": {
-        "description": "Labrastro가 백그라운드에 있을 때 시스템 알림을 표시합니다."
+        "label": "Labrastro가 백그라운드에 있을 때 시스템 알림 표시"
       }
     },
     "github": {
@@ -62,6 +62,11 @@
     }
   },
   "runtimes": {
+    "page": {
+      "add_menu": {
+        "cloud_runtime_hint": "Labrastro가 호스팅하는 클라우드 노드 생성"
+      }
+    },
     "mika_setup": {
       "title": "런타임이 준비되었습니다. Mizuki와 시작하세요.",
       "description": "Mizuki가 태스크를 정리하고 에이전트를 조율하도록 하세요.",
@@ -78,6 +83,12 @@
     },
     "profiles": {
       "empty_description": "기본 프로토콜 제품군을 선택한 다음 Labrastro가 실행할 명령을 지정하세요."
+    },
+    "qoder": {
+      "description": "Connect Qoder Cloud Agents. Labrastro manages execution and stores credentials encrypted. Workspace administrators can change this configuration.",
+      "add_agent_description": "기존 QCA 에이전트에 연결할 Labrastro 에이전트를 생성합니다. Qoder 클라우드에 설정된 환경과 인증 정보를 사용합니다.",
+      "data_disclosure_title": "Labrastro가 Qoder로 보내는 내용",
+      "connect_description": "Labrastro는 Qoder 샌드박스에서 작업을 실행합니다."
     }
   },
   "workspace": {

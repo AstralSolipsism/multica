@@ -181,7 +181,8 @@
     "./issues/invalidation": "./issues/invalidation.ts",
     "./you-should-know/anchors": "./you-should-know/anchors/index.ts",
     "./issues/dag": "./issues/dag/index.ts",
-    "./issues/dag/*": "./issues/dag/*.ts"
+    "./issues/dag/*": "./issues/dag/*.ts",
+    "./runtimes/qoder": "./runtimes/qoder.ts"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "catalog:",

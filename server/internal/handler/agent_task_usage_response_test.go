@@ -21,16 +21,17 @@ func TestReportTaskUsagePreservesExplicitZero(t *testing.T) {
 	}
 	agentID := createHandlerTestAgent(t, "ReportedZeroUsage", []byte("[]"))
 	issueID := dbfx.Issue(t, "Reported zero usage")
+	runtimeID := dbfx.Runtime(t, "Usage daemon runtime", testutil.Cols{"daemon_id": "usage-fixture"})
 	newTask := func() string {
 		return dbfx.Task(t, agentID, testutil.Cols{
-			"issue_id": issueID, "runtime_id": handlerTestRuntimeID(t), "status": "completed",
+			"issue_id": issueID, "runtime_id": runtimeID, "status": "completed",
 		})
 	}
 	zeroTask, unknownTask := newTask(), newTask()
 	for range 2 {
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+zeroTask+"/usage", map[string]any{
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/tasks/"+zeroTask+"/usage", map[string]any{
 			"usage": []TaskUsagePayload{{Provider: "antigravity", Model: "fixture-model"}},
-		}, testWorkspaceID, "usage-fixture")
+		}, runtimeID)
 		req = withURLParam(req, "taskId", zeroTask)
 		testutil.Call(t, testHandler.ReportTaskUsage, req).Want(http.StatusOK)
 	}

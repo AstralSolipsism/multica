@@ -14,6 +14,8 @@
   "runtimes": {
     "machine": {
       "metrics": {
+        "quota": "プラン残量",
+        "host": "ホスト使用率",
         "cpu": "CPU",
         "memory": "メモリ",
         "stale": "期限切れ",

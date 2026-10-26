@@ -55,6 +55,8 @@ import {
 import { toast } from "sonner";
 import { DataTable } from "@multica/ui/components/ui/data-table";
 import { Button } from "@multica/ui/components/ui/button";
+import { IconButton } from "@multica/ui/components/common/icon-button";
+import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   DropdownMenu,
@@ -119,6 +121,7 @@ import {
 } from "@tanstack/react-query";
 import { runConfirmIntent } from "../actions/run-confirm-gate";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { DeferredTooltip } from "../../common/deferred-tooltip";
 import { LabelChip } from "../../labels/label-chip";
 import { resolveClickIntent, useIntentNavigate } from "../../navigation";
 import { ProjectPicker } from "../../projects/components/project-picker";
@@ -448,18 +451,20 @@ function SortableColumnHeader({
       )}
     >
       {sortable && (
-        <button
-          type="button"
-          aria-label={reorderLabel}
-          className={cn(
-            "-ml-2 mr-0.5 rounded-xs p-0.5 text-muted-foreground opacity-0 hover:bg-accent hover:text-muted-foreground group-hover/header:opacity-100 focus-visible:opacity-100",
-            isDragging ? "cursor-grabbing opacity-100" : "cursor-grab",
-          )}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="size-3" />
-        </button>
+        <TooltipHint label={reorderLabel}>
+          <button
+            type="button"
+            aria-label={reorderLabel}
+            className={cn(
+              "-ml-2 mr-0.5 rounded-xs p-0.5 text-muted-foreground opacity-0 hover:bg-accent hover:text-muted-foreground group-hover/header:opacity-100 focus-visible:opacity-100",
+              isDragging ? "cursor-grabbing opacity-100" : "cursor-grab",
+            )}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="size-3" />
+          </button>
+        </TooltipHint>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger className="flex min-w-0 items-center gap-1 rounded-xs px-1.5 py-1 hover:bg-accent">
@@ -525,16 +530,17 @@ export function TableIssueSearch({
         className="h-7 pl-7 pr-7 text-caption"
       />
       {value && (
-        <Button
+        <IconButton
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={clearLabel}
+          label={clearLabel}
+          tooltipSide="bottom"
           onClick={() => onChange("")}
           className="absolute right-0.5 top-0.5 text-muted-foreground"
         >
           <X className="size-3" />
-        </Button>
+        </IconButton>
       )}
     </div>
   );
@@ -614,22 +620,27 @@ export function InlineTitle({
       }}
     >
       {row.hasChildren ? (
-        <button
-          type="button"
-          aria-label={toggleLabel}
-          className="rounded-xs p-0.5 text-muted-foreground hover:bg-accent"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleParent();
-          }}
-          onAuxClick={stopRowNavigation}
-        >
-          {row.collapsed ? (
-            <ChevronRight className="size-3.5" />
-          ) : (
-            <ChevronDown className="size-3.5" />
-          )}
-        </button>
+        <DeferredTooltip
+          content={toggleLabel}
+          trigger={
+            <button
+              type="button"
+              aria-label={toggleLabel}
+              className="rounded-xs p-0.5 text-muted-foreground hover:bg-accent"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleParent();
+              }}
+              onAuxClick={stopRowNavigation}
+            >
+              {row.collapsed ? (
+                <ChevronRight className="size-3.5" />
+              ) : (
+                <ChevronDown className="size-3.5" />
+              )}
+            </button>
+          }
+        />
       ) : (
         <span className="w-4 shrink-0" />
       )}
@@ -683,31 +694,41 @@ export function InlineTitle({
             * follows the row's hover colour, since that is what the cell is
             * painted with when they appear. */}
           <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-gradient-to-l from-background from-70% to-transparent pr-1 pl-8 opacity-0 transition-opacity group-hover:from-[color-mix(in_oklab,var(--muted)_50%,var(--background))] group-hover/title:pointer-events-auto group-hover/title:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-            <button
-              type="button"
-              aria-label={createSubIssueLabel}
-              className="rounded-xs p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                onCreateSubIssue();
-              }}
-              onAuxClick={stopRowNavigation}
-            >
-              <Plus className="size-3" />
-            </button>
-            <button
-              type="button"
-              aria-label={renameLabel}
-              className="rounded-xs p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                setDraft(row.issue.title);
-                onEditingChange(true);
-              }}
-              onAuxClick={stopRowNavigation}
-            >
-              <Pencil className="size-3" />
-            </button>
+            <DeferredTooltip
+              content={createSubIssueLabel}
+              trigger={
+                <button
+                  type="button"
+                  aria-label={createSubIssueLabel}
+                  className="rounded-xs p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCreateSubIssue();
+                  }}
+                  onAuxClick={stopRowNavigation}
+                >
+                  <Plus className="size-3" />
+                </button>
+              }
+            />
+            <DeferredTooltip
+              content={renameLabel}
+              trigger={
+                <button
+                  type="button"
+                  aria-label={renameLabel}
+                  className="rounded-xs p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setDraft(row.issue.title);
+                    onEditingChange(true);
+                  }}
+                  onAuxClick={stopRowNavigation}
+                >
+                  <Pencil className="size-3" />
+                </button>
+              }
+            />
           </span>
         </>
       )}
@@ -957,6 +978,7 @@ function IssueTableAddColumnHeader({
   return (
     <TableColumnPicker
       properties={meta.properties}
+      tooltip={t(($) => $.table.columns.add)}
       trigger={
         <button
           type="button"

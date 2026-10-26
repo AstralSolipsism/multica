@@ -25,9 +25,9 @@ dispatch is disabled. Candidate dispatch runs Go tests, the live vulnerability
 scan, frontend tests/typechecks and packaging regressions before draft upload.
 There is no vulnerability bypass.
 
-CI and release jobs require Go `~1.26.9`: at least 1.26.9, while accepting
-newer 1.26 patches. This security floor is independent of the development
-minimum in `server/go.mod`. A plain `1.26.x` can resolve to an older patch
+CI and release jobs require Go `~1.27.3`: at least 1.27.3, while accepting
+newer 1.27 patches. This security floor is independent of the development
+minimum in `server/go.mod`. A plain `1.27.x` can resolve to an older patch
 while the `setup-go` version manifest catches up with an official Go release.
 When raising the security floor, update all Go workflows and the pinned
 Go builder image in `Dockerfile` together so shipped binaries also receive

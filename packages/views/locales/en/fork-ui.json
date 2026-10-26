@@ -14,6 +14,8 @@
   "runtimes": {
     "machine": {
       "metrics": {
+        "quota": "Plan quota",
+        "host": "Host usage",
         "cpu": "CPU",
         "memory": "Memory",
         "stale": "Stale",

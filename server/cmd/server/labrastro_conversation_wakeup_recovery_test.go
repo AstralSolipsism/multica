@@ -11,6 +11,44 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestExternalConversationSquadWakeupKeepsGrantorAndLeader(t *testing.T) {
+	fx := testutil.New(testPool, testWorkspaceID, testUserID)
+	grantor := fx.User(t, "Squad wakeup grantor", "squad-wakeup-grantor@example.test")
+	fx.Member(t, testWorkspaceID, grantor, "member")
+	f := externalPolicyFixtureForGrantor(t, "root", grantor)
+	leader := fx.Agent(t, "external wakeup leader", f.runtime, testutil.Cols{"owner_id": grantor})
+	fx.Exec(t, "UPDATE agent SET permission_mode='public_to' WHERE id=$1", leader)
+	fx.Insert(t, "agent_invocation_target", testutil.Cols{"agent_id": leader, "target_type": "workspace", "target_id": testWorkspaceID})
+	squad := fx.Squad(t, "external wakeup squad", leader)
+	fx.SquadMember(t, squad, "agent", leader)
+	issue := policyWakeIssue(t, f, "")
+	fx.Exec(t, "UPDATE issue SET assignee_type='squad',assignee_id=$2 WHERE id=$1", issue, squad)
+	s, ctx := policyWakeups(), context.Background()
+	w, err := s.Create(ctx, policyUUID(t, issue), policyUUID(t, testUserID), pgtype.UUID{}, service.WakeupInput{
+		AgentID: leader, Kind: "event", Mode: "continuous", EventTypes: []string{"comment.created"}, Instruction: "Handle the external request",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.Comment(t, issue, "external request", testutil.Cols{"author_type": "agent", "author_id": f.agent, "source_task_id": f.root})
+	for range 2 {
+		if err := s.TickWorkspaces(ctx, policyUUID(t, testWorkspaceID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count := fx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE issue_id=$1 AND agent_id=$2", issue, leader); count != 1 {
+		t.Fatalf("repeated ticks created %d leader runs, want one", count)
+	}
+	if count := fx.Count(t, `SELECT count(*) FROM agent_task_queue
+		WHERE issue_id=$1 AND agent_id=$2 AND is_leader_task AND squad_id=$3
+		AND originator_user_id=$4 AND accountable_user_id=$4
+		AND originator_source='delegation' AND delegated_from_task_id=$5
+		AND conversation_root_task_id=$5 AND context->>'wakeup_id'=$6`,
+		issue, leader, squad, grantor, f.root, util.UUIDToString(w.ID)); count != 1 {
+		t.Fatalf("expected exactly one leader run with frozen conversation authority, got %d", count)
+	}
+}
+
 func TestExternalConversationRejectedWakeupRecovers(t *testing.T) {
 	for _, tc := range []struct {
 		name             string

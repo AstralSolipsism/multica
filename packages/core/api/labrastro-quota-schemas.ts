@@ -99,6 +99,7 @@ export const RuntimeThinkingAdaptSchema = z.object({
 // a malformed one becomes null (the UI's not-reported state) without taking
 // down the rest of the list. A wholly malformed response falls back to [].
 export const RuntimeListItemSchema = z.object({
+  shared_with: z.array(z.string().uuid()).catch([]),
   system_stats: RuntimeSystemStatsSchema.nullable().catch(null),
   thinking_adapt: RuntimeThinkingAdaptSchema.nullable().catch(null),
 }).loose();

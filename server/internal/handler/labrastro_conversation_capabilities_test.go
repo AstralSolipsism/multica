@@ -82,6 +82,7 @@ func TestConversationClaimOmitsIntegrationCapabilities(t *testing.T) {
 
 func TestConversationDaemonPluginRoutesDenyExternalTasks(t *testing.T) {
 	f := newConversationFixture(t)
+	dbfx.Exec(t, "UPDATE agent_runtime SET daemon_id='conversation-capabilities' WHERE id=$1", f.runtime)
 	f.msg.ReplyTo = nil
 	f.ingest(t)
 	withPluginsV1Flag(t, f.h, true)
@@ -112,7 +113,7 @@ func TestConversationDaemonPluginRoutesDenyExternalTasks(t *testing.T) {
 				want = http.StatusBadRequest // reaches the existing request validation
 			}
 			for name, handler := range map[string]http.HandlerFunc{"plugin-hooks": f.h.InvokeAgentPluginHook, "plugin-mcp": f.h.ResolvePluginMCPCredential} {
-				req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+id+"/"+name, map[string]any{}, testWorkspaceID, "conversation-capabilities")
+				req := newBoundDaemonTokenRequest(t, "POST", "/api/daemon/tasks/"+id+"/"+name, map[string]any{}, f.runtime)
 				req = withURLParam(req, "id", id)
 				testutil.Call(t, handler, req).Want(want)
 			}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,28 +126,18 @@ func (h *Handler) storeHeartbeatPlanQuotaAt(ctx context.Context, rt db.AgentRunt
 }
 
 // requireRuntimeQuotaPushAccess authorizes the external quota push endpoint.
-// It is deliberately stricter than requireDaemonRuntimeAccess (which any
-// workspace member's PAT passes): a quota snapshot overwrites what every
-// workspace member sees for that runtime, so writes are limited to
+// A quota snapshot overwrites what every workspace member sees for that
+// runtime, so writes are limited to
 //
-//   - the mdt_ daemon token matching the runtime's workspace AND daemon id
-//     (daemon ids are machine-provided and not globally unique), or
+//   - the mdt_ daemon token authorized for the runtime's workspace, exact
+//     daemon id and current owner (or a live Qoder-managed connection), or
 //   - the runtime owner's user token (PAT/JWT), still membership-checked.
 //
-// Everything else gets a 404 — the same "not found" the workspace check
-// returns — so the endpoint does not confirm a runtime id exists.
+// Runtime binding refusals return 404; managed credentials also pass the
+// shared connection revocation check before any quota write.
 func (h *Handler) requireRuntimeQuotaPushAccess(w http.ResponseWriter, r *http.Request, rt db.AgentRuntime) bool {
 	if middleware.DaemonAuthPathFromContext(r.Context()) == middleware.DaemonAuthPathDaemonToken {
-		// The token's workspace AND daemon id must both match the runtime:
-		// daemon ids are machine-provided strings and can collide (or be
-		// reused) across workspaces, so neither factor alone is sufficient.
-		if middleware.DaemonWorkspaceIDFromContext(r.Context()) != uuidToString(rt.WorkspaceID) ||
-			!rt.DaemonID.Valid ||
-			!strings.EqualFold(rt.DaemonID.String, middleware.DaemonIDFromContext(r.Context())) {
-			writeError(w, http.StatusNotFound, "not found")
-			return false
-		}
-		return true
+		return h.requireDaemonRuntimeAuthorized(w, r, uuidToString(rt.WorkspaceID), rt.DaemonID, rt.OwnerID, "not found")
 	}
 	userID := requestUserID(r)
 	if userID == "" || !rt.OwnerID.Valid || uuidToString(rt.OwnerID) != userID {

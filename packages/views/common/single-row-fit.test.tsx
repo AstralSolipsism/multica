@@ -11,8 +11,8 @@ function Bar({ available, active = 5, count = widths.length }: {
   available: number; active?: number; count?: number;
 }) {
   const { containerRef, measureRef, fitCount } = useSingleRowFit({
-    count, gap: 4, reserve: 36, overflowReserve: 68,
-    promotedIndex: active, promotedReserve: 236,
+    count, gap: 4,
+    reserve: (fittingCount) => active >= fittingCount ? 236 : fittingCount < count ? 68 : 36,
   });
   return (
     <div ref={containerRef} data-width={available}>

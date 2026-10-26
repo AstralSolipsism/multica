@@ -9,6 +9,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -29,6 +30,84 @@ func readPlanQuotaColumn(t *testing.T, runtimeID string) map[string]any {
 		t.Fatalf("decode plan_quota: %v", err)
 	}
 	return out
+}
+
+func TestReportRuntimeQuotaDaemonBinding(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	for _, tc := range []struct {
+		name, daemonID, ownerID string
+	}{
+		{"previous owner", "Quota-Machine", "00000000-0000-0000-0000-00000000beef"},
+		{"unbound legacy token", "Quota-Machine", ""},
+		{"daemon ID case mismatch", "quota-machine", testUserID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeID := dbfx.Runtime(t, "quota binding", testutil.Cols{"daemon_id": "Quota-Machine", "provider": "codex"})
+			now := time.Now().Unix()
+			if _, err := testHandler.applyRuntimePlanQuota(t.Context(), loadRuntime(t, runtimeID), validPlanQuotaPayload(now-1)); err != nil {
+				t.Fatal(err)
+			}
+			h := *testHandler
+			h.Bus = events.New()
+			published := 0
+			h.Bus.SubscribeAll(func(event events.Event) { published++ })
+			req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/quota",
+				map[string]any{"status": "limited", "observed_at": now, "windows": []map[string]any{{"name": "primary", "used_percent": 75}}}, testWorkspaceID, tc.daemonID)
+			ctx := middleware.WithDaemonContext(t.Context(), testWorkspaceID, tc.daemonID)
+			ctx = middleware.WithDaemonTokenOwnerID(ctx, tc.ownerID)
+			req = withURLParam(req.WithContext(ctx), "runtimeId", runtimeID)
+			testutil.Call(t, h.ReportRuntimeQuota, req).Want(http.StatusNotFound)
+			if stored := readPlanQuotaColumn(t, runtimeID); stored["status"] != "ok" || stored["observed_at"] != float64(now-1) {
+				t.Fatalf("unauthorized quota push changed snapshot: %v", stored)
+			}
+			if published != 0 {
+				t.Fatalf("unauthorized quota push published %d events", published)
+			}
+		})
+	}
+}
+
+func TestReportRuntimeQuotaQoderRevocation(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	withVCSBox(t)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM daemon_token WHERE id IN (SELECT token_id FROM cloud_agent_connection WHERE provider='qoder_cloud' AND workspace_id=$1)`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM cloud_agent_connection WHERE provider='qoder_cloud' AND workspace_id=$1`, testWorkspaceID)
+	})
+	input := map[string]any{"name": "QCA", "base_url": qoderAPIURL, "environment_id": "env_test", "qoder_token": "quota-fixture-token"}
+	testutil.Call(t, testHandler.SaveQoderConnection, vcsHandlerRequest(http.MethodPut, "/qoder", input, "")).Want(http.StatusOK)
+	cfg, _, _, _, err := testHandler.readQoderSettings(t.Context(), testWorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemonID := "qoder-managed-" + testWorkspaceID
+	runtimeID := dbfx.Runtime(t, "quota QCA", testutil.Cols{"daemon_id": daemonID, "provider": "qoder_cloud"})
+	now := time.Now().Unix()
+	request := func(observedAt int64) *http.Request {
+		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/quota",
+			map[string]any{"status": "ok", "observed_at": observedAt}, testWorkspaceID, daemonID)
+		req.Header.Set("Authorization", "Bearer "+cfg.MulticaToken)
+		// Managed credentials remain unbound and rely on the live connection.
+		ctx := middleware.WithDaemonContext(t.Context(), testWorkspaceID, daemonID)
+		return withURLParam(req.WithContext(ctx), "runtimeId", runtimeID)
+	}
+	testutil.Call(t, testHandler.ReportRuntimeQuota, request(now-600)).Want(http.StatusOK)
+	testutil.Call(t, testHandler.StopQoderConnection, vcsHandlerRequest(http.MethodPost, "/qoder/stop", nil, "")).Want(http.StatusOK)
+	h := *testHandler
+	h.Bus = events.New()
+	published := 0
+	h.Bus.SubscribeAll(func(event events.Event) { published++ })
+	testutil.Call(t, h.ReportRuntimeQuota, request(now)).Want(http.StatusForbidden)
+	if stored := readPlanQuotaColumn(t, runtimeID); stored["observed_at"] != float64(now-600) {
+		t.Fatalf("revoked managed credential changed snapshot: %v", stored)
+	}
+	if published != 0 {
+		t.Fatalf("revoked managed credential published %d events", published)
+	}
 }
 
 func validPlanQuotaPayload(observedAt int64) *protocol.RuntimePlanQuota {
@@ -163,7 +242,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"source": "external",
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		stored := readPlanQuotaColumn(t, runtimeID)
@@ -185,7 +264,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"observed_at": 0, // invalid: must be positive
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		if stored := readPlanQuotaColumn(t, runtimeID); stored != nil {
@@ -203,7 +282,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"observed_at": time.Now().Add(2 * time.Hour).Unix(),
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		if stored := readPlanQuotaColumn(t, runtimeID); stored != nil {

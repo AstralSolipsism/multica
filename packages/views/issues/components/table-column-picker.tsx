@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState, type ReactElement } from "react";
+import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 import { Input } from "@multica/ui/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@multica/ui/components/ui/dropdown-menu";
 import { TABLE_SYSTEM_COLUMNS } from "@multica/core/issues/stores/view-store";
@@ -25,9 +26,11 @@ type ColumnLabelKey =
 export function TableColumnPicker({
   properties,
   trigger,
+  tooltip,
 }: {
   properties: IssueProperty[];
   trigger: ReactElement;
+  tooltip?: string;
 }) {
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
@@ -47,9 +50,10 @@ export function TableColumnPicker({
     property.name.toLocaleLowerCase().includes(query),
   );
 
+  const menuTrigger = <DropdownMenuTrigger render={trigger} />;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={trigger} />
+      {tooltip ? <TooltipHint label={tooltip}>{menuTrigger}</TooltipHint> : menuTrigger}
       <DropdownMenuContent align="end" className="w-64 p-0">
         <div className="border-b p-2">
           <Input
