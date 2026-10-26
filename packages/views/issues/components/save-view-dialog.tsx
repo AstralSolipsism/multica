@@ -402,7 +402,6 @@ export function DraftDefinitionFields({ allowDag = true }: { allowDag?: boolean 
                       )
                     }
                     aria-label={sortDirectionLabel ?? undefined}
-                    title={sortDirectionLabel ?? undefined}
                   >
                     {sortDirectionLabel}
                   </Button>

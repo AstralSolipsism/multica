@@ -2249,6 +2249,20 @@ describe("ApiClient explicit workspace targeting", () => {
     await expect(new ApiClient("https://api.example.test").listRuntimes()).resolves.toEqual([]);
   });
 
+  it("keeps member sharing alongside quota and adaptive thinking snapshots", async () => {
+    const member = "123e4567-e89b-42d3-a456-426614174000";
+    const quota = { provider: "codex", windows: [{ used_percent: 25 }], observed_at: 1000 };
+    stubOk([
+      { id: "rt-1", shared_with: [member], plan_quota: quota, thinking_adapt: { status: "available" } },
+      { id: "rt-2", shared_with: "invalid", plan_quota: quota },
+      { id: "rt-3" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes[0]).toMatchObject({ shared_with: [member], plan_quota: quota, thinking_adapt: { status: "available" } });
+    expect(runtimes[1]).toMatchObject({ shared_with: [], plan_quota: quota });
+    expect(runtimes[2]?.shared_with).toEqual([]);
+  });
+
   // Boundary parsing of the additive thinking_adapt field (OL-1006): valid
   // snapshots parse, absent fields degrade to null, an unknown status from
   // a newer daemon passes through untouched, and a wholly malformed

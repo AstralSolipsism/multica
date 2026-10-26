@@ -1,7 +1,7 @@
 {
   "name": "@multica/desktop",
   "productName": "Labrastro",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "private": true,
   "description": "Labrastro Desktop — native desktop client for the Labrastro platform.",
   "homepage": "https://multica.ai",
@@ -73,7 +73,7 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^5.1.1",
     "app-builder-bin": "5.0.0-alpha.12",
-    "electron": "^39.2.6",
+    "electron": "^44.9.3",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "globals": "^16.0.0",

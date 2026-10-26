@@ -14,6 +14,8 @@
   "runtimes": {
     "machine": {
       "metrics": {
+        "quota": "套餐额度",
+        "host": "主机占用",
         "cpu": "CPU",
         "memory": "内存",
         "stale": "数据过期",

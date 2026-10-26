@@ -139,6 +139,7 @@ export const BoardCardContent = memo(function BoardCardContent({
         <PriorityPicker
           priority={issue.priority}
           onUpdate={handleUpdate}
+          tooltip={priorityLabel}
           triggerRender={
             <button
               type="button"
@@ -278,6 +279,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                     <StartDatePicker
                       startDate={issue.start_date}
                       onUpdate={handleUpdate}
+                      tooltip={t(($) => $.detail.prop_start_date)}
                       trigger={
                         <span className="flex items-center gap-1 text-caption text-muted-foreground">
                           <CalendarClock className="size-3" />
@@ -299,6 +301,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                     <DueDatePicker
                       dueDate={issue.due_date}
                       onUpdate={handleUpdate}
+                      tooltip={t(($) => $.detail.prop_due_date)}
                       trigger={
                         <span
                           className={`flex items-center gap-1 text-caption ${

@@ -504,6 +504,14 @@ PUT	/api/workspaces/{id}/plugins/{installationId}/mcp/{hookKey}/tools	user-auth	
 GET	/api/workspaces/{id}/plugins/{installationId}/surfaces/{surfaceKey}/launch	user-auth	deny
 DELETE	/api/workspaces/{id}/plugins/{installationId}/token	user-auth	deny
 POST	/api/workspaces/{id}/plugins/{installationId}/token	user-auth	deny
+DELETE	/api/workspaces/{id}/qoder	user-auth	deny
+GET	/api/workspaces/{id}/qoder	user-auth	deny
+PUT	/api/workspaces/{id}/qoder	user-auth	deny
+GET	/api/workspaces/{id}/qoder/agents	user-auth	deny
+POST	/api/workspaces/{id}/qoder/check	user-auth	deny
+POST	/api/workspaces/{id}/qoder/environments	user-auth	deny
+POST	/api/workspaces/{id}/qoder/resume	user-auth	deny
+POST	/api/workspaces/{id}/qoder/stop	user-auth	deny
 GET	/api/workspaces/{id}/runtime-profiles	user-auth	deny
 POST	/api/workspaces/{id}/runtime-profiles	user-auth	deny
 DELETE	/api/workspaces/{id}/runtime-profiles/{profileId}	user-auth	deny

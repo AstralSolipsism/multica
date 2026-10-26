@@ -14,6 +14,8 @@
   "runtimes": {
     "machine": {
       "metrics": {
+        "quota": "Quota du forfait",
+        "host": "Utilisation hôte",
         "cpu": "CPU",
         "memory": "Memory",
         "stale": "Stale",

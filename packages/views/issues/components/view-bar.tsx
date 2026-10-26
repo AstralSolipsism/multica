@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DndContext,
@@ -273,16 +273,21 @@ export function ViewBar({
   );
 
   // --- single-row fit -----------------------------------------------------
-  // The hook resolves all three chrome widths in one measurement pass;
-  // the result never feeds another state/effect back into its inputs.
   const activeBarId = activeView ? `view:${activeView.id}` : null;
+  const activeIndex = visible.findIndex((item) => item.barItemId === activeBarId);
+  const reserve = useCallback(
+    (fittingCount: number) =>
+      activeIndex >= fittingCount
+        ? RESERVE_PROMOTED
+        : fittingCount < visible.length
+          ? RESERVE_MORE
+          : RESERVE_MENU,
+    [activeIndex, visible.length],
+  );
   const { containerRef, measureRef, fitCount } = useSingleRowFit({
     count: visible.length,
     gap: 4,
-    reserve: RESERVE_MENU,
-    overflowReserve: RESERVE_MORE,
-    promotedIndex: visible.findIndex((item) => item.barItemId === activeBarId),
-    promotedReserve: RESERVE_PROMOTED,
+    reserve,
   });
   const fitting = visible.slice(0, fitCount);
   const overflowed = visible.slice(fitCount);

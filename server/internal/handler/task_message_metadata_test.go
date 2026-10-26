@@ -21,6 +21,8 @@ func TestTaskMessageMetadataLiveAndHistory(t *testing.T) {
 		t.Skip("database not available")
 	}
 	taskID := seedBatchTask(t, "metadata")
+	runtimeID := dbfx.Runtime(t, "Metadata daemon runtime", testutil.Cols{"daemon_id": "metadata-daemon"})
+	dbfx.Exec(t, "UPDATE agent_task_queue SET runtime_id=$2 WHERE id=$1", taskID, runtimeID)
 	h := *testHandler
 	h.Bus = events.New()
 	var live []map[string]any
@@ -130,10 +132,9 @@ func TestTaskMessageMetadataLiveAndHistory(t *testing.T) {
 	} {
 		for _, suffix := range []string{"", "?since=2"} {
 			t.Run(reader.name+suffix, func(t *testing.T) {
-				req := testutil.JSONRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages"+suffix, nil)
+				req := newBoundDaemonTokenRequest(t, http.MethodGet, "/api/tasks/"+taskID+"/messages"+suffix, nil, runtimeID)
 				req = testutil.WithURLParams(req, "taskId", taskID)
-				ctx := middleware.WithDaemonContext(req.Context(), testWorkspaceID, "metadata-daemon")
-				ctx = middleware.SetMemberContext(ctx, testWorkspaceID, db.Member{})
+				ctx := middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{})
 				var history []map[string]any
 				testutil.Call(t, reader.handler, req.WithContext(ctx)).Want(http.StatusOK).JSON(&history)
 				want := live

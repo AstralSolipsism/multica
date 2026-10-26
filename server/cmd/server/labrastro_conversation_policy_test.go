@@ -390,18 +390,28 @@ func TestExternalConversationDelegatedIssueCarriesGrant(t *testing.T) {
 	}
 }
 
-func TestExternalConversationPolicyLeavesFirstPartyCredentialsUnchanged(t *testing.T) {
+func TestExternalConversationPolicyPreservesUpstreamCredentialBoundaries(t *testing.T) {
 	f := newExternalPolicyFixture(t, "root")
 	id := f.fx.Task(t, f.agent, testutil.Cols{"runtime_id": f.runtime, "status": "running", "originator_source": "direct_human", "originator_user_id": testUserID, "accountable_user_id": testUserID})
 	ordinary := mintAgentTaskToken(t, f.agent, id, testUserID)
-	// The selected policy changes only external conversations. Upstream's
-	// member / first-party credential semantics are deliberately unchanged.
-	for name, token := range map[string]string{"member": testToken, "ordinary-task": ordinary} {
-		t.Run(name, func(t *testing.T) {
-			if w := policyRequest(t, token, "POST", "/api/cli-token", nil); w.Code != 200 {
-				t.Fatalf("ordinary caller was changed: %d", w.Code)
+	// v0.7.0 forbids every task token from minting reusable CLI credentials.
+	// Members retain minting access; ordinary tasks retain normal API reads.
+	for _, tc := range []struct {
+		name, token string
+		want        int
+	}{
+		{"member", testToken, http.StatusOK},
+		{"ordinary-task", ordinary, http.StatusForbidden},
+		{"external-task", f.token, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := policyRequest(t, tc.token, "POST", "/api/cli-token", nil); w.Code != tc.want {
+				t.Fatalf("credential boundary: got %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}
 		})
+	}
+	if w := policyRequest(t, ordinary, "GET", "/api/issues", nil); w.Code != http.StatusOK {
+		t.Fatalf("ordinary task read: %d %s", w.Code, w.Body.String())
 	}
 }
 

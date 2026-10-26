@@ -14,6 +14,8 @@
   "runtimes": {
     "machine": {
       "metrics": {
+        "quota": "요금제 할당량",
+        "host": "호스트 사용량",
         "cpu": "CPU",
         "memory": "메모리",
         "stale": "오래된 데이터",

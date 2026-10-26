@@ -2,7 +2,7 @@
   "settings": {
     "notifications": {
       "system": {
-        "description": "Show system notifications when Labrastro is in the background."
+        "label": "Show system notifications when Labrastro is in the background"
       }
     },
     "github": {
@@ -62,6 +62,11 @@
     }
   },
   "runtimes": {
+    "page": {
+      "add_menu": {
+        "cloud_runtime_hint": "Provision a Labrastro-hosted cloud node"
+      }
+    },
     "mika_setup": {
       "title": "Your runtime is ready. Start with Mizuki.",
       "description": "Let Mizuki organize work and coordinate agents.",
@@ -78,6 +83,12 @@
     },
     "profiles": {
       "empty_description": "Pick a base protocol family, then point Labrastro at the command to run."
+    },
+    "qoder": {
+      "description": "Connect Qoder Cloud Agents. Labrastro manages execution and stores credentials encrypted. Workspace administrators can change this configuration.",
+      "add_agent_description": "Create a Labrastro agent linked to an existing QCA Agent. It will use the environment and credentials configured for Qoder Cloud.",
+      "data_disclosure_title": "What Labrastro sends to Qoder",
+      "connect_description": "Labrastro runs tasks in Qoder's sandboxes."
     }
   },
   "workspace": {

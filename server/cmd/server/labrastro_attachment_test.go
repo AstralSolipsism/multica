@@ -79,7 +79,7 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 				}
 				req := httptest.NewRequest(http.MethodGet, path, nil)
 				req.Header.Set("Authorization", "Bearer "+token)
-				// Auth must overwrite forged actor and workspace claims for task tokens.
+				// Auth overwrites forged actors and rejects conflicting workspace selectors.
 				req.Header.Set("X-Actor-Source", "member")
 				if workspace != "" {
 					req.Header.Set("X-Workspace-ID", workspace)
@@ -118,7 +118,7 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 			for _, lineage := range []string{"root", "delegation", "retry", "deleted-parent"} {
 				t.Run(lineage, func(t *testing.T) {
 					f := externalPolicyFixtureForGrantor(t, lineage, grantor)
-					missing := request(f.token, uuid.NewString(), "download", otherWorkspace)
+					missing := request(f.token, uuid.NewString(), "download", testWorkspaceID)
 					// Verify every expectation queued so far is consumed, so the
 					// pending-expectation check below can only refer to the warm
 					// entry (ClearExpect would drop the earlier ones unverified).
@@ -130,7 +130,7 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 					// workspace filter must reject the request without ever
 					// consulting this cache entry (OL-964, review mutation 11).
 					cache.ExpectGet(memberKey).SetVal("1")
-					foreign := request(f.token, attachments[otherWorkspace], "download", otherWorkspace)
+					foreign := request(f.token, attachments[otherWorkspace], "download", testWorkspaceID)
 					if missing.Code != http.StatusNotFound || foreign.Code != missing.Code ||
 						foreign.Body.String() != missing.Body.String() ||
 						foreign.Header().Get("Content-Type") != missing.Header().Get("Content-Type") ||
@@ -142,10 +142,18 @@ func TestExternalConversationAttachmentDownloadWorkspace(t *testing.T) {
 						t.Fatal("warm membership cache was consulted before the workspace filter rejected the request")
 					}
 					cache.ClearExpect()
+					// The upstream task-token guard rejects forged selectors before
+					// either the attachment lookup or the membership cache is used.
+					for _, attachment := range []string{attachments[testWorkspaceID], attachments[otherWorkspace], uuid.NewString()} {
+						if w := request(f.token, attachment, "download", otherWorkspace); w.Code != http.StatusForbidden ||
+							!strings.Contains(w.Body.String(), "task token is bound to a different workspace") {
+							t.Fatalf("conflicting workspace selector: %d %s", w.Code, w.Body.String())
+						}
+					}
 					cache.ExpectGet("mul:auth:member:" + grantor + ":" + testWorkspaceID).SetVal("1")
-					assertDownload(t, request(f.token, attachments[testWorkspaceID], "download", otherWorkspace), testWorkspaceID)
+					assertDownload(t, request(f.token, attachments[testWorkspaceID], "download", testWorkspaceID), testWorkspaceID)
 					for _, attachment := range attachments {
-						if w := request(f.token, attachment, "download-metadata", otherWorkspace); w.Code != http.StatusForbidden ||
+						if w := request(f.token, attachment, "download-metadata", testWorkspaceID); w.Code != http.StatusForbidden ||
 							!strings.Contains(w.Body.String(), `"code":"external_conversation_forbidden"`) {
 							t.Fatalf("external download metadata: %d %s", w.Code, w.Body.String())
 						}

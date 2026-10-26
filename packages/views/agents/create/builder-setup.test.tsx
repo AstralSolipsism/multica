@@ -55,6 +55,7 @@ const DRAFT: AgentDraft = {
   instructions: "",
   conversationStarters: [],
   avatarUrl: null,
+  qoderAgentId: "",
   runtimeId: RUNTIME.id,
   model: "old-model",
   thinkingLevel: "_adapt",

@@ -163,7 +163,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"source": "external",
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		stored := readPlanQuotaColumn(t, runtimeID)
@@ -185,7 +185,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"observed_at": 0, // invalid: must be positive
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		if stored := readPlanQuotaColumn(t, runtimeID); stored != nil {
@@ -203,7 +203,7 @@ func TestDaemonHeartbeatPlanQuota(t *testing.T) {
 				"observed_at": time.Now().Add(2 * time.Hour).Unix(),
 			},
 		}
-		req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", body, testWorkspaceID, "quota-heartbeat-daemon")
+		req := newBoundDaemonTokenRequest(t, http.MethodPost, "/api/daemon/heartbeat", body, runtimeID)
 		testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusOK)
 
 		if stored := readPlanQuotaColumn(t, runtimeID); stored != nil {
