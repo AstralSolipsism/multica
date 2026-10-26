@@ -19,6 +19,7 @@ const thinkingInjectionScript = `#!/bin/sh
 printf 'ARGV %s\n' "$*" >> "$THINKING_WIRE"
 case "$THINKING_PROVIDER" in
   opencode)
+    cat >/dev/null
     printf '%s\n' '{"type":"text","sessionID":"fixture","part":{"type":"text","text":"done"}}' '{"type":"step_finish","sessionID":"fixture","part":{"type":"step-finish","reason":"stop"}}'
     exit 0;;
   pi|omp)

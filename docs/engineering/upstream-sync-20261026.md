@@ -75,6 +75,13 @@ remain `gpt-5.6-luna`.
 - Daemon HTTP/WS, registration and claims validate the runtime owner. Legacy
   unbound remote-MCP tokens use the upstream unique in-flight task-token
   evidence path; there is no current-owner backfill or permissive fallback.
+- The fork quota-push endpoint also uses `requireDaemonRuntimeAuthorized`:
+  exact daemon identity, current owner and live Qoder connection authorization
+  are checked before writes. Regressions reject mismatched owners, unbound
+  legacy tokens and case-mismatched daemon IDs with 404; an authorized unbound
+  Qoder credential works until connection revocation, then returns 403. Denied
+  pushes preserve the stored snapshot and publish no telemetry event. The
+  owner PAT/JWT branch is unchanged.
 - Daemon feature fixtures now use the actual runtime daemon/owner binding.
   Arbitrary fixture daemon IDs must not bypass the new gate for quota, usage,
   metadata or plugin access. The task-selector mock includes the persisted
@@ -218,6 +225,14 @@ removes new cloud connection/sharing/telemetry data. No live data was sampled.
   Container Node 22.23.4 remains the pinned shipping baseline. Host Git 2.39
   cannot run the required merge-tree worktree tests, so the validation uses a
   separate Git installation without changing project tool contracts.
+- The adaptive-thinking OpenCode fixture drains stdin before emitting events
+  and exiting, matching the CLI protocol. This removes its prompt-write race
+  under upstream v2 terminal detection without weakening the production
+  broken-pipe failure check. The complete injection-channel suite passes 40
+  consecutive runs with race detection; focused quota/heartbeat regressions
+  also pass against the disposable PostgreSQL database. Full handler, daemon
+  and middleware packages and the OpenCode agent tests pass with race
+  detection. Revision-specific logs are attached to the PR's review follow-up.
 - The host kernel is 5.15. Exactly four existing Cursor process-tree tests need
   Linux 6.9 pidfd flags; they pass with race detection in a disposable Linux
   6.12.107 QEMU guest. All remaining agent tests run with race detection on the
