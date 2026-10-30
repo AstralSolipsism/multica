@@ -1,3 +1,4 @@
+import { installLabrastroEngineeringApi, type LabrastroEngineeringApi } from "./labrastro-engineering-api";
 import { installLabrastroAgentFolderApi, type LabrastroAgentFolderApi } from "./labrastro-agent-folder-api";
 import type { ApiClient } from "./client";
 import { installLabrastroSkillApi, type LabrastroSkillApi } from "./labrastro-skill-api";
@@ -21,6 +22,7 @@ export { dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro
 declare module "./client" {
   interface ApiClient extends
     LabrastroAgentFolderApi,
+    LabrastroEngineeringApi,
     LabrastroSkillApi,
     LabrastroMessageDeliveryApi,
     LabrastroDependencyApi,
@@ -32,6 +34,7 @@ declare module "./client" {
 
 export function installLabrastroApi(target: { prototype: ApiClient }): void {
   installLabrastroAgentFolderApi(target);
+  installLabrastroEngineeringApi(target);
   installLabrastroSkillApi(target);
   installLabrastroMessageDeliveryApi(target);
   installLabrastroDependencyApi(target);
@@ -40,3 +43,6 @@ export function installLabrastroApi(target: { prototype: ApiClient }): void {
   installLabrastroYskApi(target);
   installLabrastroGitHubApi(target);
 }
+
+export { EngineeringConfigSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, BaselineRevisionSchema, BaselineDiffSchema, BaselineDecisionSchema, BaselineHistorySchema, BaselineChapterSchema } from "./labrastro-engineering-schemas";
+export type { EngineeringConfig, EngineeringOverview, BaselineRevision, BaselineDiff, BaselineDecision, BaselineHistory, BaselineChapter } from "./labrastro-engineering-schemas";
