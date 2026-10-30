@@ -777,34 +777,81 @@ it("does not invalidate global queries on task progress", () => {
   } finally { unmount(); qc.clear(); vi.useRealTimers(); }
 });
 
-it("patches cached agent status without invalidating the agent list", () => {
+it.each(["full-agent", "reconciliation"])(
+  "patches a status-only %s broadcast without invalidating the agent list",
+  (shape) => {
+    vi.useFakeTimers();
+    vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+    const qc = new QueryClient();
+    const ws = createMockWs();
+    const agentsKey = workspaceKeys.agents("ws-1");
+    const detailKey = workspaceKeys.agent("ws-1", "agent-1");
+    qc.setQueryData(agentsKey, [
+      { id: "agent-1", name: "One", status: "idle", updated_at: "old", skills: [{ id: "skill-1" }] },
+      { id: "agent-2", name: "Two", status: "idle" },
+    ]);
+    qc.setQueryData(detailKey, { id: "agent-1", name: "One", status: "idle" });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    try {
+      invalidate.mockClear();
+      vi.mocked(ws.onAny).mock.calls[0]![0]({
+        type: "agent:status",
+        payload: shape === "full-agent"
+          ? { agent: { id: "agent-1", name: "One", status: "working", updated_at: "new", skills: [] } }
+          : { agent_id: "agent-1", status: "working" },
+      } as never);
+      vi.advanceTimersByTime(100);
+
+      expect(qc.getQueryData(agentsKey)).toEqual([
+        { id: "agent-1", name: "One", status: "working", updated_at: "old", skills: [{ id: "skill-1" }] },
+        { id: "agent-2", name: "Two", status: "idle" },
+      ]);
+      expect(qc.getQueryData(detailKey)).toEqual({ id: "agent-1", name: "One", status: "working" });
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: agentsKey });
+    } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+  },
+);
+
+it("keeps the generic refresh for a full agent update that also carries status", () => {
   vi.useFakeTimers();
   vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
   const qc = new QueryClient();
   const ws = createMockWs();
   const agentsKey = workspaceKeys.agents("ws-1");
-  const detailKey = workspaceKeys.agent("ws-1", "agent-1");
-  qc.setQueryData(agentsKey, [
-    { id: "agent-1", name: "One", status: "idle" },
-    { id: "agent-2", name: "Two", status: "idle" },
-  ]);
-  qc.setQueryData(detailKey, { id: "agent-1", name: "One", status: "idle" });
+  qc.setQueryData(agentsKey, [{ id: "agent-1", name: "Before", status: "idle", runtime_bound: true }]);
   const invalidate = vi.spyOn(qc, "invalidateQueries");
   const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
   try {
     invalidate.mockClear();
     vi.mocked(ws.onAny).mock.calls[0]![0]({
       type: "agent:status",
-      payload: { agent: { id: "agent-1", status: "working" } },
+      payload: { agent: { id: "agent-1", name: "After", status: "working", runtime_bound: true } },
     } as never);
     vi.advanceTimersByTime(100);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: agentsKey });
+  } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+});
 
-    expect(qc.getQueryData(agentsKey)).toEqual([
-      { id: "agent-1", name: "One", status: "working" },
-      { id: "agent-2", name: "Two", status: "idle" },
-    ]);
-    expect(qc.getQueryData(detailKey)).toEqual({ id: "agent-1", name: "One", status: "working" });
-    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: agentsKey });
+it("coalesces folder and squad refreshes for a burst of status patches", () => {
+  vi.useFakeTimers();
+  vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  qc.setQueryData(workspaceKeys.agents("ws-1"), [{ id: "agent-1", status: "idle" }]);
+  const invalidate = vi.spyOn(qc, "invalidateQueries");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    invalidate.mockClear();
+    for (let i = 0; i < 5; i++) {
+      vi.mocked(ws.onAny).mock.calls[0]![0]({
+        type: "agent:status",
+        payload: { agent: { id: "agent-1", status: i % 2 === 0 ? "working" : "idle" } },
+      } as never);
+    }
+    expect(invalidate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(invalidate).toHaveBeenCalledTimes(2);
   } finally { unmount(); qc.clear(); vi.useRealTimers(); }
 });
 

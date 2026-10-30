@@ -758,6 +758,14 @@ function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void
   });
 }
 
+function isStatusOnlyAgentUpdate(cached: Agent, incoming: Agent): boolean {
+  return Object.entries(incoming).every(([key, value]) => {
+    if (key === "status" || key === "updated_at" || key === "skills") return true;
+    const cachedValue = cached[key as keyof Agent];
+    return value === cachedValue || JSON.stringify(value) === JSON.stringify(cachedValue);
+  });
+}
+
 function applyAgentStatusPatch(
   qc: QueryClient,
   wsId: string,
@@ -771,6 +779,18 @@ function applyAgentStatusPatch(
   const agentId = event.agent?.id ?? event.agent_id;
   const status = event.agent?.status ?? event.status;
   if (!agentId || !status) return false;
+
+  const cachedAgent = qc.getQueryData<Agent[]>(workspaceKeys.agents(wsId))
+    ?.find((agent) => agent.id === agentId);
+  if (!cachedAgent) return false;
+  const isReconciliation = !event.agent && Object.keys(event).every(
+    (key) => key === "agent_id" || key === "status",
+  );
+  // Other agent writes use the same event type. Only a status reconciliation
+  // may skip the authoritative list refresh; uncertainty falls back to it.
+  if (event.agent ? !isStatusOnlyAgentUpdate(cachedAgent, event.agent) : !isReconciliation) {
+    return false;
+  }
 
   qc.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current) =>
     current?.map((agent) => agent.id === agentId ? { ...agent, status } : agent),
@@ -1132,14 +1152,16 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId && applyAgentStatusPatch(qc, wsId, msg.payload)) {
           scheduleWorkingAgentRefresh(wsId);
-          void invalidateAgentFolderQueries(qc, wsId);
-          invalidateSquadMemberStatusQueries(qc, wsId);
+          debouncedRefresh("agent:status", () => {
+            void invalidateAgentFolderQueries(qc, wsId);
+            invalidateSquadMemberStatusQueries(qc, wsId);
+          });
           return;
         }
       }
       if (specificEvents.has(msg.type)) return;
       const prefix = msg.type.split(":")[0] ?? "";
-      if (prefix === "agent" || (prefix === "task" && msg.type !== "task:progress")) {
+      if (prefix === "agent" || prefix === "task") {
         const wsId = getCurrentWsId();
         if (wsId) scheduleWorkingAgentRefresh(wsId);
       }
