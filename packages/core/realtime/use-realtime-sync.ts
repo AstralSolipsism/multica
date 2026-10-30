@@ -127,6 +127,8 @@ import type {
   ChatSession,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
+  Agent,
+  AgentStatusPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -756,6 +758,29 @@ function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void
   });
 }
 
+function applyAgentStatusPatch(
+  qc: QueryClient,
+  wsId: string,
+  payload: unknown,
+): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const event = payload as Partial<AgentStatusPayload> & {
+    agent_id?: string;
+    status?: Agent["status"];
+  };
+  const agentId = event.agent?.id ?? event.agent_id;
+  const status = event.agent?.status ?? event.status;
+  if (!agentId || !status) return false;
+
+  qc.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current) =>
+    current?.map((agent) => agent.id === agentId ? { ...agent, status } : agent),
+  );
+  qc.setQueryData<Agent>(workspaceKeys.agent(wsId, agentId), (current) =>
+    current ? { ...current, status } : current,
+  );
+  return true;
+}
+
 export interface RealtimeSyncStores {
   authStore: UseBoundStore<StoreApi<AuthState>>;
 }
@@ -985,8 +1010,8 @@ export function useRealtimeSync(
       // Powers the agent presence cache: any task lifecycle change
       // (dispatch / completed / failed / cancelled) refreshes the
       // workspace-wide agent-task-snapshot query so per-agent presence
-      // reflects the change. task:message is NOT in this prefix path — it
-      // stays in specificEvents to avoid an invalidate storm during long runs.
+      // reflects the change. task:message and task:progress stay in
+      // specificEvents to avoid invalidate storms during long runs.
       task: () => {
         const wsId = getCurrentWsId();
         if (!wsId) return;
@@ -1016,7 +1041,6 @@ export function useRealtimeSync(
         // shape as the tasks invalidation above — any task lifecycle
         // event shifts the aggregated usage numbers.
         qc.invalidateQueries({ queryKey: ["issues", "usage"] });
-        qc.invalidateQueries({ queryKey: issueKeys.workspaceUsage(wsId) });
         // Squad members-status reads the same task lifecycle to flip
         // working ↔ idle for each agent member.
         invalidateSquadMemberStatusQueries(qc, wsId);
@@ -1092,11 +1116,10 @@ export function useRealtimeSync(
       // Chat events are handled explicitly below; do not double-invalidate.
       "chat:message", "chat:done", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
       "chat:session_created", "chat:session_deleted", "chat:session_updated",
-      // task:message stays out of the prefix path because it fires per
-      // streamed message during a long run — invalidating the snapshot on
-      // every message would flood the network. Specific chat handlers below
-      // still receive it via ws.on() (a separate subscription channel).
-      "task:message",
+      // Streamed messages and high-frequency progress frames stay out of the
+      // prefix path. Specific task/chat subscriptions still receive them via
+      // ws.on(), which is independent of this onAny dispatch.
+      "task:message", "task:progress",
       // task:completed / task:failed deliberately NOT here. They go through
       // both the task-prefix invalidate (refreshes the agent-task-snapshot
       // cache) AND the chat-specific ws.on() handlers below. The two
@@ -1105,6 +1128,15 @@ export function useRealtimeSync(
     ]);
 
     const unsubAny = ws.onAny((msg) => {
+      if (msg.type === "agent:status") {
+        const wsId = getCurrentWsId();
+        if (wsId && applyAgentStatusPatch(qc, wsId, msg.payload)) {
+          scheduleWorkingAgentRefresh(wsId);
+          void invalidateAgentFolderQueries(qc, wsId);
+          invalidateSquadMemberStatusQueries(qc, wsId);
+          return;
+        }
+      }
       if (specificEvents.has(msg.type)) return;
       const prefix = msg.type.split(":")[0] ?? "";
       if (prefix === "agent" || (prefix === "task" && msg.type !== "task:progress")) {

@@ -1316,7 +1316,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const { data: allIssues = [] } = useQuery({
+    ...issueListOptions(wsId),
+    enabled: false,
+  });
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // Activity and issue visuals share the catalog's custom geometry and color;
@@ -1530,9 +1533,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     didHighlightRef.current = null;
   }, [id]);
 
-  // Issue data from TQ — uses detail query, seeded from list cache if available.
-  // Only seed when description is present; the list API omits it, so a partial
-  // list row must not masquerade as a hydrated issue detail.
+  // Issue data from TQ — uses the detail query, seeded from the list cache
+  // without fetching that list. Only a cached row with a description may seed
+  // the detail; a partial row must not masquerade as a hydrated issue detail.
   const { data: issue = null, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
     ...issueDetailOptions(wsId, id),
     // List rows and issue-created realtime payloads intentionally omit the
@@ -2150,7 +2153,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const {
     reactions: issueReactions,
     toggleReaction: handleToggleIssueReaction,
-  } = useIssueReactions(id, user?.id);
+  } = useIssueReactions(wsId, id, user?.id);
 
   const {
     subscribers, isSubscribed, subscriptionReason, subscriptionKnown,

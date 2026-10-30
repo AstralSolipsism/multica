@@ -34,8 +34,22 @@ export function useLocalSearchIndexSync(
   useEffect(() => {
     if (!userId || !workspaceId || !workspaceSlug) return;
     const index = getLocalSearchIndex();
-    index.attach({ userId, workspaceId, workspaceSlug });
-    return () => index.detach();
+    const idleTimeoutMs = 3_000;
+    let attached = false;
+    const attach = () => {
+      index.attach({ userId, workspaceId, workspaceSlug });
+      attached = true;
+    };
+    const idleId = typeof window.requestIdleCallback === "function"
+      ? window.requestIdleCallback(attach, { timeout: idleTimeoutMs })
+      : null;
+    const fallbackId = idleId === null ? setTimeout(attach, idleTimeoutMs) : null;
+
+    return () => {
+      if (idleId !== null) window.cancelIdleCallback(idleId);
+      if (fallbackId !== null) clearTimeout(fallbackId);
+      if (attached) index.detach();
+    };
   }, [userId, workspaceId, workspaceSlug]);
 
   // Membership is the only access boundary, so the workspace list says which

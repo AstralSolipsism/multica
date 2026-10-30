@@ -12,6 +12,12 @@ let runs: unknown[] = [];
 let systemRules: SystemWakeup[] = [];
 let pending = false;
 let wakeup: IssueWakeup;
+let hideWakeup = false;
+let observedQueryOptions: {
+  queryKey: string[];
+  enabled?: boolean;
+  refetchInterval?: unknown;
+}[] = [];
 let status = "queued";
 let viewTZ = "UTC";
 vi.mock("./wakeup-condition-names", () => ({
@@ -33,18 +39,26 @@ vi.mock("@multica/core/issues", () => ({
   issueWakeupRunsOptions: () => ({ queryKey: ["runs"] }),
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: ({ queryKey }: { queryKey: string[] }) => ({
-    data:
-      queryKey[0] === "wakeups"
-        ? [wakeup]
-        : queryKey[0] === "system"
-          ? systemRules
-          : queryKey[0] === "tasks"
-            ? [{ id: "task", status }]
-            : queryKey[0] === "runs"
-              ? runs
-              : [],
-  }),
+  useQuery: (options: {
+    queryKey: string[];
+    enabled?: boolean;
+    refetchInterval?: unknown;
+  }) => {
+    observedQueryOptions.push(options);
+    const { queryKey } = options;
+    return {
+      data:
+        queryKey[0] === "wakeups"
+          ? hideWakeup ? [] : [wakeup]
+          : queryKey[0] === "system"
+            ? systemRules
+            : queryKey[0] === "tasks"
+              ? [{ id: "task", status }]
+              : queryKey[0] === "runs"
+                ? runs
+                : [],
+    };
+  },
 }));
 vi.mock("../../common/use-viewing-timezone", () => ({
   useViewingTimezone: () => viewTZ,
@@ -64,6 +78,8 @@ beforeEach(() => {
   systemRules = [];
   enable.mockReset().mockResolvedValue(undefined);
   pending = false;
+  hideWakeup = false;
+  observedQueryOptions = [];
   status = "queued";
   viewTZ = "UTC";
   wakeup = {
@@ -89,6 +105,34 @@ beforeEach(() => {
   };
 });
 describe("Wakeups sidebar", () => {
+  it("disables wakeups, task and system-rule queries while collapsed", () => {
+    renderWithI18n(<WakeupsSection issueId="issue" />);
+    for (const key of ["wakeups", "tasks", "system"]) {
+      expect(observedQueryOptions.findLast((options) => options.queryKey[0] === key)?.enabled).toBe(true);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /^Wakeups/ }));
+
+    for (const key of ["wakeups", "tasks", "system"]) {
+      expect(observedQueryOptions.findLast((options) => options.queryKey[0] === key)?.enabled).toBe(false);
+    }
+  });
+
+  it("stops polling and skips run details when a closed issue has no wakeups", () => {
+    hideWakeup = true;
+    renderWithI18n(<WakeupsSection issueId="issue" closed />);
+
+    expect(screen.queryByRole("button", { name: /^Wakeups/ })).toBeNull();
+    const wakeupsOptions = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups");
+    const refetchInterval = wakeupsOptions?.refetchInterval as (
+      query: { state: { data: IssueWakeup[] } },
+    ) => number | false;
+    expect(refetchInterval({ state: { data: [] } })).toBe(false);
+    for (const key of ["tasks", "system"]) {
+      expect(observedQueryOptions.findLast((options) => options.queryKey[0] === key)?.enabled).toBe(false);
+    }
+  });
+
   it("describes hourly schedules without exposing interval seconds", () => {
     renderWithI18n(<WakeupsSection issueId="issue" />, { locale: "zh-Hans" });
     expect(screen.getByRole("button", { name: /唤醒 Emacs/ })).toHaveTextContent("每小时唤醒");

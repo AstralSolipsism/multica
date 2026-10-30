@@ -814,7 +814,7 @@ export function ChatWindow() {
       }
     : { width: renderWidth, height: renderHeight };
 
-  const contextItems = useChatContextItems(wsId);
+  const contextItems = useChatContextItems(wsId, isOpen);
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
   return (
