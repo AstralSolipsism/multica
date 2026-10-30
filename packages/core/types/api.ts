@@ -550,6 +550,7 @@ export interface SearchIssueResult extends Issue {
 
 export interface SearchIssuesResponse {
   issues: SearchIssueResult[];
+  has_more?: boolean;
 }
 
 export interface SearchProjectResult extends Project {

@@ -1226,11 +1226,13 @@ export class ApiClient {
     );
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; project_id?: string; scope?: "all" | "title_desc"; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
+    if (params.project_id) search.set("project_id", params.project_id);
+    if (params.scope && params.scope !== "all") search.set("scope", params.scope);
     const raw = await this.fetch<unknown>(
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,

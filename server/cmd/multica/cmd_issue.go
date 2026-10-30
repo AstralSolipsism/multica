@@ -474,7 +474,10 @@ var issueSearchCmd = &cobra.Command{
 	Short: "Search issues by title, description, or comments",
 	Long: "Search issues in the current workspace. The query matches issue titles,\n" +
 		"descriptions, and comment bodies, so a conclusion that only lives in a\n" +
-		"comment thread is still findable.\n\n" +
+		"comment thread is still findable. Use --scope title_desc to match only\n" +
+		"titles and descriptions and skip the long comment threads.\n\n" +
+		"Done and cancelled issues are included by default; use --open-only to\n" +
+		"search only issues that are still open.\n\n" +
 		"A bare number or an identifier-shaped query (\"412\", \"AGE-412\") matches\n" +
 		"the issue with that number. The prefix is not validated, and number\n" +
 		"matches rank first, so pasting an identifier from another tracker can\n" +
@@ -482,7 +485,9 @@ var issueSearchCmd = &cobra.Command{
 		"The MATCH column (match_source in --output json) reports the strongest\n" +
 		"field that matched — title, description, or comment — and falls back to\n" +
 		"\"comment\" for a number-only hit. Treat it as a display hint, not a\n" +
-		"filter.",
+		"filter.\n\n" +
+		"Results are paginated: --output json reports has_more, and --offset\n" +
+		"advances by the number of issues in that same response.",
 	Args: cobra.ExactArgs(1),
 	RunE: runIssueSearch,
 }
@@ -753,7 +758,11 @@ func init() {
 
 	// issue search
 	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return")
-	issueSearchCmd.Flags().Bool("include-closed", false, "Include done and cancelled issues")
+	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
+	issueSearchCmd.Flags().String("project", "", "Filter results by project ID or ID prefix")
+	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
+	issueSearchCmd.Flags().Bool("include-closed", true, "Include done and cancelled issues (default; kept for compatibility with older flag habits)")
+	issueSearchCmd.Flags().Bool("open-only", false, "Search only issues that are not done or cancelled (overrides --include-closed)")
 	issueSearchCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue subscriber list
@@ -3029,13 +3038,44 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
+	scope, _ := cmd.Flags().GetString("scope")
+	if scope != "all" && scope != "title_desc" {
+		return fmt.Errorf("invalid --scope %q: valid values are all, title_desc", scope)
+	}
+	if scope == "all" {
+		// Never send the default explicitly; the server treats absence as all.
+		scope = ""
+	}
+
+	openOnly, _ := cmd.Flags().GetBool("open-only")
+	includeClosed, _ := cmd.Flags().GetBool("include-closed")
+
+	limit, _ := cmd.Flags().GetInt("limit")
+	offset, _ := cmd.Flags().GetInt("offset")
+
 	params := url.Values{}
 	params.Set("q", args[0])
-	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
-		params.Set("limit", fmt.Sprintf("%d", v))
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
 	}
-	if v, _ := cmd.Flags().GetBool("include-closed"); v {
+	if offset > 0 {
+		params.Set("offset", fmt.Sprintf("%d", offset))
+	}
+	// Terminal issues are searchable by default (matching the frontend's
+	// include_closed: true); --open-only is the opt-out, and --include-closed
+	// keeps working for callers that pass it explicitly.
+	if !openOnly && includeClosed {
 		params.Set("include_closed", "true")
+	}
+	if scope != "" {
+		params.Set("scope", scope)
+	}
+	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
+		project, err := resolveProjectID(ctx, client, projectInput)
+		if err != nil {
+			return fmt.Errorf("resolve project: %w", err)
+		}
+		params.Set("project_id", project.ID)
 	}
 
 	path := "/api/issues/search?" + params.Encode()
@@ -3049,7 +3089,13 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
+		wrapped := map[string]any{
+			"issues":   issuesRaw,
+			"limit":    limit,
+			"offset":   offset,
+			"has_more": boolVal(result, "has_more"),
+		}
+		return cli.PrintJSON(os.Stdout, wrapped)
 	}
 
 	headers := []string{"KEY", "TITLE", "STATUS", "MATCH"}
@@ -3075,6 +3121,9 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
+	if hasMore := boolVal(result, "has_more"); hasMore {
+		fmt.Fprintf(os.Stderr, "More results available: --offset %d\n", offset+len(issuesRaw))
+	}
 	return nil
 }
 
@@ -3602,4 +3651,11 @@ func compactComments(comments []map[string]any) {
 			}
 		}
 	}
+}
+
+// boolVal reads a boolean field from a decoded JSON object, defaulting to
+// false when the backend omitted it.
+func boolVal(m map[string]any, key string) bool {
+	v, _ := m[key].(bool)
+	return v
 }

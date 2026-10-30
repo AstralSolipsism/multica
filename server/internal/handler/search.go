@@ -42,6 +42,13 @@ const (
 	defaultSearchWorkMemMB = 64
 )
 
+// searchScopeTitleDesc is the only non-default value the issue search `scope`
+// parameter accepts: it restricts matching to issue titles and descriptions,
+// dropping comment matches and their long-process noise from both eligibility
+// and ranking (OL-458). Any other or absent value keeps the default all-field
+// scope.
+const searchScopeTitleDesc = "title_desc"
+
 // configuredSearchWorkMemMB removes the candidate-first comment aggregation
 // spill seen at Postgres' 4 MB default. work_mem is a per-node ceiling, not a
 // reservation: the production plan's dominant sort used about 9 MB, but the
