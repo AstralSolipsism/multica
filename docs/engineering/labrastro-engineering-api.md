@@ -79,4 +79,5 @@ indexes before tables.
 After commit, `project_engineering:updated` and `project_baseline:changed` publish
 only project/chapter identifiers. Shared API clients parse all responses through
 Zod and `parseWithFallback`; unknown statuses, warnings and credentials remain
-explicitly unknown. The CLI and overview UI are separate follow-up issues.
+explicitly unknown. The [baseline CLI](labrastro-project-baseline-cli.md) exposes
+these APIs; the overview UI is a separate follow-up issue.
