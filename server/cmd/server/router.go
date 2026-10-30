@@ -1569,9 +1569,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// the browsers above; the other four composio endpoints stay session-gated.
 	r.Get("/api/integrations/composio/callback", h.ComposioCallback)
 
+	r.Post("/api/media/jobs/{id}/output", h.UploadMediaOutput)
+	r.Get("/api/media/jobs/{id}/status", h.MediaAttemptStatus)
+	r.Get("/api/media/jobs/{id}/inputs/{attachmentID}", h.DownloadMediaInput)
+
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
+		r.Post("/media/claim", h.ClaimMediaJob)
+		r.Post("/media/result", h.ReportMediaJob)
 
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
@@ -1696,6 +1702,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// middleware.Auth and never call this (MUL-7436).
 		r.Post("/api/auth/refresh", h.RefreshSession)
 		r.Post("/api/upload-file", h.UploadFile)
+		r.Post("/api/media/jobs", h.CreateMediaJob)
+		r.Get("/api/media/jobs/{id}", h.GetMediaJob)
+		r.Post("/api/media/jobs/{id}/cancel", h.CancelMediaJob)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 

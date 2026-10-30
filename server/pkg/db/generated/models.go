@@ -1452,6 +1452,27 @@ type MaintenanceJob struct {
 	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
 }
 
+type MediaJob struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	CallerID      pgtype.UUID        `json:"caller_id"`
+	UploaderType  string             `json:"uploader_type"`
+	UploaderID    pgtype.UUID        `json:"uploader_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	Request       []byte             `json:"request"`
+	State         string             `json:"state"`
+	RuntimeID     pgtype.UUID        `json:"runtime_id"`
+	Attempt       pgtype.UUID        `json:"attempt"`
+	Attempts      int32              `json:"attempts"`
+	AttachmentID  pgtype.UUID        `json:"attachment_id"`
+	Error         string             `json:"error"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Member struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

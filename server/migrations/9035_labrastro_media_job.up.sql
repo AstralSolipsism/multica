@@ -1,0 +1,20 @@
+CREATE TABLE media_job (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    caller_id uuid NOT NULL,
+    uploader_type text NOT NULL,
+    uploader_id uuid NOT NULL,
+    task_id uuid,
+    issue_id uuid,
+    chat_session_id uuid,
+    request jsonb NOT NULL,
+    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','completed','failed','cancelled')),
+    runtime_id uuid,
+    attempt uuid,
+    attempts integer NOT NULL DEFAULT 0,
+    attachment_id uuid,
+    error text NOT NULL DEFAULT '',
+    expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);

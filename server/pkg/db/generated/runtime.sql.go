@@ -2301,7 +2301,7 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    metadata = EXCLUDED.metadata || jsonb_build_object('media_cooldowns', COALESCE(agent_runtime.metadata->'media_cooldowns', '{}'::jsonb)),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
@@ -2424,7 +2424,7 @@ DO UPDATE SET
     provider = EXCLUDED.provider,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    metadata = EXCLUDED.metadata || jsonb_build_object('media_cooldowns', COALESCE(agent_runtime.metadata->'media_cooldowns', '{}'::jsonb)),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()

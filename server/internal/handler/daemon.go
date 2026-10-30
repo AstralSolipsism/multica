@@ -326,7 +326,8 @@ type DaemonRegisterRequest struct {
 		// runtime_profile (MUL-3284). Empty = built-in runtime (legacy path).
 		// Type carries the protocol family for both built-in and custom rows
 		// so task routing (agent.New) is unchanged.
-		ProfileID string `json:"profile_id"`
+		ProfileID         string   `json:"profile_id"`
+		MediaCapabilities []string `json:"media_capabilities,omitempty"`
 	} `json:"runtimes"`
 	FailedProfiles []struct {
 		ProfileID   string `json:"profile_id"`
@@ -770,7 +771,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			"version":      runtime.Version,
 			"cli_version":  req.CLIVersion,
 			"launched_by":  req.LaunchedBy,
-			"capabilities": requestClientCapabilities(r),
+			"capabilities": runtimeMediaCapabilities(r, runtime.Type, runtime.MediaCapabilities),
 		})
 
 		var registered db.AgentRuntime
@@ -1013,7 +1014,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					"version":                            "",
 					"cli_version":                        req.CLIVersion,
 					"launched_by":                        req.LaunchedBy,
-					"capabilities":                       requestClientCapabilities(r),
+					"capabilities":                       runtimeMediaCapabilities(r, "", nil),
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
 					"command_name":                       resolvedCommandName,

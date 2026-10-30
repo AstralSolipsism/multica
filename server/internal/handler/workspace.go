@@ -1257,6 +1257,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return deleteWorkspaceTasks(ctx, qtx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete media jobs",
+			run:  func() error { return qtx.DeleteMediaJobsForWorkspace(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete YSK data",
 			run:  func() error { return qtx.LabrastroYSKDeleteWorkspace(ctx, requester.WorkspaceID) },
 		},
