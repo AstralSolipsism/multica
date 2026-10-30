@@ -373,13 +373,26 @@ export function WakeupsSection({
   const workspaceId = useCurrentWorkspace()?.id ?? "";
   const [open, setOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const queryEnabled = open && !!workspaceId && !!issueId;
   const {
     data = [],
     isError,
     refetch,
-  } = useQuery(issueWakeupsOptions(workspaceId, issueId));
-  const { data: tasks = [] } = useQuery(issueTasksOptions(issueId));
-  const { data: systemRules = [] } = useQuery(issueSystemWakeupsOptions(workspaceId, issueId));
+  } = useQuery({
+    ...issueWakeupsOptions(workspaceId, issueId),
+    enabled: queryEnabled,
+    refetchInterval: (query) =>
+      closed && query.state.data?.length === 0 ? false : 10_000,
+  });
+  const loadRunDetails = !closed || data.length > 0;
+  const { data: tasks = [] } = useQuery({
+    ...issueTasksOptions(issueId),
+    enabled: open && !!issueId && loadRunDetails,
+  });
+  const { data: systemRules = [] } = useQuery({
+    ...issueSystemWakeupsOptions(workspaceId, issueId),
+    enabled: queryEnabled && loadRunDetails,
+  });
   const text = useWakeupText();
   const disable = useDisableIssueWakeup(workspaceId, issueId);
   const enable = useEnableIssueWakeup(workspaceId, issueId);

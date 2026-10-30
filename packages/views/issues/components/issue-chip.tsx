@@ -59,7 +59,10 @@ export function IssueChip({
 }: IssueChipProps) {
   const wsId = useWorkspaceId();
   const { colorOf: statusColorOf, iconOf: statusIconOf } = useIssueStatuses(wsId);
-  const { data: issues = [] } = useQuery(issueListOptions(wsId));
+  const { data: issues = [] } = useQuery({
+    ...issueListOptions(wsId),
+    enabled: false,
+  });
   const listIssue = issues.find((i) => i.id === issueId);
 
   // Fallback fetch for issues outside the list's first page (the first

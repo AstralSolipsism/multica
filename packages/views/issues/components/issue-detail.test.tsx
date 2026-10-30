@@ -87,6 +87,14 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.getProject.mockReset();
   });
 
+  it("observes the issue list without fetching it and shares the cold detail read with reactions", async () => {
+    renderIssueDetail();
+
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(mockApiObj.getIssue).toHaveBeenCalledTimes(1));
+    expect(mockApiObj.listIssues).not.toHaveBeenCalled();
+  });
+
   it("counts comment files as deliverables, a re-upload once as v2, never the description's (MUL-7649)", async () => {
     const file = (id: string, over: Partial<Attachment>): Attachment => ({
       id,

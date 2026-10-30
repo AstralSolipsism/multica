@@ -23,6 +23,7 @@ import { useLocalSearchIndexSync } from "../search-index/hooks";
 import { useYouShouldKnowRealtimeSync } from "../you-should-know/realtime";
 import { createLogger } from "../logger";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
+import { useWorkspaceUsageRealtimeSync } from "./use-workspace-usage-realtime-sync";
 
 type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => void;
 
@@ -133,6 +134,8 @@ export function WSProvider({
 
   // Keeps You Should Know tip caches fresh across tabs and reconnects.
   useYouShouldKnowRealtimeSync(wsClient);
+
+  useWorkspaceUsageRealtimeSync(wsClient);
 
   const subscribe = useCallback(
     (event: WSEventType, handler: EventHandler) => {

@@ -80,7 +80,7 @@ export function parseCurrentContextRoute(pathname: string, searchParams: URLSear
   return null;
 }
 
-export function useChatContextItems(wsId: string): MentionItem[] {
+export function useChatContextItems(wsId: string, enabled: boolean): MentionItem[] {
   const { pathname, searchParams } = useNavigation();
   const currentRoute = parseCurrentContextRoute(pathname, searchParams);
   const recentEntries = useRecentContextStore(selectRecentContexts(wsId));
@@ -91,12 +91,12 @@ export function useChatContextItems(wsId: string): MentionItem[] {
 
   const { data: currentIssue } = useQuery({
     ...issueDetailOptions(wsId, currentRoute?.type === "issue" ? currentRoute.id : ""),
-    enabled: currentRoute?.type === "issue",
+    enabled: enabled && currentRoute?.type === "issue",
   });
 
   const { data: currentProject } = useQuery({
     ...projectDetailOptions(wsId, currentRoute?.type === "project" ? currentRoute.id : ""),
-    enabled: currentRoute?.type === "project",
+    enabled: enabled && currentRoute?.type === "project",
   });
 
   const recentQueries = useQueries({
@@ -104,6 +104,7 @@ export function useChatContextItems(wsId: string): MentionItem[] {
       ...(entry.type === "issue"
         ? issueDetailOptions(wsId, entry.id)
         : projectDetailOptions(wsId, entry.id)),
+      enabled,
       staleTime: 30_000,
     })),
   });

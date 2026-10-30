@@ -86,6 +86,12 @@ describe("IssueChip", () => {
 
     expect(screen.getByText("MUL-999999999999999999999999999999999"))
       .toHaveClass("min-w-0", "truncate");
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["issues"], enabled: false }),
+    );
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["issue", "missing-issue"], enabled: true }),
+    );
   });
 
   it("paints a custom status with its catalog color instead of the category token", () => {

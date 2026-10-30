@@ -1254,6 +1254,32 @@ describe("user-supplied custom pricing", () => {
     ).toBeCloseTo(5, 5);
   });
 
+  it("prices a fully uncosted group whose five cost-split fields are omitted", () => {
+    const row = {
+      ...zeroUsage,
+      provider: "acme",
+      model: "auto",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+    expect(summarizeTaskUsage([row])).toMatchObject({ tokens: 4_000_000, cost: 0 });
+    expect(summarizeTaskUsage([])).toBeNull();
+
+    useCustomPricingStore.getState().setCustomPricing("acme/auto", {
+      input: 2,
+      output: 8,
+      cacheRead: 0.2,
+      cacheWrite: 2,
+    });
+    expect(summarizeTaskUsage([row])?.cost).toBeCloseTo(12.2, 5);
+
+    // An authoritative zero is a real free row, not missing usage, and must
+    // not be estimated again through the custom rate table.
+    expect(summarizeTaskUsage([{ ...row, cost_usd_ticks: 0 }])?.cost).toBe(0);
+  });
+
   it("does NOT shadow the maintained catalog when both define the same model", () => {
     // Catalog wins so a user can't accidentally over-charge themselves for
     // a model we already track (and so a stale local override doesn't
