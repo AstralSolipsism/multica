@@ -2005,12 +2005,14 @@ type ChatLastMessage struct {
 const chatListPreviewLimit = inboxListBodyPreviewLimit
 
 // chatListPreview truncates a list row's last-message content to
-// chatListPreviewLimit characters, by rune boundary like inboxListBody. The
-// front-end list row collapses markdown to one plain line (toPreview in
-// chat-thread-list.tsx), which strips fenced blocks WHOLE via
-// /```[\s\S]*?```/ — a preview cut inside a fence that opened near the start
-// could then render as an empty line. Dropping fence runs from the preview
-// keeps the code text visible instead, so the line can never go blank.
+// chatListPreviewLimit characters, by rune boundary like inboxListBody.
+// Fence markers are stripped from the preview for two client-side reasons
+// (toPreview in chat-thread-list.tsx): a CLOSED block before the cut is
+// stripped whole, so a preview ending in "\n" after one collapses to just
+// the ellipsis; and strip-fences turns any cut-inside-fence remainder into
+// visible code text instead of a dangling marker. Note the trade-off: a
+// closed block's code text now shows in the preview line where the old
+// full-content preview hid it — acceptable for a one-line snippet.
 func chatListPreview(content string) string {
 	cut, seen := 0, 0
 	for offset := range content {

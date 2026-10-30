@@ -19,6 +19,10 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 	child := dbfx.Issue(t, "child usage", testutil.Cols{"parent_issue_id": parent})
 	empty := dbfx.Issue(t, "no usage")
 	zero := dbfx.Issue(t, "metered zero")
+	// free: provider reported a $0 cost for every run (fully priced, price
+	// zero). The split fields must stay so clients don't re-estimate.
+	free := dbfx.Issue(t, "priced zero cost")
+	freePartial := dbfx.Issue(t, "priced zero partial")
 	foreignWS := dbfx.Workspace(t, "foreign usage", "foreign-card-usage")
 	foreign := dbfx.Issue(t, "foreign usage", testutil.Cols{"workspace_id": foreignWS})
 	addUsage := func(issueID, provider, model, status string, tokens int64, cost any) {
@@ -37,6 +41,12 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 	addUsage(parent, "anthropic", "claude-opus-4-6", "running", 400, nil)
 	addUsage(child, "openai", "gpt-5.4", "completed", 500, int64(20_000_000_000))
 	addUsage(zero, "openai", "gpt-5.4", "completed", 0, int64(0))
+	// A fully-priced $0 group and a $0+unpriced partial group: both must KEEP
+	// the split fields — this is the zero-cost vs unpriced distinction the
+	// four uncosted_* == total_* clauses exist to preserve (mutant M3).
+	addUsage(free, "openai", "gpt-5.4", "completed", 50, int64(0))
+	addUsage(freePartial, "openai", "gpt-5.4", "completed", 60, int64(0))
+	addUsage(freePartial, "openai", "gpt-5.4", "failed", 70, nil)
 	addUsage(foreign, "openai", "gpt-5.4", "completed", 999, int64(99_000_000_000))
 	dbfx.Task(t, agentID, testutil.Cols{"issue_id": empty, "status": "completed", "runtime_id": runtimeID})
 
@@ -68,6 +78,28 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 				t.Fatalf("priced / unpriced split (including authoritative zero): %+v", row)
 			}
 		}
+	}
+
+	// Zero-cost PRICED groups keep the split fields: fully-priced $0 (free)
+	// reports cost_usd_ticks=0 with uncosted_* = 0; the $0+unpriced mix
+	// (freePartial) reports cost_usd_ticks=0 with uncosted_* = the unpriced
+	// run's tokens. Omitting these would make clients re-estimate a cost the
+	// provider already reported as zero.
+	if row := byIssue[free]; len(row) != 1 ||
+		row[0].CostUsdTicks == nil || *row[0].CostUsdTicks != 0 ||
+		row[0].UncostedInputTokens == nil || *row[0].UncostedInputTokens != 0 ||
+		row[0].UncostedOutputTokens == nil || *row[0].UncostedOutputTokens != 0 ||
+		row[0].UncostedCacheReadTokens == nil || *row[0].UncostedCacheReadTokens != 0 ||
+		row[0].UncostedCacheWriteTokens == nil || *row[0].UncostedCacheWriteTokens != 0 {
+		t.Fatalf("fully-priced $0 group must keep split fields: %+v", byIssue[free])
+	}
+	if row := byIssue[freePartial]; len(row) != 1 ||
+		row[0].CostUsdTicks == nil || *row[0].CostUsdTicks != 0 ||
+		row[0].UncostedInputTokens == nil || *row[0].UncostedInputTokens != 70 ||
+		row[0].UncostedOutputTokens == nil || *row[0].UncostedOutputTokens != 140 ||
+		row[0].UncostedCacheReadTokens == nil || *row[0].UncostedCacheReadTokens != 210 ||
+		row[0].UncostedCacheWriteTokens == nil || *row[0].UncostedCacheWriteTokens != 280 {
+		t.Fatalf("partial $0-priced group must keep split fields: %+v", byIssue[freePartial])
 	}
 
 	// Fully uncosted rows omit the five cost-split fields (nil here, absent on
@@ -125,8 +157,8 @@ func TestWorkspaceIssueUsageAccountingAndIsolation(t *testing.T) {
 			omitted++
 		}
 	}
-	if omitted != 2 || present != 2 {
-		t.Fatalf("cost-split omission: want 2 omitted / 2 present, got %d / %d", omitted, present)
+	if omitted != 2 || present != 4 {
+		t.Fatalf("cost-split omission: want 2 omitted / 4 present, got %d / %d", omitted, present)
 	}
 
 	req := newRequest("GET", "/api/issues/usage-summary", nil)

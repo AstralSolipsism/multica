@@ -86,24 +86,38 @@ func TestChatListPreviewTruncation(t *testing.T) {
 }
 
 // TestChatListPreviewKeepsFencedContentReadable guards the front-end contract:
-// the list row collapses fenced blocks whole, so a preview cut inside a fence
-// that opened near the start would render as an empty line. The preview must
-// strip the fence markers instead, keeping the code text visible.
+// toPreview strips CLOSED fenced blocks whole, so a preview whose pre-cut text
+// is a closed block plus only whitespace would collapse to a bare ellipsis.
+// stripFences removes the markers, keeping the code text on the line.
 func TestChatListPreviewKeepsFencedContentReadable(t *testing.T) {
-	// Truncation must have happened for this fixture to make sense.
-	fenced := "```html\n<html><body>decision card</body></html>\n" + strings.Repeat("x", 300)
-	got := chatListPreview(fenced)
-	if got == fenced {
+	// The blanking risk: closed block + whitespace up to the cut.
+	closed := "```bash\nmake test\n```\n" + strings.Repeat(" ", 300)
+	got := chatListPreview(closed)
+	if got == closed {
 		t.Fatal("fixture was not truncated; make it longer than the limit")
 	}
 	if strings.Contains(got, "```") {
 		t.Fatalf("fence marker survived: %q", got)
 	}
-	if !strings.Contains(got, "html") || !strings.Contains(got, "decision card") {
+	if !strings.Contains(got, "make test") {
 		t.Fatalf("fenced content lost from preview: %q", got)
 	}
 
-	// Mirrors the front-end toPreview collapse; must not degrade to empty.
+	// Cut inside an unclosed fence: markers gone, code text visible.
+	unclosed := "```html\n<html><body>decision card</body></html>\n" + strings.Repeat("x", 300)
+	got = chatListPreview(unclosed)
+	if got == unclosed {
+		t.Fatal("fixture was not truncated; make it longer than the limit")
+	}
+	if strings.Contains(got, "```") {
+		t.Fatalf("fence marker survived: %q", got)
+	}
+	if !strings.Contains(got, "decision card") {
+		t.Fatalf("fenced content lost from preview: %q", got)
+	}
+
+	// Mirrors the front-end toPreview collapse; must not degrade to a bare
+	// ellipsis while the original had visible content.
 	toPreview := func(content string) string {
 		replaced := regexpReplaceFences(content)
 		for _, c := range []string{"#", "*", "`", ">", "~"} {
@@ -111,8 +125,18 @@ func TestChatListPreviewKeepsFencedContentReadable(t *testing.T) {
 		}
 		return strings.Join(strings.Fields(replaced), " ")
 	}
-	if toPreview(got) == "" {
-		t.Fatalf("preview collapses to empty line on the client: %q", got)
+	// Without stripFences the closed-block preview collapses to a bare
+	// ellipsis — the degradation this test exists for. Guard the premise
+	// itself, then the fix.
+	rawTruncation := string([]rune(closed)[:chatListPreviewLimit-1]) + "…"
+	if got := toPreview(rawTruncation); got != "…" {
+		t.Fatalf("fixture premise broken: raw truncation should collapse to a bare ellipsis, got %q", got)
+	}
+	if got := toPreview(chatListPreview(closed)); got == "…" || !strings.Contains(got, "make test") {
+		t.Fatalf("preview loses fenced content on the client: %q", got)
+	}
+	if got := toPreview(chatListPreview(unclosed)); !strings.Contains(got, "decision card") {
+		t.Fatalf("preview loses fenced content on the client: %q", got)
 	}
 }
 
@@ -130,7 +154,8 @@ func TestChatListPreviewShortContentUnchanged(t *testing.T) {
 
 // regexpReplaceFences mirrors the client's /```[\s\S]*?```/g whole-block strip
 // non-greedily: everything from an opening fence to the nearest closing fence
-// (or the end when unclosed) is replaced with a space.
+// is replaced with a space; an UNCLOSED fence keeps its content (the regex
+// needs a closer to match), which is exactly the client behaviour.
 func regexpReplaceFences(s string) string {
 	for {
 		start := strings.Index(s, "```")
