@@ -94,6 +94,15 @@ func TimestampToString(t pgtype.Timestamptz) string {
 	return t.Time.Format(time.RFC3339)
 }
 
+// TimestampToPreciseString preserves the database ordering of inbox events
+// created within one second, including events received out of order.
+func TimestampToPreciseString(t pgtype.Timestamptz) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.Format("2006-01-02T15:04:05.000000Z07:00")
+}
+
 func TimestampToPtr(t pgtype.Timestamptz) *string {
 	if !t.Valid {
 		return nil

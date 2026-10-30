@@ -155,11 +155,12 @@ it("keeps the active read selection until moving to another notification", async
   setApiInstance({ listInbox, markInboxRead, getInboxUnreadSummary: async () => [] } as unknown as ApiClient);
   renderPage();
   fireEvent.click(await screen.findByText("inbox-a"));
-  await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(2));
-  expect(screen.getByText("inbox-a")).toHaveAttribute("data-read", "true");
+  await waitFor(() => expect(screen.getByText("inbox-a")).toHaveAttribute("data-read", "true"));
+  expect(listInbox).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId("detail")).toHaveTextContent("issue-a");
   fireEvent.click(screen.getByText("inbox-b"));
-  await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByText("inbox-b")).toHaveAttribute("data-read", "true"));
+  expect(listInbox).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId("detail")).toHaveTextContent("issue-b");
   expect(screen.queryByText("inbox-a")).not.toBeInTheDocument();
   expect(screen.getByText("inbox-b")).toHaveAttribute("data-read", "true");

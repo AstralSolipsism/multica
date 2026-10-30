@@ -81,6 +81,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	personalEvents := map[string]bool{
 		protocol.EventInboxNew:           true,
 		protocol.EventInboxRead:          true,
+		protocol.EventInboxUnread:        true,
 		protocol.EventInboxArchived:      true,
 		protocol.EventInboxUnarchived:    true,
 		protocol.EventInboxBatchRead:     true,
@@ -124,7 +125,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	// inbox:read, inbox:archived, inbox:unarchived, inbox:batch-read,
 	// inbox:batch-archived — extract recipient from top-level payload
 	for _, eventType := range []string{
-		protocol.EventInboxRead, protocol.EventInboxArchived, protocol.EventInboxUnarchived,
+		protocol.EventInboxRead, protocol.EventInboxUnread, protocol.EventInboxArchived, protocol.EventInboxUnarchived,
 		protocol.EventInboxBatchRead, protocol.EventInboxBatchArchived,
 	} {
 		bus.Subscribe(eventType, func(e events.Event) {

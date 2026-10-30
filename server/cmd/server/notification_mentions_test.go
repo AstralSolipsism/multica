@@ -34,7 +34,7 @@ func TestNotification_MalformedMemberMentionPreservesValidRecipients(t *testing.
 				"user_id":      mutedID,
 				"preferences":  `{"mentions":"muted"}`,
 			})
-			issueID := fx.Issue(t, "Malformed mention")
+			issueID := fx.Issue(t, "Malformed mention", testutil.Cols{"priority": "high"})
 			fx.Cleanup(t, `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
 			fx.Cleanup(t, `DELETE FROM issue_subscriber WHERE issue_id = $1`, issueID)
 
@@ -93,6 +93,10 @@ func TestNotification_MalformedMemberMentionPreservesValidRecipients(t *testing.
 				t.Fatalf("got %d inbox:new events, want 1", len(inboxEvents))
 			}
 			item := inboxEvents[0].Payload.(map[string]any)["item"].(map[string]any)
+			priority, ok := item["issue_priority"].(*string)
+			if !ok || priority == nil || *priority != "high" {
+				t.Fatalf("inbox:new must carry the current issue priority: %+v", item)
+			}
 			if item["recipient_id"] != recipientID || item["type"] != "mentioned" || item["issue_status"] != "todo" {
 				t.Fatalf("unexpected inbox:new item: %+v", item)
 			}

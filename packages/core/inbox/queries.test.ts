@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
 import { EMPTY_INBOX_FILTERS, type InboxFilters } from "./filter-store";
@@ -259,4 +260,16 @@ describe("unreadCountForWorkspace", () => {
   it("returns zero for an empty summary", () => {
     expect(unreadCountForWorkspace([], "ws-1")).toBe(0);
   });
+});
+
+
+it("uses precise timestamps/IDs while preserving legacy servers' order within a truncated second", () => {
+  const newer = item({ id: "aaa", read: true });
+  const older = item({ id: "zzz", read: false });
+  expect(deduplicateInboxItems([newer, older])).toEqual([newer]);
+  const preciseNewer = { ...newer, created_at: "2026-06-15T08:00:00.000002Z" };
+  const preciseOlder = { ...older, created_at: "2026-06-15T08:00:00.000001Z" };
+  expect(deduplicateInboxItems([preciseOlder, preciseNewer])).toEqual([preciseNewer]);
+  const equalTime = { ...preciseOlder, created_at: preciseNewer.created_at };
+  expect(deduplicateInboxItems([preciseNewer, equalTime])).toEqual([equalTime]);
 });

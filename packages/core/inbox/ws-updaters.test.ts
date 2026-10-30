@@ -6,11 +6,12 @@ import {
   onInboxInvalidate,
   onInboxIssueDeleted,
   onInboxNew,
+  onInboxReadState,
   onInboxIssueStatusChanged,
   onInboxSummaryInvalidate,
   patchInboxIssueProjection,
 } from "./ws-updaters";
-import { inboxKeys } from "./queries";
+import { deduplicateInboxItems, inboxKeys } from "./queries";
 import type { InboxItem } from "../types";
 
 const wsId = "ws-1";
@@ -392,4 +393,85 @@ describe("inbox list refresh during the first load", () => {
       qc.clear();
     }
   });
+});
+
+
+describe("incremental inbox events", () => {
+  it("updates a ready list without refetching and preserves the newest comment anchor across out-of-order events", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    const anchor = makeItem("anchor", "issue-a", { details: { comment_id: "old-comment" } });
+    const queryFn = vi.fn(async () => [anchor]);
+    const options = { queryKey: inboxKeys.list(wsId), queryFn };
+    await qc.fetchQuery(options);
+    const observer = new QueryObserver(qc, options);
+    const unsubscribe = observer.subscribe(() => {});
+    qc.setQueryData(inboxKeys.archived(wsId), []);
+    try {
+      const newest = makeItem("a-newest", "issue-a", { issue_priority: "high", created_at: "2025-01-01T00:00:00.000002Z", read: true });
+      const middle = makeItem("z-middle", "issue-a", { issue_priority: "high", created_at: "2025-01-01T00:00:00.000001Z", details: { comment_id: "new-comment" } });
+      await onInboxNew(qc, wsId, newest);
+      await onInboxNew(qc, wsId, middle);
+      await onInboxReadState(qc, wsId, "a-newest", false);
+      // A duplicate creation event must not overwrite a later read-state patch.
+      await onInboxNew(qc, wsId, newest);
+      const visible = deduplicateInboxItems(observer.getCurrentResult().data!);
+      expect(visible).toEqual([{ ...newest, read: false, details: { comment_id: "new-comment" } }]);
+      expect(queryFn).toHaveBeenCalledTimes(1);
+      expect(qc.getQueryState(inboxKeys.archived(wsId))?.isInvalidated).toBe(true);
+      expect(qc.getQueryState(options.queryKey)?.isInvalidated).toBe(false);
+    } finally {
+      unsubscribe();
+      qc.clear();
+    }
+  });
+
+  it("does not turn an invalidated or absent list into a partial snapshot", async () => {
+    const qc = new QueryClient();
+    const old = makeItem("old", "issue-a");
+    qc.setQueryData(inboxKeys.list(wsId), [old]);
+    await qc.invalidateQueries({ queryKey: inboxKeys.list(wsId), refetchType: "none" });
+    await onInboxNew(qc, wsId, makeItem("new", "issue-b"));
+    expect(qc.getQueryData(inboxKeys.list(wsId))).toEqual([old]);
+    expect(qc.getQueryState(inboxKeys.list(wsId))?.isInvalidated).toBe(true);
+    await onInboxNew(qc, "cold", makeItem("new", "issue-b"));
+    expect(qc.getQueryData(inboxKeys.list("cold"))).toBeUndefined();
+    qc.clear();
+  });
+
+  it("restarts a pending refresh instead of losing its unrelated membership change", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    const old = makeItem("old", "issue-a");
+    const added = makeItem("added", "issue-b");
+    let release!: (items: InboxItem[]) => void;
+    const queryFn = vi.fn<() => Promise<InboxItem[]>>()
+      .mockResolvedValueOnce([old])
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue([added, { ...old, read: true }]);
+    const options = { queryKey: inboxKeys.list(wsId), queryFn };
+    await qc.fetchQuery(options);
+    const observer = new QueryObserver(qc, options);
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      const refetch = qc.refetchQueries({ queryKey: options.queryKey });
+      await onInboxReadState(qc, wsId, "old", true);
+      release([old]);
+      await refetch;
+      expect(observer.getCurrentResult().data).toEqual([added, { ...old, read: true }]);
+      expect(queryFn).toHaveBeenCalledTimes(3);
+    } finally {
+      unsubscribe();
+      qc.clear();
+    }
+  });
+});
+
+
+it("falls back for legacy inbox:new payloads missing issue projections", async () => {
+  const qc = new QueryClient();
+  const old = makeItem("old", "issue-a");
+  qc.setQueryData(inboxKeys.list(wsId), [old]);
+  await onInboxNew(qc, wsId, makeItem("legacy-new", "issue-b"));
+  expect(qc.getQueryData(inboxKeys.list(wsId))).toEqual([old]);
+  expect(qc.getQueryState(inboxKeys.list(wsId))?.isInvalidated).toBe(true);
+  qc.clear();
 });

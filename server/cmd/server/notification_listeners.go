@@ -369,6 +369,7 @@ func notifyIssueSubscribers(
 		}
 	}
 	userPrefs := loadUserPrefs(ctx, queries, workspaceID, memberIDs)
+	issuePriority := inboxIssuePriority(ctx, queries, targetIssueID)
 
 	for _, sub := range subs {
 		// Only notify member-type subscribers (not agents)
@@ -426,6 +427,7 @@ func notifyIssueSubscribers(
 		notified[subID] = true
 		resp := inboxItemToResponse(item)
 		resp["issue_status"] = issueStatus
+		resp["issue_priority"] = issuePriority
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
 			WorkspaceID: workspaceID,
@@ -494,6 +496,7 @@ func notifyDirect(
 
 	resp := inboxItemToResponse(item)
 	resp["issue_status"] = issueStatus
+	resp["issue_priority"] = inboxIssuePriority(ctx, queries, issueID)
 	bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,
 		WorkspaceID: workspaceID,
@@ -578,7 +581,12 @@ func notifyMentionedMembers(
 			mentionUserIDs = append(mentionUserIDs, id)
 		}
 	}
+	if len(mentionUserIDs) == 0 {
+		return
+	}
 	mentionPrefs := loadUserPrefs(context.Background(), queries, e.WorkspaceID, mentionUserIDs)
+
+	issuePriority := inboxIssuePriority(context.Background(), queries, issueID)
 
 	for id := range recipientIDs {
 		if id == e.ActorID || skip[id] {
@@ -612,6 +620,7 @@ func notifyMentionedMembers(
 		}
 		resp := inboxItemToResponse(item)
 		resp["issue_status"] = issueStatus
+		resp["issue_priority"] = issuePriority
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
 			WorkspaceID: e.WorkspaceID,
@@ -1043,13 +1052,25 @@ func inboxItemToResponse(item db.InboxItem) map[string]any {
 		"type":           item.Type,
 		"severity":       item.Severity,
 		"issue_id":       util.UUIDToPtr(item.IssueID),
+		"issue_status":   nil,
+		"issue_priority": nil,
 		"title":          item.Title,
 		"body":           util.TextToPtr(item.Body),
 		"read":           item.Read,
 		"archived":       item.Archived,
-		"created_at":     util.TimestampToString(item.CreatedAt),
+		"created_at":     util.TimestampToPreciseString(item.CreatedAt),
 		"actor_type":     util.TextToPtr(item.ActorType),
 		"actor_id":       util.UUIDToPtr(item.ActorID),
 		"details":        json.RawMessage(item.Details),
 	}
+}
+
+// Resolve once per recipient batch: incremental clients render inbox:new
+// without reloading the list's current issue projections.
+func inboxIssuePriority(ctx context.Context, queries *db.Queries, issueID string) *string {
+	issue, err := queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		return nil
+	}
+	return &issue.Priority
 }

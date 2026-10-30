@@ -3,13 +3,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
-import { useMarkInboxRead, useMarkInboxUnread, useUnarchiveInbox } from "./mutations";
+import { useMarkInboxRead, useMarkInboxUnread, useUnarchiveInbox, useArchiveInbox } from "./mutations";
 import { inboxKeys, useInboxUnreadCount } from "./queries";
 import { onInboxSummaryInvalidate } from "./ws-updaters";
 import { createQueryClient } from "../query-client";
@@ -363,4 +363,68 @@ describe("unread summary is server-owned", () => {
       }
     },
   );
+});
+
+
+it.each([useMarkInboxRead, useMarkInboxUnread, useArchiveInbox])(
+  "restores a refresh interrupted by a single-item optimistic write (%s)", async (useWrite) => {
+    const qc = createQueryClient();
+    const old = item({ archived: false });
+    const added = item({ id: "new", issue_id: "new-issue", archived: false });
+    let release!: (rows: InboxItem[]) => void;
+    const listInbox = vi.fn<() => Promise<InboxItem[]>>()
+      .mockResolvedValueOnce([old])
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+      .mockResolvedValue([added, old]);
+    const write = vi.fn(async () => old);
+    setApiInstance({ markInboxRead: write, markInboxUnread: write, archiveInbox: write } as unknown as ApiClient);
+    const { result, unmount } = renderHook(() => ({
+      list: useQuery({ queryKey: inboxKeys.list(WORKSPACE_ID), queryFn: listInbox }),
+      write: useWrite(),
+    }), { wrapper: createWrapper(qc) });
+    try {
+      await waitFor(() => expect(result.current.list.data).toEqual([old]));
+      let refetch!: Promise<void>;
+      act(() => { refetch = qc.refetchQueries({ queryKey: inboxKeys.list(WORKSPACE_ID) }); });
+      await act(async () => { await result.current.write.mutateAsync(old.id); });
+      await act(async () => { release([old]); await refetch; });
+      await waitFor(() => expect(result.current.list.data).toEqual([added, old]));
+      expect(listInbox).toHaveBeenCalledTimes(3);
+    } finally { unmount(); qc.clear(); }
+  },
+);
+
+
+it("reconciles a refresh started while a read mutation is pending, without requiring a WS echo", async () => {
+  const qc = createQueryClient();
+  const old = item({ archived: false, read: false });
+  let releaseWrite!: () => void;
+  let releaseRead!: (rows: InboxItem[]) => void;
+  let server = [old];
+  const listInbox = vi.fn<() => Promise<InboxItem[]>>()
+    .mockResolvedValueOnce([old])
+    .mockImplementationOnce(() => new Promise((resolve) => { releaseRead = resolve; }))
+    .mockImplementation(async () => server);
+  const markInboxRead = vi.fn(async () => {
+    await new Promise<void>((resolve) => { releaseWrite = resolve; });
+    server = [{ ...old, read: true }];
+    return server[0]!;
+  });
+  setApiInstance({ markInboxRead } as unknown as ApiClient);
+  const { result, unmount } = renderHook(() => ({
+    list: useQuery({ queryKey: inboxKeys.list(WORKSPACE_ID), queryFn: listInbox }),
+    write: useMarkInboxRead(),
+  }), { wrapper: createWrapper(qc) });
+  try {
+    await waitFor(() => expect(result.current.list.data).toEqual([old]));
+    act(() => result.current.write.mutate(old.id));
+    await waitFor(() => expect(markInboxRead).toHaveBeenCalledTimes(1));
+    let refetch!: Promise<void>;
+    act(() => { refetch = qc.invalidateQueries({ queryKey: inboxKeys.list(WORKSPACE_ID) }); });
+    await act(async () => { releaseWrite(); });
+    await waitFor(() => expect(result.current.write.isSuccess).toBe(true));
+    await act(async () => { releaseRead([old]); await refetch; });
+    await waitFor(() => expect(result.current.list.data).toEqual([{ ...old, read: true }]));
+    expect(listInbox).toHaveBeenCalledTimes(3);
+  } finally { unmount(); qc.clear(); }
 });

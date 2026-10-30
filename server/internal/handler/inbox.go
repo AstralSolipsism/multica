@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -46,7 +47,7 @@ func inboxToResponse(i db.InboxItem) InboxItemResponse {
 		Body:          textToPtr(i.Body),
 		Read:          i.Read,
 		Archived:      i.Archived,
-		CreatedAt:     timestampToString(i.CreatedAt),
+		CreatedAt:     util.TimestampToPreciseString(i.CreatedAt),
 		ActorType:     textToPtr(i.ActorType),
 		ActorID:       uuidToPtr(i.ActorID),
 		Details:       json.RawMessage(i.Details),
@@ -122,7 +123,7 @@ func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
 		Body:          inboxListBody(r.Type, r.IssueID, r.Body),
 		Read:          r.Read,
 		Archived:      r.Archived,
-		CreatedAt:     timestampToString(r.CreatedAt),
+		CreatedAt:     util.TimestampToPreciseString(r.CreatedAt),
 		IssueStatus:   textToPtr(r.IssueStatus),
 		IssuePriority: textToPtr(r.IssuePriority),
 		ActorType:     textToPtr(r.ActorType),
@@ -164,19 +165,30 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.Queries.ListInboxItems(r.Context(), db.ListInboxItemsParams{
+	params := db.ListInboxItemsParams{
 		WorkspaceID:   wsUUID,
 		RecipientType: "member",
 		RecipientID:   parseUUID(userID),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list inbox")
-		return
 	}
-
-	resp := make([]InboxItemResponse, len(items))
-	for i, item := range items {
-		resp[i] = inboxRowToResponse(item)
+	resp := make([]InboxItemResponse, 0)
+	if r.URL.Query().Get("view") == "grouped" {
+		items, err := h.Queries.ListGroupedInboxItems(r.Context(), db.ListGroupedInboxItemsParams(params))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list inbox")
+			return
+		}
+		for _, item := range items {
+			resp = append(resp, inboxRowToResponse(db.ListInboxItemsRow(item)))
+		}
+	} else {
+		items, err := h.Queries.ListInboxItems(r.Context(), params)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list inbox")
+			return
+		}
+		for _, item := range items {
+			resp = append(resp, inboxRowToResponse(item))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -235,6 +247,7 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	userID := requestUserID(r)
 	workspaceID := uuidToString(item.WorkspaceID)
 	h.publish(protocol.EventInboxRead, workspaceID, "member", userID, map[string]any{
+		"workspace_id": workspaceID,
 		"item_id":      uuidToString(item.ID),
 		"recipient_id": uuidToString(item.RecipientID),
 	})
@@ -264,6 +277,7 @@ func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 	userID := requestUserID(r)
 	workspaceID := uuidToString(item.WorkspaceID)
 	h.publish(protocol.EventInboxUnread, workspaceID, "member", userID, map[string]any{
+		"workspace_id": workspaceID,
 		"item_id":      uuidToString(item.ID),
 		"recipient_id": uuidToString(item.RecipientID),
 	})

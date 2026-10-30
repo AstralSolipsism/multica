@@ -518,7 +518,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 		}
 		s.publishWakeupActivities(activities...)
 		for _, item := range inbox {
-			s.publishSystemInbox(item, issue.Status)
+			s.publishSystemInbox(item, issue.Status, issue.Priority)
 		}
 		return nil
 	}
@@ -708,7 +708,7 @@ func (s *IssueWakeupService) dispatchSystem(ctx context.Context, prev db.IssueWa
 	return nil
 }
 
-func (s *IssueWakeupService) publishSystemInbox(item db.InboxItem, issueStatus string) {
+func (s *IssueWakeupService) publishSystemInbox(item db.InboxItem, issueStatus, issuePriority string) {
 	if s.Tasks == nil || s.Tasks.Bus == nil {
 		return
 	}
@@ -719,8 +719,8 @@ func (s *IssueWakeupService) publishSystemInbox(item db.InboxItem, issueStatus s
 			"recipient_type": item.RecipientType, "recipient_id": util.UUIDToString(item.RecipientID),
 			"type": item.Type, "severity": item.Severity, "issue_id": util.UUIDToPtr(item.IssueID),
 			"title": item.Title, "body": util.TextToPtr(item.Body), "read": item.Read, "archived": item.Archived,
-			"created_at": util.TimestampToString(item.CreatedAt), "actor_type": util.TextToPtr(item.ActorType),
-			"actor_id": util.UUIDToPtr(item.ActorID), "details": json.RawMessage(item.Details), "issue_status": issueStatus,
+			"created_at": util.TimestampToPreciseString(item.CreatedAt), "actor_type": util.TextToPtr(item.ActorType),
+			"actor_id": util.UUIDToPtr(item.ActorID), "details": json.RawMessage(item.Details), "issue_status": issueStatus, "issue_priority": issuePriority,
 		}},
 	})
 }
