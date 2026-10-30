@@ -758,14 +758,6 @@ function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void
   });
 }
 
-function isStatusOnlyAgentUpdate(cached: Agent, incoming: Agent): boolean {
-  return Object.entries(incoming).every(([key, value]) => {
-    if (key === "status" || key === "updated_at" || key === "skills") return true;
-    const cachedValue = cached[key as keyof Agent];
-    return value === cachedValue || JSON.stringify(value) === JSON.stringify(cachedValue);
-  });
-}
-
 function applyAgentStatusPatch(
   qc: QueryClient,
   wsId: string,
@@ -780,15 +772,11 @@ function applyAgentStatusPatch(
   const status = event.agent?.status ?? event.status;
   if (!agentId || !status) return false;
 
-  const cachedAgent = qc.getQueryData<Agent[]>(workspaceKeys.agents(wsId))
-    ?.find((agent) => agent.id === agentId);
-  if (!cachedAgent) return false;
-  const isReconciliation = !event.agent && Object.keys(event).every(
-    (key) => key === "agent_id" || key === "status",
-  );
-  // Other agent writes use the same event type. Only a status reconciliation
-  // may skip the authoritative list refresh; uncertainty falls back to it.
-  if (event.agent ? !isStatusOnlyAgentUpdate(cachedAgent, event.agent) : !isReconciliation) {
+  if (event.agent) {
+    // TaskService status broadcasts omit runtime_bound; handler configuration
+    // updates always include it and must refresh the authoritative list.
+    if ("runtime_bound" in event.agent) return false;
+  } else if (!Object.keys(event).every((key) => key === "agent_id" || key === "status")) {
     return false;
   }
 
