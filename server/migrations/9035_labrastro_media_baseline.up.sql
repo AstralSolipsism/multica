@@ -1,0 +1,111 @@
+-- No foreign keys: authorization and cross-resource lifecycle belong to the
+-- application transaction. Indexes are built separately and concurrently.
+ALTER TABLE attachment ADD COLUMN IF NOT EXISTS sha256 TEXT
+    CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$');
+
+CREATE TABLE IF NOT EXISTS media_executor (
+    workspace_id UUID NOT NULL,
+    runtime_id UUID NOT NULL,
+    daemon_id TEXT NOT NULL,
+    executor_id UUID NOT NULL,
+    credential_scope_id UUID NOT NULL,
+    provider TEXT NOT NULL CHECK (provider IN ('codex','agy','flow','whisk')),
+    capability TEXT NOT NULL,
+    descriptor_version INTEGER NOT NULL,
+    descriptor JSONB NOT NULL,
+    quota_ref JSONB NOT NULL,
+    readiness TEXT NOT NULL CHECK (readiness IN ('ready','needs_auth','unsupported','unhealthy')),
+    observed_at BIGINT NOT NULL,
+    max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 64),
+    connection_id UUID NOT NULL,
+    connection_expires_at TIMESTAMPTZ NOT NULL,
+    plan_quota JSONB,
+    in_flight INTEGER NOT NULL DEFAULT 0 CHECK (in_flight >= 0),
+    cooldown_until TIMESTAMPTZ,
+    last_selected_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS media_job (
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    initiating_principal_type TEXT NOT NULL,
+    initiating_principal_id UUID NOT NULL,
+    initiating_user_id UUID NOT NULL,
+    task_id UUID,
+    issue_id UUID,
+    capability TEXT NOT NULL,
+    requested_provider TEXT NOT NULL,
+    requested_model TEXT,
+    immutable_request JSONB NOT NULL,
+    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
+    idempotency_key TEXT NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 256),
+    state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','generating','uploading','completed','failed','cancelled')),
+    revision BIGINT NOT NULL DEFAULT 1,
+    deadline_at TIMESTAMPTZ NOT NULL,
+    active_attempt_id UUID,
+    next_eligible_at TIMESTAMPTZ,
+    cancel_requested_at TIMESTAMPTZ,
+    failure_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS media_job_attempt (
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    job_id UUID NOT NULL,
+    runtime_id UUID NOT NULL,
+    executor_id UUID NOT NULL,
+    connection_id UUID NOT NULL,
+    operation_id UUID NOT NULL,
+    fence BIGINT NOT NULL CHECK (fence > 0),
+    lease_expires_at TIMESTAMPTZ NOT NULL,
+    submission_state TEXT NOT NULL DEFAULT 'not_submitted' CHECK (submission_state IN ('not_submitted','accepted','unknown')),
+    phase TEXT NOT NULL DEFAULT 'reserved',
+    provider_operation_ref TEXT,
+    resolved_provider TEXT,
+    resolved_model TEXT,
+    error_origin TEXT,
+    failure_code TEXT,
+    event_seq BIGINT NOT NULL DEFAULT 0 CHECK (event_seq >= 0),
+    closed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS attachment_upload (
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL,
+    initiating_principal_type TEXT NOT NULL,
+    initiating_principal_id UUID NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('input','media_output')),
+    idempotency_key TEXT NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 256),
+    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
+    job_id UUID,
+    attempt_id UUID,
+    fence BIGINT,
+    output_index INTEGER CHECK (output_index >= 0),
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    part_size BIGINT NOT NULL CHECK (part_size > 0),
+    state TEXT NOT NULL DEFAULT 'uploading' CHECK (state IN ('uploading','finalizing','completed','aborted','expired','failed')),
+    object_key TEXT NOT NULL,
+    storage_upload_id TEXT,
+    attachment_id UUID,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((purpose = 'input' AND job_id IS NULL AND attempt_id IS NULL AND fence IS NULL AND output_index IS NULL)
+        OR (purpose = 'media_output' AND job_id IS NOT NULL AND attempt_id IS NOT NULL AND fence > 0 AND output_index IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS attachment_upload_part (
+    workspace_id UUID NOT NULL,
+    upload_id UUID NOT NULL,
+    part_index INTEGER NOT NULL CHECK (part_index >= 0),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    object_key TEXT NOT NULL,
+    storage_etag TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

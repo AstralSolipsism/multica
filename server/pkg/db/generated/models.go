@@ -207,6 +207,44 @@ type Attachment struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
+	Sha256          pgtype.Text        `json:"sha256"`
+}
+
+type AttachmentUpload struct {
+	ID                      pgtype.UUID        `json:"id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	InitiatingPrincipalType string             `json:"initiating_principal_type"`
+	InitiatingPrincipalID   pgtype.UUID        `json:"initiating_principal_id"`
+	Purpose                 string             `json:"purpose"`
+	IdempotencyKey          string             `json:"idempotency_key"`
+	RequestHash             string             `json:"request_hash"`
+	JobID                   pgtype.UUID        `json:"job_id"`
+	AttemptID               pgtype.UUID        `json:"attempt_id"`
+	Fence                   pgtype.Int8        `json:"fence"`
+	OutputIndex             pgtype.Int4        `json:"output_index"`
+	Filename                string             `json:"filename"`
+	ContentType             string             `json:"content_type"`
+	SizeBytes               int64              `json:"size_bytes"`
+	Sha256                  string             `json:"sha256"`
+	PartSize                int64              `json:"part_size"`
+	State                   string             `json:"state"`
+	ObjectKey               string             `json:"object_key"`
+	StorageUploadID         pgtype.Text        `json:"storage_upload_id"`
+	AttachmentID            pgtype.UUID        `json:"attachment_id"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AttachmentUploadPart struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UploadID    pgtype.UUID        `json:"upload_id"`
+	PartIndex   int32              `json:"part_index"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Sha256      string             `json:"sha256"`
+	ObjectKey   string             `json:"object_key"`
+	StorageEtag pgtype.Text        `json:"storage_etag"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type Autopilot struct {
@@ -1450,6 +1488,78 @@ type MaintenanceJob struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+}
+
+type MediaExecutor struct {
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	RuntimeID           pgtype.UUID        `json:"runtime_id"`
+	DaemonID            string             `json:"daemon_id"`
+	ExecutorID          pgtype.UUID        `json:"executor_id"`
+	CredentialScopeID   pgtype.UUID        `json:"credential_scope_id"`
+	Provider            string             `json:"provider"`
+	Capability          string             `json:"capability"`
+	DescriptorVersion   int32              `json:"descriptor_version"`
+	Descriptor          []byte             `json:"descriptor"`
+	QuotaRef            []byte             `json:"quota_ref"`
+	Readiness           string             `json:"readiness"`
+	ObservedAt          int64              `json:"observed_at"`
+	MaxConcurrency      int32              `json:"max_concurrency"`
+	ConnectionID        pgtype.UUID        `json:"connection_id"`
+	ConnectionExpiresAt pgtype.Timestamptz `json:"connection_expires_at"`
+	PlanQuota           []byte             `json:"plan_quota"`
+	InFlight            int32              `json:"in_flight"`
+	CooldownUntil       pgtype.Timestamptz `json:"cooldown_until"`
+	LastSelectedAt      pgtype.Timestamptz `json:"last_selected_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MediaJob struct {
+	ID                      pgtype.UUID        `json:"id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	InitiatingPrincipalType string             `json:"initiating_principal_type"`
+	InitiatingPrincipalID   pgtype.UUID        `json:"initiating_principal_id"`
+	InitiatingUserID        pgtype.UUID        `json:"initiating_user_id"`
+	TaskID                  pgtype.UUID        `json:"task_id"`
+	IssueID                 pgtype.UUID        `json:"issue_id"`
+	Capability              string             `json:"capability"`
+	RequestedProvider       string             `json:"requested_provider"`
+	RequestedModel          pgtype.Text        `json:"requested_model"`
+	ImmutableRequest        []byte             `json:"immutable_request"`
+	RequestHash             string             `json:"request_hash"`
+	IdempotencyKey          string             `json:"idempotency_key"`
+	State                   string             `json:"state"`
+	Revision                int64              `json:"revision"`
+	DeadlineAt              pgtype.Timestamptz `json:"deadline_at"`
+	ActiveAttemptID         pgtype.UUID        `json:"active_attempt_id"`
+	NextEligibleAt          pgtype.Timestamptz `json:"next_eligible_at"`
+	CancelRequestedAt       pgtype.Timestamptz `json:"cancel_requested_at"`
+	FailureCode             pgtype.Text        `json:"failure_code"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type MediaJobAttempt struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	JobID                pgtype.UUID        `json:"job_id"`
+	RuntimeID            pgtype.UUID        `json:"runtime_id"`
+	ExecutorID           pgtype.UUID        `json:"executor_id"`
+	ConnectionID         pgtype.UUID        `json:"connection_id"`
+	OperationID          pgtype.UUID        `json:"operation_id"`
+	Fence                int64              `json:"fence"`
+	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
+	SubmissionState      string             `json:"submission_state"`
+	Phase                string             `json:"phase"`
+	ProviderOperationRef pgtype.Text        `json:"provider_operation_ref"`
+	ResolvedProvider     pgtype.Text        `json:"resolved_provider"`
+	ResolvedModel        pgtype.Text        `json:"resolved_model"`
+	ErrorOrigin          pgtype.Text        `json:"error_origin"`
+	FailureCode          pgtype.Text        `json:"failure_code"`
+	EventSeq             int64              `json:"event_seq"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Member struct {

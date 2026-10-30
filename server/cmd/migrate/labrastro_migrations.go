@@ -7,6 +7,22 @@ package main
 // the catalog against every concurrent CREATE INDEX statement.
 func init() {
 	for version, index := range map[string]string{
+		"9036_labrastro_media_executor_identity_index":        "idx_media_executor_identity",
+		"9037_labrastro_media_executor_runtime_index":         "idx_media_executor_runtime",
+		"9038_labrastro_media_executor_scope_index":           "idx_media_executor_scope",
+		"9039_labrastro_media_job_id_index":                   "idx_media_job_id",
+		"9040_labrastro_media_job_idempotency_index":          "idx_media_job_idempotency",
+		"9041_labrastro_media_job_queue_index":                "idx_media_job_queue",
+		"9042_labrastro_media_attempt_id_index":               "idx_media_attempt_id",
+		"9043_labrastro_media_attempt_active_index":           "idx_media_attempt_active",
+		"9044_labrastro_media_attempt_fence_index":            "idx_media_attempt_fence",
+		"9045_labrastro_media_attempt_operation_index":        "idx_media_attempt_operation",
+		"9046_labrastro_media_attempt_executor_index":         "idx_media_attempt_executor",
+		"9047_labrastro_attachment_upload_id_index":           "idx_attachment_upload_id",
+		"9048_labrastro_attachment_upload_idempotency_index":  "idx_attachment_upload_idempotency",
+		"9049_labrastro_attachment_upload_output_index":       "idx_attachment_upload_output",
+		"9050_labrastro_attachment_upload_pending_index":      "idx_attachment_upload_pending",
+		"9051_labrastro_attachment_upload_part_index":         "idx_attachment_upload_part",
 		"9031_labrastro_agent_folder_id_index":                "idx_labrastro_agent_folder_id",
 		"9032_labrastro_agent_folder_sibling_index":           "idx_labrastro_agent_folder_sibling",
 		"9033_labrastro_agent_placement_identity_index":       "idx_labrastro_agent_placement_identity",

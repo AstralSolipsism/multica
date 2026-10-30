@@ -230,7 +230,7 @@ type Overrides struct {
 	Profile                        string // profile name (empty = default)
 	HealthPort                     int    // health check port (0 = use default)
 	// AllowNoAgents is reserved for read-only local configuration probes. Daemon
-	// startup keeps the default false and still refuses to run with no agent CLI.
+	// startup keeps the default false; provisioned media hosts need no coding CLI.
 	AllowNoAgents bool
 	// DisableAutoUpdate, when true, forces the auto-update poller off. There
 	// is no symmetric "force on" override because the env/default already
@@ -307,7 +307,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// Discover installed agent CLIs. Extracted so the periodic workspace sync
 	// can re-run the same discovery on a live daemon (MUL-5439).
 	agents := probeAgentCLIs()
-	if len(agents) == 0 && !overrides.AllowNoAgents {
+	if len(agents) == 0 && !overrides.AllowNoAgents && !hasProvisionedMediaProfile(overrides.Profile) {
 		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codearts, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, dim, or zeroclaw and ensure it is on PATH")
 	}
 

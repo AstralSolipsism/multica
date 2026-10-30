@@ -33,3 +33,10 @@ func TestRuntimeSharedMemberReadiness(t *testing.T) {
 		t.Fatal("ownerless runtime grants access")
 	}
 }
+
+func TestMediaRuntimeIsNotAnAgentExecutionTarget(t *testing.T) {
+	verdict := runtimeVerdict(db.AgentRuntime{Provider: "media", Status: "online"}, db.Agent{})
+	if verdict.Availability != AgentBlocked {
+		t.Fatal("media runtime admitted an agent")
+	}
+}

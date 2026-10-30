@@ -318,6 +318,7 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 			Type: protocol.EventDaemonHeartbeat,
 			Payload: marshalRaw(protocol.DaemonHeartbeatRequestPayload{
 				RuntimeID:           rid,
+				MediaExecutors:      extras.MediaExecutors,
 				SupportsBatchImport: true,
 				PlanQuota:           extras.PlanQuota,
 				Metrics:             extras.Metrics,

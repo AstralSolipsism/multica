@@ -154,6 +154,9 @@ func AgentReadiness(ctx context.Context, lookup RuntimeLookup, agent db.Agent) (
 // runtimeVerdict combines runtime health with the ownership binding that
 // determines whether this agent can execute there.
 func runtimeVerdict(rt db.AgentRuntime, agent db.Agent) AgentVerdict {
+	if rt.Provider == "media" {
+		return AgentVerdict{Availability: AgentBlocked, Reason: dispatch.ReasonRuntimeUnusable, Detail: "media runtime cannot execute agents"}
+	}
 	if rt.Visibility == "private" && rt.OwnerID.Valid && !RuntimeAllowsUser(rt, agent.OwnerID) {
 		return AgentVerdict{
 			Availability: AgentBlocked,

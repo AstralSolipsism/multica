@@ -317,11 +317,13 @@ type DaemonRegisterRequest struct {
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
 	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
 	Runtimes        []struct {
-		Name        string `json:"name"`
-		RuntimeMode string `json:"runtime_mode,omitempty"`
-		Type        string `json:"type"`
-		Version     string `json:"version"` // agent CLI version (claude/codex)
-		Status      string `json:"status"`
+		Kind           string                        `json:"kind,omitempty"`
+		MediaExecutors *protocol.MediaExecutorReport `json:"media_executors,omitempty"`
+		Name           string                        `json:"name"`
+		RuntimeMode    string                        `json:"runtime_mode,omitempty"`
+		Type           string                        `json:"type"`
+		Version        string                        `json:"version"` // agent CLI version (claude/codex)
+		Status         string                        `json:"status"`
 		// ProfileID, when non-empty, marks this as an instance of a custom
 		// runtime_profile (MUL-3284). Empty = built-in runtime (legacy path).
 		// Type carries the protocol family for both built-in and custom rows
@@ -574,6 +576,25 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	// launch a local command and cannot declare managed cloud execution.
 	for i := range req.Runtimes {
 		rt := &req.Runtimes[i]
+		rt.Type = normalizeProvider(rt.Type)
+		if rt.Kind != "" && rt.Kind != "agent" && rt.Kind != "media" {
+			writeError(w, http.StatusBadRequest, "invalid runtime kind")
+			return
+		}
+		if (rt.Kind == "media") != (rt.Type == "media") || (rt.Kind == "media" && rt.ProfileID != "") {
+			writeError(w, http.StatusBadRequest, "invalid media runtime")
+			return
+		}
+		if rt.MediaExecutors != nil {
+			if !mediaNegotiated(requestClientCapabilities(r)) {
+				writeError(w, http.StatusBadRequest, "media-jobs-v1 and rpc-v1 required")
+				return
+			}
+			if err := protocol.ValidateMediaExecutorReport(rt.MediaExecutors, time.Now()); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 		if rt.RuntimeMode == "" {
 			rt.RuntimeMode = "local"
 		}
@@ -767,10 +788,11 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		// same signal the claim path uses, instead of re-deriving it from a
 		// version string (MUL-5707).
 		metadata, _ := json.Marshal(map[string]any{
+			"kind":         runtime.Kind,
 			"version":      runtime.Version,
 			"cli_version":  req.CLIVersion,
 			"launched_by":  req.LaunchedBy,
-			"capabilities": requestClientCapabilities(r),
+			"capabilities": protocol.WithoutMediaCapabilities(requestClientCapabilities(r)),
 		})
 
 		var registered db.AgentRuntime
@@ -912,6 +934,19 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if err := persistMediaReport(r.Context(), qtx, registered, runtime.MediaExecutors, true); err != nil {
+			writeError(w, http.StatusConflict, "media registration rejected: "+err.Error())
+			return
+		}
+		if runtime.MediaExecutors != nil {
+			refreshed, err := qtx.GetAgentRuntime(r.Context(), registered.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load media runtime")
+				return
+			}
+			registered = refreshed
+		}
+
 		// A brand-new runtime on an already-named machine inherits the machine's
 		// shared custom name so the machine title stays stable as providers come
 		// and go (MUL-4217). Shared with the failed-profile path below.
@@ -1013,7 +1048,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					"version":                            "",
 					"cli_version":                        req.CLIVersion,
 					"launched_by":                        req.LaunchedBy,
-					"capabilities":                       requestClientCapabilities(r),
+					"capabilities":                       protocol.WithoutMediaCapabilities(requestClientCapabilities(r)),
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
 					"command_name":                       resolvedCommandName,
@@ -1310,7 +1345,8 @@ func (h *Handler) setRuntimeOffline(ctx context.Context, runtimeID pgtype.UUID, 
 // DaemonDeregister marks runtimes as offline when the daemon shuts down.
 func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RuntimeIDs []string `json:"runtime_ids"`
+		RuntimeIDs        []string `json:"runtime_ids"`
+		MediaConnectionID string   `json:"media_connection_id,omitempty"`
 		// OfflineReasons is optional and keyed by runtime id. Present only for
 		// causes the user must repair — a daemon shutting down sends none, so an
 		// older daemon simply keeps today's behaviour (MUL-6164).
@@ -1328,6 +1364,12 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 	runtimeUUIDs, ok := parseUUIDSliceOrBadRequest(w, req.RuntimeIDs, "runtime_ids")
 	if !ok {
 		return
+	}
+
+	if req.MediaConnectionID != "" {
+		if _, ok := parseUUIDOrBadRequest(w, req.MediaConnectionID, "media_connection_id"); !ok {
+			return
+		}
 	}
 
 	// Track affected workspaces for WS notifications.
@@ -1366,6 +1408,17 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if rt.Provider == "media" {
+			if req.MediaConnectionID == "" {
+				continue
+			}
+			if err := h.deregisterMedia(r.Context(), rt, req.MediaConnectionID); err != nil {
+				writeError(w, http.StatusConflict, "media deregistration rejected")
+				return
+			}
+			affectedWorkspaces[wsID] = true
+			continue
+		}
 		if err := h.setRuntimeOffline(r.Context(), rt.ID, req.OfflineReasons[rid]); err != nil {
 			slog.Warn("deregister: failed to set offline", "runtime_id", rid, "error", err)
 			continue
@@ -1393,8 +1446,9 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 }
 
 type DaemonHeartbeatRequest struct {
-	RuntimeID           string `json:"runtime_id"`
-	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	MediaExecutors      *protocol.MediaExecutorReport `json:"media_executors,omitempty"`
+	RuntimeID           string                        `json:"runtime_id"`
+	SupportsBatchImport bool                          `json:"supports_batch_import,omitempty"`
 	// PlanQuota mirrors protocol.DaemonHeartbeatRequestPayload.PlanQuota:
 	// the daemon's latest provider plan/rate-limit snapshot for this
 	// runtime. Optional; a bad payload drops the field, never the beat.
@@ -1548,8 +1602,11 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	updateMs = time.Since(updateStart).Milliseconds()
 
-	// Observational extras ride the beat but must never affect its outcome:
-	// the helpers swallow validation/persistence failures internally.
+	if err := h.heartbeatMedia(r.Context(), runtimeID, req.MediaExecutors, strings.Join(requestClientCapabilities(r), ","), uuidToString(rt.WorkspaceID), rt.DaemonID.String, uuidToString(rt.OwnerID)); err != nil {
+		writeError(w, http.StatusConflict, "media heartbeat rejected: "+err.Error())
+		return
+	}
+	// Quota and metrics are observational; their helpers swallow invalid extras.
 	h.storeHeartbeatPlanQuota(r.Context(), rt, req.PlanQuota)
 	h.storeHeartbeatMetrics(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.Metrics)
 	h.storeHeartbeatThinkingAdapt(r.Context(), uuidToString(rt.WorkspaceID), rt.DaemonID.String, req.ThinkingAdapt)
@@ -1621,6 +1678,14 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 			}
 			return runtimeGoneHeartbeatAck(runtimeID), nil
 		}
+		return nil, err
+	}
+
+	mediaOwnerID := identity.UserID
+	if identity.DaemonID != "" {
+		mediaOwnerID = identity.DaemonTokenOwnerID
+	}
+	if err := h.heartbeatMedia(ctx, runtimeID, payload.MediaExecutors, identity.Capabilities, lease.Snapshot().WorkspaceID, lease.Snapshot().DaemonID, mediaOwnerID); err != nil {
 		return nil, err
 	}
 
@@ -1792,7 +1857,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, suppor
 	ack := &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID:          runtimeID,
 		Status:             "ok",
-		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1},
+		ServerCapabilities: []string{protocol.DaemonCapabilityRPCV1, protocol.DaemonCapabilityMediaJobsV1},
 	}
 
 	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)

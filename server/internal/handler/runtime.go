@@ -1032,7 +1032,7 @@ func (h *Handler) profileInstanceRefusalBlockers(ctx context.Context, runtimeID 
 // admit every workspace member. Workspace roles never override this decision.
 // An ownerless runtime cannot mint task tokens and remains unusable.
 func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
-	return service.RuntimeAllowsUser(rt, member.UserID)
+	return rt.Provider != "media" && service.RuntimeAllowsUser(rt, member.UserID)
 }
 
 // canSetRuntimeVisibility reports whether a member may flip this runtime

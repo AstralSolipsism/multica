@@ -34,6 +34,10 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 // says is usable but the server refuses is a picker that 403s on submit —
 // the MUL-6126 bug — and the reverse is a runtime the UI hides for no reason.
 describe("isRuntimeUsableForUser", () => {
+  it("excludes media runtimes even for their owner", () => {
+    expect(isRuntimeUsableForUser(makeRuntime({provider: "media", visibility: "public"}), OWNER)).toBe(false);
+    expect(isRuntimeUsableForUser(makeRuntime({metadata: {kind: "media"}}), null)).toBe(false);
+  });
   it("lets the owner use their own private runtime", () => {
     expect(isRuntimeUsableForUser(makeRuntime(), OWNER)).toBe(true);
   });

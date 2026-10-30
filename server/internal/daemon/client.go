@@ -94,9 +94,10 @@ func isRuntimeNotFoundError(err error) bool {
 
 // Client handles HTTP communication with the Multica server daemon API.
 type Client struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	mediaConnectionID string
+	baseURL           string
+	token             string
+	client            *http.Client
 
 	// bundleClient downloads skill bundles. Unlike client it carries no fixed
 	// Timeout: bundles can be large and slow on jittery links, so the caller
@@ -211,6 +212,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityMediaJobsV1,
 		protocol.DaemonCapabilityPlatformSkillV1,
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 		protocol.DaemonCapabilityJoinedWakeupsV1,
@@ -748,8 +750,9 @@ type (
 // servers ignore unknown keys, so a zero HeartbeatExtras reproduces the
 // pre-feature request exactly.
 type HeartbeatExtras struct {
-	PlanQuota *protocol.RuntimePlanQuota
-	Metrics   *protocol.HostMetrics
+	MediaExecutors *protocol.MediaExecutorReport
+	PlanQuota      *protocol.RuntimePlanQuota
+	Metrics        *protocol.HostMetrics
 	// ThinkingAdapt is the daemon's Jev health snapshot, attached only for
 	// runtimes whose provider supports thinking control (contract §8).
 	ThinkingAdapt *protocol.ThinkingAdaptSnapshot
@@ -759,6 +762,9 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, extras Hea
 	body := map[string]any{
 		"runtime_id":            runtimeID,
 		"supports_batch_import": true,
+	}
+	if extras.MediaExecutors != nil {
+		body["media_executors"] = extras.MediaExecutors
 	}
 	if extras.PlanQuota != nil {
 		body["plan_quota"] = extras.PlanQuota
@@ -1097,6 +1103,9 @@ type RuntimeOfflineReason struct {
 // broken CLI does.
 func (c *Client) Deregister(ctx context.Context, runtimeIDs []string, reasons map[string]RuntimeOfflineReason) error {
 	body := map[string]any{"runtime_ids": runtimeIDs}
+	if c.mediaConnectionID != "" {
+		body["media_connection_id"] = c.mediaConnectionID
+	}
 	if len(reasons) > 0 {
 		body["offline_reasons"] = reasons
 	}

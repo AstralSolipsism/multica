@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
+	"github.com/multica-ai/multica/server/internal/daemon/media"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -434,6 +435,8 @@ type repoCacheBackend interface {
 
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
+	mediaRegistry *media.Registry
+
 	cfg        Config
 	client     *Client
 	jevClient  *jev.Client
@@ -1372,6 +1375,11 @@ func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
 // would describe a dial the runtime does not have.
 func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	extras := HeartbeatExtras{Metrics: d.latestHostMetrics()}
+	if d.mediaRegistry != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil && rt.Provider == "media" {
+			extras.MediaExecutors = d.mediaRegistry.Snapshot()
+		}
+	}
 	if d.jevClient != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil && agent.ThinkingControlSupported(rt.Provider) {
 			snap := d.jevClient.Snapshot()
@@ -2208,9 +2216,13 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	var err error
 	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	d.cancelFunc = cancel
 	d.setLifecycleCtx(ctx)
 	d.rootCtx = ctx
+	if err := d.initMediaRegistry(ctx); err != nil {
+		return err
+	}
 
 	// Bind health port early to detect another running daemon.
 	if healthLn == nil {
@@ -2963,6 +2975,9 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 	d.clearProviderDemotions(recovered, sampledAfter)
 
 	runtimes := make([]map[string]string, 0, len(results))
+	if d.mediaRegistry != nil && len(d.mediaRegistry.Snapshot().Executors) > 0 {
+		runtimes = append(runtimes, map[string]string{"name": "Media (" + d.cfg.DeviceName + ")", "type": "media", "kind": "media", "status": "online"})
+	}
 	for _, r := range results {
 		displayName := providerDisplayName(r.name)
 		if d.cfg.DeviceName != "" {
@@ -3107,7 +3122,7 @@ func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, wo
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
-		"runtimes":          runtimes,
+		"runtimes":          d.mediaRegistrationEntries(runtimes),
 		"failed_profiles":   failedProfiles,
 	}
 
@@ -3152,7 +3167,7 @@ func (d *Daemon) registerBuiltinRuntimesForWorkspaceLocked(ctx context.Context, 
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
-		"runtimes":          runtimes,
+		"runtimes":          d.mediaRegistrationEntries(runtimes),
 		// Deliberately empty: this call carries no profiles, so it must not
 		// report profile failures either.
 		"failed_profiles": []map[string]string{},
@@ -5529,7 +5544,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			return
 		}
 
-		runtimeIDs := d.allRuntimeIDs()
+		runtimeIDs := d.agentRuntimeIDs()
 		if len(runtimeIDs) == 0 {
 			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
 				return
