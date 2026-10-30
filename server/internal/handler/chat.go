@@ -1998,14 +1998,55 @@ type ChatLastMessage struct {
 	MessageKind string `json:"message_kind"`
 }
 
+// chatListPreviewLimit caps, in characters, the last-message preview the
+// session LIST responses carry — same budget as the inbox list preview
+// (inboxListBodyPreviewLimit). The full text stays in the database and keeps
+// flowing from the session-detail and /messages endpoints.
+const chatListPreviewLimit = inboxListBodyPreviewLimit
+
+// chatListPreview truncates a list row's last-message content to
+// chatListPreviewLimit characters, by rune boundary like inboxListBody. The
+// front-end list row collapses markdown to one plain line (toPreview in
+// chat-thread-list.tsx), which strips fenced blocks WHOLE via
+// /```[\s\S]*?```/ — a preview cut inside a fence that opened near the start
+// could then render as an empty line. Dropping fence runs from the preview
+// keeps the code text visible instead, so the line can never go blank.
+func chatListPreview(content string) string {
+	cut, seen := 0, 0
+	for offset := range content {
+		if seen == chatListPreviewLimit-1 {
+			cut = offset
+		}
+		if seen++; seen > chatListPreviewLimit {
+			return stripFences(content[:cut]) + "…"
+		}
+	}
+	return content
+}
+
+// stripFences removes markdown code-fence runs so the front-end's whole-block
+// fence stripping cannot swallow the entire preview line (embedded HTML
+// sources are left as-is: toPreview does not remove tags, so they never blank
+// the line).
+func stripFences(s string) string {
+	for _, fence := range []string{"```", "~~~"} {
+		if strings.Contains(s, fence) {
+			s = strings.ReplaceAll(s, fence, " ")
+		}
+	}
+	return s
+}
+
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
 // when there is no last message (the LEFT JOIN produced a NULL timestamp).
+// Callers pass content through chatListPreview: the list renders one preview
+// line, while detail and /messages paths return the full text.
 func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure pgtype.Text, kind string) *ChatLastMessage {
 	if !at.Valid || protocol.IsHiddenChatMessageKind(kind) {
 		return nil
 	}
 	return &ChatLastMessage{
-		Content:       content,
+		Content:       chatListPreview(content),
 		Role:          role,
 		CreatedAt:     timestampToString(at),
 		FailureReason: textToPtr(failure),

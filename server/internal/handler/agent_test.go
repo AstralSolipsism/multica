@@ -86,8 +86,14 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		if f.createdAt != "" {
 			createdExpr = f.createdAt
 		}
-		query := `INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at, created_at)
-		          VALUES ($1, $2, $3, 0, ` + completedExpr + `, ` + createdExpr + `) RETURNING id`
+		// A.latest_completed carries a stored result: the snapshot must strip
+		// it even when the column is populated (pinned further below).
+		resultExpr := "NULL"
+		if f.label == "A.latest_completed" {
+			resultExpr = `'{"summary": "big execution output"}'`
+		}
+		query := `INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, completed_at, created_at, result)
+		          VALUES ($1, $2, $3, 0, ` + completedExpr + `, ` + createdExpr + `, ` + resultExpr + `) RETURNING id`
 		if err := testPool.QueryRow(ctx, query, f.agentID, testRuntimeID, f.status).Scan(&id); err != nil {
 			t.Fatalf("insert %s: %v", f.label, err)
 		}
@@ -176,6 +182,18 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		if counts[key{agentID, "cancelled"}] != 0 {
 			t.Errorf("agent %s: cancelled rows must be excluded from snapshot; got %d",
 				agentID, counts[key{agentID, "cancelled"}])
+		}
+	}
+
+	// Snapshot consumers never read a task's execution output; `result` must
+	// arrive null on every row regardless of what is stored, while the
+	// outcome rows themselves (and attribution, pinned above) stay intact.
+	for _, task := range tasks {
+		if task.AgentID != agentA && task.AgentID != agentB && task.AgentID != agentC && task.AgentID != agentD {
+			continue
+		}
+		if task.Result != nil {
+			t.Errorf("task %s: snapshot result must be null, got %v", task.ID, task.Result)
 		}
 	}
 }
