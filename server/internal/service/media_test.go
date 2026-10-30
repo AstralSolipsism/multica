@@ -91,3 +91,93 @@ func TestMediaRouting(t *testing.T) {
 		t.Fatal("fallback cooldown")
 	}
 }
+
+func TestMediaBrowserSourcesIgnoreHostQuota(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	user := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	for _, source := range []string{"flow", "whisk"} {
+		capability := "video-generate"
+		if source == "whisk" {
+			capability = "image-remix"
+		}
+		tag := protocol.MediaCapabilityTag(source, capability)
+		metadata, _ := json.Marshal(map[string]any{"capabilities": []string{tag}})
+		for _, snapshot := range []struct{ name, quota string }{
+			{"claude full", `{"status":"limited","windows":[{"group":"claude_gpt","used_percent":100,"resets_at":1800018000},{"group":"gemini","used_percent":25,"resets_at":1800018000}]}`},
+			{"gemini full", `{"status":"limited","windows":[{"group":"gemini","used_percent":100,"resets_at":1800018000},{"group":"claude_gpt","used_percent":25,"resets_at":1800018000}]}`},
+			{"host quota available", `{"status":"ok","windows":[{"group":"gemini","used_percent":0,"resets_at":1800018000}]}`},
+			{"limited without windows", `{"status":"limited","windows":[]}`},
+		} {
+			t.Run(source+"/"+snapshot.name, func(t *testing.T) {
+				rt := db.AgentRuntime{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, OwnerID: user, Provider: "antigravity", Status: "online", Metadata: metadata, PlanQuota: []byte(snapshot.quota)}
+				var quota protocol.RuntimePlanQuota
+				if err := json.Unmarshal(rt.PlanQuota, &quota); err != nil {
+					t.Fatal(err)
+				}
+				if score, usable := mediaQuotaScore(quota, source, now); score != -1 || !usable {
+					t.Errorf("host quota must be unknown for %s: score=%v usable=%v", source, score, usable)
+				}
+				for _, provider := range []string{source, "auto"} {
+					selected := SelectMediaRuntime([]db.AgentRuntime{rt}, user, protocol.MediaRequest{Provider: provider, Capability: capability}, now)
+					if selected == nil || selected.ID != rt.ID || selected.Tag != tag {
+						t.Errorf("%s/%s rejected because of host model quota", provider, capability)
+					}
+				}
+				if until := MediaCooldown(rt, tag, 0, now); !until.Equal(now.Add(time.Minute)) {
+					t.Errorf("host reset leaked into cooldown: %v", until.Sub(now))
+				}
+				if until := MediaCooldown(rt, tag, 90, now); !until.Equal(now.Add(90 * time.Second)) {
+					t.Errorf("Retry-After ignored: %v", until.Sub(now))
+				}
+				rt.Metadata = []byte(fmt.Sprintf(`{"capabilities":[%q],"media_cooldowns":{%q:%d}}`, tag, tag, now.Add(time.Minute).Unix()))
+				if SelectMediaRuntime([]db.AgentRuntime{rt}, user, protocol.MediaRequest{Provider: source, Capability: capability}, now) != nil {
+					t.Fatal("unknown quota bypassed explicit media cooldown")
+				}
+			})
+		}
+	}
+}
+
+func TestMediaQuotaUsesOnlySourceWindows(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	for _, tc := range []struct {
+		name, source, quota string
+		score               float64
+		usable              bool
+		cooldown            time.Duration
+	}{
+		{"codex all groups", "codex", `{"windows":[{"group":"other","used_percent":75,"resets_at":1800007200}]}`, 25, true, 2 * time.Hour},
+		{"codex full", "codex", `{"windows":[{"used_percent":100,"resets_at":1800007200}]}`, 0, false, 2 * time.Hour},
+		{"codex account limited", "codex", `{"status":"limited"}`, 0, false, time.Minute},
+		{"agy ignores exhausted claude and aggregate status", "agy", `{"status":"limited","windows":[{"group":"claude_gpt","used_percent":100,"resets_at":1800003600},{"group":"gemini","used_percent":25,"resets_at":1800007200}]}`, 75, true, 2 * time.Hour},
+		{"agy gemini full", "agy", `{"windows":[{"group":"gemini","used_percent":100,"resets_at":1800007200}]}`, 0, false, 2 * time.Hour},
+		{"agy ignores ungrouped window", "agy", `{"windows":[{"used_percent":100,"resets_at":1800007200}]}`, -1, true, time.Minute},
+		{"agy no applicable window", "agy", `{"status":"limited","windows":[{"group":"claude_gpt","used_percent":100,"resets_at":1800003600}]}`, -1, true, time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var quota protocol.RuntimePlanQuota
+			if err := json.Unmarshal([]byte(tc.quota), &quota); err != nil {
+				t.Fatal(err)
+			}
+			if score, usable := mediaQuotaScore(quota, tc.source, now); score != tc.score || usable != tc.usable {
+				t.Errorf("score=%v usable=%v; want %v, %v", score, usable, tc.score, tc.usable)
+			}
+			rt := db.AgentRuntime{PlanQuota: []byte(tc.quota)}
+			if until := MediaCooldown(rt, protocol.MediaCapabilityTag(tc.source, "image-generate"), 0, now); !until.Equal(now.Add(tc.cooldown)) {
+				t.Errorf("cooldown=%v; want %v", until.Sub(now), tc.cooldown)
+			}
+		})
+	}
+}
+
+func TestMediaMeasuredQuotaRanksAheadOfUnknown(t *testing.T) {
+	user := pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	unknown := db.AgentRuntime{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, OwnerID: user, Provider: "antigravity", Status: "online", Metadata: []byte(`{"capabilities":["media-image-agy-v1"]}`), PlanQuota: []byte(`{"windows":[{"group":"claude_gpt","used_percent":0}]}`)}
+	measured := db.AgentRuntime{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, OwnerID: user, Provider: "codex", Status: "online", Metadata: []byte(`{"capabilities":["media-image-codex-v1"]}`), PlanQuota: []byte(`{"windows":[{"used_percent":99}]}`)}
+	for _, candidates := range [][]db.AgentRuntime{{unknown, measured}, {measured, unknown}} {
+		selected := SelectMediaRuntime(candidates, user, protocol.MediaRequest{Provider: "auto", Capability: "image-generate"}, time.Now())
+		if selected == nil || selected.ID != measured.ID {
+			t.Fatal("unknown capacity ranked ahead of measured remaining quota")
+		}
+	}
+}

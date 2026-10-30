@@ -49,8 +49,16 @@ func SelectMediaRuntime(runtimes []db.AgentRuntime, caller pgtype.UUID, request 
 }
 
 func applicableMediaWindow(w protocol.RuntimePlanQuotaWindow, provider string) bool {
-	// agy image generation consumes the Gemini pool, never Claude/GPT.
-	return provider != "agy" || w.Group == "" || w.Group == "gemini"
+	switch provider {
+	case "codex":
+		return true
+	case "agy":
+		return w.Group == "gemini"
+	default:
+		// Flow/Whisk have no dedicated quota windows yet. Host model pools
+		// describe neither their remaining capacity nor their reset time.
+		return false
+	}
 }
 
 func mediaQuotaScore(quota protocol.RuntimePlanQuota, provider string, now time.Time) (float64, bool) {
@@ -72,7 +80,9 @@ func mediaQuotaScore(quota protocol.RuntimePlanQuota, provider string, now time.
 			score = remaining
 		}
 	}
-	if quota.Status == protocol.PlanQuotaStatusLimited && (hasActive || len(quota.Windows) == 0) {
+	// Only Codex consumes the whole account quota. Antigravity's aggregate
+	// limited status may come from a pool unrelated to this media source.
+	if provider == "codex" && quota.Status == protocol.PlanQuotaStatusLimited && (hasActive || len(quota.Windows) == 0) {
 		return 0, false
 	}
 	return score, true
