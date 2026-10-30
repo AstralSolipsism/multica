@@ -263,9 +263,19 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := cli.APIContext(cmd.Context())
 	defer cancel()
-	project, err := resolveProjectID(ctx, client, args[0])
+	// Keep local reference errors actionable without exposing HTTP response
+	// bodies or misclassifying transport failures as invalid parameters.
+	var lookupErr error
+	project, err := resolveIDByPrefix(ctx, client, "project", args[0], func(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
+		candidates, err := fetchProjectCandidates(ctx, client)
+		lookupErr = err
+		return candidates, err
+	})
 	if err != nil {
-		return baselineRequestError(cmd, client, "", err, false)
+		if lookupErr != nil {
+			return baselineRequestError(cmd, client, "", lookupErr, false)
+		}
+		return baselineFailure(2, "%s", err)
 	}
 	path := "/api/projects/" + project.ID
 	if cmd.Name() == "diff" && mustString(cmd, "from") != "" {
@@ -530,20 +540,57 @@ func baselineAdopt(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	return nil
 }
 
+func baselineApprovalURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
+	ctx, cancel := cli.APIContext(cmd.Context())
+	defer cancel()
+	origin := tryResolveAppURL(cmd)
+	if origin == "" {
+		var config struct {
+			AppURL string `json:"daemon_app_url"`
+		}
+		if err := client.GetJSON(ctx, "/api/config", &config); err == nil {
+			origin = strings.TrimSpace(config.AppURL)
+		}
+	}
+	if origin == "" {
+		// Only known cloud deployments have a predictable public app origin.
+		// A self-hosted API URL may be an internal container address.
+		switch strings.TrimRight(client.BaseURL, "/") {
+		case defaultCloudServerURL:
+			origin = defaultCloudAppURL
+		case "https://api.multica.ai", "https://multica.ai":
+			origin = "https://multica.ai"
+		}
+	}
+	app, err := url.Parse(origin)
+	if err != nil || app.Host == "" || (app.Scheme != "http" && app.Scheme != "https") || app.User != nil || app.RawQuery != "" || app.Fragment != "" {
+		return ""
+	}
+	if client.WorkspaceID == "" {
+		return ""
+	}
+	var workspace struct {
+		Slug string `json:"slug"`
+	}
+	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &workspace); err != nil || strings.TrimSpace(workspace.Slug) == "" {
+		return ""
+	}
+	link := strings.TrimRight(origin, "/") + "/" + url.PathEscape(workspace.Slug) + "/projects/" + url.PathEscape(project) + "/engineering"
+	if len(candidateIDs) > 0 {
+		link += "?" + url.Values{"candidate": {candidateIDs[0]}}.Encode()
+	}
+	return link
+}
+
 func baselineRequestError(cmd *cobra.Command, client *cli.APIClient, project string, err error, writing bool, candidateIDs ...string) error {
 	var e *cli.HTTPError
 	if errors.As(err, &e) {
 		code := cli.ServerErrorCode(err)
 		if e.StatusCode == 403 && (code == "baseline_human_required" || code == "baseline_rule_cut_needs_human") {
-			origin := tryResolveAppURL(cmd)
-			if origin == "" {
-				origin = client.BaseURL
+			if link := baselineApprovalURL(cmd, client, project, candidateIDs...); link != "" {
+				return baselineFailure(1, "%s: a human decider must review this candidate in the engineering overview: %s", code, link)
 			}
-			link := strings.TrimRight(origin, "/") + "/projects/" + url.PathEscape(project) + "/engineering"
-			if len(candidateIDs) > 0 {
-				link += "?" + url.Values{"candidate": {candidateIDs[0]}}.Encode()
-			}
-			return baselineFailure(1, "%s: a human decider must review this candidate in the engineering overview: %s", code, link)
+			return baselineFailure(1, "%s: a human decider must review this candidate in the project's engineering overview on the dashboard (approval link unavailable)", code)
 		}
 		if e.StatusCode == 401 {
 			// Preserve the task-token stop instruction, even with ambient debug
@@ -559,7 +606,11 @@ func baselineRequestError(cmd *cobra.Command, client *cli.APIClient, project str
 		if e.StatusCode == 400 || e.StatusCode == 404 {
 			exit = 2
 		}
-		return baselineFailure(exit, "baseline request failed (HTTP %d, %s); inspect baseline state before retrying", e.StatusCode, code)
+		detail := fmt.Sprintf("HTTP %d", e.StatusCode)
+		if code != "" {
+			detail += ", " + code
+		}
+		return baselineFailure(exit, "baseline request failed (%s); inspect baseline state before retrying", detail)
 	}
 	if writing {
 		return baselineFailure(1, "baseline request failed; result is indeterminate. Inspect baseline state before retrying.")

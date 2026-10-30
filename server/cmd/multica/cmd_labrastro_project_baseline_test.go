@@ -299,6 +299,10 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 			t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
 			t.Setenv("MULTICA_APP_URL", "https://workspace.example")
 			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+				if r.URL.Path == "/api/workspaces/offline-workspace" {
+					json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
+					return
+				}
 				if strings.HasSuffix(r.URL.Path, "/revisions") {
 					chapter := r.URL.Query().Get("chapter")
 					rev := baselineTestRevision(chapter, 2, "candidate")
@@ -402,7 +406,7 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 				}
 			}
 			if mode == "human" || mode == "rule cut" {
-				link := "https://workspace.example/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
+				link := "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
 				if !strings.Contains(stderr, link) || !strings.Contains(stderr, "human decider") || strings.Contains(stderr, "PAT") {
 					t.Errorf("incorrect refusal guidance: %s", stderr)
 				}
@@ -457,6 +461,135 @@ func TestLabrastroBaselineArgumentsAndContentBoundary(t *testing.T) {
 	abs, _ := filepath.Abs(file)
 	if _, err := baselineReadContent(abs); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type baselineRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f baselineRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestLabrastroBaselineApprovalURL(t *testing.T) {
+	for _, tc := range []struct {
+		name, appEnv, frontendEnv, profileApp, advertised, apiURL, wantOrigin string
+		configStatus, workspaceStatus                                         int
+		missingSlug                                                           bool
+	}{
+		{name: "task defaults", advertised: "https://public.example/", wantOrigin: "https://public.example"},
+		{name: "app env wins", appEnv: "https://env.example", frontendEnv: "https://frontend.example", profileApp: "https://profile.example", advertised: "https://server.example", wantOrigin: "https://env.example"},
+		{name: "frontend env wins", frontendEnv: "https://frontend.example", profileApp: "https://profile.example", wantOrigin: "https://frontend.example"},
+		{name: "selected profile", profileApp: "https://profile.example", advertised: "https://server.example", wantOrigin: "https://profile.example"},
+		{name: "official cloud", apiURL: "https://api.multica.ai", wantOrigin: "https://multica.ai"},
+		{name: "fork cloud", apiURL: defaultCloudServerURL, wantOrigin: defaultCloudAppURL},
+		{name: "cloud config unavailable", apiURL: "https://api.multica.ai", configStatus: 503, wantOrigin: "https://multica.ai"},
+		{name: "internal API with no app", apiURL: "http://multica-backend:8080"},
+		{name: "config unavailable", configStatus: 503},
+		{name: "invalid app", advertised: "://invalid"},
+		{name: "non web app", advertised: "javascript:alert(1)"},
+		{name: "workspace unavailable", advertised: "https://public.example", workspaceStatus: 403},
+		{name: "workspace slug absent", advertised: "https://public.example", missingSlug: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MULTICA_APP_URL", tc.appEnv)
+			t.Setenv("FRONTEND_ORIGIN", tc.frontendEnv)
+			t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
+			if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{AppURL: tc.profileApp}, "approval"); err != nil {
+				t.Fatal(err)
+			}
+			cmd := &cobra.Command{}
+			cmd.Flags().String("profile", "approval", "")
+			srv, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+				switch r.URL.Path {
+				case "/api/config":
+					if tc.appEnv != "" || tc.frontendEnv != "" || tc.profileApp != "" {
+						t.Error("explicit app setting should not query server config")
+					}
+					if tc.configStatus != 0 {
+						w.WriteHeader(tc.configStatus)
+					}
+					json.NewEncoder(w).Encode(map[string]any{"daemon_app_url": tc.advertised, "error": "SECRET_METADATA"})
+				case "/api/workspaces/offline-workspace":
+					if tc.workspaceStatus != 0 {
+						w.WriteHeader(tc.workspaceStatus)
+					}
+					slug := "chosen-workspace"
+					if tc.missingSlug {
+						slug = ""
+					}
+					json.NewEncoder(w).Encode(map[string]any{"slug": slug, "error": "SECRET_METADATA"})
+				default:
+					t.Errorf("unexpected metadata request: %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			})
+			client := cli.NewAPIClient(srv.URL, "offline-workspace", "mat_baseline_test")
+			if tc.apiURL != "" {
+				client.BaseURL = tc.apiURL
+				local, _ := url.Parse(srv.URL)
+				client.HTTPClient.Transport = baselineRoundTripper(func(r *http.Request) (*http.Response, error) {
+					clone := r.Clone(r.Context())
+					clone.URL.Scheme, clone.URL.Host = local.Scheme, local.Host
+					return srv.Client().Transport.RoundTrip(clone)
+				})
+			}
+			err := baselineRequestError(cmd, client, baselineTestProject, &cli.HTTPError{StatusCode: 403, Body: `{"code":"baseline_human_required"}`}, true, baselineTestCandidate)
+			if err.(*baselineCLIError).code != 1 || strings.Contains(err.Error(), "SECRET_METADATA") {
+				t.Fatalf("metadata lookup changed refusal semantics: %v", err)
+			}
+			if tc.wantOrigin != "" {
+				want := tc.wantOrigin + "/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("approval URL missing: want %s; got %v", want, err)
+				}
+			} else if !strings.Contains(err.Error(), "engineering overview on the dashboard (approval link unavailable)") || strings.Contains(err.Error(), "http") {
+				t.Fatalf("expected manual dashboard guidance without a guessed URL: %v", err)
+			}
+			for _, c := range calls() {
+				if c.Method != "GET" {
+					t.Error("approval lookup must not retry a decision")
+				}
+			}
+		})
+	}
+}
+
+func TestLabrastroBaselineProjectErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, project, response, want string
+		status, exit                  int
+	}{
+		{"HTTP 400", baselineTestProject, `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 400)", 400, 2},
+		{"HTTP 404", baselineTestProject, `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 404)", 404, 2},
+		{"invalid prefix", "not-hex", "", "expected a UUID prefix containing only hex characters", 0, 2},
+		{"missing prefix", "1000", `{"projects":[]}`, `no project found matching id prefix "1000"`, 200, 2},
+		{"ambiguous prefix", "1000", `{"projects":[{"id":"10000000-0000-4000-8000-000000000001"},{"id":"10000000-0000-4000-8000-000000000002"}]}`, "ambiguous project id prefix", 200, 2},
+		{"prefix unauthorized", "1000", `{"error":"SECRET_BASELINE_CONTENT"}`, "Stop here: do not retry", 401, 1},
+		{"prefix service failure", "1000", `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 503)", 503, 1},
+		{"prefix malformed response", "1000", `SECRET_BASELINE_CONTENT`, "baseline read failed", 200, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+				if tc.status == 0 {
+					t.Error("invalid prefix reached server")
+					return
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.response)
+			})
+			out, stderr, code := executeBaseline(t, "get", tc.project, "--output", "json")
+			if code != tc.exit || out != "" || !strings.Contains(stderr, tc.want) || strings.Contains(stderr, "SECRET_BASELINE_CONTENT") {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+			if tc.name == "ambiguous prefix" {
+				for _, id := range []string{baselineTestProject, "10000000-0000-4000-8000-000000000002"} {
+					if !strings.Contains(stderr, id) {
+						t.Error("ambiguity guidance lost matching project IDs")
+					}
+				}
+			}
+			if len(calls()) > 1 {
+				t.Error("project failure must not proceed to baseline requests or retry")
+			}
+		})
 	}
 }
 
@@ -533,7 +666,8 @@ func TestLabrastroBaselineCLIProcess(t *testing.T) {
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
 	t.Setenv("MULTICA_AGENT_ID", baselineTestIssue)
 	t.Setenv("MULTICA_TASK_ID", baselineTestCandidate)
-	t.Setenv("MULTICA_APP_URL", "https://workspace.example")
+	t.Setenv("MULTICA_APP_URL", "")
+	t.Setenv("FRONTEND_ORIGIN", "")
 	if err := os.Chdir(os.Getenv("BASELINE_CLI_DIR")); err != nil {
 		t.Fatal(err)
 	}
@@ -543,6 +677,14 @@ func TestLabrastroBaselineCLIProcess(t *testing.T) {
 }
 func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
 	srv, _ := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		switch r.URL.Path {
+		case "/api/config":
+			json.NewEncoder(w).Encode(map[string]any{"daemon_app_url": "https://workspace.example"})
+			return
+		case "/api/workspaces/offline-workspace":
+			json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/revisions") {
 			json.NewEncoder(w).Encode(map[string]any{"revisions": []any{baselineTestRevision("domain_rules", 2, "candidate")}})
 			return
@@ -561,7 +703,7 @@ func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
 	}{
 		{[]string{"get", baselineTestProject, "--output", "json"}, 0, ""},
 		{[]string{"get", baselineTestProject, "--revision", "domain_rules:999"}, 2, "404"},
-		{[]string{"adopt", baselineTestProject, "--revision", "domain_rules:2", "--output", "json", "--debug"}, 1, "https://workspace.example/projects/"},
+		{[]string{"adopt", baselineTestProject, "--revision", "domain_rules:2", "--output", "json", "--debug"}, 1, "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate},
 		{[]string{"get", baselineTestProject, "--unknown"}, 2, "unknown flag"},
 	} {
 		args := append([]string{"-test.run=^TestLabrastroBaselineCLIProcess$", "--", "project", "baseline"}, tc.args...)

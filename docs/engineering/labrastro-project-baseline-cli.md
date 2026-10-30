@@ -58,9 +58,22 @@ may decide only when `agent_decisions_enabled` permits it, and adopting rule
 cuts still requires a human. `baseline_human_required` and
 `baseline_rule_cut_needs_human` print a human review instruction and the project
 engineering URL with the selected candidate. The URL uses `MULTICA_APP_URL`,
-`FRONTEND_ORIGIN`, or the profile's app URL, falling back to the configured
-server URL. Separate frontend/API installations should configure the app URL.
+`FRONTEND_ORIGIN`, or the selected profile's app URL, then `daemon_app_url` from
+`GET /api/config`. Known cloud deployments can fall back to their public app
+address (`https://api.multica.ai` maps to `https://multica.ai`; the fork's cloud
+uses its configured cloud default). An arbitrary API address is never used as
+an app address. The workspace slug comes from `GET /api/workspaces/<workspace-id>`.
+If either the app address or slug is unavailable, the CLI instead asks the
+decider to open the project's engineering overview on the dashboard.
 The CLI uses its normal credential resolver and never switches credentials.
+
+The approval deep link is
+`<app-url>/<workspace-slug>/projects/<project-id>/engineering?candidate=<revision-id>`.
+The OL-92 Web/Desktop engineering view must preserve this workspace path and
+candidate through login, then display that revision's Diff without adopting it
+on navigation. A replaced or closed candidate must not silently select a newer
+revision. This route is a frontend handoff contract; it is not implemented by
+the CLI change.
 
 Successful decision text prints Diff summaries followed by `open_issues` in
 the server's `in_flight`/`queued` groups, including custom statuses and a
@@ -82,4 +95,7 @@ All five commands support `--output json`; text (or table) is the default.
 Failures write only to stderr, without echoing baseline bodies even under
 `--debug`. Exit codes are 0 for success, 1 for business/transport failures
 (including 403/409/422), and 2 for invalid parameters or missing resources.
+HTTP 400/404 also exit 2. Invalid, missing, or ambiguous project prefixes retain
+the resolver's explanation (including matching IDs) and exit 2; failures while
+fetching project candidates still use the transport/HTTP error handling.
 Other CLI commands retain their existing exit conventions.
