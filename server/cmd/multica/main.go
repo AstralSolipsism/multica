@@ -120,6 +120,6 @@ func main() {
 		if err != errSilent {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, debugFlag))
 		}
-		os.Exit(cli.ExitCodeFor(err))
+		os.Exit(labrastroBaselineExitCode(cmd, err))
 	}
 }
