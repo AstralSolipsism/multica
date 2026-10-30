@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,5 +47,109 @@ func TestMediaCancellationStopsSubmitAndCleansFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(executor.dir); !os.IsNotExist(err) {
 		t.Fatal("cancelled job left temporary files")
+	}
+}
+
+type artifactMediaExecutor struct {
+	path func(string) (string, error)
+}
+
+func (e artifactMediaExecutor) Capabilities() []string {
+	return []string{"media-video-flow-v1", "media-image-whisk-v1"}
+}
+func (e artifactMediaExecutor) Submit(_ context.Context, _ protocol.MediaRequest, _ []media.Input, dir string) (media.Artifact, error) {
+	path, err := e.path(dir)
+	return media.Artifact{Path: path}, err
+}
+
+func TestMediaOutputCannotEscapeJobDirectory(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "private-fixture.txt")
+	if err := os.WriteFile(outside, []byte("fixture only; must never be transferred"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, symlink := range []bool{false, true} {
+		name := "absolute path"
+		if symlink {
+			name = "symlink"
+		}
+		t.Run(name, func(t *testing.T) {
+			var uploads atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { uploads.Add(1); w.Write([]byte(`{"id":"unexpected"}`)) }))
+			defer server.Close()
+			executor := artifactMediaExecutor{path: func(dir string) (string, error) {
+				if symlink {
+					p := filepath.Join(dir, "output.png")
+					return p, os.Symlink(outside, p)
+				}
+				return outside, nil
+			}}
+			d := &Daemon{cfg: Config{MediaExecutor: func(string, string) media.Executor { return executor }}, client: NewClient(server.URL)}
+			result := d.executeMedia(t.Context(), Runtime{ID: "runtime", Provider: "antigravity"}, protocol.MediaAssignment{Job: protocol.MediaJob{ID: "job", ExpiresAt: time.Now().Add(time.Minute)}})
+			if result.Error != "media output must be inside job directory" || uploads.Load() != 0 {
+				t.Fatalf("host file escaped: error=%s uploads=%d", result.Error, uploads.Load())
+			}
+		})
+	}
+}
+
+func TestMediaBrowserCapabilitiesUseExistingRuntime(t *testing.T) {
+	executor := artifactMediaExecutor{}
+	d := &Daemon{cfg: Config{MediaExecutor: func(provider, profile string) media.Executor {
+		if provider == "antigravity" && profile == "verified" {
+			return executor
+		}
+		return nil
+	}}}
+	entries := d.withMediaCapabilities([]map[string]string{{"type": "antigravity", "profile_id": "verified"}, {"type": "antigravity", "profile_id": "unavailable"}, {"type": "codex"}})
+	for i, entry := range entries {
+		got := entry["media_capabilities"].([]string)
+		if i == 0 && !slices.Equal(got, executor.Capabilities()) || i != 0 && len(got) != 0 {
+			t.Fatalf("verified browser capabilities: %v", entries)
+		}
+	}
+}
+
+func TestMediaWorkerReportsDuringShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reported := make(chan protocol.MediaResult, 1)
+	var claims atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/daemon/media/claim":
+			claims.Add(1)
+			json.NewEncoder(w).Encode(protocol.MediaClaimResponse{Assignment: &protocol.MediaAssignment{Job: protocol.MediaJob{ID: "job", ExpiresAt: time.Now().Add(time.Minute)}, Attempt: "attempt"}})
+		case "/api/daemon/media/result":
+			var result protocol.MediaResult
+			if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
+				t.Error(err)
+			}
+			reported <- result
+			w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	executor := artifactMediaExecutor{path: func(string) (string, error) { cancel(); return "", context.Canceled }}
+	d := &Daemon{cfg: Config{MediaExecutor: func(string, string) media.Executor { return executor }}, client: NewClient(server.URL), wsRPC: newWSRPCClient(wsRPCResponseGrace)}
+	done := make(chan struct{})
+	go func() { defer close(done); d.mediaWorker(ctx, Runtime{ID: "runtime", Provider: "antigravity"}) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("worker did not finish shutdown")
+	}
+	select {
+	case result := <-reported:
+		if result.JobID != "job" || result.Attempt != "attempt" || result.Error == "" {
+			t.Fatal("invalid shutdown receipt", result)
+		}
+	default:
+		t.Fatal("cancelled worker did not report independently")
+	}
+	if claims.Load() != 1 {
+		t.Fatal("shutdown claimed another job")
 	}
 }

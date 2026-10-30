@@ -47,12 +47,18 @@ owner/public/shared-with rules. Workspace membership is required. Eligible
 runtimes must be online, carry a matching per-runtime capability and not be
 cooling. Header-level `media-*` capabilities are discarded.
 
-| Runtime provider | Tag | Operations |
+| Runtime host | Tag / media source | Operations |
 | --- | --- | --- |
 | codex | media-image-codex-v1 | image-generate, image-edit |
 | antigravity (`--provider agy`) | media-image-agy-v1 | image-generate, image-edit |
-| flow | media-video-flow-v1 | video-generate |
-| whisk | media-image-whisk-v1 | image-remix |
+| Any verified existing runtime (e.g. antigravity) | media-video-flow-v1 / flow | video-generate |
+| Same Flow host | media-image-whisk-v1 / whisk | image-remix |
+
+Media source comes from the advertised tag, independently of the host's runtime
+type. Codex/agy tags retain their native host restriction; Flow and Whisk can
+share an existing antigravity runtime with a verified browser executor. The
+matched `capability_tag` is stored per assignment and supplies the cooldown key,
+even if registration changes its tags before the result arrives.
 
 Rank uses the minimum remaining percentage across applicable active quota
 windows. Exhausted windows are excluded; agy uses the Gemini pool, not the
@@ -74,9 +80,13 @@ status interval and prevents later output/receipts from reviving the job.
 Claims and receipts use negotiated `rpc-v1` (`media.claim`, `media.result`), with
 HTTP fallback only when a WS request was not sent. Parameters, input attachment
 IDs and a scoped, expiring `mjt_` token travel over RPC. Binary data never does.
-An ambiguous claim or daemon crash is not automatically replayed against a
-model: the job expires failed. This stage intentionally has no durable native
-execution recovery or resumable upload ledger.
+Each runtime has one serial worker. Its next claim settles any prior running
+assignment: an already persisted attachment completes the job; otherwise it
+fails with `assignment lost`. This releases the runtime even after a lost claim
+or receipt. Shutdown sends the receipt with an independent ten-second timeout.
+No model execution is replayed. If the runtime never returns, the job deadline
+still applies. This stage has no durable native execution recovery or resumable
+upload ledger.
 
 ## HTTP and storage
 
@@ -105,6 +115,9 @@ and Local storage. It streams a 110 MiB output, injects an upload failure and a
 lost committed-upload response, checks one Submit / three uploads / one output
 attachment, observes heartbeat acknowledgements during transfer, and verifies
 receipt-only versus explicit streamed download behavior. Separate tests cover
-quota selection, permission boundaries, stale receipts, cancellation, task and
-issue binding, CLI validation, migrations/rollback and S3's streaming contract.
+quota selection, Flow/Whisk registration and routing on an existing antigravity
+runtime, lost dispatch/receipt settlement, shutdown receipts, permission
+revocation, input scope, private-chat isolation, artifact path/symlink boundaries,
+content-type and retry limits, stale receipts, cancellation, task/issue binding,
+CLI validation, migrations/rollback and S3's streaming contract.
 No real provider login or generation is needed for these checks.

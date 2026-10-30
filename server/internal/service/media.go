@@ -3,7 +3,6 @@ package service
 import (
 	"encoding/json"
 	"math"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -11,30 +10,39 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+type MediaRuntimeSelection struct {
+	db.AgentRuntime
+	Tag string
+}
+
 // SelectMediaRuntime applies machine-owner consent before considering quota.
 // Unknown quota is usable but ranks behind any measured remaining capacity.
-func SelectMediaRuntime(runtimes []db.AgentRuntime, caller pgtype.UUID, request protocol.MediaRequest, now time.Time) *db.AgentRuntime {
-	var best *db.AgentRuntime
+func SelectMediaRuntime(runtimes []db.AgentRuntime, caller pgtype.UUID, request protocol.MediaRequest, now time.Time) *MediaRuntimeSelection {
+	var best *MediaRuntimeSelection
 	bestScore := -2.0
 	for i := range runtimes {
 		rt := &runtimes[i]
-		provider := protocol.MediaProvider(rt.Provider)
-		if rt.Status != "online" || !RuntimeAllowsUser(*rt, caller) || (request.Provider != "auto" && request.Provider != provider) {
+		if rt.Status != "online" || !RuntimeAllowsUser(*rt, caller) {
 			continue
 		}
-		tag := protocol.MediaCapabilityTag(provider, request.Capability)
 		var meta struct {
 			Capabilities []string         `json:"capabilities"`
 			Cooldowns    map[string]int64 `json:"media_cooldowns"`
 		}
-		if tag == "" || json.Unmarshal(rt.Metadata, &meta) != nil || !slices.Contains(meta.Capabilities, tag) || meta.Cooldowns[tag] > now.Unix() {
+		if json.Unmarshal(rt.Metadata, &meta) != nil {
 			continue
 		}
 		var quota protocol.RuntimePlanQuota
 		_ = json.Unmarshal(rt.PlanQuota, &quota)
-		score, usable := mediaQuotaScore(quota, provider, now)
-		if usable && score > bestScore {
-			best, bestScore = rt, score
+		for _, tag := range meta.Capabilities {
+			provider := protocol.MediaTagProvider(tag)
+			if !protocol.ValidMediaTag(rt.Provider, tag) || (request.Provider != "auto" && request.Provider != provider) || protocol.MediaCapabilityTag(provider, request.Capability) != tag || meta.Cooldowns[tag] > now.Unix() {
+				continue
+			}
+			score, usable := mediaQuotaScore(quota, provider, now)
+			if usable && score > bestScore {
+				best, bestScore = &MediaRuntimeSelection{AgentRuntime: *rt, Tag: tag}, score
+			}
 		}
 	}
 	return best
@@ -70,7 +78,7 @@ func mediaQuotaScore(quota protocol.RuntimePlanQuota, provider string, now time.
 	return score, true
 }
 
-func MediaCooldown(rt db.AgentRuntime, retryAfter int64, now time.Time) time.Time {
+func MediaCooldown(rt db.AgentRuntime, tag string, retryAfter int64, now time.Time) time.Time {
 	if retryAfter > 0 {
 		return now.Add(time.Duration(min(retryAfter, int64(86400*7))) * time.Second)
 	}
@@ -78,7 +86,7 @@ func MediaCooldown(rt db.AgentRuntime, retryAfter int64, now time.Time) time.Tim
 	_ = json.Unmarshal(rt.PlanQuota, &quota)
 	var reset int64
 	for _, w := range quota.Windows {
-		if applicableMediaWindow(w, protocol.MediaProvider(rt.Provider)) && w.ResetsAt != nil && *w.ResetsAt > now.Unix() && (reset == 0 || *w.ResetsAt < reset) {
+		if applicableMediaWindow(w, protocol.MediaTagProvider(tag)) && w.ResetsAt != nil && *w.ResetsAt > now.Unix() && (reset == 0 || *w.ResetsAt < reset) {
 			reset = *w.ResetsAt
 		}
 	}

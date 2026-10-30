@@ -13,7 +13,7 @@ import (
 
 const attachMediaJob = `-- name: AttachMediaJob :one
 UPDATE media_job SET attachment_id = $1, updated_at = now()
-WHERE id = $2 AND workspace_id = $3 RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at
+WHERE id = $2 AND workspace_id = $3 RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at
 `
 
 type AttachMediaJobParams struct {
@@ -38,6 +38,7 @@ func (q *Queries) AttachMediaJob(ctx context.Context, arg AttachMediaJobParams) 
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,
@@ -127,7 +128,7 @@ WITH authorized_workspace AS MATERIALIZED (
 INSERT INTO media_job (workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request)
 SELECT id, $1, $2, $3, $4, $5, $6, $7
 FROM authorized_workspace
-RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at
+RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at
 `
 
 type CreateMediaJobParams struct {
@@ -167,6 +168,7 @@ func (q *Queries) CreateMediaJob(ctx context.Context, arg CreateMediaJobParams) 
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,
@@ -198,7 +200,7 @@ func (q *Queries) ExpireMediaJobs(ctx context.Context, workspaceID pgtype.UUID) 
 
 const finishMediaJob = `-- name: FinishMediaJob :one
 UPDATE media_job SET state = $1, error = $2, updated_at = now()
-WHERE id = $3 AND workspace_id = $4 RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at
+WHERE id = $3 AND workspace_id = $4 RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at
 `
 
 type FinishMediaJobParams struct {
@@ -229,6 +231,7 @@ func (q *Queries) FinishMediaJob(ctx context.Context, arg FinishMediaJobParams) 
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,
@@ -240,7 +243,7 @@ func (q *Queries) FinishMediaJob(ctx context.Context, arg FinishMediaJobParams) 
 }
 
 const getMediaJob = `-- name: GetMediaJob :one
-SELECT id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at FROM media_job WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at FROM media_job WHERE id = $1 AND workspace_id = $2
 `
 
 type GetMediaJobParams struct {
@@ -264,6 +267,7 @@ func (q *Queries) GetMediaJob(ctx context.Context, arg GetMediaJobParams) (Media
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,
@@ -275,7 +279,7 @@ func (q *Queries) GetMediaJob(ctx context.Context, arg GetMediaJobParams) (Media
 }
 
 const lockMediaJob = `-- name: LockMediaJob :one
-SELECT id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at FROM media_job WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+SELECT id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at FROM media_job WHERE id = $1 AND workspace_id = $2 FOR UPDATE
 `
 
 type LockMediaJobParams struct {
@@ -299,6 +303,7 @@ func (q *Queries) LockMediaJob(ctx context.Context, arg LockMediaJobParams) (Med
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,
@@ -310,30 +315,24 @@ func (q *Queries) LockMediaJob(ctx context.Context, arg LockMediaJobParams) (Med
 }
 
 const queuedMediaJobs = `-- name: QueuedMediaJobs :many
-SELECT j.id, j.workspace_id, j.caller_id, j.uploader_type, j.uploader_id, j.task_id, j.issue_id, j.chat_session_id, j.request, j.state, j.runtime_id, j.attempt, j.attempts, j.attachment_id, j.error, j.expires_at, j.created_at, j.updated_at FROM media_job j
+SELECT j.id, j.workspace_id, j.caller_id, j.uploader_type, j.uploader_id, j.task_id, j.issue_id, j.chat_session_id, j.request, j.state, j.runtime_id, j.attempt, j.capability_tag, j.attempts, j.attachment_id, j.error, j.expires_at, j.created_at, j.updated_at FROM media_job j
 JOIN agent_runtime r ON r.id = $1 AND r.workspace_id = j.workspace_id
 WHERE j.workspace_id = $2 AND j.state = 'queued' AND j.expires_at > now()
   AND (r.owner_id = j.caller_id OR r.visibility = 'public' OR (r.visibility = 'private' AND j.caller_id = ANY(r.shared_with)))
   AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = j.workspace_id AND m.user_id = j.caller_id)
-  AND j.request->>'provider' IN ('auto', $3::text)
-  AND j.request->>'capability' = ANY($4::text[])
+  AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS route(provider text, capability text)
+      WHERE j.request->>'provider' IN ('auto', route.provider) AND j.request->>'capability' = route.capability)
 ORDER BY j.created_at, j.id LIMIT 50 FOR UPDATE OF j SKIP LOCKED
 `
 
 type QueuedMediaJobsParams struct {
-	RuntimeID    pgtype.UUID `json:"runtime_id"`
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	Provider     string      `json:"provider"`
-	Capabilities []string    `json:"capabilities"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Routes      []byte      `json:"routes"`
 }
 
 func (q *Queries) QueuedMediaJobs(ctx context.Context, arg QueuedMediaJobsParams) ([]MediaJob, error) {
-	rows, err := q.db.Query(ctx, queuedMediaJobs,
-		arg.RuntimeID,
-		arg.WorkspaceID,
-		arg.Provider,
-		arg.Capabilities,
-	)
+	rows, err := q.db.Query(ctx, queuedMediaJobs, arg.RuntimeID, arg.WorkspaceID, arg.Routes)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +353,7 @@ func (q *Queries) QueuedMediaJobs(ctx context.Context, arg QueuedMediaJobsParams
 			&i.State,
 			&i.RuntimeID,
 			&i.Attempt,
+			&i.CapabilityTag,
 			&i.Attempts,
 			&i.AttachmentID,
 			&i.Error,
@@ -371,23 +371,42 @@ func (q *Queries) QueuedMediaJobs(ctx context.Context, arg QueuedMediaJobsParams
 	return items, nil
 }
 
+const settleMediaRuntimeJobs = `-- name: SettleMediaRuntimeJobs :exec
+UPDATE media_job SET state = CASE WHEN attachment_id IS NOT NULL THEN 'completed' ELSE 'failed' END,
+error = CASE WHEN attachment_id IS NOT NULL THEN '' ELSE 'assignment lost' END, updated_at = now()
+WHERE workspace_id = $1 AND runtime_id = $2 AND state = 'running'
+`
+
+type SettleMediaRuntimeJobsParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+}
+
+// A new claim from the serial worker ends its previous assignment.
+func (q *Queries) SettleMediaRuntimeJobs(ctx context.Context, arg SettleMediaRuntimeJobsParams) error {
+	_, err := q.db.Exec(ctx, settleMediaRuntimeJobs, arg.WorkspaceID, arg.RuntimeID)
+	return err
+}
+
 const startMediaJob = `-- name: StartMediaJob :one
 UPDATE media_job SET state = 'running', runtime_id = $1, attempt = $2,
-attempts = attempts + 1, error = '', updated_at = now()
-WHERE id = $3 AND workspace_id = $4 AND state = 'queued' RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, attempts, attachment_id, error, expires_at, created_at, updated_at
+capability_tag = $3, attempts = attempts + 1, error = '', updated_at = now()
+WHERE id = $4 AND workspace_id = $5 AND state = 'queued' RETURNING id, workspace_id, caller_id, uploader_type, uploader_id, task_id, issue_id, chat_session_id, request, state, runtime_id, attempt, capability_tag, attempts, attachment_id, error, expires_at, created_at, updated_at
 `
 
 type StartMediaJobParams struct {
-	RuntimeID   pgtype.UUID `json:"runtime_id"`
-	Attempt     pgtype.UUID `json:"attempt"`
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	Attempt       pgtype.UUID `json:"attempt"`
+	CapabilityTag string      `json:"capability_tag"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 }
 
 func (q *Queries) StartMediaJob(ctx context.Context, arg StartMediaJobParams) (MediaJob, error) {
 	row := q.db.QueryRow(ctx, startMediaJob,
 		arg.RuntimeID,
 		arg.Attempt,
+		arg.CapabilityTag,
 		arg.ID,
 		arg.WorkspaceID,
 	)
@@ -405,6 +424,7 @@ func (q *Queries) StartMediaJob(ctx context.Context, arg StartMediaJobParams) (M
 		&i.State,
 		&i.RuntimeID,
 		&i.Attempt,
+		&i.CapabilityTag,
 		&i.Attempts,
 		&i.AttachmentID,
 		&i.Error,

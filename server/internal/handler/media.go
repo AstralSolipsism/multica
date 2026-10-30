@@ -216,6 +216,12 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireDaemonRuntimeAuthorized(w, r, uuidToString(rt.WorkspaceID), rt.DaemonID, rt.OwnerID, "runtime not found") {
 		return
 	}
+	// The daemon has one serial worker per runtime. Another claim means the
+	// previous assignment ended, even if its dispatch or receipt was lost.
+	if err := q.SettleMediaRuntimeJobs(r.Context(), db.SettleMediaRuntimeJobsParams{WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID}); err != nil {
+		writeError(w, 500, "settle previous assignment failed")
+		return
+	}
 	runtimes, err := q.AvailableMediaRuntimes(r.Context(), rt.WorkspaceID)
 	if err != nil {
 		writeError(w, 500, "runtime selection failed")
@@ -223,18 +229,15 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// Filter unroutable operations and callers before the bounded queue scan,
 	// so an unavailable provider's backlog cannot starve another provider.
-	capabilities := make([]string, 0, 4)
+	routes := make([]map[string]string, 0, 4)
 	for _, capability := range []string{"image-generate", "image-edit", "image-remix", "video-generate"} {
 		request := protocol.MediaRequest{Provider: "auto", Capability: capability}
-		if service.SelectMediaRuntime([]db.AgentRuntime{rt}, rt.OwnerID, request, time.Now()) != nil {
-			capabilities = append(capabilities, capability)
+		if selected := service.SelectMediaRuntime([]db.AgentRuntime{rt}, rt.OwnerID, request, time.Now()); selected != nil {
+			routes = append(routes, map[string]string{"provider": protocol.MediaTagProvider(selected.Tag), "capability": capability})
 		}
 	}
-	if len(capabilities) == 0 {
-		writeJSON(w, http.StatusOK, protocol.MediaClaimResponse{})
-		return
-	}
-	jobs, err := q.QueuedMediaJobs(r.Context(), db.QueuedMediaJobsParams{WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, Provider: protocol.MediaProvider(rt.Provider), Capabilities: capabilities})
+	rawRoutes, _ := json.Marshal(routes)
+	jobs, err := q.QueuedMediaJobs(r.Context(), db.QueuedMediaJobsParams{WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, Routes: rawRoutes})
 	if err != nil {
 		writeError(w, 500, "claim failed")
 		return
@@ -252,7 +255,7 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		attempt := uuid.NewString()
-		job, err = q.StartMediaJob(r.Context(), db.StartMediaJobParams{ID: job.ID, WorkspaceID: job.WorkspaceID, RuntimeID: rt.ID, Attempt: parseUUID(attempt)})
+		job, err = q.StartMediaJob(r.Context(), db.StartMediaJobParams{ID: job.ID, WorkspaceID: job.WorkspaceID, RuntimeID: rt.ID, Attempt: parseUUID(attempt), CapabilityTag: selected.Tag})
 		if err != nil {
 			writeError(w, 500, "claim failed")
 			return
@@ -263,6 +266,10 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, protocol.MediaClaimResponse{Assignment: &protocol.MediaAssignment{Job: h.mediaJobResponse(r, job), Attempt: attempt, Token: token}})
+		return
+	}
+	if tx.Commit(r.Context()) != nil {
+		writeError(w, 500, "claim failed")
 		return
 	}
 	writeJSON(w, 200, protocol.MediaClaimResponse{})
@@ -310,10 +317,8 @@ func (h *Handler) ReportMediaJob(w http.ResponseWriter, r *http.Request) {
 	if time.Now().After(job.ExpiresAt.Time) {
 		message = "job deadline exceeded"
 	} else if req.RateLimited && !job.AttachmentID.Valid {
-		var request protocol.MediaRequest
-		_ = json.Unmarshal(job.Request, &request)
-		until := service.MediaCooldown(rt, req.RetryAfter, time.Now())
-		err = q.CoolMediaRuntime(r.Context(), db.CoolMediaRuntimeParams{ID: rt.ID, WorkspaceID: rt.WorkspaceID, Capability: protocol.MediaCapabilityTag(protocol.MediaProvider(rt.Provider), request.Capability), UntilEpoch: until.Unix()})
+		until := service.MediaCooldown(rt, job.CapabilityTag, req.RetryAfter, time.Now())
+		err = q.CoolMediaRuntime(r.Context(), db.CoolMediaRuntimeParams{ID: rt.ID, WorkspaceID: rt.WorkspaceID, Capability: job.CapabilityTag, UntilEpoch: until.Unix()})
 		if err != nil {
 			writeError(w, 500, "cooldown failed")
 			return

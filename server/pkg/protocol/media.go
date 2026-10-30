@@ -75,12 +75,28 @@ func MediaProvider(runtimeProvider string) string {
 	return runtimeProvider
 }
 
+// MediaTagProvider identifies the media source independently of its host runtime.
+func MediaTagProvider(tag string) string {
+	switch tag {
+	case "media-image-codex-v1":
+		return "codex"
+	case "media-image-agy-v1":
+		return "agy"
+	case "media-video-flow-v1":
+		return "flow"
+	case "media-image-whisk-v1":
+		return "whisk"
+	}
+	return ""
+}
+
 func ValidMediaTag(runtimeProvider, tag string) bool {
-	p := MediaProvider(runtimeProvider)
-	for _, c := range []string{"image-generate", "image-edit", "image-remix", "video-generate"} {
-		if tag != "" && tag == MediaCapabilityTag(p, c) {
-			return true
-		}
+	switch source := MediaTagProvider(tag); source {
+	case "codex", "agy":
+		return source == MediaProvider(runtimeProvider)
+	case "flow", "whisk":
+		// A verified browser executor can run on any existing runtime host.
+		return true
 	}
 	return false
 }

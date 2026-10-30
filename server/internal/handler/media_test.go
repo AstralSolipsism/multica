@@ -158,7 +158,7 @@ func TestMediaCapabilitiesArePerRuntime(t *testing.T) {
 	if got := runtimeMediaCapabilities(req, "claude", []string{"media-image-codex-v1"}); !slices.Equal(got, []string{"rpc-v1"}) {
 		t.Fatalf("broadcast leaked: %v", got)
 	}
-	if got := runtimeMediaCapabilities(req, "codex", []string{"media-image-codex-v1", "media-video-flow-v1"}); !slices.Equal(got, []string{"rpc-v1", "media-image-codex-v1"}) {
+	if got := runtimeMediaCapabilities(req, "codex", []string{"media-image-codex-v1", "media-video-flow-v1"}); !slices.Equal(got, []string{"rpc-v1", "media-image-codex-v1", "media-video-flow-v1"}) {
 		t.Fatalf("wrong capabilities: %v", got)
 	}
 }

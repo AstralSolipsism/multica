@@ -79,15 +79,15 @@ func TestMediaRouting(t *testing.T) {
 	if SelectMediaRuntime([]db.AgentRuntime{agy}, user, req, now) == nil {
 		t.Fatal("unrelated agy pool blocked image")
 	}
-	if until := MediaCooldown(agy, 90, now); !until.Equal(now.Add(90 * time.Second)) {
+	if until := MediaCooldown(agy, "media-image-agy-v1", 90, now); !until.Equal(now.Add(90 * time.Second)) {
 		t.Fatal("Retry-After not honored")
 	}
 	reset := now.Add(2 * time.Hour).Unix()
 	agy.PlanQuota = []byte(fmt.Sprintf(`{"windows":[{"group":"gemini","resets_at":%d}]}`, reset))
-	if MediaCooldown(agy, 0, now).Unix() != reset {
+	if MediaCooldown(agy, "media-image-agy-v1", 0, now).Unix() != reset {
 		t.Fatal("quota reset not used")
 	}
-	if MediaCooldown(one, 0, now).Sub(now) != time.Minute {
+	if MediaCooldown(one, "media-image-codex-v1", 0, now).Sub(now) != time.Minute {
 		t.Fatal("fallback cooldown")
 	}
 }

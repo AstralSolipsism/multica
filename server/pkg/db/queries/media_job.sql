@@ -26,9 +26,15 @@ JOIN agent_runtime r ON r.id = @runtime_id AND r.workspace_id = j.workspace_id
 WHERE j.workspace_id = @workspace_id AND j.state = 'queued' AND j.expires_at > now()
   AND (r.owner_id = j.caller_id OR r.visibility = 'public' OR (r.visibility = 'private' AND j.caller_id = ANY(r.shared_with)))
   AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = j.workspace_id AND m.user_id = j.caller_id)
-  AND j.request->>'provider' IN ('auto', @provider::text)
-  AND j.request->>'capability' = ANY(@capabilities::text[])
+  AND EXISTS (SELECT 1 FROM jsonb_to_recordset(@routes::jsonb) AS route(provider text, capability text)
+      WHERE j.request->>'provider' IN ('auto', route.provider) AND j.request->>'capability' = route.capability)
 ORDER BY j.created_at, j.id LIMIT 50 FOR UPDATE OF j SKIP LOCKED;
+
+-- name: SettleMediaRuntimeJobs :exec
+-- A new claim from the serial worker ends its previous assignment.
+UPDATE media_job SET state = CASE WHEN attachment_id IS NOT NULL THEN 'completed' ELSE 'failed' END,
+error = CASE WHEN attachment_id IS NOT NULL THEN '' ELSE 'assignment lost' END, updated_at = now()
+WHERE workspace_id = @workspace_id AND runtime_id = @runtime_id AND state = 'running';
 
 -- name: AvailableMediaRuntimes :many
 SELECT r.* FROM agent_runtime r WHERE r.workspace_id = @workspace_id AND r.status = 'online'
@@ -38,7 +44,7 @@ ORDER BY r.id;
 
 -- name: StartMediaJob :one
 UPDATE media_job SET state = 'running', runtime_id = @runtime_id, attempt = @attempt,
-attempts = attempts + 1, error = '', updated_at = now()
+capability_tag = @capability_tag, attempts = attempts + 1, error = '', updated_at = now()
 WHERE id = @id AND workspace_id = @workspace_id AND state = 'queued' RETURNING *;
 
 -- name: FinishMediaJob :one

@@ -1465,6 +1465,7 @@ type MediaJob struct {
 	State         string             `json:"state"`
 	RuntimeID     pgtype.UUID        `json:"runtime_id"`
 	Attempt       pgtype.UUID        `json:"attempt"`
+	CapabilityTag string             `json:"capability_tag"`
 	Attempts      int32              `json:"attempts"`
 	AttachmentID  pgtype.UUID        `json:"attachment_id"`
 	Error         string             `json:"error"`

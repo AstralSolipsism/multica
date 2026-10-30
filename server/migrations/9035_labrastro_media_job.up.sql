@@ -11,6 +11,7 @@ CREATE TABLE media_job (
     state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','completed','failed','cancelled')),
     runtime_id uuid,
     attempt uuid,
+    capability_tag text NOT NULL DEFAULT '',
     attempts integer NOT NULL DEFAULT 0,
     attachment_id uuid,
     error text NOT NULL DEFAULT '',

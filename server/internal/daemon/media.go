@@ -113,14 +113,17 @@ func (d *Daemon) mediaWorker(ctx context.Context, rt Runtime) {
 		err := d.mediaRPC(ctx, "media.claim", protocol.MediaClaimRequest{RuntimeID: rt.ID}, &claim)
 		if err == nil && claim.Assignment != nil {
 			result := d.executeMedia(ctx, rt, *claim.Assignment)
+			// Shutdown cancels Submit/transfers, but must still send the receipt.
+			reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			for i := 0; i < 3; i++ {
-				if d.mediaRPC(ctx, "media.result", result, nil) == nil {
+				if d.mediaRPC(reportCtx, "media.result", result, nil) == nil {
 					break
 				}
-				if !mediaWait(ctx, time.Duration(i+1)*time.Second) {
-					return
+				if i < 2 && !mediaWait(reportCtx, time.Duration(i+1)*time.Second) {
+					break
 				}
 			}
+			cancel()
 		}
 		select {
 		case <-ctx.Done():
