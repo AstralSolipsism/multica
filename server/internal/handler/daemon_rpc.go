@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -45,13 +46,17 @@ func (w *rpcResponseCapture) Write(b []byte) (int, error) {
 func (h *Handler) DaemonRPCHandler(ctx context.Context, identity daemonws.ClientIdentity, method string, body json.RawMessage) (int, json.RawMessage, error) {
 	switch method {
 	case "tasks.claim":
-		return h.rpcClaimTasks(ctx, identity, body)
+		return h.rpcDaemonHTTP(ctx, identity, body, h.ClaimTasksByRuntime)
+	case "media.claim":
+		return h.rpcMediaHTTP(ctx, identity, body, h.ClaimMediaJob)
+	case "media.result":
+		return h.rpcMediaHTTP(ctx, identity, body, h.ReportMediaJob)
 	default:
 		return http.StatusNotFound, nil, fmt.Errorf("unknown rpc method %q", method)
 	}
 }
 
-func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIdentity, body json.RawMessage) (int, json.RawMessage, error) {
+func (h *Handler) rpcDaemonHTTP(ctx context.Context, identity daemonws.ClientIdentity, body json.RawMessage, handler http.HandlerFunc) (int, json.RawMessage, error) {
 	if len(body) == 0 {
 		body = json.RawMessage("{}")
 	}
@@ -85,10 +90,23 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	}
 
 	rec := &rpcResponseCapture{}
-	h.ClaimTasksByRuntime(rec, req)
+	handler(rec, req)
 	status := rec.status
 	if status == 0 {
 		status = http.StatusOK
 	}
 	return status, json.RawMessage(rec.body.Bytes()), nil
+}
+
+func (h *Handler) rpcMediaHTTP(ctx context.Context, identity daemonws.ClientIdentity, body json.RawMessage, handler http.HandlerFunc) (int, json.RawMessage, error) {
+	var request struct {
+		RuntimeID string `json:"runtime_id"`
+	}
+	if len(body) > 64<<10 || json.Unmarshal(body, &request) != nil {
+		return http.StatusBadRequest, nil, fmt.Errorf("invalid media request")
+	}
+	if !slices.Contains(identity.RuntimeIDs, request.RuntimeID) {
+		return http.StatusNotFound, nil, fmt.Errorf("runtime not in connection scope")
+	}
+	return h.rpcDaemonHTTP(ctx, identity, body, handler)
 }

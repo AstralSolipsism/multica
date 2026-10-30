@@ -390,12 +390,16 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// The cap covers the whole multipart body, so it leaves room for the form's
 	// own framing; the file itself is held to maxUploadSize once read.
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+multipartOverheadBytes)
+	uploadLimit := maxUploadSize
+	if r.URL.Query().Get("media") == "1" {
+		uploadLimit = protocol.MediaMaxBytes
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, uploadLimit+multipartOverheadBytes)
 
-	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "file exceeds 100 MB limit")
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds %d MB limit", uploadLimit>>20))
 			return
 		}
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
@@ -428,13 +432,8 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := io.ReadAll(file)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read file")
-		return
-	}
-	if int64(len(data)) > maxUploadSize {
-		writeError(w, http.StatusRequestEntityTooLarge, "file exceeds 100 MB limit")
+	if header.Size > uploadLimit {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds %d MB limit", uploadLimit>>20))
 		return
 	}
 
@@ -469,7 +468,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			UploaderID:   parseUUID(uploaderID),
 			Filename:     header.Filename,
 			ContentType:  contentType,
-			SizeBytes:    int64(len(data)),
+			SizeBytes:    header.Size,
 		}
 
 		if issueID := r.FormValue("issue_id"); issueID != "" {
@@ -566,7 +565,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			params.ChatSessionID = task.ChatSessionID
 		}
 
-		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
+		link, err := h.uploadAttachmentStream(r.Context(), key, file, header.Size, contentType, header.Filename)
 		if err != nil {
 			slog.Error("file upload failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "upload failed")
@@ -631,7 +630,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No workspace context (e.g. avatar upload) — upload directly.
-	link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
+	link, err := h.uploadAttachmentStream(r.Context(), key, file, header.Size, contentType, header.Filename)
 	if err != nil {
 		slog.Error("file upload failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "upload failed")

@@ -20,6 +20,7 @@ const (
 // teardown. Adding a table requires an explicit ownership decision here; the
 // handler deletion graph must then implement that decision before CI passes.
 var workspaceDeletionManifest = map[string]workspaceDeleteAction{
+	"media_job":                         workspaceDelete,
 	"labrastro_issue_tip":               workspaceDelete,
 	"labrastro_issue_tip_state":         workspaceDelete,
 	"labrastro_known_topic":             workspaceDelete,

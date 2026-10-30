@@ -2332,6 +2332,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// ZenMux self-gates like Kimi: it always starts so removed associations
 	// are actively cleared, and polls only with key + link configured.
 	go d.zenmuxPlanQuotaLoop(ctx)
+	mediaDone := make(chan struct{})
+	go func() { defer close(mediaDone); d.mediaLoop(ctx) }()
+	defer func() { cancel(); <-mediaDone }()
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
@@ -3107,7 +3110,7 @@ func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, wo
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
-		"runtimes":          runtimes,
+		"runtimes":          d.withMediaCapabilities(runtimes),
 		"failed_profiles":   failedProfiles,
 	}
 
@@ -3152,7 +3155,7 @@ func (d *Daemon) registerBuiltinRuntimesForWorkspaceLocked(ctx context.Context, 
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
-		"runtimes":          runtimes,
+		"runtimes":          d.withMediaCapabilities(runtimes),
 		// Deliberately empty: this call carries no profiles, so it must not
 		// report profile failures either.
 		"failed_profiles": []map[string]string{},

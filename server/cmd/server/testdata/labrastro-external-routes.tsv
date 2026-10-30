@@ -146,6 +146,8 @@ POST	/api/daemon/claim	daemon-auth	separate-auth
 POST	/api/daemon/deregister	daemon-auth	separate-auth
 POST	/api/daemon/heartbeat	daemon-auth	separate-auth
 GET	/api/daemon/issues/{issueId}/gc-check	daemon-auth	separate-auth
+POST	/api/daemon/media/claim	daemon-auth	separate-auth
+POST	/api/daemon/media/result	daemon-auth	separate-auth
 POST	/api/daemon/register	daemon-auth	separate-auth
 POST	/api/daemon/runtimes/{runtimeId}/local-skills/import/{requestId}/result	daemon-auth	separate-auth
 POST	/api/daemon/runtimes/{runtimeId}/local-skills/{requestId}/result	daemon-auth	separate-auth
@@ -318,6 +320,12 @@ PATCH	/api/me	user-auth	deny
 PATCH	/api/me/onboarding	user-auth	deny
 POST	/api/me/onboarding/cloud-waitlist	user-auth	deny
 POST	/api/me/onboarding/complete	user-auth	deny
+POST	/api/media/jobs	user-auth	deny
+GET	/api/media/jobs/{id}	user-auth	deny
+POST	/api/media/jobs/{id}/cancel	user-auth	deny
+GET	/api/media/jobs/{id}/inputs/{attachmentID}	public-or-capability	separate-auth
+POST	/api/media/jobs/{id}/output	public-or-capability	separate-auth
+GET	/api/media/jobs/{id}/status	public-or-capability	separate-auth
 GET	/api/message-approved-targets	user-auth	deny
 POST	/api/message-approved-targets	user-auth	deny
 DELETE	/api/message-approved-targets/{targetId}	user-auth	deny
