@@ -5991,6 +5991,40 @@ func TestRunIssueSearchRejectsInvalidScope(t *testing.T) {
 	}
 }
 
+// The server caps a search page at 50 even when a larger --limit is sent; the
+// JSON envelope must echo the effective limit so offset += limit paging does
+// not skip issues (OL-458 first review #4).
+func TestRunIssueSearchJSONEchoesEffectiveLimit(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The clamp happens before the request, so the wire carries the
+		// effective page size, not the oversized request.
+		if got := r.URL.Query().Get("limit"); got != "50" {
+			t.Errorf("limit query = %q, want the effective 50", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": true})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("limit", "100")
+	out, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode stdout JSON: %v", err)
+	}
+	if got, ok := payload["limit"].(float64); !ok || int(got) != 50 {
+		t.Fatalf("limit echo = %#v, want 50 (the server-side page cap)", payload["limit"])
+	}
+}
+
 func TestRunIssueSearchResolvesProjectPrefix(t *testing.T) {
 	chdirWithDaemonTaskMarker(t)
 	const projectUUID = "44444444-4444-4444-8444-444444444444"

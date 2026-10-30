@@ -976,7 +976,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		) aggregated_comments
 		WHERE %s
 	)`,
-		strings.Join(commentFlagColumns, ",\n				"),
+		strings.Join(commentFlagColumns, ",\n\t\t\t\t"),
 		wsParam,
 		strings.Join(commentCandidateFlags, " OR "),
 	)
@@ -996,6 +996,13 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	if len(termContainsParams) > 1 {
 		var allTerms []string
 		for index := range termContainsParams {
+			if titleDescOnly {
+				// cm is not joined under scope=title_desc; the per-term
+				// spread may only draw from the title/description flags.
+				allTerms = append(allTerms, fmt.Sprintf(
+					"(im.title_term_%[1]d OR im.description_term_%[1]d)", index))
+				continue
+			}
 			allTerms = append(allTerms, fmt.Sprintf(
 				"(im.title_term_%[1]d OR im.description_term_%[1]d OR COALESCE(cm.comment_term_%[1]d, FALSE))",
 				index,
@@ -1064,7 +1071,14 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		ELSE 7
 	END`
 
+	// Under scope=title_desc there is no comment fallback; a number-only hit
+	// is neither a title nor a description match, so label it "number" rather
+	// than misleading "description" (which would also attach a description
+	// snippet that does not contain the query).
 	matchSourceParts := []string{"WHEN im.title_phrase THEN 'title'"}
+	if titleDescOnly && hasNum {
+		matchSourceParts = append(matchSourceParts, "WHEN im.number_exact THEN 'number'")
+	}
 	if len(termContainsParams) > 1 {
 		var titleTerms []string
 		for index := range termContainsParams {
@@ -1082,6 +1096,9 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	}
 	matchSourceElse := "'comment'"
 	if titleDescOnly {
+		// Reached only when title/description term flags all failed but
+		// eligibility still held, i.e. the phrase spread across title and
+		// description without either field containing the whole phrase.
 		matchSourceElse = "'description'"
 	}
 	matchSourceExpr := "CASE " + strings.Join(matchSourceParts, " ") + " ELSE " + matchSourceElse + " END"

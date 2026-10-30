@@ -577,9 +577,12 @@ func TestBuildSearchQuery_TitleDescScopeDropsComments(t *testing.T) {
 	if strings.Contains(query, "comment_matches") || strings.Contains(query, "FROM comment c") {
 		t.Fatalf("title_desc scope still scans comments:\n%s", query)
 	}
-	relevancePrefix := query[:strings.Index(query, "AS relevance_rank")]
-	if strings.Contains(relevancePrefix, "cm.comment_phrase") || strings.Contains(relevancePrefix, "cm.comment_term_0") {
-		t.Fatalf("title_desc scope still ranks on comment flags:\n%s", query)
+	// The whole statement must be free of cm. references: with multiple terms
+	// the eligibility WHERE used to reference cm.comment_term_N even though
+	// the comment CTE and LEFT JOIN were dropped, which PostgreSQL rejects
+	// with SQLSTATE 42P01 (OL-458 first review #1).
+	if strings.Contains(query, "cm.") {
+		t.Fatalf("title_desc scope still references the un-joined cm alias:\n%s", query)
 	}
 	if strings.Contains(query, "THEN 7") || strings.Contains(query, "THEN 8") {
 		// statusRank's ELSE 7 legitimately contains "THEN 7" inside its own
@@ -599,5 +602,29 @@ func TestBuildSearchQuery_TitleDescScopeDropsComments(t *testing.T) {
 		if !strings.Contains(all, anchor) {
 			t.Fatalf("default scope lost %q:\n%s", anchor, all)
 		}
+	}
+}
+
+// With scope=title_desc a number-only hit has no comment to fall back to; it
+// must report "number" instead of a misleading "description" (OL-458 first
+// review #2), while the default scope keeps the legacy "comment" fallback.
+func TestBuildSearchQuery_TitleDescScopeNumberHitMatchSource(t *testing.T) {
+	titleDesc, _ := buildSearchQuery("mul-7", []string{"mul-7"}, 7, true, false, nil, pgtype.UUID{}, true)
+	if !strings.Contains(titleDesc, "WHEN im.number_exact THEN 'number'") {
+		t.Fatalf("title_desc scope lost the number match-source branch:\n%s", titleDesc)
+	}
+	if !strings.Contains(titleDesc, "ELSE 'description'") {
+		t.Fatalf("title_desc scope lost the description fallback:\n%s", titleDesc)
+	}
+	if strings.Contains(titleDesc, "ELSE 'comment'") {
+		t.Fatalf("title_desc scope must not fall back to comment:\n%s", titleDesc)
+	}
+
+	all, _ := buildSearchQuery("mul-7", []string{"mul-7"}, 7, true, false, nil, pgtype.UUID{}, false)
+	if strings.Contains(all, "THEN 'number'") {
+		t.Fatalf("default scope gained the number branch, breaking legacy parity:\n%s", all)
+	}
+	if !strings.Contains(all, "ELSE 'comment'") {
+		t.Fatalf("default scope lost the comment fallback:\n%s", all)
 	}
 }

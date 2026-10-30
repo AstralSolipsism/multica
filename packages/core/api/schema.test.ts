@@ -576,6 +576,20 @@ describe("ApiClient schema fallback", () => {
       const res = await client.searchIssues({ q: "bug" });
       expect(res).toEqual({ issues: [] });
     });
+
+    it("parses has_more when the server reports another page", async () => {
+      stubFetchJson({ issues: [], has_more: true });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchIssues({ q: "bug" });
+      expect(res.has_more).toBe(true);
+    });
+
+    it("keeps has_more optional and undefined when absent", async () => {
+      stubFetchJson({ issues: [] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchIssues({ q: "bug" });
+      expect(res.has_more).toBeUndefined();
+    });
   });
 
   describe("searchProjects", () => {

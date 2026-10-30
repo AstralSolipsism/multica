@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -91,6 +92,12 @@ func TestIssueSearch_HasMoreAndOffset(t *testing.T) {
 	if len(ids) != 1 || (ids[0] != first && ids[0] != second) {
 		t.Fatalf("second page = %v; want exactly one of [%s %s]", ids, first, second)
 	}
+	// The second page is exactly full and is the last one: has_more must be
+	// false, or every full final page would send callers to an empty extra
+	// page (OL-458 first review #3; mutation M01).
+	if page2.HasMore {
+		t.Fatalf("second page has_more=true; want false on the exactly-full final page")
+	}
 
 	page3, _ := callIssueSearch(t, "q="+url.QueryEscape(token)+"&include_closed=true&limit=1&offset=2")
 	if len(page3.Issues) != 0 || page3.HasMore {
@@ -113,6 +120,77 @@ func TestIssueSearch_TitleDescScopeIgnoresComments(t *testing.T) {
 	all, _ := callIssueSearch(t, "q="+url.QueryEscape(token)+"&include_closed=true&limit=50")
 	if !searchOL458Contains(searchIDs(t, all), commentOnly) {
 		t.Fatalf("default scope lost the comment-only match: %v", searchIDs(t, all))
+	}
+}
+
+// Regression for the OL-458 first review #1: with multiple terms the
+// eligibility WHERE used to reference cm.comment_term_N even though the
+// comment CTE and LEFT JOIN are dropped under scope=title_desc, so every
+// multi-term title_desc query failed with SQLSTATE 42P01 / HTTP 500.
+func TestIssueSearch_TitleDescScopeMultiWordQueries(t *testing.T) {
+	tokenA := "mwalpha" + uuid.NewString()[:8]
+	tokenB := "mwbeta" + uuid.NewString()[:8]
+	projectID := dbfx.Project(t, "Search project "+tokenA)
+	inProject := dbfx.Issue(t, tokenA+" title and "+tokenB, testutil.Cols{"project_id": projectID})
+
+	// English multi-word.
+	payload, _ := callIssueSearch(t, "q="+url.QueryEscape(tokenA+" "+tokenB)+"&scope=title_desc&include_closed=true&limit=50")
+	if got := searchIDs(t, payload); len(got) != 1 || got[0] != inProject {
+		t.Fatalf("multi-word title_desc search = %v, want only %s", got, inProject)
+	}
+
+	// Chinese multi-word (issue #1 was also reported with CJK queries).
+	cjk := dbfx.Issue(t, "多词检索"+tokenA+"边界用例", testutil.Cols{})
+	cjkPayload, _ := callIssueSearch(t, "q="+url.QueryEscape("多词检索 "+tokenA)+"&scope=title_desc&include_closed=true&limit=50")
+	if got := searchIDs(t, cjkPayload); len(got) != 1 || got[0] != cjk {
+		t.Fatalf("chinese multi-word title_desc search = %v, want only %s", got, cjk)
+	}
+
+	// Multi-word combined with the project filter.
+	projPayload, _ := callIssueSearch(t, "q="+url.QueryEscape(tokenA+" "+tokenB)+"&scope=title_desc&project_id="+projectID+"&include_closed=true&limit=50")
+	if got := searchIDs(t, projPayload); len(got) != 1 || got[0] != inProject {
+		t.Fatalf("multi-word + project title_desc search = %v, want only %s", got, inProject)
+	}
+}
+
+// Regression for the OL-458 first review #2: under scope=title_desc a
+// number-only hit must report match_source "number", not "description" (which
+// would also attach a description snippet that does not contain the query).
+func TestIssueSearch_TitleDescScopeNumberHitMatchSource(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Number hit title_desc", "numhit-"+uuid.NewString(), testutil.Cols{"issue_prefix": "NH"})
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	// Neither the title nor the description contains the query string; the
+	// issue is only reachable through its number.
+	numbered := dbfx.Issue(t, "unrelated numbered issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"number":       12,
+		"description":  "a long description that never mentions the identifier",
+	})
+
+	for _, scope := range []string{"", "&scope=title_desc"} {
+		path := fmt.Sprintf("/api/issues/search?q=NH-12&include_closed=true&limit=50%s", scope)
+		req := newRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-Workspace-ID", workspaceID)
+		var response struct {
+			Issues []SearchIssueResponse `json:"issues"`
+		}
+		testutil.Call(t, testHandler.SearchIssues, req).Want(http.StatusOK).JSON(&response)
+
+		if len(response.Issues) != 1 || response.Issues[0].ID != numbered {
+			t.Fatalf("scope %q search = %d issues, want only %s", scope, len(response.Issues), numbered)
+		}
+		want := "comment"
+		if scope != "" {
+			want = "number"
+		}
+		if response.Issues[0].MatchSource != want {
+			t.Fatalf("scope %q match_source = %q, want %q", scope, response.Issues[0].MatchSource, want)
+		}
+		// A number-only hit must not carry a description snippet, since the
+		// description does not contain the query.
+		if scope != "" && response.Issues[0].MatchedDescriptionSnippet != nil {
+			t.Fatalf("title_desc number hit attached a description snippet: %q", *response.Issues[0].MatchedDescriptionSnippet)
+		}
 	}
 }
 

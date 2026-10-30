@@ -484,7 +484,8 @@ var issueSearchCmd = &cobra.Command{
 		"put an unrelated local issue at the top of the results.\n\n" +
 		"The MATCH column (match_source in --output json) reports the strongest\n" +
 		"field that matched — title, description, or comment — and falls back to\n" +
-		"\"comment\" for a number-only hit. Treat it as a display hint, not a\n" +
+		"\"comment\" for a number-only hit (\"number\" with --scope title_desc,\n" +
+		"where comments are skipped). Treat it as a display hint, not a\n" +
 		"filter.\n\n" +
 		"Results are paginated: --output json reports has_more, and --offset\n" +
 		"advances by the number of issues in that same response.",
@@ -507,6 +508,10 @@ var validIssuePriorities = []string{
 // issueListMaxPageSize mirrors the page clamp in the server's ListIssues
 // handler; the two must move together.
 const issueListMaxPageSize = 100
+
+// issueSearchMaxLimit mirrors the page clamp in the server's SearchIssues
+// handler; the two must move together.
+const issueSearchMaxLimit = 50
 
 // validIssueSortColumns are the sort keys `issue list --sort` accepts. They
 // mirror the server's ListIssues handler. "position" is the default and is
@@ -3052,6 +3057,11 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	// The server caps the page at 50; echo the effective limit so callers
+	// paging with offset += limit do not skip issues (OL-458 review #4).
+	if limit <= 0 || limit > issueSearchMaxLimit {
+		limit = issueSearchMaxLimit
+	}
 
 	params := url.Values{}
 	params.Set("q", args[0])
