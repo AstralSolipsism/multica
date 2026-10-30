@@ -5871,3 +5871,207 @@ func TestRunIssueCommentDeleteKeepsReplies(t *testing.T) {
 		})
 	}
 }
+
+// --- issue search (OL-458) ---
+
+func newIssueSearchTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "search"}
+	cmd.Flags().Int("limit", 20, "")
+	cmd.Flags().Int("offset", 0, "")
+	cmd.Flags().String("project", "", "")
+	cmd.Flags().String("scope", "all", "")
+	cmd.Flags().Bool("include-closed", true, "")
+	cmd.Flags().Bool("open-only", false, "")
+	cmd.Flags().String("output", "json", "")
+	return cmd
+}
+
+func TestRunIssueSearchSendsExpectedParams(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const projectUUID = "33333333-3333-4333-8333-333333333333"
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/issues/search" {
+			t.Fatalf("path = %q, want /api/issues/search", r.URL.Path)
+		}
+		gotQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issues":   []any{},
+			"has_more": true,
+		})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("project", projectUUID)
+	_ = cmd.Flags().Set("scope", "title_desc")
+	_ = cmd.Flags().Set("limit", "5")
+	_ = cmd.Flags().Set("offset", "10")
+	stderr := captureStderr(t)
+	defer stderr.restore()
+	out, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+
+	// CLI defaults to include_closed=true (OL-458) and forwards every filter.
+	if gotQuery.Get("q") != "needle" {
+		t.Fatalf("q = %q", gotQuery.Get("q"))
+	}
+	if gotQuery.Get("include_closed") != "true" {
+		t.Fatalf("include_closed = %q, want true by default", gotQuery.Get("include_closed"))
+	}
+	if gotQuery.Get("project_id") != projectUUID {
+		t.Fatalf("project_id = %q", gotQuery.Get("project_id"))
+	}
+	if gotQuery.Get("scope") != "title_desc" {
+		t.Fatalf("scope = %q", gotQuery.Get("scope"))
+	}
+	if gotQuery.Get("limit") != "5" || gotQuery.Get("offset") != "10" {
+		t.Fatalf("limit/offset = %q/%q", gotQuery.Get("limit"), gotQuery.Get("offset"))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode stdout JSON: %v", err)
+	}
+	if payload["has_more"] != true {
+		t.Fatalf("has_more = %#v, want true", payload["has_more"])
+	}
+	if _, ok := payload["issues"]; !ok {
+		t.Fatalf("stdout JSON missing issues: %#v", payload)
+	}
+}
+
+func TestRunIssueSearchOpenOnlyOmitsIncludeClosed(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": false})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("open-only", "true")
+	// Default scope must not be sent explicitly.
+	_ = cmd.Flags().Set("output", "table")
+	if _, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	}); err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	if gotQuery.Get("include_closed") != "" {
+		t.Fatalf("include_closed = %q, want absent with --open-only", gotQuery.Get("include_closed"))
+	}
+	if gotQuery.Get("scope") != "" {
+		t.Fatalf("scope = %q, want absent for default all", gotQuery.Get("scope"))
+	}
+}
+
+func TestRunIssueSearchRejectsInvalidScope(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server must not be called for an invalid scope")
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("scope", "bogus")
+	if err := runIssueSearch(cmd, []string{"needle"}); err == nil {
+		t.Fatal("runIssueSearch accepted an invalid --scope")
+	}
+}
+
+// The server caps a search page at 50 even when a larger --limit is sent; the
+// JSON envelope must echo the effective limit so offset += limit paging does
+// not skip issues (OL-458 first review #4).
+func TestRunIssueSearchJSONEchoesEffectiveLimit(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The clamp happens before the request, so the wire carries the
+		// effective page size, not the oversized request.
+		if got := r.URL.Query().Get("limit"); got != "50" {
+			t.Errorf("limit query = %q, want the effective 50", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": true})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("limit", "100")
+	out, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode stdout JSON: %v", err)
+	}
+	if got, ok := payload["limit"].(float64); !ok || int(got) != 50 {
+		t.Fatalf("limit echo = %#v, want 50 (the server-side page cap)", payload["limit"])
+	}
+}
+
+func TestRunIssueSearchResolvesProjectPrefix(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const projectUUID = "44444444-4444-4444-8444-444444444444"
+	var searchQueries []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"projects": []any{map[string]any{"id": projectUUID, "title": "Strixnova", "status": "active"}},
+			})
+		case "/api/issues/search":
+			searchQueries = append(searchQueries, r.URL.Query())
+			_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": false})
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("project", "44444444")
+	if _, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	}); err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	if len(searchQueries) != 1 || searchQueries[0].Get("project_id") != projectUUID {
+		t.Fatalf("search queries = %#v, want resolved project_id %s", searchQueries, projectUUID)
+	}
+}
+
+func TestIssueSearchCommandRegistration(t *testing.T) {
+	cmd, _, err := issueCmd.Find([]string{"search"})
+	if err != nil {
+		t.Fatalf("find issue search: %v", err)
+	}
+	if cmd != issueSearchCmd {
+		t.Fatalf("found command = %q, want issue search", cmd.CommandPath())
+	}
+	for _, name := range []string{"limit", "offset", "project", "scope", "include-closed", "open-only", "output"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("issue search missing --%s", name)
+		}
+	}
+	if def, _ := cmd.Flags().GetBool("include-closed"); !def {
+		t.Errorf("--include-closed default = false, want true (done issues searchable by default)")
+	}
+}

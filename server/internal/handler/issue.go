@@ -794,7 +794,10 @@ type searchResult struct {
 // case-insensitive LIKE semantics as the legacy query. The pipeline deliberately
 // trades the title, description, and comment content GIN fast paths for one
 // predictable pass over each relation within the selected workspace.
-func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string) (string, []any) {
+// titleDescOnly (scope=title_desc) restricts matching to issue titles and
+// descriptions, dropping comment matches and their long-process noise from
+// both eligibility and ranking (OL-458).
+func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string, projectID pgtype.UUID, titleDescOnly bool) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, term := range terms {
@@ -830,6 +833,13 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		// Negate only known terminal keys so an unknown legacy key remains
 		// searchable instead of disappearing from the default result set.
 		terminalStatusesParam = nextArg(terminalStatusKeys)
+	}
+
+	// Bound before limit/offset so the handler's args[len-2]/args[len-1] fill
+	// keeps landing on the pagination placeholders.
+	projectParam := ""
+	if projectID.Valid {
+		projectParam = nextArg(projectID)
 	}
 
 	limitParam := nextArg(nil)
@@ -874,6 +884,9 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	}
 
 	issueWhere := "i.workspace_id = " + wsParam
+	if projectParam != "" {
+		issueWhere += " AND i.project_id = " + projectParam
+	}
 	if terminalStatusesParam != "" {
 		issueWhere += fmt.Sprintf(" AND NOT (i.status = ANY(%s::text[]))", terminalStatusesParam)
 	}
@@ -967,17 +980,29 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		wsParam,
 		strings.Join(commentCandidateFlags, " OR "),
 	)
+	if titleDescOnly {
+		commentMatchesCTE = ""
+	}
 
 	// Stage two combines the two narrow sources, applies the legacy eligibility
 	// and ranking rules once, and materializes only the requested page.
 	eligibleParts := []string{
 		"im.title_phrase",
 		"im.description_phrase",
-		"COALESCE(cm.comment_phrase, FALSE)",
+	}
+	if !titleDescOnly {
+		eligibleParts = append(eligibleParts, "COALESCE(cm.comment_phrase, FALSE)")
 	}
 	if len(termContainsParams) > 1 {
 		var allTerms []string
 		for index := range termContainsParams {
+			if titleDescOnly {
+				// cm is not joined under scope=title_desc; the per-term
+				// spread may only draw from the title/description flags.
+				allTerms = append(allTerms, fmt.Sprintf(
+					"(im.title_term_%[1]d OR im.description_term_%[1]d)", index))
+				continue
+			}
 			allTerms = append(allTerms, fmt.Sprintf(
 				"(im.title_term_%[1]d OR im.description_term_%[1]d OR COALESCE(cm.comment_term_%[1]d, FALSE))",
 				index,
@@ -1014,9 +1039,11 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		}
 		rankCases = append(rankCases, "WHEN ("+strings.Join(descriptionTerms, " AND ")+") THEN 6")
 	}
-	rankCases = append(rankCases, "WHEN COALESCE(cm.comment_phrase, FALSE) THEN 7")
-	if len(termContainsParams) > 1 {
-		rankCases = append(rankCases, "WHEN COALESCE(cm.comment_all_terms, FALSE) THEN 8")
+	if !titleDescOnly {
+		rankCases = append(rankCases, "WHEN COALESCE(cm.comment_phrase, FALSE) THEN 7")
+		if len(termContainsParams) > 1 {
+			rankCases = append(rankCases, "WHEN COALESCE(cm.comment_all_terms, FALSE) THEN 8")
+		}
 	}
 	rankExpr := "CASE " + strings.Join(rankCases, " ") + " ELSE 9 END"
 
@@ -1044,7 +1071,14 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		ELSE 7
 	END`
 
+	// Under scope=title_desc there is no comment fallback; a number-only hit
+	// is neither a title nor a description match, so label it "number" rather
+	// than misleading "description" (which would also attach a description
+	// snippet that does not contain the query).
 	matchSourceParts := []string{"WHEN im.title_phrase THEN 'title'"}
+	if titleDescOnly && hasNum {
+		matchSourceParts = append(matchSourceParts, "WHEN im.number_exact THEN 'number'")
+	}
 	if len(termContainsParams) > 1 {
 		var titleTerms []string
 		for index := range termContainsParams {
@@ -1060,18 +1094,32 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		}
 		matchSourceParts = append(matchSourceParts, "WHEN ("+strings.Join(descriptionTerms, " AND ")+") THEN 'description'")
 	}
-	matchSourceExpr := "CASE " + strings.Join(matchSourceParts, " ") + " ELSE 'comment' END"
+	matchSourceElse := "'comment'"
+	if titleDescOnly {
+		// Reached only when title/description term flags all failed but
+		// eligibility still held, i.e. the phrase spread across title and
+		// description without either field containing the whole phrase.
+		matchSourceElse = "'description'"
+	}
+	matchSourceExpr := "CASE " + strings.Join(matchSourceParts, " ") + " ELSE " + matchSourceElse + " END"
 
+	commentJoin := ""
+	if !titleDescOnly {
+		commentJoin = "\n		LEFT JOIN comment_matches cm ON cm.issue_id = im.issue_id"
+	}
+	rankedSelect := "im.issue_id, im.updated_at, cm.snippet_comment_id"
+	if titleDescOnly {
+		rankedSelect = "im.issue_id, im.updated_at, NULL::uuid AS snippet_comment_id"
+	}
 	rankedCandidatesCTE := fmt.Sprintf(`ranked_candidates AS (
-		SELECT im.issue_id, im.updated_at, cm.snippet_comment_id,
+		SELECT %s,
 			%s AS cancelled_rank,
 			%s AS relevance_rank,
 			%s AS status_rank,
 			%s AS match_source
-		FROM issue_matches im
-		LEFT JOIN comment_matches cm ON cm.issue_id = im.issue_id
+		FROM issue_matches im%s
 		WHERE %s
-	)`, cancelledRank, rankExpr, statusRank, matchSourceExpr, eligibleExpr)
+	)`, rankedSelect, cancelledRank, rankExpr, statusRank, matchSourceExpr, commentJoin, eligibleExpr)
 
 	pageCandidatesCTE := fmt.Sprintf(`page_candidates AS MATERIALIZED (
 		SELECT issue_id, updated_at, snippet_comment_id, cancelled_rank, relevance_rank, status_rank, match_source
@@ -1080,10 +1128,13 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		LIMIT %s OFFSET %s
 	)`, limitParam, offsetParam)
 
-	query := fmt.Sprintf(`WITH %s,
-	%s,
-	%s,
-	%s
+	ctes := []string{issueMatchesCTE}
+	if commentMatchesCTE != "" {
+		ctes = append(ctes, commentMatchesCTE)
+	}
+	ctes = append(ctes, rankedCandidatesCTE, pageCandidatesCTE)
+
+	query := fmt.Sprintf(`WITH %s
 	SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
@@ -1095,10 +1146,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	JOIN issue i ON i.id = pc.issue_id AND i.workspace_id = %s
 	LEFT JOIN comment c ON c.id = pc.snippet_comment_id AND c.workspace_id = %s
 	ORDER BY pc.cancelled_rank, pc.relevance_rank, pc.status_rank, pc.updated_at DESC, pc.issue_id ASC`,
-		issueMatchesCTE,
-		commentMatchesCTE,
-		rankedCandidatesCTE,
-		pageCandidatesCTE,
+		strings.Join(ctes, ",\n	"),
 		wsParam,
 		wsParam,
 	)
@@ -1134,6 +1182,23 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
 
+	// scope=title_desc drops comment matching entirely (OL-458): long comment
+	// threads carry process noise that buries title/description hits. Any other
+	// (or absent) value keeps the default all-field scope.
+	titleDescOnly := r.URL.Query().Get("scope") == searchScopeTitleDesc
+
+	// project_id filters results to one project. Malformed UUIDs return 400 —
+	// silently coercing to a zero UUID would return an empty result set and
+	// mask a client bug, matching ListIssues' filter behavior.
+	var projectFilter pgtype.UUID
+	if p := r.URL.Query().Get("project_id"); p != "" {
+		id, ok := parseUUIDOrBadRequest(w, p, "project_id")
+		if !ok {
+			return
+		}
+		projectFilter = id
+	}
+
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
@@ -1154,10 +1219,12 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		terminalStatusKeys = resolvedKeys
 	}
 
-	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, terminalStatusKeys)
-	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
+	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, terminalStatusKeys, projectFilter, titleDescOnly)
+	// Fill placeholder args: $4 = workspace_id, last two = limit, offset.
+	// The limit is over-fetched by one row so has_more is decidable without
+	// an exact count, which this endpoint deliberately does not compute.
 	args[3] = wsUUID
-	args[len(args)-2] = limit
+	args[len(args)-2] = limit + 1
 	args[len(args)-1] = offset
 
 	var results []searchResult
@@ -1222,6 +1289,12 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Drop the over-fetched row used only to decide has_more.
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 	var originals []pgtype.UUID
 	for _, sr := range results {
@@ -1258,7 +1331,8 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issues": resp,
+		"issues":   resp,
+		"has_more": hasMore,
 	})
 }
 
