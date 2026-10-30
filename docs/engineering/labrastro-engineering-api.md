@@ -48,10 +48,17 @@ examples do not create anchors. `_preamble` compares text before the first ancho
 such edits are never silently omitted. Rule shrink warnings use Unicode character
 counts and require a reduction strictly greater than 40%.
 
+`defer_missing_pool` checks each `[Defer-*]` title and body for an Issue reference:
+an identifier using the current workspace prefix (bare or in an `/issues/` URL),
+a `mention://issue/<uuid>` link, or an `/issues/<uuid>` URL. References such as
+`ADR-3`, `UTF-8` and `PR-201` do not count unless their prefix matches the workspace.
+
 Diffs are stored on proposal and recomputed at decision time. Deferred-rule checks
 use the exclusions candidate when present, otherwise its adopted revision. A
 changed Diff returns `409 baseline_base_stale`; refresh and explicitly replace the
-candidate before deciding again. Rollback uses a historical body as a new candidate.
+candidate before deciding again. Renaming the workspace Issue prefix can also
+change the recomputed Diff and require candidate replacement. Rollback uses a
+historical body as a new candidate.
 
 History requires `chapter`, with optional `limit` (default 50, maximum 200) and
 `before` revision number. `diff_from` and `diff_to` together return a Diff instead.

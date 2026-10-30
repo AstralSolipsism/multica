@@ -15,7 +15,7 @@ var prefixes = map[string]string{
 
 var anchorPattern = regexp.MustCompile(`^### \[(Stage|Term|Rule|ADR|Contract|Out|Defer|Risk)-([^\]\r\n]{1,64})\][ \t]*(.*)$`)
 var headingPattern = regexp.MustCompile(`^ {0,3}#{1,3}(?:[ \t]|$)`)
-var issuePattern = regexp.MustCompile(`(?:mention://issue/[0-9a-f-]{36}|/issues/[A-Z][A-Z0-9]*-[0-9]+|\b[A-Z][A-Z0-9]*-[0-9]+\b)`)
+var issueLinkPattern = regexp.MustCompile(`(?:mention://issue/|/issues/)[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 
 type Error struct{ Code string }
 
@@ -141,7 +141,7 @@ func Parse(chapter, content string) ([]Section, error) {
 	return sections, nil
 }
 
-func Compute(chapter, before, after string, baseNumber int32, exclusions string) (Diff, error) {
+func Compute(chapter, before, after string, baseNumber int32, exclusions, issuePrefix string) (Diff, error) {
 	d := Diff{Chapter: chapter, BaseRevisionNumber: baseNumber, Added: []Change{}, Modified: []Change{}, Removed: []Change{}, Warnings: []Warning{}}
 	old, err := Parse(chapter, before)
 	if err != nil {
@@ -207,8 +207,10 @@ func Compute(chapter, before, after string, baseNumber int32, exclusions string)
 	}
 
 	if chapter == "exclusions_and_risks" {
+		issuePattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(issuePrefix) + `-[0-9]+\b`)
 		for _, s := range next {
-			if strings.HasPrefix(s.Anchor, "Defer-") && !issuePattern.MatchString(s.Title+"\n"+s.Body) {
+			text := s.Title + "\n" + s.Body
+			if strings.HasPrefix(s.Anchor, "Defer-") && !issueLinkPattern.MatchString(text) && !(issuePrefix != "" && issuePattern.MatchString(text)) {
 				d.Warnings = append(d.Warnings, Warning{"defer_missing_pool", s.Anchor})
 			}
 		}

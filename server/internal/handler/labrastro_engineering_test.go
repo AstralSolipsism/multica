@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -288,6 +290,49 @@ func TestLabrastroEngineeringDiffRecheckedAcrossChapters(t *testing.T) {
 	if len(diff.Warnings) != 2 || diff.Warnings[1].Code != "rule_deferred" {
 		t.Fatalf("diff=%+v", diff)
 	}
+}
+
+func TestLabrastroEngineeringDeferUsesCurrentWorkspacePrefix(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable(false)
+	var prefix, risk string
+	dbfx.QueryRow(t, `SELECT issue_prefix FROM workspace WHERE id=$1`, testWorkspaceID).Scan(&prefix)
+	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
+	dbfx.Cleanup(t, `UPDATE workspace SET issue_prefix=$2 WHERE id=$1`, testWorkspaceID, prefix)
+
+	content := baselinePATRisk + "\n### [Defer-1] Later\n" + prefix + "-1097"
+	first := f.propose("exclusions_and_risks", content, &risk, nil)
+	var diff engineering.Diff
+	if err := json.Unmarshal(first.AnchorsDiff, &diff); err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Warnings) != 0 {
+		t.Fatalf("workspace issue reference warned: %+v", diff.Warnings)
+	}
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", first), "session")).Want(200)
+	candidate := f.propose("exclusions_and_risks", content+"\nADR-3", uuidToPtr(first.ID), nil)
+
+	dbfx.Exec(t, `UPDATE workspace SET issue_prefix='RENAMED' WHERE id=$1`, testWorkspaceID)
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", candidate), "session")).Want(409), "baseline_base_stale")
+	if f.readRevision(uuidToString(candidate.ID)).Status != "candidate" {
+		t.Fatal("prefix change must leave the candidate undecided")
+	}
+
+	path := "/baseline/revisions?chapter=exclusions_and_risks&diff_from=" + strconv.Itoa(int(first.RevisionNumber)) + "&diff_to=" + strconv.Itoa(int(candidate.RevisionNumber))
+	testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", path, nil, "session")).Want(200).JSON(&diff)
+	want := []engineering.Warning{{Code: "defer_missing_pool", Anchor: "Defer-1"}}
+	if !reflect.DeepEqual(diff.Warnings, want) {
+		t.Fatalf("historical diff must use current prefix: %+v", diff.Warnings)
+	}
+
+	replacement := f.propose("exclusions_and_risks", candidate.ContentMarkdown, uuidToPtr(first.ID), uuidToPtr(candidate.ID))
+	if err := json.Unmarshal(replacement.AnchorsDiff, &diff); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(diff.Warnings, want) {
+		t.Fatalf("replacement must retain missing-pool warning: %+v", diff.Warnings)
+	}
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", replacement), "session")).Want(200)
 }
 
 func TestLabrastroEngineeringOpenIssuesAndIsolation(t *testing.T) {

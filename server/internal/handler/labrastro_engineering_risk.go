@@ -20,7 +20,7 @@ func (s *engineeringState) seedRisk(ctx context.Context, actor baselineActor) (b
 	if err = s.q.LabrastroEnsureBaselineDoc(ctx, db.LabrastroEnsureBaselineDocParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: "exclusions_and_risks"}); err != nil {
 		return false, err
 	}
-	diff, err := engineering.Compute("exclusions_and_risks", "", baselinePATRisk, 0, "")
+	diff, err := engineering.Compute("exclusions_and_risks", "", baselinePATRisk, 0, "", s.issuePrefix)
 	if err != nil {
 		return false, err
 	}

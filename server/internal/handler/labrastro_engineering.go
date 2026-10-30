@@ -117,11 +117,12 @@ func engineeringActor(r *http.Request) (baselineActor, error) {
 }
 
 type engineeringState struct {
-	tx      pgx.Tx
-	q       *db.Queries
-	project db.Project
-	member  db.Member
-	config  db.ProjectEngineering
+	tx          pgx.Tx
+	q           *db.Queries
+	project     db.Project
+	member      db.Member
+	config      db.ProjectEngineering
+	issuePrefix string
 }
 
 // Hold the workspace lifetime before the project lock, matching teardown. The
@@ -149,6 +150,11 @@ func (h *Handler) engineeringState(w http.ResponseWriter, r *http.Request, write
 	if _, err = s.q.LockWorkspaceForChatSessionCreate(r.Context(), project.WorkspaceID); err != nil {
 		return fail(err)
 	}
+	workspace, err := s.q.GetWorkspace(r.Context(), project.WorkspaceID)
+	if err != nil {
+		return fail(err)
+	}
+	s.issuePrefix = workspace.IssuePrefix
 	if write {
 		s.project, err = s.q.LabrastroLockEngineeringProject(r.Context(), db.LabrastroLockEngineeringProjectParams{WorkspaceID: project.WorkspaceID, ID: project.ID})
 	} else {
@@ -464,7 +470,7 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 		writeEngineeringError(w, err)
 		return
 	}
-	diff, err := engineering.Compute(req.Chapter, old.ContentMarkdown, req.Content, old.RevisionNumber, exclusions)
+	diff, err := engineering.Compute(req.Chapter, old.ContentMarkdown, req.Content, old.RevisionNumber, exclusions, s.issuePrefix)
 	if err != nil {
 		writeEngineeringError(w, err)
 		return
@@ -578,7 +584,7 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 			writeEngineeringError(w, err)
 			return
 		}
-		diff, err := engineering.Compute(candidate.Chapter, base.ContentMarkdown, candidate.ContentMarkdown, base.RevisionNumber, exclusions)
+		diff, err := engineering.Compute(candidate.Chapter, base.ContentMarkdown, candidate.ContentMarkdown, base.RevisionNumber, exclusions, s.issuePrefix)
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
@@ -664,10 +670,6 @@ func (s *engineeringState) openIssues(ctx context.Context) (baselineOpenIssues, 
 	if err != nil {
 		return out, err
 	}
-	workspace, err := s.q.GetWorkspace(ctx, s.project.WorkspaceID)
-	if err != nil {
-		return out, err
-	}
 	out.Truncated = len(issues) > 200
 	if out.Truncated {
 		issues = issues[:200]
@@ -681,7 +683,7 @@ func (s *engineeringState) openIssues(ctx context.Context) (baselineOpenIssues, 
 		if category != issuestatus.CategoryStarted && category != issuestatus.CategoryUnstarted {
 			continue
 		}
-		item := baselineOpenIssue{uuidToString(i.ID), workspace.IssuePrefix + "-" + strconv.FormatInt(int64(i.Number), 10), i.Title, i.Status, category, textToPtr(i.AssigneeType), uuidToPtr(i.AssigneeID)}
+		item := baselineOpenIssue{uuidToString(i.ID), s.issuePrefix + "-" + strconv.FormatInt(int64(i.Number), 10), i.Title, i.Status, category, textToPtr(i.AssigneeType), uuidToPtr(i.AssigneeID)}
 		if category == issuestatus.CategoryStarted {
 			out.InFlight = append(out.InFlight, item)
 		} else {
@@ -761,7 +763,7 @@ func (h *Handler) LabrastroBaselineHistory(w http.ResponseWriter, r *http.Reques
 			writeEngineeringError(w, err)
 			return
 		}
-		diff, err := engineering.Compute(chapter, old.ContentMarkdown, next.ContentMarkdown, from, exclusions)
+		diff, err := engineering.Compute(chapter, old.ContentMarkdown, next.ContentMarkdown, from, exclusions, s.issuePrefix)
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
