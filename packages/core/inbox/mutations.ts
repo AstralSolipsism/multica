@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { inboxKeys, mapArchivedInboxCache, patchArchivedInboxCaches, type ArchivedInboxCache } from "./queries";
-import { onInboxInvalidate, onInboxSummaryInvalidate } from "./ws-updaters";
+import { canPatchInboxList, onArchivedInboxInvalidate, onInboxInvalidate, onInboxSummaryInvalidate } from "./ws-updaters";
 import { useWorkspaceId } from "../hooks";
 import type { InboxItem } from "../types";
 
@@ -20,12 +20,21 @@ function refreshInboxAfterWrite(qc: QueryClient, wsId: string) {
   void onInboxSummaryInvalidate(qc);
 }
 
+// Capture uncertainty before cancellation or optimistic writes clear it.
+// A successful single-item write only refreshes projections it cannot patch.
+function refreshSingleInboxWrite(qc: QueryClient, wsId: string, refreshList: boolean) {
+  if (refreshList || !canPatchInboxList(qc, wsId)) void onInboxInvalidate(qc, wsId);
+  else void onArchivedInboxInvalidate(qc, wsId);
+  void onInboxSummaryInvalidate(qc);
+}
+
 export function useMarkInboxRead() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: (id: string) => api.markInboxRead(id),
     onMutate: async (id) => {
+      const refreshList = !canPatchInboxList(qc, wsId);
       await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
       const markRead = (old: InboxItem[] | undefined) =>
@@ -35,14 +44,17 @@ export function useMarkInboxRead() {
       // patch that cache as well, or its unread dot would sit there until the
       // next refetch.
       const prevArchived = patchArchivedInboxCaches(qc, wsId, (items) => markRead(items) ?? items);
-      return { prev, prevArchived };
+      if (refreshList) {
+        void qc.invalidateQueries({ queryKey: inboxKeys.list(wsId), refetchType: "none" });
+      }
+      return { prev, prevArchived, refreshList };
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
       for (const [key, data] of ctx?.prevArchived ?? []) qc.setQueryData(key, data);
     },
-    onSettled: () => {
-      refreshInboxAfterWrite(qc, wsId);
+    onSettled: (_data, error, _id, ctx) => {
+      refreshSingleInboxWrite(qc, wsId, !!error || ctx?.refreshList === true);
     },
   });
 }
@@ -75,22 +87,26 @@ export function useMarkInboxUnread() {
   return useMutation({
     mutationFn: (id: string) => api.markInboxUnread(id),
     onMutate: async (id) => {
+      const refreshList = !canPatchInboxList(qc, wsId);
       await qc.cancelQueries({ queryKey: inboxKeys.all(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));
       const markUnread = (old: InboxItem[] | undefined) =>
         old?.map((item) => (item.id === id ? { ...item, read: false } : item));
       qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), markUnread);
       const prevArchived = patchArchivedInboxCaches(qc, wsId, (items) => markUnread(items) ?? items);
-      return { prev, prevArchived };
+      if (refreshList) {
+        void qc.invalidateQueries({ queryKey: inboxKeys.list(wsId), refetchType: "none" });
+      }
+      return { prev, prevArchived, refreshList };
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prev) qc.setQueryData(inboxKeys.list(wsId), ctx.prev);
       for (const [key, data] of ctx?.prevArchived ?? []) qc.setQueryData(key, data);
     },
-    onSettled: () => {
+    onSettled: (_data, error, _id, ctx) => {
       // The switcher dot must light again when the workspace goes back to
       // having unread items — that count lives on the server.
-      refreshInboxAfterWrite(qc, wsId);
+      refreshSingleInboxWrite(qc, wsId, !!error || ctx?.refreshList === true);
     },
   });
 }

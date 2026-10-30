@@ -830,12 +830,11 @@ describe("handleInboxNew", () => {
 
     await handleInboxNew(qc, inboxItem());
 
-    // The workspace prefix, which covers both the main list and the archived
-    // one: a new notification on an archived issue revives it into the main
-    // inbox, so the archived list has to drop it in the same pass (MUL-3736).
-    expect(invalidate).toHaveBeenCalledWith({
-      queryKey: inboxKeys.all("ws-a"),
-    });
+    // Cold main lists and archive projections refresh in the source workspace.
+    await vi.waitFor(() => expect(invalidate).toHaveBeenCalledWith({
+      queryKey: inboxKeys.archived("ws-a"),
+    }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: inboxKeys.list("ws-a") });
     expect(showNotification).toHaveBeenCalledWith(
       expect.objectContaining({ slug: "workspace-a" }),
     );

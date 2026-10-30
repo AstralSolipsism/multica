@@ -6771,11 +6771,12 @@ func (s *TaskService) exhaustDelegatedFailureRecovery(ctx context.Context, targe
 				"body":           util.TextToPtr(exhaustedInbox.Body),
 				"read":           exhaustedInbox.Read,
 				"archived":       exhaustedInbox.Archived,
-				"created_at":     util.TimestampToString(exhaustedInbox.CreatedAt),
+				"created_at":     util.TimestampToPreciseString(exhaustedInbox.CreatedAt),
 				"actor_type":     util.TextToPtr(exhaustedInbox.ActorType),
 				"actor_id":       util.UUIDToPtr(exhaustedInbox.ActorID),
 				"details":        json.RawMessage(exhaustedInbox.Details),
 				"issue_status":   target.issue.Status,
+				"issue_priority": target.issue.Priority,
 			}},
 		})
 	}
@@ -8157,7 +8158,7 @@ func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.Ag
 	if !inserted {
 		return
 	}
-	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status)
+	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status, &issue.Priority)
 }
 
 // Inbox types for the two non-success quick-create outcomes. They are distinct
@@ -8261,13 +8262,13 @@ func (s *TaskService) writeQuickCreateOutcomeInbox(ctx context.Context, task db.
 	if !inserted {
 		return
 	}
-	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "")
+	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "", nil)
 }
 
 // publishQuickCreateInbox emits the WS event so the requester's inbox list
 // updates immediately. Mirrors the payload shape used by the other inbox
 // listeners (notification_listeners.go).
-func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, agentID, issueStatus string) {
+func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, agentID, issueStatus string, issuePriority *string) {
 	resp := map[string]any{
 		"id":             util.UUIDToString(item.ID),
 		"workspace_id":   util.UUIDToString(item.WorkspaceID),
@@ -8280,11 +8281,12 @@ func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, ag
 		"body":           util.TextToPtr(item.Body),
 		"read":           item.Read,
 		"archived":       item.Archived,
-		"created_at":     util.TimestampToString(item.CreatedAt),
+		"created_at":     util.TimestampToPreciseString(item.CreatedAt),
 		"actor_type":     util.TextToPtr(item.ActorType),
 		"actor_id":       util.UUIDToPtr(item.ActorID),
 		"details":        json.RawMessage(item.Details),
 		"issue_status":   issueStatus,
+		"issue_priority": issuePriority,
 	}
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,

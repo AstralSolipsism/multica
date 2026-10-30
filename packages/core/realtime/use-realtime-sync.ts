@@ -52,7 +52,7 @@ import {
   invalidateLastActivitySortedIssueLists,
   invalidateUpdatedAtSortedIssueLists,
 } from "../issues/cache-coordinator";
-import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
+import { onInboxNew, onInboxReadState, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
 import {
   notificationPreferenceOptions,
   notificationPreferenceKeys,
@@ -833,7 +833,7 @@ export function useRealtimeSync(
       inbox: () => {
         const wsId = getCurrentWsId();
         if (wsId) void onInboxInvalidate(qc, wsId);
-        // inbox:read / inbox:archived / inbox:unarchived / batch events arrive
+        // inbox:archived / inbox:unarchived / batch events arrive
         // here. They can originate from a workspace other than the active one
         // (personal events fan out to all the user's connections), so always
         // refresh the cross-workspace summary — its dot must clear when another
@@ -1136,6 +1136,19 @@ export function useRealtimeSync(
     ]);
 
     const unsubAny = ws.onAny((msg) => {
+      if (msg.type === "inbox:read" || msg.type === "inbox:unread") {
+        const payload = msg.payload as {
+          item_id?: string; workspace_id?: string;
+        };
+        const wsId = payload.workspace_id ?? getCurrentWsId();
+        if (wsId && payload.item_id) {
+          void onInboxReadState(qc, wsId, payload.item_id, msg.type === "inbox:read");
+        } else if (wsId) {
+          void onInboxInvalidate(qc, wsId);
+        }
+        void onInboxSummaryInvalidate(qc);
+        return;
+      }
       if (msg.type === "agent:status") {
         const wsId = getCurrentWsId();
         if (wsId && applyAgentStatusPatch(qc, wsId, msg.payload)) {

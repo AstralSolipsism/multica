@@ -21,7 +21,7 @@ export const inboxKeys = {
 export function inboxListOptions(wsId: string) {
   return queryOptions({
     queryKey: inboxKeys.list(wsId),
-    queryFn: () => api.listInbox(),
+    queryFn: ({ signal }) => api.listInbox({ view: "grouped", signal }),
   });
 }
 
@@ -208,6 +208,20 @@ export function deduplicateArchivedInboxItems(items: InboxItem[]): InboxItem[] {
   return groupInboxItemsByIssue(items.filter((i) => i.archived));
 }
 
+// JS Date truncates PostgreSQL microseconds. Keep them when selecting the
+// newest row/anchor, then use the same ID tie-breaker as both server queries.
+function compareInboxItems(a: InboxItem, b: InboxItem): number {
+  const micros = (item: InboxItem) =>
+    Date.parse(item.created_at) * 1000 +
+    Number((item.created_at.match(/\.(\d+)/)?.[1] ?? "").padEnd(6, "0").slice(3, 6));
+  const delta = micros(b) - micros(a);
+  if (delta) return delta;
+  // Older servers truncate to seconds; their SQL order remains authoritative
+  // for ties that may actually have different fractional timestamps.
+  return a.created_at.includes(".") && b.created_at.includes(".")
+    ? b.id.localeCompare(a.id) : 0;
+}
+
 function groupInboxItemsByIssue(items: InboxItem[]): InboxItem[] {
   const groups = new Map<string, InboxItem[]>();
   for (const item of items) {
@@ -218,10 +232,7 @@ function groupInboxItemsByIssue(items: InboxItem[]): InboxItem[] {
   }
   const merged: InboxItem[] = [];
   for (const group of groups.values()) {
-    group.sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    );
+    group.sort(compareInboxItems);
     const newest = group[0];
     if (!newest) continue;
 
@@ -239,8 +250,5 @@ function groupInboxItemsByIssue(items: InboxItem[]): InboxItem[] {
 
     merged.push(newest);
   }
-  return merged.sort(
-    (a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
+  return merged.sort(compareInboxItems);
 }

@@ -192,7 +192,7 @@ func (s *AutopilotService) publishAutopilotQuotaInboxItems(items []db.InboxItem)
 				"type": item.Type, "severity": item.Severity, "issue_id": nil,
 				"issue_status": nil, "issue_priority": nil,
 				"title": item.Title, "body": util.TextToPtr(item.Body), "read": item.Read,
-				"archived": item.Archived, "created_at": util.TimestampToString(item.CreatedAt),
+				"archived": item.Archived, "created_at": util.TimestampToPreciseString(item.CreatedAt),
 				"actor_type": util.TextToPtr(item.ActorType), "actor_id": nil,
 				"details": json.RawMessage(item.Details),
 			}},

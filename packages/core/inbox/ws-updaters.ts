@@ -22,7 +22,7 @@ import type { InboxItem, IssuePriority, IssueStatus } from "../types";
 // `staleTime: Infinity` and no refetch on focus, nothing asks again. Cancelling
 // first makes a refresh behave the same whether or not the query has loaded.
 //
-// Every inbox cache is refreshed through here — both lists and the unread
+// Every inbox cache refresh goes through here — both lists and the unread
 // summary. They are rendered side by side (the badge next to the rows it
 // counts), so a hole in either one shows up as the two disagreeing (MUL-6967).
 async function refreshInboxQuery(qc: QueryClient, queryKey: QueryKey) {
@@ -30,18 +30,50 @@ async function refreshInboxQuery(qc: QueryClient, queryKey: QueryKey) {
   await qc.invalidateQueries({ queryKey });
 }
 
-export async function onInboxNew(
-  qc: QueryClient,
-  wsId: string,
-  _item: InboxItem,
+// A partial patch cannot replace a missing or uncertain snapshot. Also fall
+// back during a refetch: cancelling it could discard an earlier server change.
+export function canPatchInboxList(qc: QueryClient, wsId: string): boolean {
+  const state = qc.getQueryState(inboxKeys.list(wsId));
+  return state?.data !== undefined && state.status === "success" &&
+    !state.isInvalidated && state.fetchStatus === "idle";
+}
+
+export async function onArchivedInboxInvalidate(qc: QueryClient, wsId: string) {
+  await Promise.all([
+    refreshInboxQuery(qc, inboxKeys.archived(wsId)),
+    refreshInboxQuery(qc, inboxKeys.facets(wsId)),
+  ]);
+}
+
+export async function onInboxNew(qc: QueryClient, wsId: string, item: InboxItem) {
+  // Older servers omit issue projections from events. Keep their list fetch
+  // fallback so an incremental insert cannot lose the priority filter field.
+  const complete = !item.issue_id || item.issue_priority !== undefined;
+  if (complete && canPatchInboxList(qc, wsId)) {
+    // Keep real anchor rows: folding their comment_id into the newest row here
+    // loses the anchor's timestamp when events arrive out of order.
+    qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), (old) =>
+      old && (old.some((row) => row.id === item.id) ? old : [item, ...old]),
+    );
+  } else {
+    await refreshInboxQuery(qc, inboxKeys.list(wsId));
+  }
+  // A new active row hides the entire issue from every archive projection.
+  await onArchivedInboxInvalidate(qc, wsId);
+}
+
+export async function onInboxReadState(
+  qc: QueryClient, wsId: string, id: string, read: boolean,
 ) {
-  // Refetch instead of setQueryData, so every observer is notified.
-  //
-  // Both lists: a new notification on an ARCHIVED issue puts that issue back in
-  // the main inbox, which means it must also leave the archived list. The
-  // server owns that split (ListArchivedInboxItems excludes issues with an
-  // active row), so refetching both is what keeps them mutually exclusive.
-  await onInboxInvalidate(qc, wsId);
+  if (canPatchInboxList(qc, wsId)) {
+    qc.setQueryData<InboxItem[]>(inboxKeys.list(wsId), (old) =>
+      old?.map((item) => item.id === id ? { ...item, read } : item),
+    );
+  } else {
+    await refreshInboxQuery(qc, inboxKeys.list(wsId));
+  }
+  // Read filters and facets can change archive membership, not just row state.
+  await onArchivedInboxInvalidate(qc, wsId);
 }
 
 // An issue event only patches known rows; it cannot fulfill a pending inbox
@@ -170,10 +202,9 @@ export function cancelInboxLists(qc: QueryClient, wsId: string): boolean {
   return interrupted;
 }
 
-// THE entry point for refreshing the workspace's inbox lists — main and
-// archived. Every inbox event can move an item across that boundary (archive,
-// unarchive, or a new notification reviving an archived issue), and the split
-// is decided server-side, so the two are always refreshed together.
+// Refresh both lists when membership cannot be reconstructed locally, such
+// as archive, batch writes, unarchive and reconnect. Read-state events patch a ready
+// main list and refresh only the archive projections.
 //
 // Cancels first, like the summary refresh below, and for the same reason: the
 // Inbox page is the only observer that fetches the list, so its first visit

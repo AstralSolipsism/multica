@@ -2911,8 +2911,9 @@ export class ApiClient {
   }
 
   // Inbox
-  async listInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox");
+  async listInbox(options: { view?: "grouped"; signal?: AbortSignal } = {}): Promise<InboxItem[]> {
+    const path = options.view === "grouped" ? "/api/inbox?view=grouped" : "/api/inbox";
+    const raw = await this.fetch<unknown>(path, { signal: options.signal });
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox",
     });

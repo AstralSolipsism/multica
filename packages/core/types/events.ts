@@ -229,12 +229,14 @@ export interface InboxNewPayload {
 }
 
 export interface InboxReadPayload {
+  workspace_id?: string;
   item_id: string;
   recipient_id: string;
 }
 
 /** Emitted when a recipient flips a notification back to unread. */
 export interface InboxUnreadPayload {
+  workspace_id?: string;
   item_id: string;
   recipient_id: string;
 }

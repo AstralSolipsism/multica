@@ -81,3 +81,27 @@ func TestRegisterListeners_FrameContainsActorType(t *testing.T) {
 		})
 	}
 }
+
+func TestInboxReadStateEventsArePersonal(t *testing.T) {
+	for _, eventType := range []string{protocol.EventInboxRead, protocol.EventInboxUnread} {
+		t.Run(eventType, func(t *testing.T) {
+			bus := events.New()
+			fb := &fakeBroadcaster{}
+			registerListeners(bus, fb)
+			bus.Publish(events.Event{Type: eventType, WorkspaceID: "ws-1", Payload: map[string]any{
+				"item_id": "notification", "workspace_id": "ws-1", "recipient_id": "recipient",
+			}})
+			if len(fb.userCalls) != 1 || len(fb.workspaceCalls) != 0 {
+				t.Fatalf("read state must go only to its recipient: user=%d workspace=%d", len(fb.userCalls), len(fb.workspaceCalls))
+			}
+			var frame struct {
+				Payload struct {
+					WorkspaceID string `json:"workspace_id"`
+				} `json:"payload"`
+			}
+			if err := json.Unmarshal(fb.userCalls[0].msg, &frame); err != nil || frame.Payload.WorkspaceID != "ws-1" {
+				t.Fatalf("lost event origin: %s (%v)", fb.userCalls[0].msg, err)
+			}
+		})
+	}
+}

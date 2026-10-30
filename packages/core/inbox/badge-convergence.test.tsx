@@ -86,6 +86,7 @@ class FakeServer {
       title: issueId,
       body: null,
       issue_status: null,
+      issue_priority: "medium",
       read: false,
       archived: false,
       created_at: new Date(Date.UTC(2026, 8, 1, 0, 0, this.clock)).toISOString(),

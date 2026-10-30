@@ -13,7 +13,8 @@ import {
   useInboxUnreadCount,
 } from "../inbox/queries";
 import { createQueryClient } from "../query-client";
-import type { InboxItem } from "../types";
+import type { InboxItem, WSMessage } from "../types";
+import { useMarkInboxRead, useMarkInboxUnread } from "../inbox/mutations";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 
 vi.mock("../platform/workspace-storage", () => ({
@@ -22,6 +23,7 @@ vi.mock("../platform/workspace-storage", () => ({
   createWorkspaceAwareStorage: (adapter: unknown) => adapter,
   registerForWorkspaceRehydration: () => {},
 }));
+vi.mock("../hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("../paths", () => ({
   useHasOnboarded: () => true,
   resolvePostAuthDestination: () => "/",
@@ -32,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("refreshes an inactive Inbox after inbox:new then issue:updated (MUL-7286)", async () => {
+it.each([false, true])("keeps an inactive Inbox current after inbox:new then issue:updated (invalidated=%s, MUL-7286)", async (invalidated) => {
   const qc = createQueryClient();
   const oldItem: InboxItem = {
     id: "n1",
@@ -47,6 +49,7 @@ it("refreshes an inactive Inbox after inbox:new then issue:updated (MUL-7286)", 
     title: "Issue 1",
     body: null,
     issue_status: "todo",
+    issue_priority: "medium",
     read: true,
     archived: false,
     created_at: "2026-09-11T00:00:00Z",
@@ -104,12 +107,14 @@ it("refreshes an inactive Inbox after inbox:new then issue:updated (MUL-7286)", 
       read: false,
       created_at: "2026-09-11T00:01:00Z",
     };
+    // A prior reconnect/batch event left an outstanding refresh obligation.
+    if (invalidated) await qc.invalidateQueries({ queryKey: inboxKeys.list("ws-1"), refetchType: "none" });
     rows = [newItem, oldItem];
     await act(async () => {
       handlers["inbox:new"]!({ item: newItem });
     });
     await waitFor(() => expect(shell.result.current).toBe(1));
-    expect(qc.getQueryState(inboxKeys.list("ws-1"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(inboxKeys.list("ws-1"))?.isInvalidated).toBe(invalidated);
     expect(listInbox).toHaveBeenCalledTimes(1);
 
     // Any later issue update patches status, without re-reading notifications.
@@ -120,7 +125,7 @@ it("refreshes an inactive Inbox after inbox:new then issue:updated (MUL-7286)", 
       });
     });
     page = mountInbox();
-    await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(invalidated ? 2 : 1));
     await waitFor(() => expect(page.result.current.data).toEqual(rows));
     expect(
       deduplicateInboxItems(page.result.current.data!).filter((item) => !item.read),
@@ -131,4 +136,52 @@ it("refreshes an inactive Inbox after inbox:new then issue:updated (MUL-7286)", 
     shell.unmount();
     qc.clear();
   }
+});
+
+it.each([
+  ["inbox:read", useMarkInboxRead, true],
+  ["inbox:unread", useMarkInboxUnread, false],
+] as const)("settles a single mutation and its %s echo without another list request", async (event, useWrite, read) => {
+  const qc = createQueryClient();
+  const row: InboxItem = {
+    id: "n1", workspace_id: "ws-1", recipient_type: "member", recipient_id: "u1",
+    actor_type: null, actor_id: null, type: "mentioned", severity: "info", issue_id: "issue-1",
+    title: "Issue", body: null, issue_status: "todo", read: !read, archived: false,
+    created_at: "2026-09-11T00:00:00Z", details: null,
+  };
+  let rows = [row];
+  const listInbox = vi.fn(async () => rows);
+  const write = vi.fn(async () => {
+    rows = [{ ...row, read }];
+    return { ...row, read };
+  });
+  setApiInstance({ listInbox, markInboxRead: write, markInboxUnread: write,
+    getInboxUnreadSummary: async () => [{ workspace_id: "ws-1", count: rows.filter((item) => !item.read).length }],
+  } as unknown as ApiClient);
+  let onAny!: (message: WSMessage) => void;
+  const ws = {
+    on: () => () => {}, onReconnect: () => () => {},
+    onAny: (handler: typeof onAny) => { onAny = handler; return () => {}; },
+  } as unknown as WSClient;
+  const stores = { authStore: { getState: () => ({ user: { id: "u1" } }) } } as unknown as RealtimeSyncStores;
+  function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  }
+  const view = renderHook(() => {
+    useRealtimeSync(ws, stores);
+    return { list: useQuery(inboxListOptions("ws-1")), write: useWrite(), badge: useInboxUnreadCount("ws-1") };
+  }, { wrapper: Wrapper });
+  try {
+    await waitFor(() => expect(view.result.current.list.data).toEqual([row]));
+    await act(async () => { await view.result.current.write.mutateAsync(row.id); });
+    await act(async () => {
+      onAny({ type: event, payload: { item_id: row.id, issue_id: row.issue_id, workspace_id: "ws-1" } });
+    });
+    await waitFor(() => expect(view.result.current.badge).toBe(read ? 0 : 1));
+    // Let the generic debounce window expire; a second full reload used to hide here.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(deduplicateInboxItems(view.result.current.list.data!)).toEqual(rows);
+    expect(listInbox).toHaveBeenCalledTimes(1);
+    expect(qc.getQueryState(inboxKeys.list("ws-1"))?.isInvalidated).toBe(false);
+  } finally { view.unmount(); qc.clear(); }
 });
