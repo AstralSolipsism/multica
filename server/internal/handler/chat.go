@@ -1998,14 +1998,57 @@ type ChatLastMessage struct {
 	MessageKind string `json:"message_kind"`
 }
 
+// chatListPreviewLimit caps, in characters, the last-message preview the
+// session LIST responses carry — same budget as the inbox list preview
+// (inboxListBodyPreviewLimit). The full text stays in the database and keeps
+// flowing from the session-detail and /messages endpoints.
+const chatListPreviewLimit = inboxListBodyPreviewLimit
+
+// chatListPreview truncates a list row's last-message content to
+// chatListPreviewLimit characters, by rune boundary like inboxListBody.
+// Fence markers are stripped from the preview for two client-side reasons
+// (toPreview in chat-thread-list.tsx): a CLOSED block before the cut is
+// stripped whole, so a preview ending in "\n" after one collapses to just
+// the ellipsis; and strip-fences turns any cut-inside-fence remainder into
+// visible code text instead of a dangling marker. Note the trade-off: a
+// closed block's code text now shows in the preview line where the old
+// full-content preview hid it — acceptable for a one-line snippet.
+func chatListPreview(content string) string {
+	cut, seen := 0, 0
+	for offset := range content {
+		if seen == chatListPreviewLimit-1 {
+			cut = offset
+		}
+		if seen++; seen > chatListPreviewLimit {
+			return stripFences(content[:cut]) + "…"
+		}
+	}
+	return content
+}
+
+// stripFences removes markdown code-fence runs so the front-end's whole-block
+// fence stripping cannot swallow the entire preview line (embedded HTML
+// sources are left as-is: toPreview does not remove tags, so they never blank
+// the line).
+func stripFences(s string) string {
+	for _, fence := range []string{"```", "~~~"} {
+		if strings.Contains(s, fence) {
+			s = strings.ReplaceAll(s, fence, " ")
+		}
+	}
+	return s
+}
+
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
 // when there is no last message (the LEFT JOIN produced a NULL timestamp).
+// Callers pass content through chatListPreview: the list renders one preview
+// line, while detail and /messages paths return the full text.
 func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure pgtype.Text, kind string) *ChatLastMessage {
 	if !at.Valid || protocol.IsHiddenChatMessageKind(kind) {
 		return nil
 	}
 	return &ChatLastMessage{
-		Content:       content,
+		Content:       chatListPreview(content),
 		Role:          role,
 		CreatedAt:     timestampToString(at),
 		FailureReason: textToPtr(failure),

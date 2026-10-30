@@ -3273,6 +3273,14 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))
 	}
+	// Snapshot consumers (presence + Squad hover) never read a task's full
+	// execution output, and the row set can carry ~100KB of it. Nil it here
+	// only — taskToResponse stays untouched for the history/claim paths that
+	// do serve `result`. The field keeps its key with a null value so the
+	// front-end zod schema (result: z.unknown().default(null)) is satisfied.
+	for i := range resp {
+		resp[i].Result = nil
+	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 
 	writeJSON(w, http.StatusOK, resp)
