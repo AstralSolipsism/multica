@@ -1389,7 +1389,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			name: "delete runtimes and projects",
-			run:  func() error { return qtx.DeleteWorkspaceRuntimesAndProjects(ctx, requester.WorkspaceID) },
+			run:  func() error { return deleteWorkspaceEngineeringAndProjects(ctx, qtx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete administration data",

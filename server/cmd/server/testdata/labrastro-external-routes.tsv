@@ -362,6 +362,11 @@ GET	/api/projects/search	user-auth	allow
 DELETE	/api/projects/{id}/	user-auth	deny
 GET	/api/projects/{id}/	user-auth	allow
 PUT	/api/projects/{id}/	user-auth	deny
+POST	/api/projects/{id}/baseline/candidates	user-auth	deny
+POST	/api/projects/{id}/baseline/decisions	user-auth	deny
+GET	/api/projects/{id}/baseline/revisions	user-auth	deny
+GET	/api/projects/{id}/engineering	user-auth	deny
+PATCH	/api/projects/{id}/engineering	user-auth	deny
 GET	/api/projects/{id}/resources	user-auth	allow
 POST	/api/projects/{id}/resources	user-auth	deny
 DELETE	/api/projects/{id}/resources/{resourceId}	user-auth	deny

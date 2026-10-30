@@ -1635,6 +1635,55 @@ type Project struct {
 	WorkflowID  pgtype.UUID        `json:"workflow_id"`
 }
 
+type ProjectBaselineDoc struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	Chapter             string             `json:"chapter"`
+	AdoptedRevisionID   pgtype.UUID        `json:"adopted_revision_id"`
+	CandidateRevisionID pgtype.UUID        `json:"candidate_revision_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectBaselineRevision struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	Chapter            string             `json:"chapter"`
+	RevisionNumber     int32              `json:"revision_number"`
+	Status             string             `json:"status"`
+	ContentMarkdown    string             `json:"content_markdown"`
+	ChangeSummary      string             `json:"change_summary"`
+	BaseRevisionID     pgtype.UUID        `json:"base_revision_id"`
+	ReplacesRevisionID pgtype.UUID        `json:"replaces_revision_id"`
+	AnchorsDiff        []byte             `json:"anchors_diff"`
+	SourceIssueID      pgtype.UUID        `json:"source_issue_id"`
+	CreatedByType      string             `json:"created_by_type"`
+	CreatedByID        pgtype.UUID        `json:"created_by_id"`
+	CreatedByTaskID    pgtype.UUID        `json:"created_by_task_id"`
+	DecidedByType      pgtype.Text        `json:"decided_by_type"`
+	DecidedByID        pgtype.UUID        `json:"decided_by_id"`
+	DecidedByTaskID    pgtype.UUID        `json:"decided_by_task_id"`
+	DecidedAt          pgtype.Timestamptz `json:"decided_at"`
+	DecisionCredential pgtype.Text        `json:"decision_credential"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectEngineering struct {
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ProjectID             pgtype.UUID        `json:"project_id"`
+	Enabled               bool               `json:"enabled"`
+	CurrentStage          int32              `json:"current_stage"`
+	ModeSummary           string             `json:"mode_summary"`
+	DeciderMemberIds      []pgtype.UUID      `json:"decider_member_ids"`
+	AgentDecisionsEnabled bool               `json:"agent_decisions_enabled"`
+	UpdatedByType         string             `json:"updated_by_type"`
+	UpdatedByID           pgtype.UUID        `json:"updated_by_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProjectFile struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
