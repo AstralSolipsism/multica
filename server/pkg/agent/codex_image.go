@@ -21,6 +21,15 @@ type CodexImageResult struct {
 	RetryAfter  int64
 }
 
+type codexImageTurnError struct {
+	Info json.RawMessage `json:"codexErrorInfo"`
+}
+
+func (e codexImageTurnError) rateLimited() bool {
+	var code string
+	return json.Unmarshal(e.Info, &code) == nil && (code == "usageLimitExceeded" || code == "rateLimitExceeded")
+}
+
 // withCodexImageClient reuses the runtime's RPC and owned-process boundaries.
 // There are no launch/turn retries: an interrupted generation is ambiguous.
 func withCodexImageClient(ctx context.Context, command Command, cwd, home string, observe func(string, json.RawMessage), fn func(*codexClient) error) error {
@@ -165,7 +174,7 @@ func GenerateCodexImage(ctx context.Context, command Command, sourceHome, dir, p
 	if err := os.Symlink(auth, filepath.Join(home, "auth.json")); err != nil {
 		return CodexImageResult{}, err
 	}
-	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[features]\nimage_generation = true\nshell_tool = false\nplugins = false\napps = false\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[features]\nimage_generation = true\nshell_tool = false\nplugins = false\napps = false\nview_image = false\nmulti_agent = false\n"), 0600); err != nil {
 		return CodexImageResult{}, err
 	}
 	var mu sync.Mutex
@@ -176,8 +185,10 @@ func GenerateCodexImage(ctx context.Context, command Command, sourceHome, dir, p
 	completed := make(chan bool, 1)
 	observe := func(method string, raw json.RawMessage) {
 		var event struct {
-			ThreadID string `json:"threadId"`
-			Item     struct {
+			ThreadID  string              `json:"threadId"`
+			Error     codexImageTurnError `json:"error"`
+			WillRetry *bool               `json:"willRetry"`
+			Item      struct {
 				ID        string `json:"id"`
 				Type      string `json:"type"`
 				Status    string `json:"status"`
@@ -188,7 +199,8 @@ func GenerateCodexImage(ctx context.Context, command Command, sourceHome, dir, p
 				} `json:"failure"`
 			} `json:"item"`
 			Turn struct {
-				Status string `json:"status"`
+				Status string              `json:"status"`
+				Error  codexImageTurnError `json:"error"`
 			} `json:"turn"`
 		}
 		if json.Unmarshal(raw, &event) != nil {
@@ -214,9 +226,15 @@ func GenerateCodexImage(ctx context.Context, command Command, sourceHome, dir, p
 				}
 			}
 		}
-		if method == "turn/completed" {
+		// Retrying notifications are not final quota decisions. Only a typed
+		// terminal error can allow the scheduler to retry on another runtime.
+		terminalError := method == "error" && event.WillRetry != nil && !*event.WillRetry
+		if terminalError && event.Error.rateLimited() || method == "turn/completed" && event.Turn.Status == "failed" && event.Turn.Error.rateLimited() {
+			result.RateLimited = true
+		}
+		if method == "turn/completed" || terminalError {
 			select {
-			case completed <- event.Turn.Status == "completed":
+			case completed <- !terminalError && event.Turn.Status == "completed":
 			default:
 			}
 		}

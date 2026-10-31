@@ -17,6 +17,12 @@ import (
 // LOCALAPPDATA on Windows. Process-wide redirection isolates tests that forget
 // their own redirect; per-test t.Setenv overrides still take precedence.
 func TestMain(m *testing.M) {
+	// Native discovery accepts an executable path without test flags. Handle
+	// its test-owned CLI before testing parses the provider's arguments.
+	if os.Getenv("MULTICA_TEST_MEDIA_PROBE") != "" {
+		runMediaNativeProcess()
+		os.Exit(0)
+	}
 	for _, key := range []string{
 		"MULTICA_AGENT_ID",
 		"MULTICA_TASK_ID",

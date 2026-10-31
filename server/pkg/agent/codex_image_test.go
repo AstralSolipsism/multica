@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 func imageTestCommand(t *testing.T, mode string) Command {
@@ -58,8 +60,31 @@ func TestCodexImageProcess(t *testing.T) {
 			if req.Params["approvalPolicy"] != "never" || req.Params["ephemeral"] != true {
 				os.Exit(3)
 			}
+			config, err := os.ReadFile(filepath.Join(os.Getenv("CODEX_HOME"), "config.toml"))
+			var settings struct {
+				Features map[string]bool `toml:"features"`
+			}
+			if err != nil || toml.Unmarshal(config, &settings) != nil || !settings.Features["image_generation"] {
+				os.Exit(7)
+			}
+			for _, feature := range []string{"shell_tool", "plugins", "apps", "view_image", "multi_agent"} {
+				if enabled, exists := settings.Features[feature]; !exists || enabled {
+					os.Exit(8)
+				}
+			}
 			result["thread"] = map[string]string{"id": "native-thread"}
 		case "turn/start":
+			if mode == "events" {
+				var events []json.RawMessage
+				if json.Unmarshal([]byte(os.Getenv("MULTICA_TEST_CODEX_IMAGE_EVENTS")), &events) != nil {
+					os.Exit(6)
+				}
+				for _, event := range events {
+					write(event)
+				}
+				write(map[string]any{"id": req.ID, "result": result})
+				continue
+			}
 			if mode == "cancel" {
 				for {
 					time.Sleep(time.Second)
@@ -106,6 +131,62 @@ func TestCodexImageProcess(t *testing.T) {
 		write(map[string]any{"id": req.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+func TestCodexNativeImageTurnFailures(t *testing.T) {
+	turn := func(info any) map[string]any {
+		return map[string]any{"method": "turn/completed", "params": map[string]any{
+			"threadId": "native-thread", "turn": map[string]any{"status": "failed", "error": map[string]any{"codexErrorInfo": info}},
+		}}
+	}
+	notification := func(thread string, retry any, info any) map[string]any {
+		return map[string]any{"method": "error", "params": map[string]any{
+			"threadId": thread, "willRetry": retry, "error": map[string]any{"codexErrorInfo": info},
+		}}
+	}
+	image := map[string]any{"method": "item/completed", "params": map[string]any{
+		"threadId": "native-thread", "item": map[string]string{"id": "one", "type": "imageGeneration", "status": "completed", "savedPath": "/fixture.png"},
+	}}
+	for _, tc := range []struct {
+		name    string
+		events  []any
+		limited bool
+	}{
+		{"turn usage", []any{turn("usageLimitExceeded")}, true},
+		{"turn rate", []any{turn("rateLimitExceeded")}, true},
+		{"terminal usage", []any{notification("native-thread", false, "usageLimitExceeded")}, true},
+		{"terminal rate", []any{notification("native-thread", false, "rateLimitExceeded")}, true},
+		{"retry usage", []any{notification("native-thread", true, "usageLimitExceeded"), turn("other")}, false},
+		{"retry rate", []any{notification("native-thread", true, "rateLimitExceeded"), turn("other")}, false},
+		{"missing retry flag", []any{notification("native-thread", nil, "usageLimitExceeded"), turn("other")}, false},
+		{"other thread", []any{notification("other-thread", false, "usageLimitExceeded"), turn("other")}, false},
+		{"unknown error", []any{turn("unauthorized")}, false},
+		{"transport error", []any{turn(map[string]any{"responseStreamDisconnected": map[string]int{"httpStatusCode": 429}})}, false},
+		{"artifact before turn quota", []any{image, turn("usageLimitExceeded")}, false},
+		{"artifact before error quota", []any{image, notification("native-thread", false, "rateLimitExceeded")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events, err := json.Marshal(tc.events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("MULTICA_TEST_CODEX_IMAGE_EVENTS", string(events))
+			command := imageTestCommand(t, "events")
+			home := t.TempDir()
+			if err := os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"fixture":true}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			result, err := GenerateCodexImage(ctx, command, home, t.TempDir(), "test image", nil)
+			if result.RateLimited != tc.limited || (err == nil) != tc.limited || result.Path != "" {
+				t.Fatalf("result=%+v err=%v, want rate limited=%v", result, err, tc.limited)
+			}
+			if ctx.Err() != nil {
+				t.Fatal("terminal notification did not finish promptly")
+			}
+		})
+	}
 }
 
 func TestProbeCodexNativeImages(t *testing.T) {

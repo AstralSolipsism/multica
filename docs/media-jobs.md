@@ -26,9 +26,13 @@ The adapter accepts only the current thread's completed `imageGeneration`
 receipt and its `savedPath`. Assistant text is not an artifact manifest.
 Duplicate item receipts are ignored; multiple distinct images fail closed.
 The daemon enforces its existing artifact/symlink boundary before uploading.
-Only a structured `usageLimitExceeded` image failure permits quota failover;
-ambiguous process/transport failures do not replay the model. Cancellation
-terminates the owned subprocess tree before temporary files are removed.
+With no completed image, a structured image `usageLimitExceeded` failure or a
+terminal turn/error `usageLimitExceeded` or `rateLimitExceeded` signal permits
+quota failover. Retrying error notifications and ambiguous process/transport
+failures do not replay the model. Cancellation terminates the owned subprocess
+tree before temporary files are removed. The job disables shell, plugins, apps,
+local image-reading tools and subagents; editing uses the supplied `localImage`
+inputs.
 
 The native image tool selects its image model. It does not expose a model
 selector through the App Server protocol used here, so `--model` is rejected
