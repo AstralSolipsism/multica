@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearPendingEngineeringDestination,
+  consumeEngineeringDestinationForReauth,
+  preserveEngineeringDestinationForReauth,
+} from "./platform/engineering-deep-links";
 
 const state = vi.hoisted(() => ({
   auth: {
@@ -15,6 +20,7 @@ const state = vi.hoisted(() => ({
 
 const tabStore = vi.hoisted(() => ({
   activeWorkspaceSlug: "acme" as string | null,
+  activeUrl: "/acme/issues",
   byWorkspace: {},
   closeActiveTab: vi.fn(),
   reset: vi.fn(),
@@ -22,12 +28,29 @@ const tabStore = vi.hoisted(() => ({
   validateWorkspaceSlugs: vi.fn(),
 }));
 
+const coreHandlers = vi.hoisted(() => ({
+  onLogout: undefined as (() => void) | undefined,
+  onSessionExpired: undefined as (() => void) | undefined,
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ setQueryData: vi.fn() }),
 }));
 
 vi.mock("@multica/core/platform", () => ({
-  CoreProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  CoreProvider: ({
+    children,
+    onLogout,
+    onSessionExpired,
+  }: {
+    children: ReactNode;
+    onLogout?: () => void;
+    onSessionExpired?: () => void;
+  }) => {
+    coreHandlers.onLogout = onLogout;
+    coreHandlers.onSessionExpired = onSessionExpired;
+    return <>{children}</>;
+  },
   setCurrentWorkspace: vi.fn(),
 }));
 
@@ -36,8 +59,10 @@ vi.mock("@multica/core/i18n", () => ({
 }));
 
 vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (auth: typeof state.auth) => unknown) =>
-    selector(state.auth),
+  useAuthStore: Object.assign(
+    (selector: (auth: typeof state.auth) => unknown) => selector(state.auth),
+    { getState: () => state.auth },
+  ),
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -63,6 +88,7 @@ vi.mock("@multica/core/api", () => ({
 
 vi.mock("@multica/core/paths", () => ({
   useHasOnboarded: () => true,
+  workspaceSlugForPath: (path: string) => path.split("/").filter(Boolean)[0] ?? null,
 }));
 
 vi.mock("@multica/core/analytics", () => ({ captureEvent: vi.fn() }));
@@ -106,6 +132,7 @@ vi.mock("./components/issue-window", () => ({
 }));
 
 vi.mock("./stores/tab-store", () => ({
+  getActiveTab: () => ({ url: tabStore.activeUrl }),
   useTabStore: Object.assign(
     (selector: (value: typeof tabStore) => unknown) => selector(tabStore),
     { getState: () => tabStore },
@@ -160,6 +187,11 @@ beforeEach(() => {
   state.refetchWorkspaceList.mockReset();
   state.workspaceListUnavailable = false;
   tabStore.activeWorkspaceSlug = "acme";
+  tabStore.activeUrl = "/acme/issues";
+  tabStore.switchWorkspace.mockReset();
+  coreHandlers.onLogout = undefined;
+  coreHandlers.onSessionExpired = undefined;
+  clearPendingEngineeringDestination();
 
   Object.assign(window, {
     daemonAPI: {
@@ -189,6 +221,38 @@ beforeEach(() => {
 });
 
 describe("App main-window auth recovery", () => {
+  it("restores a pending engineering candidate once after same-account re-auth", () => {
+    const path = "/acme/projects/p1/engineering?candidate=rev-1";
+    preserveEngineeringDestinationForReauth("user-1", path);
+
+    render(<App />);
+
+    expect(tabStore.switchWorkspace).toHaveBeenCalledWith("acme", path);
+    expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
+  });
+
+  it("captures the active engineering candidate when the session expires", () => {
+    const path = "/acme/projects/p1/engineering?candidate=rev-1";
+    render(<App />);
+    tabStore.activeUrl = path;
+
+    coreHandlers.onSessionExpired!();
+
+    expect(consumeEngineeringDestinationForReauth("user-1")).toBe(path);
+  });
+
+  it("clears a pending engineering candidate on explicit logout", () => {
+    render(<App />);
+    preserveEngineeringDestinationForReauth(
+      "user-1",
+      "/acme/projects/p1/engineering?candidate=rev-1",
+    );
+
+    coreHandlers.onLogout!();
+
+    expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
+  });
+
   it("keeps auth recovery ahead of the desktop shell while the session recovers", () => {
     state.auth.status = "recovering";
 

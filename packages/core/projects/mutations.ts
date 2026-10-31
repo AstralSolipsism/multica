@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import type { ApiClient } from "../api/client";
 import { projectKeys } from "./queries";
 import { issueKeys } from "../issues/queries";
+import { invalidateIssueQueries } from "../issues/invalidation";
 import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { clearIssueSurfaceViewState } from "../issues/stores/surface-view-store";
@@ -92,4 +94,49 @@ export function useDeleteProject() {
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
     },
   });
+}
+
+type UpdateProjectEngineeringInput = { projectId: string } &
+  Parameters<ApiClient["updateProjectEngineering"]>[2];
+
+export function useUpdateProjectEngineering() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ projectId, ...data }: UpdateProjectEngineeringInput) =>
+      api.updateProjectEngineering(wsId, projectId, data),
+    retry: false,
+    onSettled: (_data, _error, { projectId }) => {
+      qc.invalidateQueries({ queryKey: projectKeys.engineeringAll(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: projectKeys.engineeringDecisionIssuesAll(wsId, projectId) });
+    },
+  });
+}
+
+type DecideProjectBaselineInput = {
+  projectId: string;
+  revisions: Parameters<ApiClient["decideProjectBaseline"]>[3];
+};
+
+function useDecideProjectBaseline(action: "adopt" | "reject") {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ projectId, revisions }: DecideProjectBaselineInput) =>
+      api.decideProjectBaseline(wsId, projectId, action, revisions),
+    retry: false,
+    onSettled: (_data, _error, { projectId }) => {
+      qc.invalidateQueries({ queryKey: projectKeys.engineeringAll(wsId, projectId) });
+      void invalidateIssueQueries(qc, wsId);
+      qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
+    },
+  });
+}
+
+export function useAdoptProjectBaseline() {
+  return useDecideProjectBaseline("adopt");
+}
+
+export function useRejectProjectBaseline() {
+  return useDecideProjectBaseline("reject");
 }

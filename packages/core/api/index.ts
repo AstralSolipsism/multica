@@ -19,6 +19,28 @@ export { parseWithFallback, setSchemaLogger } from "./schema";
 export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
+export {
+  BaselineChapterSchema,
+  BaselineDecisionSchema,
+  BaselineDiffSchema,
+  BaselineHistorySchema,
+  BaselineRevisionSchema,
+  EngineeringConfigSchema,
+  EngineeringOverviewSchema,
+  EngineeringUpdatedSchema,
+} from "./labrastro-engineering-schemas";
+export type {
+  BaselineChapter,
+  BaselineDecision,
+  BaselineDiff,
+  BaselineHistory,
+  BaselineRevision,
+  EngineeringConfig,
+  EngineeringOverview,
+} from "./labrastro-engineering-schemas";
+export type BaselineChange = import("./labrastro-engineering-schemas").BaselineDiff["added"][number];
+export type ChapterState = import("./labrastro-engineering-schemas").EngineeringOverview["chapters"][number];
+export type OpenIssue = import("./labrastro-engineering-schemas").BaselineDecision["openIssues"]["inFlight"][number];
 export type {
   DependencyView, IssuePrerequisite, IssueWithDependencies,
   CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest,

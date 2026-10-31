@@ -11,7 +11,7 @@ import type { Project, ProjectStatus, ProjectPriority } from "@multica/core/type
 import { useFeatureEnabled } from "@multica/core/config";
 import { PROJECT_WORKFLOWS_V1_FLAG } from "@multica/core/feature-flags";
 import { useAuthStore } from "@multica/core/auth";
-import { projectDetailOptions } from "@multica/core/projects/queries";
+import { projectEngineeringOptions, projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
 import { pinListOptions } from "@multica/core/pins";
 import { useCreatePin, useDeletePin } from "@multica/core/pins";
@@ -24,7 +24,7 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { currentPath, useNavigation } from "../../navigation";
+import { AppLink, currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
@@ -117,6 +117,7 @@ function ProjectWorkflowPropRow({ project }: { project: Project }) {
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const { t: tCommon } = useT("common");
+  const { t: tEngineering } = useT("engineering");
   const statusLabels = useProjectStatusLabels();
   const priorityLabels = useProjectPriorityLabels();
   const wsId = useWorkspaceId();
@@ -124,6 +125,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const router = useNavigation();
   const userId = useAuthStore((s) => s.user?.id);
   const { data: project, isLoading } = useQuery(projectDetailOptions(wsId, projectId));
+  const { data: engineeringOverview } = useQuery(projectEngineeringOptions(wsId, projectId));
   const recordRecentContext = useRecentContextStore((s) => s.recordVisit);
   useEffect(() => {
     if (project) {
@@ -502,6 +504,15 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             leaf={<span className="truncate font-medium text-foreground">{project.title}</span>}
             actions={
               <>
+              {engineeringOverview?.engineering?.enabled === true && (
+                <AppLink
+                  href={wsPaths.projectEngineering(project.id)}
+                  newTabTitle={tEngineering(($) => $.title)}
+                  className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  {tEngineering(($) => $.title)}
+                </AppLink>
+              )}
               <ProjectWorkflowMenu project={project} />
               <IconButton
                 label={isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}

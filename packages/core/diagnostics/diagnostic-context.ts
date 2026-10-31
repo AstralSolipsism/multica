@@ -56,6 +56,7 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["issues"],
   ["issues", ":id"],
   ["projects"],
+  ["projects", ":id", "engineering"],
   ["projects", ":id"],
   ["autopilots"],
   ["autopilots", ":id"],

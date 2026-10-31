@@ -1,0 +1,29 @@
+{
+  "title": "Vue d’ingénierie",
+  "summary": { "label": "Aperçu de l’ingénierie du projet", "decisions": "Décisions en attente", "stage": "Étape actuelle", "blocked": "Tâches bloquées", "candidates": "Candidats de référence" },
+  "stage": {
+    "title": "Étapes d’ingénierie et stratégie de livraison", "flowLabel": "Étapes d’ingénierie", "summaryLabel": "Stratégie de livraison",
+    "defaults": { "1": "Exploration 0→1", "2": "Spécifications et référence", "3": "Livraison incrémentale", "4": "Revue sur quatre axes", "5": "Acceptation et archivage" }
+  },
+  "decisions": { "title": "Décisions nécessitant votre validation", "count": "{{count}} en attente", "emptyTitle": "Aucune décision n’attend votre validation", "noComment": "Aucun commentaire explicatif pour le moment" },
+  "progress": {
+    "title": "Progression par étape et blocages", "emptyTitle": "Aucune tâche dans ce projet", "unstaged": "Sans étape", "stage": "Étape {{number}}", "closed": "{{count}} sur {{total}} terminées", "blocked": "{{count}} bloquées", "percent": "{{percent}} % terminé"
+  },
+  "baseline": {
+    "title": "Référence gérée et approbation des révisions", "chaptersLabel": "Chapitres de référence", "adoptedTitle": "Référence adoptée", "candidateTitle": "Candidat et diff structuré", "adoptedLabel": "Adopté", "candidateLabel": "Candidat", "noAdopted": "Aucune référence adoptée dans ce chapitre", "noCandidate": "Aucun candidat en attente dans ce chapitre", "candidateMissing": "La révision demandée est introuvable", "candidateMissingDescription": "Le lien ne correspond à aucune révision actuelle ou historique. Aucun autre candidat n’a été sélectionné.", "warningTitle": "Alertes de downgrade des règles", "unchanged": "{{count}} ancres inchangées", "added": "Ajouté", "modified": "Modifié", "removed": "Supprimé", "noChanges": "Aucun changement d’ancre", "openIssuesTitle": "Tâches ouvertes après la décision", "inFlight": "En cours", "queued": "En attente", "openIssuesTruncated": "Seules les 200 premières tâches ouvertes sont affichées.", "readOnlyRevision": "Cette révision historique est en lecture seule et ne peut pas être adoptée ici."
+  },
+  "chapters": { "overview": "Présentation du projet", "domain_rules": "Domaine et règles obligatoires", "architecture": "Architecture et décisions techniques", "exclusions_and_risks": "Exclusions, reports et risques" },
+  "status": { "candidate": "Candidat", "adopted": "Adopté", "superseded": "Remplacé", "withdrawn": "Retiré", "rejected": "Rejeté", "unknown": "État inconnu" },
+  "credentials": { "session": "Confirmé dans le tableau de bord", "pat": "Confirmé avec un jeton personnel", "task": "Confirmé par un agent", "unknown": "Identifiant inconnu" },
+  "warnings": { "rule_removed": "{{anchor}} supprime une règle obligatoire", "rule_shrunk": "{{anchor}} réduit fortement une règle obligatoire", "rule_deferred": "{{anchor}} reporte une règle obligatoire", "defer_missing_pool": "{{anchor}} est reporté sans tâche du pool non bloquant", "unknown": "{{anchor}} présente une alerte de règle inconnue" },
+  "history": { "title": "Historique des révisions", "revision": "Révision {{number}}", "empty": "Aucune révision dans ce chapitre", "more": "Charger les révisions précédentes" },
+  "settings": {
+    "title": "Paramètres d’ingénierie", "enabledLabel": "Activer la vue d’ingénierie", "enabledHint": "La désactivation masque la vue sans modifier les données du projet.", "agentLabel": "Autoriser les agents à décider", "agentHint": "Les agents peuvent adopter ou rejeter des candidats en leur nom. La suppression, l’affaiblissement ou le report d’une règle obligatoire nécessite toujours votre confirmation.", "decidersLabel": "Décideurs", "decidersHint": "Les owners et admins de l’espace de travail sont toujours inclus. Sans sélection, le responsable humain du projet est utilisé."
+  },
+  "actions": { "save": "Enregistrer", "reject": "Rejeter", "adopt": "Adopter", "enable": "Activer" },
+  "disabled": { "title": "La vue d’ingénierie n’est pas activée", "description": "Le projet conserve son interface habituelle. Demandez à un owner ou admin de l’espace de travail de l’activer.", "adminDescription": "Activez Strixnova pour voir ici les étapes, décisions, progrès et la référence gérée." },
+  "errors": {
+    "title": "Les données d’ingénierie sont indisponibles", "overview": "La réponse d’ingénierie n’a pas pu être chargée ou est invalide. Réessayez plus tard.", "timeline": "Impossible de charger le commentaire de décision.", "decisionIssues": "Impossible de charger les tâches en attente de décision.", "graph": "Impossible de charger la progression par étape.", "history": "Impossible de charger l’historique des révisions.", "chapter": "Ce chapitre est absent de la réponse du serveur.", "decisionTitle": "La décision du candidat a échoué", "decision": "Le candidat a peut-être changé ou a déjà été décidé. Vérifiez la révision actuelle avant de réessayer.", "configTitle": "Les paramètres n’ont pas été enregistrés", "config": "Vos modifications n’ont pas été appliquées. Vérifiez vos permissions et réessayez."
+  },
+  "messages": { "configSaved": "Paramètres d’ingénierie enregistrés", "adopted": "Candidat adopté", "rejected": "Candidat rejeté", "serverAuthoritative": "Les permissions et révisions sont vérifiées par le serveur" }
+}

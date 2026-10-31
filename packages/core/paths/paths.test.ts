@@ -38,6 +38,13 @@ describe("paths.workspace(slug)", () => {
     expect(ws.attachmentPreview("att_42")).toBe("/acme/attachments/att_42/preview");
   });
 
+  it("builds engineering deep links with an optional encoded candidate", () => {
+    expect(ws.projectEngineering("project/id")).toBe("/acme/projects/project%2Fid/engineering");
+    expect(ws.projectEngineering("project/id", "candidate / one")).toBe(
+      "/acme/projects/project%2Fid/engineering?candidate=candidate+%2F+one",
+    );
+  });
+
   it("URL-encodes special characters in ids", () => {
     expect(ws.issueDetail("id with space")).toBe("/acme/issues/id%20with%20space");
   });
