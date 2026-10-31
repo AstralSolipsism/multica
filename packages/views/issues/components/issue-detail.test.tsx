@@ -1984,15 +1984,15 @@ describe("IssueDetail (shared)", () => {
       return observers;
     };
 
-    const getLandingObserver = (observers: TestResizeObserver[]) => {
+    const getLandingObserver = (observers: TestResizeObserver[], commentId = "comment-2") => {
       const observer = observers.find((candidate) =>
-        candidate.observed.some((element) => element.id === "comment-comment-2"),
+        candidate.observed.some((element) => element.id === `comment-${commentId}`),
       );
       if (!observer) throw new Error("Comment landing ResizeObserver not found");
       return observer;
     };
 
-    it("re-centers after async layout growth and releases on user scrolling", async () => {
+    it("re-centers after async layout growth", async () => {
       const observers = stubResizeObservers();
       const view = renderIssueDetailWithHighlight("comment-2");
 
@@ -2018,12 +2018,78 @@ describe("IssueDetail (shared)", () => {
       targetTop = 600;
       act(() => observer.callback([], observer as unknown as ResizeObserver));
       expect(scroller.scrollTop).toBe(500);
+    });
 
-      fireEvent.wheel(scroller);
+    it.each([
+      ["wheel", fireEvent.wheel],
+      ["touchstart", fireEvent.touchStart],
+      ["pointerdown", fireEvent.pointerDown],
+      ["keydown", fireEvent.keyDown],
+    ] as const)("releases the landing observer on %s", async (_eventName, fire) => {
+      const observers = stubResizeObservers();
+      const view = renderIssueDetailWithHighlight("comment-2");
+      await waitFor(() => {
+        expect(observers.some((observer) =>
+          observer.observed.some((element) => element.id === "comment-comment-2"),
+        )).toBe(true);
+      });
+      const observer = getLandingObserver(observers);
+      const scroller = view.container.querySelector<HTMLElement>("[data-tab-scroll-root]")!;
+
+      fire(scroller);
+
       expect(observer.disconnect).toHaveBeenCalledTimes(1);
-      targetTop = 800;
+    });
+
+    it("releases the landing observer when the two-second window expires", async () => {
+      const observers = stubResizeObservers();
+      renderIssueDetailWithHighlight("comment-2");
+      await waitFor(() => {
+        expect(observers.some((observer) =>
+          observer.observed.some((element) => element.id === "comment-comment-2"),
+        )).toBe(true);
+      });
+      const observer = getLandingObserver(observers);
+      expect(observer.disconnect).not.toHaveBeenCalled();
+
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2100)); });
+
+      expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    }, 10000);
+
+    it("does not pull an in-page jump back to the arrival anchor", async () => {
+      const observers = stubResizeObservers();
+      const view = renderIssueDetailWithHighlight("comment-1");
+      await waitFor(() => {
+        expect(observers.some((observer) =>
+          observer.observed.some((element) => element.id === "comment-comment-1"),
+        )).toBe(true);
+      });
+      const observer = getLandingObserver(observers, "comment-1");
+      const scroller = view.container.querySelector<HTMLElement>("[data-tab-scroll-root]")!;
+      const arrivalTarget = document.getElementById("comment-comment-1")!;
+      Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 600 });
+      scroller.getBoundingClientRect = () => ({ top: 0 } as DOMRect);
+      arrivalTarget.getBoundingClientRect = () => ({ top: 400, height: 100 } as DOMRect);
+
+      view.rerender(
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <QueryClientProvider client={view.queryClient}>
+            <IssueDetail issueId="issue-1" highlightCommentId="comment-2" />
+          </QueryClientProvider>
+        </I18nProvider>,
+      );
+      await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledWith({
+        index: 1,
+        align: "start",
+        offset: -16,
+      }));
+      await waitFor(() => expect(observer.disconnect).toHaveBeenCalledTimes(1));
+      scroller.scrollTop = 1000;
+
       act(() => observer.callback([], observer as unknown as ResizeObserver));
-      expect(scroller.scrollTop).toBe(500);
+
+      expect(scroller.scrollTop).toBe(1000);
     });
 
     it("disconnects the landing observer on unmount", async () => {

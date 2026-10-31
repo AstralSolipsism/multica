@@ -1980,8 +1980,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     },
     [scrollContainerEl, flashJumpTarget],
   );
+  const [pendingArrivalLanding, setPendingArrivalLanding] = useState<{
+    issueId: string;
+    landingId: string;
+  } | null>(null);
   const jumpToThread = useCallback(
     (threadId: string) => {
+      setPendingArrivalLanding(null);
       // Flat mode mounts every row, so the anchor is always in the DOM.
       if (isFlatTimeline) return jumpToComment(threadId);
       // Virtualized mode: the target row may not be mounted, so scroll by
@@ -2006,6 +2011,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       const rootItem = items[index];
       const root = rootItem && rootItem.kind !== "activity-group" ? rootItem.entry : undefined;
       if (!rootId || !root) return;
+      setPendingArrivalLanding(null);
       const collapse = useCommentCollapseStore.getState();
       if (collapse.isCollapsed(id, rootId)) collapse.toggle(id, rootId);
       if (!expandedResolved.has(rootId)) {
@@ -2090,6 +2096,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       }
       const rootItem = items[index];
       if (!run || !rootItem) return;
+      setPendingArrivalLanding(null);
       const root = rootItem.kind !== "activity-group" ? rootItem.entry : undefined;
       const headsThread = run.hasReply && run.commentId === rootItem.id;
       if (root && !headsThread) {
@@ -2366,11 +2373,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     setHighlight({ id: landingId, ms: 2500 });
     setPendingArrivalLanding({ issueId: id, landingId });
   }, [highlightCommentId, highlightRequestToken, isArrivalHighlight, arrival.captured, isFlatTimeline, jumpToMinimapTarget, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand, collapsedBarrierRootId]);
-
-  const [pendingArrivalLanding, setPendingArrivalLanding] = useState<{
-    issueId: string;
-    landingId: string;
-  } | null>(null);
 
   // Keep the exact anchor centered while asynchronous content above it settles.
   // This effect deliberately does not depend on timeline data: late child issues
