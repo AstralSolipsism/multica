@@ -49,6 +49,10 @@
     "action_failed_toast": "Impossible de mettre à jour le message en file d'attente"
   },
   "message_list": {
+    "process_history": "Déroulement de l’exécution",
+    "process_loading": "Chargement de l’exécution…",
+    "process_retry": "Échec du chargement. Réessayer",
+    "process_empty": "Aucune étape d’exécution enregistrée.",
     "show_details": "Afficher les détails",
     "replied_in": "Réponse en {{elapsed}}",
     "failed_after": "Échec après {{elapsed}}",

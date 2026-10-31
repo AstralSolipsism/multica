@@ -47,6 +47,10 @@
     "action_failed_toast": "无法更新排队消息"
   },
   "message_list": {
+    "process_history": "执行过程",
+    "process_loading": "正在加载执行过程…",
+    "process_retry": "执行过程加载失败，重试",
+    "process_empty": "没有记录执行步骤。",
     "show_details": "查看详情",
     "replied_in": "{{elapsed}} 内回复",
     "failed_after": "{{elapsed}} 后失败",

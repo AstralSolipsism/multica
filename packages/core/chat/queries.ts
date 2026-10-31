@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, queryOptions, useQuery, type QueryClient } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions, useQuery, type QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../api";
 import type { TaskMessagePayload } from "../types/events";
@@ -6,6 +6,7 @@ import type {
   ChatQuickActionsFailureState,
   ChatQuickActionsPendingState,
   ChatSession,
+  ChatMessagesPage,
 } from "../types/chat";
 
 /**
@@ -147,8 +148,37 @@ export function chatMessagesOptions(sessionId: string) {
 export function chatMessagesPageOptions(sessionId: string, limit = 50) {
   return infiniteQueryOptions({
     queryKey: chatKeys.messagesPage(sessionId),
-    queryFn: ({ pageParam }) =>
-      api.listChatMessagesPage(sessionId, { before: pageParam, limit }),
+    queryFn: async ({ pageParam, client, signal }) => {
+      // Infinite-query refetches rebuild a fixed NUMBER of pages. New turns
+      // otherwise push the oldest loaded rows out of that window, including
+      // the row someone is reading. Refill the newest page through its former
+      // oldest row before replaying the remaining cursors. Only authoritative
+      // responses are retained, so deleted/redacted rows are not resurrected.
+      const oldest = pageParam == null
+        ? client.getQueryData<InfiniteData<ChatMessagesPage>>(
+            chatKeys.messagesPage(sessionId),
+          )?.pages[0]?.messages[0]
+        : undefined;
+      let page = await api.listChatMessagesPage(sessionId, { before: pageParam, limit });
+      while (oldest && !signal.aborted) {
+        const boundary = page.messages.findIndex((message) => message.id === oldest.id);
+        if (boundary >= 0) {
+          const hasMore = page.has_more || boundary > 0;
+          return {
+            ...page,
+            messages: page.messages.slice(boundary),
+            has_more: hasMore,
+            next_cursor: hasMore ? { id: oldest.id, created_at: oldest.created_at } : null,
+          };
+        }
+        const first = page.messages[0];
+        if (!first || !page.has_more || !page.next_cursor ||
+          Date.parse(first.created_at) < Date.parse(oldest.created_at)) break;
+        const older = await api.listChatMessagesPage(sessionId, { before: page.next_cursor, limit });
+        page = { ...older, messages: [...older.messages, ...page.messages] };
+      }
+      return page;
+    },
     initialPageParam: null as { created_at: string; id: string } | null,
     getNextPageParam: (lastPage) =>
       lastPage.has_more ? lastPage.next_cursor ?? undefined : undefined,

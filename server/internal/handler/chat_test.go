@@ -655,6 +655,37 @@ func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) 
 	}
 }
 
+// The client refills the newest page through its previous oldest row before
+// following this cursor. New turns must not change what that cursor returns.
+func TestListChatMessagesPage_SavedCursorSurvivesNewTurns(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatStableHistoryAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	insert := func(content string, at time.Time) string {
+		return dbfx.Insert(t, "chat_message", testutil.Cols{
+			"chat_session_id": sessionID, "role": "assistant", "content": content, "created_at": at,
+		})
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldestID := insert("oldest", base)
+	boundaryID := insert("boundary", base.Add(time.Second))
+	insert("latest", base.Add(2*time.Second))
+	latest := fetchChatMessagesPageForTest(t, sessionID, url.Values{"limit": {"2"}})
+	if latest.NextCursor == nil || latest.NextCursor.ID != boundaryID {
+		t.Fatalf("unexpected original boundary: %#v", latest.NextCursor)
+	}
+	insert("new turn", base.Add(3*time.Second))
+	refreshed := fetchChatMessagesPageForTest(t, sessionID, url.Values{"limit": {"2"}})
+	if len(refreshed.Messages) != 2 || refreshed.Messages[1].Content != "new turn" {
+		t.Fatalf("newest page did not advance: %#v", refreshed.Messages)
+	}
+	older := fetchChatMessagesPageForTest(t, sessionID, url.Values{
+		"limit": {"2"}, "before_created_at": {latest.NextCursor.CreatedAt}, "before_id": {latest.NextCursor.ID},
+	})
+	if len(older.Messages) != 1 || older.Messages[0].ID != oldestID || older.HasMore {
+		t.Fatalf("saved cursor changed after append: %#v", older)
+	}
+}
+
 func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatCursorTieBreakAgent", []byte("[]"))
 	sessionID := createHandlerTestChatSession(t, agentID)
