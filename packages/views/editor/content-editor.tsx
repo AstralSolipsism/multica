@@ -12,8 +12,9 @@
  *    misuse — Tiptap's `useEditor` reads `editable` at mount, so toggling
  *    the prop later silently failed (mounted-as-readonly editors stayed
  *    unfocusable forever). To express "currently disabled", wrap this
- *    component in a layout that sets `pointer-events-none` / `aria-disabled`
- *    — don't reach into the editor.
+ *    component in a layout that sets `pointer-events-none` / `aria-disabled`.
+ *    Submit flows can additionally use `setInputLocked` on the public handle
+ *    to synchronously stop keyboard input and pending draft updates.
  *
  * 2. ONE MARKDOWN PIPELINE via @tiptap/markdown. Content is loaded with
  *    `contentType: 'markdown'` and saved with `editor.getMarkdown()`.
@@ -339,6 +340,8 @@ interface ContentEditorRef {
    * targets, so it reads the current document rather than a cached copy.
    */
   flushPendingUpdate: () => string | null;
+  /** Synchronous temporary input lock for a submit; external draft adoption still works. */
+  setInputLocked: (locked: boolean) => void;
   /**
    * Force `markdown` into the document, bypassing the synchronized `value`
    * guards.
@@ -389,6 +392,13 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     ref,
   ) {
     const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const inputLockedRef = useRef(false);
+    const cancelPendingUpdate = () => {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = undefined;
+      pendingFlushRef.current = null;
+      pendingBaseRef.current = null;
+    };
     const flushPendingOnUnmountRef = useRef(flushPendingOnUnmount);
     // Markdown serialized at `onUpdate` time, awaiting its debounce fire. The
     // unmount flush emits this cached copy — it runs mid-teardown and can't
@@ -625,6 +635,12 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         resolveIssueIdentifierRef,
       }),
       onUpdate: ({ editor: ed }) => {
+        if (inputLockedRef.current) {
+          // Composition transactions already queued before the lock must not
+          // persist a draft or make the document look dirty on a session switch.
+          lastEmittedRef.current = normalizeEditorMarkdown(ed);
+          return;
+        }
         if (!onUpdateRef.current) return;
         pendingBaseRef.current = documentBaseRef.current;
         if (flushPendingOnUnmountRef.current) {
@@ -906,7 +922,13 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       // placeholder no longer serialises at all, which is strictly stronger
       // than scrubbing it back out afterwards.
       getMarkdown: () => editor?.getMarkdown() ?? "",
+      setInputLocked: (locked: boolean) => {
+        inputLockedRef.current = locked;
+        if (locked) cancelPendingUpdate();
+        if (editor && !editor.isDestroyed) editor.setEditable(!locked, false);
+      },
       clearContent: () => {
+        cancelPendingUpdate();
         if (!editor) return;
         editor.commands.clearContent();
         // Clearing maps the selection across the replace, and an
@@ -943,7 +965,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         editor?.commands.blur();
       },
       uploadFile: (file: File) => {
-        if (!editor || !onUploadFileRef.current) return;
+        if (inputLockedRef.current || !editor || !onUploadFileRef.current) return;
         const endPos = editor.state.doc.content.size;
         uploadAndInsertFile(editor, file, onUploadFileRef.current, endPos);
       },

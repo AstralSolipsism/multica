@@ -10,6 +10,7 @@ import {
 } from "@multica/core/workspace/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
+import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink } from "../../navigation";
@@ -68,7 +69,7 @@ export function SquadProfileCard({ squadId }: SquadProfileCardProps) {
         <ActorAvatarBase
           name={squad.name}
           initials={initials}
-          avatarUrl={squad.avatar_url}
+          avatarUrl={resolvePublicFileUrl(squad.avatar_url)}
           isSquad
           size="xl"
         />

@@ -107,6 +107,7 @@ vi.mock("@tiptap/react", () => ({
         get isDestroyed() {
           return editorState.isDestroyed;
         },
+        setEditable: vi.fn(),
         commands: {
           focus: mockFocus,
           clearContent: vi.fn(),
@@ -408,6 +409,34 @@ describe("ContentEditor", () => {
         mockSetTextSelection.mock.invocationCallOrder[0]!,
       );
     });
+  });
+
+  it("cancels pending updates and suppresses IME tails while input is locked", () => {
+    vi.useFakeTimers();
+    const onUpdate = vi.fn();
+    const ref = createRef<ContentEditorRef>();
+    render(<ContentEditor ref={ref} defaultValue="sent" onUpdate={onUpdate} debounceMs={100} />);
+    act(() => {
+      editorState.markdown = "sent";
+      latestEditorOptions.current?.onUpdate?.({ editor: editorRef.current });
+      ref.current?.setInputLocked(true);
+      editorState.markdown = "composition tail";
+      latestEditorOptions.current?.onUpdate?.({ editor: editorRef.current });
+      vi.advanceTimersByTime(500);
+    });
+    expect(onUpdate).not.toHaveBeenCalled();
+    const editor = editorRef.current as { setEditable: ReturnType<typeof vi.fn> };
+    expect(editor.setEditable).toHaveBeenLastCalledWith(false, false);
+    act(() => {
+      ref.current?.clearContent();
+      ref.current?.setInputLocked(false);
+      editorState.markdown = "next input";
+      latestEditorOptions.current?.onUpdate?.({ editor: editorRef.current });
+      vi.advanceTimersByTime(100);
+    });
+    expect(editor.setEditable).toHaveBeenLastCalledWith(true, false);
+    expect(onUpdate).toHaveBeenCalledWith("next input", expect.any(String));
+    vi.useRealTimers();
   });
 
   describe("flushPendingUpdate", () => {

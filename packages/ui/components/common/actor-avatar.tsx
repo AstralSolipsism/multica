@@ -74,6 +74,7 @@ function ActorAvatar({
         <img
           src={avatarUrl}
           alt={name}
+          decoding="async"
           className="h-full w-full object-cover"
           onError={() => setImgError(true)}
         />

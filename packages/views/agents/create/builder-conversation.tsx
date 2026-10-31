@@ -12,6 +12,7 @@ import {
 import { isRuntimeUsableForUser } from "@multica/core/runtimes";
 import type {
   ChatMessage,
+  ChatSendAttempt,
   MemberWithUser,
   RuntimeDevice,
 } from "@multica/core/types";
@@ -157,7 +158,7 @@ export function BuilderConversation({
   runtimeOnline: boolean;
   /** `commitInput` is the composer's clear; the owner runs it as soon as the
    *  server accepts the message. The prompt buttons below send without one. */
-  onSend: (content: string, commitInput?: () => void) => Promise<boolean>;
+  onSend: (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => Promise<boolean>;
   onStop: () => void;
   restoreDraftRequest: BuilderRestore | null;
   onRestoreDraftApplied: () => void;
@@ -179,8 +180,8 @@ export function BuilderConversation({
   // with the unmounted instance, and the conversation opened instead mounts
   // its own list at the live end.
   const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
-  const handleSend = async (content: string, commitInput?: () => void) => {
-    const sent = await onSend(content, commitInput);
+  const handleSend = async (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => {
+    const sent = await onSend(content, commitInput, attempt);
     if (sent) setResumeFollowNonce((n) => n + 1);
     return sent;
   };
@@ -279,8 +280,8 @@ export function BuilderConversation({
       ) : null}
 
       <ChatInput
-        onSend={(content, _attachmentIds, commitInput) =>
-          handleSend(content, commitInput)
+        onSend={(content, _attachmentIds, commitInput, _attachments, attempt) =>
+          handleSend(content, commitInput, attempt)
         }
         onStop={onStop}
         isRunning={pending}

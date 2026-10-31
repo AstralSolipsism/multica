@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -824,8 +826,9 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 // Chat Messages
 
 type SendChatMessageRequest struct {
-	Content       string   `json:"content"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	ClientMessageID string   `json:"client_message_id"`
+	Content         string   `json:"content"`
+	AttachmentIDs   []string `json:"attachment_ids"`
 }
 
 type SendChatMessageResponse struct {
@@ -875,6 +878,14 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return
+	}
+
+	if req.ClientMessageID != "" {
+		id, ok := parseUUIDOrBadRequest(w, req.ClientMessageID, "client_message_id")
+		if !ok {
+			return
+		}
+		req.ClientMessageID = uuidToString(id)
 	}
 
 	// Load chat session and re-check the private-agent gate on every send.
@@ -964,9 +975,27 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator and the run's originator —
 	// surfaced to the agent under `## On Behalf Of`. actorType/actorID were
 	// resolved above for the invoke gate.
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	// Authorization above runs even for cached receipts. Content is only a
+	// conflict check for a supplied key; identical text with a new key is new work.
+	cacheKey := ""
+	if req.ClientMessageID != "" {
+		cacheKey = uuidToString(session.ID) + ":" + req.ClientMessageID
+	}
+	canonicalAttachments := make([]string, 0, len(attachmentIDs))
+	for _, id := range attachmentIDs {
+		canonicalAttachments = append(canonicalAttachments, uuidToString(id))
+	}
+	slices.Sort(canonicalAttachments)
+	payload, _ := json.Marshal([]any{req.Content, slices.Compact(canonicalAttachments), actorType, actorID})
+	sent, replayed, err := h.chatSends.Do(r.Context(), cacheKey, sha256.Sum256(payload), func() (*service.DirectChatSendResult, error) {
+		return h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	})
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrChatSendConflict):
+			writeError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, service.ErrChatSendCacheFull):
+			writeError(w, http.StatusServiceUnavailable, err.Error())
 		case errors.Is(err, service.ErrChatSessionArchived):
 			writeError(w, http.StatusConflict, "chat session is archived")
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
@@ -982,7 +1011,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	msg := sent.Message
 	task := sent.Task
 	currentTitle := session.Title
-	if sent.InitialTitle != "" {
+	if !replayed && sent.InitialTitle != "" {
 		currentTitle = sent.InitialTitle
 		h.ChannelChatTitleInitialized(session.WorkspaceID, session.CreatorID, session.ID, sent.InitialTitle)
 	}
@@ -997,39 +1026,41 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	taskContext := h.TaskService.AnalyticsContextForTask(r.Context(), task)
-	platform, _, _ := middleware.ClientMetadataFromContext(r.Context())
-	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.ChatMessageSent(
-		userID,
-		workspaceID,
-		uuidToString(session.ID),
-		uuidToString(task.ID),
-		uuidToString(session.AgentID),
-		taskContext.RuntimeMode,
-		taskContext.Provider,
-		platform,
-	))
+	if !replayed {
+		taskContext := h.TaskService.AnalyticsContextForTask(r.Context(), task)
+		platform, _, _ := middleware.ClientMetadataFromContext(r.Context())
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.ChatMessageSent(
+			userID,
+			workspaceID,
+			uuidToString(session.ID),
+			uuidToString(task.ID),
+			uuidToString(session.AgentID),
+			taskContext.RuntimeMode,
+			taskContext.Provider,
+			platform,
+		))
 
-	// Broadcast the user message.
-	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
-		ChatSessionID: resolvedSessionID,
-		MessageID:     uuidToString(msg.ID),
-		Role:          "user",
-		Content:       req.Content,
-		TaskID:        uuidToString(task.ID),
-		CreatedAt:     timestampToString(msg.CreatedAt),
-	})
+		// Broadcast the user message.
+		resolvedSessionID := uuidToString(session.ID)
+		h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
+			ChatSessionID: resolvedSessionID,
+			MessageID:     uuidToString(msg.ID),
+			Role:          "user",
+			Content:       req.Content,
+			TaskID:        uuidToString(task.ID),
+			CreatedAt:     timestampToString(msg.CreatedAt),
+		})
 
-	// First user message → kick off best-effort LLM auto-titling (MUL-4295).
-	// Fire-and-forget and non-blocking: the response below is written whether
-	// or not a title is ever generated, and a disabled/failing LLM layer
-	// silently keeps the original first-message-derived title. session.Title
-	// is the default/original title observed here and drives the CAS so a
-	// manual rename mid-generation is never clobbered.
-	shouldGenerateTitle := shouldGenerateFirstMessageTitle(hadUserMessage, currentTitle, sent.InitialTitle, channelBacked, channelSourceKnown)
-	if shouldGenerateTitle && h.labrastroAllowChatAutoTitle(r.Context(), session.ID) {
-		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, req.Content)
+		// First user message → kick off best-effort LLM auto-titling (MUL-4295).
+		// Fire-and-forget and non-blocking: the response below is written whether
+		// or not a title is ever generated, and a disabled/failing LLM layer
+		// silently keeps the original first-message-derived title. session.Title
+		// is the default/original title observed here and drives the CAS so a
+		// manual rename mid-generation is never clobbered.
+		shouldGenerateTitle := shouldGenerateFirstMessageTitle(hadUserMessage, currentTitle, sent.InitialTitle, channelBacked, channelSourceKnown)
+		if shouldGenerateTitle && h.labrastroAllowChatAutoTitle(r.Context(), session.ID) {
+			h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, req.Content)
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{

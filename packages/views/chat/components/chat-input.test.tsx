@@ -70,6 +70,7 @@ const editorState = vi.hoisted(() => ({
   blurred: 0,
   focused: 0,
   adopted: [] as string[],
+  locked: false,
 }));
 
 vi.mock("../../editor", async () => ({
@@ -111,15 +112,18 @@ vi.mock("../../editor", async () => ({
     } = props;
     editorProps.last = props as unknown as Record<string, unknown>;
     const valueRef = useRef<string>(value ?? defaultValue ?? "");
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const uploadingRef = useRef(0);
     useEffect(() => {
       if (value !== undefined) valueRef.current = value;
     }, [value]);
     useImperativeHandle(ref, () => ({
       getMarkdown: () => valueRef.current,
+      setInputLocked: (locked: boolean) => { editorState.locked = locked; },
       clearContent: () => {
         editorState.cleared += 1;
         valueRef.current = "";
+        if (textareaRef.current) textareaRef.current.value = "";
       },
       blur: () => {
         editorState.blurred += 1;
@@ -178,6 +182,7 @@ vi.mock("../../editor", async () => ({
     }));
     return (
       <textarea
+        ref={textareaRef}
         data-testid="editor"
         defaultValue={value ?? defaultValue}
         placeholder={placeholder}
@@ -259,6 +264,7 @@ beforeEach(() => {
   editorState.blurred = 0;
   editorState.focused = 0;
   editorState.adopted = [];
+  editorState.locked = false;
   const state = useChatStore.getState() as unknown as {
     activeSessionId: string | null;
     selectedAgentId: string;
@@ -535,6 +541,7 @@ describe("ChatInput conversation starter send", () => {
       undefined,
       expect.any(Function),
       [],
+      expect.objectContaining({ clientMessageId: expect.any(String) }),
     );
   });
 
@@ -1108,7 +1115,7 @@ describe("ChatInput attachment wiring", () => {
     });
   });
 
-  it("text typed while a chat send is in flight survives the success", async () => {
+  it("locks sending and ignores late composition updates before clearing the accepted draft", async () => {
     const state = useChatStore.getState() as unknown as {
       inputDrafts: Record<string, string>;
     };
@@ -1128,8 +1135,9 @@ describe("ChatInput attachment wiring", () => {
     fireEvent.click(buttons[buttons.length - 1]!);
     await waitFor(() => expect(onSend).toHaveBeenCalled());
 
-    // The editor stays interactive during the send; the debounced commit files
-    // the newer text under the same slot mid-flight.
+    expect(editorState.locked).toBe(true);
+    expect(editor.closest("[inert]")).not.toBeNull();
+    // Simulate an IME/update tail that was already queued before the lock.
     fireEvent.change(editor, { target: { value: "draft B typed during send" } });
 
     await act(async () => {
@@ -1137,10 +1145,9 @@ describe("ChatInput attachment wiring", () => {
       await Promise.resolve();
     });
 
-    // Success may only clear what it sent — the newer draft survives, and the
-    // editor was not scrubbed over it.
-    expect(state.inputDrafts["__draft_new__"]).toBe("draft B typed during send");
-    expect(editorState.cleared).toBe(0);
+    expect(state.inputDrafts["__draft_new__"]).toBeUndefined();
+    expect(editorState.cleared).toBe(1);
+    expect(editorState.locked).toBe(false);
   });
 
   it("keeps an in-flight placeholder while the user keeps typing", () => {
@@ -1299,6 +1306,7 @@ describe("ChatInput async send", () => {
       undefined,
       expect.any(Function),
       [],
+      expect.objectContaining({ clientMessageId: expect.any(String) }),
     );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
     await waitFor(() => expect(sendButton!).toBeDisabled());
@@ -1337,7 +1345,7 @@ describe("ChatInput async send", () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), [], expect.objectContaining({ clientMessageId: expect.any(String) }));
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 
@@ -1384,6 +1392,7 @@ describe("ChatInput async send", () => {
       ["att-persisted"],
       expect.any(Function),
       [attachment],
+      expect.objectContaining({ clientMessageId: expect.any(String) }),
     );
   });
 });
@@ -1684,5 +1693,66 @@ describe("ChatInput send disabled reason", () => {
 
     expect(sendButton()).toBeDisabled();
     expect(sendButton()).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("chat send identity", () => {
+  async function submitInput() {
+    await act(async () => {
+      await (editorProps.last?.onSubmit as () => Promise<void>)();
+    });
+  }
+
+  it("reuses failed submissions and retires the id after success or edited input", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderInput({ onSend });
+    const editor = screen.getByTestId("editor");
+    fireEvent.change(editor, { target: { value: "hello" } });
+    await submitInput();
+    const first = onSend.mock.calls[0]![4];
+    expect(first.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(editorState.locked).toBe(false);
+    await submitInput();
+    expect(onSend.mock.calls[1]![4]).toBe(first);
+
+    fireEvent.change(editor, { target: { value: "changed" } });
+    fireEvent.change(editor, { target: { value: "hello" } });
+    onSend.mockResolvedValue(true);
+    await submitInput();
+    const edited = onSend.mock.calls[2]![4];
+    expect(edited.clientMessageId).not.toBe(first.clientMessageId);
+    // Paste the same text in one update: an intermediate empty update would
+    // retire the ID via the edit path and mask missing success cleanup.
+    fireEvent.change(editor, { target: { value: "hello" } });
+    await submitInput();
+    expect(onSend).toHaveBeenCalledTimes(4);
+    expect(onSend.mock.calls[3]![4].clientMessageId).not.toBe(edited.clientMessageId);
+  });
+
+  it("clears only the source draft when navigation happens before success", async () => {
+    const state = useChatStore.getState();
+    state.activeSessionId = "session-a";
+    state.inputDrafts["session-a"] = "sent A";
+    state.inputDrafts["session-b"] = "unsent B";
+    let accept!: (accepted: boolean) => void;
+    const onSend = vi.fn().mockImplementation(() => new Promise<boolean>((resolve) => { accept = resolve; }));
+    const { rerender } = renderInput({ onSend });
+    let pending!: Promise<void>;
+    act(() => { pending = (editorProps.last?.onSubmit as () => Promise<void>)(); });
+    state.activeSessionId = "session-b";
+    rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatInput onSend={onSend} agentName="Multica" />
+      </I18nProvider>,
+    );
+    await act(async () => {
+      onSend.mock.calls[0]![2]({ clearEditor: false });
+      accept(true);
+      await pending;
+    });
+    expect(state.inputDrafts["session-a"]).toBeUndefined();
+    expect(state.inputDrafts["session-b"]).toBe("unsent B");
+    expect(editorState.cleared).toBe(0);
+    expect(editorState.locked).toBe(false);
   });
 });

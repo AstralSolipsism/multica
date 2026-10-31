@@ -214,6 +214,7 @@ type RuntimeRecoveryNotifier interface {
 }
 
 type Handler struct {
+	chatSends              *service.ChatSendCache
 	Queries                *db.Queries
 	ReadSelector           *dbreader.Selector
 	DB                     dbExecutor
@@ -526,6 +527,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
 	h := &Handler{
+		chatSends:                    &service.ChatSendCache{},
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
