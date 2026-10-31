@@ -5,7 +5,7 @@
     "decisions": "Decisions waiting",
     "stage": "Current stage",
     "blocked": "Blocked tasks",
-    "candidates": "Baseline candidates"
+    "recent": "Latest decision"
   },
   "stage": {
     "title": "Engineering stages and delivery strategy",
@@ -33,6 +33,11 @@
     "closed": "{{count}} of {{total}} closed",
     "blocked": "{{count}} blocked",
     "percent": "{{percent}}% closed"
+  },
+  "recent": {
+    "title": "What changed since your last visit",
+    "empty": "No baseline decisions have been made yet",
+    "noSummary": "Baseline revision decided"
   },
   "baseline": {
     "title": "Managed baseline and revision approval",

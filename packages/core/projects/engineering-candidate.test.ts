@@ -5,6 +5,7 @@ import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { BaselineRevision, EngineeringOverview } from "../api";
 import { engineeringCandidateOptions } from "./engineering-candidate";
+import { projectKeys } from "./queries";
 
 const revision = (id: string, status = "candidate") => ({ id, status }) as BaselineRevision;
 const overview = (candidate: BaselineRevision | null): EngineeringOverview => ({
@@ -16,6 +17,14 @@ describe("engineeringCandidateOptions", () => {
   let qc: QueryClient;
   beforeEach(() => { qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }); });
   afterEach(() => { qc.clear(); vi.restoreAllMocks(); });
+
+  it("nests candidate lookups under the engineering invalidation scope", () => {
+    expect(engineeringCandidateOptions("ws-1", "project-1", "rev-1").queryKey).toEqual([
+      ...projectKeys.engineeringAll("ws-1", "project-1"),
+      "candidate",
+      "rev-1",
+    ]);
+  });
 
   it("returns the exact current candidate without reading history", async () => {
     const current = revision("rev-current");

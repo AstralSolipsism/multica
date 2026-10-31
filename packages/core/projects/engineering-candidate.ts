@@ -10,7 +10,7 @@ export interface EngineeringCandidateLocation {
 
 export function engineeringCandidateOptions(wsId: string, projectId: string, candidateId: string) {
   return queryOptions({
-    queryKey: [...projectKeys.all(wsId), "engineering-candidate", projectId, candidateId] as const,
+    queryKey: [...projectKeys.engineeringAll(wsId, projectId), "candidate", candidateId] as const,
     enabled: !!wsId && !!projectId && !!candidateId,
     queryFn: async (): Promise<EngineeringCandidateLocation | null> => {
       const overview = await api.getProjectEngineering(wsId, projectId);

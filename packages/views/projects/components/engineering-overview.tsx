@@ -14,7 +14,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { paths } from "@multica/core/paths";
-import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectKeys } from "@multica/core/projects/queries";
+import { projectBaselineHistoryOptions, projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectKeys } from "@multica/core/projects/queries";
 import { useAdoptProjectBaseline, useRejectProjectBaseline, useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { engineeringCandidateOptions } from "@multica/core/projects/engineering-candidate";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -26,9 +26,10 @@ import { useNavigation } from "../../navigation";
 import { EngineeringBaseline } from "./engineering-baseline";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringProgress } from "./engineering-progress";
+import { EngineeringRecentChanges } from "./engineering-recent-changes";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringStage } from "./engineering-stage";
-import { engineeringPermissions, engineeringStageTitles, selectEngineeringComment } from "./engineering-utils";
+import { ENGINEERING_CHAPTERS, engineeringPermissions, engineeringStageTitles, selectEngineeringComment } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
@@ -91,11 +92,11 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const stageTitles = useMemo(() => engineeringStageTitles(overview?.chapters.find((chapter) => chapter.chapter === "overview")?.adopted?.contentMarkdown), [overview]);
   const chapterState = overview?.chapters.find((chapter) => chapter.chapter === selectedChapter);
   const [conflictRevision, setConflictRevision] = useState<BaselineRevision | null>(null);
-  const queriedRevision: BaselineRevision | null = candidateId ? candidateQuery.data?.revision ?? null : chapterState?.candidate ?? null;
+  const deepLinkChapter = candidateQuery.data?.chapter ?? "overview";
+  const showDeepLinkedRevision = !!candidateId && selectedChapter === deepLinkChapter;
+  const queriedRevision: BaselineRevision | null = showDeepLinkedRevision ? candidateQuery.data?.revision ?? null : chapterState?.candidate ?? null;
   const revision = conflictRevision ?? queriedRevision;
-  const currentCandidate = !conflictRevision && (candidateId
-    ? candidateQuery.data?.current === true && chapterState?.candidate?.id === revision?.id
-    : revision !== null);
+  const currentCandidate = !conflictRevision && revision !== null && chapterState?.candidate?.id === revision.id && (!showDeepLinkedRevision || candidateQuery.data?.current === true);
   const [decisionResult, setDecisionResult] = useState<BaselineDecision | null>(null);
   const [decisionError, setDecisionError] = useState(false);
   useEffect(() => {
@@ -117,6 +118,17 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     const last = pages.at(-1);
     return { revisions: pages.flatMap((page) => page.revisions), hasMore: last?.hasMore ?? false, nextBefore: last?.nextBefore ?? null };
   }, [historyQuery.data]);
+  const recentQueries = useQueries({
+    queries: ENGINEERING_CHAPTERS.map((chapter) => ({
+      ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 10 }),
+      enabled,
+    })),
+  });
+  const recentRevisions = useMemo(() => recentQueries
+    .flatMap((query) => query.data?.revisions ?? [])
+    .filter((revision) => revision.decidedAt !== null)
+    .sort((a, b) => (b.decidedAt ?? "").localeCompare(a.decidedAt ?? "") || b.revisionNumber - a.revisionNumber)
+    .slice(0, 5), [recentQueries]);
 
   const updateEngineering = useUpdateProjectEngineering();
   const adoptBaseline = useAdoptProjectBaseline();
@@ -176,7 +188,6 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const projectNodes = graphQuery.data?.nodes.filter((node) => node.projectId === projectId) ?? [];
   const blockedCount = projectNodes.filter((node) => node.status === "blocked" && node.statusCategory !== "done" && node.statusCategory !== "closed").length;
-  const candidateCount = overview.chapters.filter((chapter) => chapter.candidate).length;
   return (
     <div className="min-w-0">
       {header}
@@ -186,7 +197,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
           <Card><CardContent className="p-4"><div className="text-caption text-muted-foreground">{t(($) => $.summary.decisions)}</div><div className="mt-1 text-title-sm font-medium">{decisionIssues.length}</div></CardContent></Card>
           <Card><CardContent className="p-4"><div className="text-caption text-muted-foreground">{t(($) => $.summary.stage)}</div><div className="mt-1 text-title-sm font-medium">{stageTitles.get(config.currentStage) ?? t(($) => $.stage.defaults[String(config.currentStage) as "1" | "2" | "3" | "4" | "5"] ?? $.stage.defaults[1])}</div></CardContent></Card>
           <Card><CardContent className="p-4"><div className="text-caption text-muted-foreground">{t(($) => $.summary.blocked)}</div><div className="mt-1 text-title-sm font-medium">{blockedCount}</div></CardContent></Card>
-          <Card><CardContent className="p-4"><div className="text-caption text-muted-foreground">{t(($) => $.summary.candidates)}</div><div className="mt-1 text-title-sm font-medium">{candidateCount}</div></CardContent></Card>
+          <Card><CardContent className="p-4"><div className="text-caption text-muted-foreground">{t(($) => $.summary.recent)}</div><div className="mt-1 text-title-sm font-medium">{recentRevisions[0] ? recentRevisions[0].changeSummary || t(($) => $.recent.noSummary) : t(($) => $.recent.empty)}</div></CardContent></Card>
         </section>
         <EngineeringStage
           currentStage={config.currentStage}
@@ -201,9 +212,14 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
         {decisionQueries.some((query) => query.isLoading) ? <Skeleton className="h-52 w-full" /> : (
           <EngineeringDecisions workspaceSlug={workspaceSlug} issues={decisionIssues} timelines={timelines} />
         )}
-        {graphQuery.isLoading ? <Skeleton className="h-52 w-full" /> : graphQuery.isError ? (
-          <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
-        ) : <EngineeringProgress workspaceSlug={workspaceSlug} workspaceId={wsId} nodes={projectNodes} stageTitles={stageTitles} />}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
+          <div className="min-w-0">
+            {graphQuery.isLoading ? <Skeleton className="h-52 w-full" /> : graphQuery.isError ? (
+              <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
+            ) : <EngineeringProgress workspaceSlug={workspaceSlug} workspaceId={wsId} nodes={projectNodes} stageTitles={stageTitles} />}
+          </div>
+          <EngineeringRecentChanges revisions={recentRevisions} loading={recentQueries.some((query) => query.isLoading)} error={recentQueries.some((query) => query.isError)} />
+        </div>
         <EngineeringBaseline
           workspaceId={wsId}
           chapters={overview.chapters}
@@ -211,11 +227,11 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
           onChapterChange={setSelectedChapter}
           revision={revision}
           currentCandidate={currentCandidate}
-          candidateLoading={!!candidateId && candidateQuery.isLoading}
-          candidateNotFound={!!candidateId && !candidateQuery.isLoading && !candidateQuery.isError && !revision}
+          candidateLoading={showDeepLinkedRevision && candidateQuery.isLoading}
+          candidateNotFound={showDeepLinkedRevision && !candidateQuery.isLoading && !candidateQuery.isError && !revision}
           canDecide={permissions.isDecider}
           decisionPending={adoptBaseline.isPending || rejectBaseline.isPending}
-          decisionError={decisionError || candidateQuery.isError}
+          decisionError={decisionError || (showDeepLinkedRevision && candidateQuery.isError)}
           decisionResult={decisionResult}
           onDecision={decide}
           history={history}

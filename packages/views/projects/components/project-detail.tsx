@@ -513,6 +513,15 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                   {tEngineering(($) => $.title)}
                 </AppLink>
               )}
+              {isWorkspaceAdmin && engineeringOverview?.engineering && engineeringOverview.engineering.enabled !== true && (
+                <AppLink
+                  href={wsPaths.projectEngineering(project.id)}
+                  newTabTitle={tEngineering(($) => $.actions.enable)}
+                  className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  {tEngineering(($) => $.actions.enable)}
+                </AppLink>
+              )}
               <ProjectWorkflowMenu project={project} />
               <IconButton
                 label={isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}

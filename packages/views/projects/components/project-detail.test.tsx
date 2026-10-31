@@ -323,12 +323,26 @@ describe("ProjectDetail engineering entry", () => {
     );
   });
 
-  it("hides the entry when engineering is disabled", () => {
+  it("offers admins an enable entry when engineering is disabled", () => {
     mocks.engineering = { engineering: { enabled: false } };
 
     renderProjectDetail();
 
     expect(screen.queryByRole("link", { name: "Engineering overview" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Enable overview" })).toHaveAttribute(
+      "href",
+      "/test-workspace/projects/project-1/engineering",
+    );
+    expect(screen.getByText("Launch Plan")).toBeInTheDocument();
+  });
+
+  it("hides the enable entry from regular members", () => {
+    mocks.role = "member";
+    mocks.engineering = { engineering: { enabled: false } };
+
+    renderProjectDetail();
+
+    expect(screen.queryByRole("link", { name: "Enable overview" })).not.toBeInTheDocument();
     expect(screen.getByText("Launch Plan")).toBeInTheDocument();
   });
 

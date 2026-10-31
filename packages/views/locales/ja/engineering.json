@@ -1,6 +1,6 @@
 {
   "title": "工程概要",
-  "summary": { "label": "プロジェクト工程の概要", "decisions": "承認待ち", "stage": "現在の段階", "blocked": "ブロック中のタスク", "candidates": "基線候補" },
+  "summary": { "label": "プロジェクト工程の概要", "decisions": "承認待ち", "stage": "現在の段階", "blocked": "ブロック中のタスク", "recent": "最近の承認" },
   "stage": {
     "title": "工程段階と推進方針", "flowLabel": "工程段階", "summaryLabel": "推進方針",
     "defaults": { "1": "0→1 要件探索", "2": "仕様と基線の確定", "3": "段階的な開発", "4": "四軸レビュー", "5": "受入とアーカイブ" }
@@ -9,6 +9,7 @@
   "progress": {
     "title": "段階別の進捗とブロッカー", "emptyTitle": "このプロジェクトにはタスクがありません", "unstaged": "段階未設定", "stage": "第 {{number}} 段階", "closed": "{{total}} 件中 {{count}} 件完了", "blocked": "{{count}} 件ブロック中", "percent": "{{percent}}% 完了"
   },
+  "recent": { "title": "前回確認後の決定事項", "empty": "承認済みの基線版はまだありません", "noSummary": "基線版が承認されました" },
   "baseline": {
     "title": "管理基線と改訂承認", "chaptersLabel": "基線の章", "adoptedTitle": "採用済み基線", "candidateTitle": "候補と構造化 Diff", "adoptedLabel": "採用済み", "candidateLabel": "候補", "noAdopted": "この章には採用済み基線がありません", "noCandidate": "この章に承認待ちの候補はありません", "candidateMissing": "指定された改訂版が見つかりません", "candidateMissingDescription": "現在・履歴のいずれの版にも一致しないため、別の候補は選択していません。", "warningTitle": "必須ルールの downgrade 警告", "unchanged": "{{count}} 個のアンカーは未変更", "added": "追加", "modified": "変更", "removed": "削除", "noChanges": "アンカーの変更はありません", "openIssuesTitle": "承認後の未完了タスク", "inFlight": "進行中", "queued": "待機中", "openIssuesTruncated": "最初の 200 件のみ表示しています。", "readOnlyRevision": "これは読み取り専用の履歴版で、ここから採用することはできません。"
   },

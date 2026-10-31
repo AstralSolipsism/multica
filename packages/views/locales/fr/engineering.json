@@ -1,6 +1,6 @@
 {
   "title": "Vue d’ingénierie",
-  "summary": { "label": "Aperçu de l’ingénierie du projet", "decisions": "Décisions en attente", "stage": "Étape actuelle", "blocked": "Tâches bloquées", "candidates": "Candidats de référence" },
+  "summary": { "label": "Aperçu de l’ingénierie du projet", "decisions": "Décisions en attente", "stage": "Étape actuelle", "blocked": "Tâches bloquées", "recent": "Décision récente" },
   "stage": {
     "title": "Étapes d’ingénierie et stratégie de livraison", "flowLabel": "Étapes d’ingénierie", "summaryLabel": "Stratégie de livraison",
     "defaults": { "1": "Exploration 0→1", "2": "Spécifications et référence", "3": "Livraison incrémentale", "4": "Revue sur quatre axes", "5": "Acceptation et archivage" }
@@ -9,6 +9,7 @@
   "progress": {
     "title": "Progression par étape et blocages", "emptyTitle": "Aucune tâche dans ce projet", "unstaged": "Sans étape", "stage": "Étape {{number}}", "closed": "{{count}} sur {{total}} terminées", "blocked": "{{count}} bloquées", "percent": "{{percent}} % terminé"
   },
+  "recent": { "title": "Décisions depuis votre dernière visite", "empty": "Aucune révision de référence n’a encore été décidée", "noSummary": "Révision de référence décidée" },
   "baseline": {
     "title": "Référence gérée et approbation des révisions", "chaptersLabel": "Chapitres de référence", "adoptedTitle": "Référence adoptée", "candidateTitle": "Candidat et diff structuré", "adoptedLabel": "Adopté", "candidateLabel": "Candidat", "noAdopted": "Aucune référence adoptée dans ce chapitre", "noCandidate": "Aucun candidat en attente dans ce chapitre", "candidateMissing": "La révision demandée est introuvable", "candidateMissingDescription": "Le lien ne correspond à aucune révision actuelle ou historique. Aucun autre candidat n’a été sélectionné.", "warningTitle": "Alertes de downgrade des règles", "unchanged": "{{count}} ancres inchangées", "added": "Ajouté", "modified": "Modifié", "removed": "Supprimé", "noChanges": "Aucun changement d’ancre", "openIssuesTitle": "Tâches ouvertes après la décision", "inFlight": "En cours", "queued": "En attente", "openIssuesTruncated": "Seules les 200 premières tâches ouvertes sont affichées.", "readOnlyRevision": "Cette révision historique est en lecture seule et ne peut pas être adoptée ici."
   },

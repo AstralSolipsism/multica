@@ -5,7 +5,7 @@
     "decisions": "待拍板",
     "stage": "当前阶段",
     "blocked": "阻塞任务",
-    "candidates": "基线候选"
+    "recent": "最近拍板"
   },
   "stage": {
     "title": "工程阶段与推进策略",
@@ -33,6 +33,11 @@
     "closed": "{{total}} 项中已闭环 {{count}} 项",
     "blocked": "{{count}} 项阻塞",
     "percent": "已闭环 {{percent}}%"
+  },
+  "recent": {
+    "title": "上次看过之后，定了什么",
+    "empty": "还没有已拍板的基线版本",
+    "noSummary": "基线版本已拍板"
   },
   "baseline": {
     "title": "受管项目基线与修订审批",
