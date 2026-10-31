@@ -54,8 +54,9 @@ const avatarRedirectMaxAgeCap = 60
 
 // avatarProxyMaxAge is the cache lifetime for a proxied avatar body. Avatars
 // are immutable per key (every upload mints a fresh UUIDv7 key), so this is
-// only bounded by how quickly a re-upload should win.
-const avatarProxyMaxAge = 300
+// only bounded by how quickly a re-upload should win; revalidation is cheap
+// because If-None-Match hits answer 304 without reading storage.
+const avatarProxyMaxAge = 86400
 
 // avatarExtContentTypes is the allowlist of avatar object types.
 //
@@ -393,11 +394,47 @@ func (h *Handler) ServeAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// avatarETag is the entity tag for a proxied avatar body. Every upload mints
+// a fresh UUIDv7 key, so the key — through its HMAC, already exposed in the
+// URL path — identifies an immutable body without reading it.
+func avatarETag(key string) string {
+	return `"` + signAvatarKey(key) + `"`
+}
+
+// ifNoneMatch reports whether an If-None-Match header value matches etag.
+// Handles "*" and comma-separated lists, comparing weakly (RFC 9110 §8.8.3):
+// a W/ prefix on a listed tag is ignored, so an intermediary that weakened our
+// strong tag still hits the 304 path.
+func ifNoneMatch(header, etag string) bool {
+	weak := func(tag string) string { return strings.TrimPrefix(strings.TrimSpace(tag), "W/") }
+	if weak(header) == "*" {
+		return true
+	}
+	for _, tag := range strings.Split(header, ",") {
+		if weak(tag) == etag {
+			return true
+		}
+	}
+	return false
+}
+
 // proxyAvatar streams the object through the API for backends that cannot be
 // reached directly by the browser (local disk, or a private host such as
 // http://rustfs:9000). No Range handling: avatars are small images loaded by
 // <img>, not resumable downloads.
+//
+// The caller has already validated the signature and the publishable
+// boundary, so the If-None-Match short-circuit below may answer 304 without
+// touching storage — a later binding of the object never gets that far.
 func (h *Handler) proxyAvatar(w http.ResponseWriter, r *http.Request, key, contentType string) {
+	etag := avatarETag(key)
+	if ifNoneMatch(r.Header.Get("If-None-Match"), etag) {
+		setAvatarCacheControl(w, avatarProxyMaxAge)
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	reader, err := h.Storage.GetReader(r.Context(), key)
 	if err != nil {
 		slog.Warn("avatar object not found", "key", key, "error", err)
@@ -410,6 +447,7 @@ func (h *Handler) proxyAvatar(w http.ResponseWriter, r *http.Request, key, conte
 	w.Header().Set("Content-Disposition", "inline")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	setAvatarCacheControl(w, avatarProxyMaxAge)
+	w.Header().Set("ETag", etag)
 
 	if _, err := io.Copy(w, reader); err != nil {
 		slog.Warn("avatar stream interrupted", "key", key, "error", err)
