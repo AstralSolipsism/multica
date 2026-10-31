@@ -16,10 +16,10 @@
  * user's text and attachments in place (send affordance locked and spinning)
  * until the server accepts the submission, then clears. A slow send never
  * looks like "posted but the box is still full", and a rejected send keeps the
- * draft for retry instead of silently dropping it. The editor itself stays
- * interactive (Tiptap cannot toggle editable post-mount), so callers' accepted
- * handlers guard on a submit-time snapshot: success clears ONLY the draft it
- * submitted, and anything typed during the request survives.
+ * draft for retry instead of silently dropping it. Callers can temporarily
+ * lock input with ContentEditorRef.setInputLocked (chat does); other surfaces
+ * keep editing and guard acceptance with a submit-time snapshot. Success must
+ * never clear a different draft opened while the request was in flight.
  *
  * It also owns the post-send FOCUS decision (`afterAccepted`). Where the caret
  * lands after a send is a per-surface product call — a reply box the user keeps

@@ -214,6 +214,7 @@ type RuntimeRecoveryNotifier interface {
 }
 
 type Handler struct {
+	chatSends              service.ChatSendCache
 	Queries                *db.Queries
 	ReadSelector           *dbreader.Selector
 	DB                     dbExecutor

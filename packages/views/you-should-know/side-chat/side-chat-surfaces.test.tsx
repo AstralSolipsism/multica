@@ -339,7 +339,7 @@ describe("the floating chat on a side chat", () => {
     await waitFor(() =>
       expect(within(screen.getByTestId("messages")).getByText("Tell me more")).toBeInTheDocument(),
     );
-    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith("side-1", "Tell me more", undefined);
+    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith("side-1", "Tell me more", undefined, expect.any(String));
     expect(apiMock.createChatSession).not.toHaveBeenCalled();
     expect(screen.queryByRole("group", { name: "Common questions" })).toBeNull();
     // The banner stays with the chat.

@@ -2114,12 +2114,13 @@ describe("ApiClient", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
-      await client.sendChatMessage("session-1", "hello", ["att-1", "att-2"]);
+      await client.sendChatMessage("session-1", "hello", ["att-1", "att-2"], "client-id-1");
 
       const [, init] = fetchMock.mock.calls[0]!;
       expect(JSON.parse(init?.body as string)).toEqual({
         content: "hello",
         attachment_ids: ["att-1", "att-2"],
+        client_message_id: "client-id-1",
       });
     });
 

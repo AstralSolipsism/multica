@@ -90,7 +90,8 @@ import { useTipSideChatLookup } from "@multica/core/you-should-know";
 import { TipSideChatBanner } from "../../you-should-know/side-chat/tip-side-chat-banner";
 import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse , ChatSendAttempt } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
 import { useLocale, useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
@@ -416,6 +417,7 @@ export function ChatWindow() {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      attempt: ChatSendAttempt = { clientMessageId: createSafeId() },
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -466,7 +468,9 @@ export function ChatWindow() {
 
       let sessionId: string | null = null;
       try {
-        sessionId = await ensureSession(finalContent);
+        // A failed response after lazy creation must retry in the SAME session.
+        sessionId = attempt.sessionId ?? await ensureSession(finalContent);
+        if (sessionId) attempt.sessionId = sessionId;
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
         const reason = dispatchReasonCode(err);
@@ -494,7 +498,7 @@ export function ChatWindow() {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, attempt.clientMessageId);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         const reason = dispatchReasonCode(err);

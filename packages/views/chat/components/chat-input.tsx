@@ -27,7 +27,8 @@ import { createLogger } from "@multica/core/logger";
 import { useShortcut } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
-import type { Attachment, Project } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
+import type { ChatSendAttempt, Attachment, Project } from "@multica/core/types";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ClearablePillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
@@ -62,6 +63,7 @@ interface ChatInputProps {
     attachmentIds: string[] | undefined,
     commitInput: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
     draftAttachments: Attachment[],
+    attempt: ChatSendAttempt,
   ) => void | boolean | Promise<void | boolean>;
   restoreDraftRequest?: {
     id: string;
@@ -181,6 +183,14 @@ export function ChatInput({
   const editorRef = useRef<ContentEditorRef>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const selectedAgentId = useChatStore((s) => s.selectedAgentId);
+  const sendAttemptsRef = useRef(new Map<string, {
+    draftKey: string;
+    content: string;
+    attachments: string;
+    attempt: ChatSendAttempt;
+  }>());
+  const activeSendRef = useRef<string | null>(null);
   // Two keys with deliberately different concerns:
   //
   // `draftKey` — zustand storage key. Scopes the in-progress draft per session
@@ -210,6 +220,11 @@ export function ChatInput({
   // Embedded surfaces (Agent Builder) still pass `editorKeyOverride` to isolate
   // their own composer.
   const draftKey = draftKeyOverride ?? activeSessionId ?? DRAFT_NEW_SESSION;
+  const sendTarget = JSON.stringify([
+    draftKey,
+    draftKey === DRAFT_NEW_SESSION ? selectedAgentId : null,
+    draftKey === DRAFT_NEW_SESSION ? projectId : null,
+  ]);
   // Select a primitive — empty-string fallback keeps referential stability.
   const inputDraft = useChatStore((s) => s.inputDrafts[draftKey] ?? "");
   const storeUploads = useChatStore(
@@ -256,6 +271,13 @@ export function ChatInput({
   // belongs to the selected draft, not the loaded one.
   const commitDraft = useCallback(
     (key: string, markdown: string) => {
+      // Ignore composition/debounce tails from the document being submitted.
+      if (activeSendRef.current === key) return;
+      for (const [target, submission] of sendAttemptsRef.current) {
+        if (submission.draftKey === key && submission.content !== markdown.trim()) {
+          sendAttemptsRef.current.delete(target);
+        }
+      }
       setInputDraft(key, markdown);
       const uploads =
         useChatStore.getState().inputDraftAttachments[key] ?? EMPTY_UPLOADS;
@@ -429,7 +451,10 @@ export function ChatInput({
   // surface routes the file through the editor's upload extension (same
   // handler as the in-editor paste path).
   const { isDragOver, dropZoneProps } = useFileDropZone({
-    onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
+    onDrop: (files) => {
+      if (activeSendRef.current !== null) return;
+      files.forEach((f) => editorRef.current?.uploadFile(f));
+    },
   });
 
   // The unified await-then-render send contract (MUL-5181). `useComposerSubmit`
@@ -491,14 +516,20 @@ export function ChatInput({
       // activeSessionId synchronously, so reading it after onSend would point
       // at the new session and leave the old draft orphaned.
       const keyAtSend = draftKey;
-      // Stale-submit guard (MUL-5181 P0): snapshot the sent draft's persisted
-      // value, flushing the editor's pending debounce first so pre-submit
-      // typing is inside the snapshot. A late success may only clear what it
-      // actually sent — text typed DURING the send (or by a reopened composer
-      // after this one unmounted) survives in both the editor and the store.
+      // Flush pre-submit typing into the snapshot, cancelling its debounce.
+      // Lock synchronously, before onSend can yield or navigation can intervene.
       const pendingFlush = editorRef.current?.flushPendingUpdate?.();
       if (pendingFlush != null) commitDraft(editorDraftKeyRef.current, pendingFlush);
       const draftValueAtSend = useChatStore.getState().inputDrafts[keyAtSend];
+      const markdownAtSend = editorRef.current?.getMarkdown() ?? content;
+      const attachmentKey = JSON.stringify([...uniqueActiveIds].sort());
+      let submission = sendAttemptsRef.current.get(sendTarget);
+      if (!submission || submission.content !== content || submission.attachments !== attachmentKey) {
+        submission = { draftKey: keyAtSend, content, attachments: attachmentKey, attempt: { clientMessageId: createSafeId() } };
+        sendAttemptsRef.current.set(sendTarget, submission);
+      }
+      activeSendRef.current = keyAtSend;
+      editorRef.current?.setInputLocked(true);
       let committed = false;
       const commitInput = (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => {
         if (committed) return;
@@ -509,13 +540,13 @@ export function ChatInput({
         // into) a DIFFERENT draft — clearing it or blurring would wipe that
         // visible input. Only scrub the editor when the user is still on the
         // session they sent from.
-        // Flush typing still inside the debounce window before judging: it
-        // belongs to the LOADED document and must count as a mid-flight edit.
-        const lateMd = editorRef.current?.flushPendingUpdate?.();
-        if (lateMd != null) commitDraft(editorDraftKeyRef.current, lateMd);
+        // Drop any composition tail; the submitted document was locked.
+        editorRef.current?.flushPendingUpdate?.();
         const liveDraft = useChatStore.getState().inputDrafts[keyAtSend];
         const untouched = liveDraft === undefined || liveDraft === draftValueAtSend;
-        if (options?.clearEditor !== false && untouched) {
+        const loadedKey = editorDraftKeyRef.current;
+        const showingSentDraft = loadedKey === keyAtSend || options?.extraDraftKeys?.includes(loadedKey);
+        if (options?.clearEditor !== false && showingSentDraft && untouched) {
           editorRef.current?.clearContent();
           // Scrubbed the document the user was looking at, so the caret belongs
           // back here: chat is a conversation and the next turn is typed in the
@@ -526,31 +557,43 @@ export function ChatInput({
           editorScrubbedRef.current = true;
           setIsEmpty(true);
         }
-        // The sent draft's data is cleared only when untouched — the message
-        // is on its way, but a draft replaced since the snapshot is NEWER work
-        // and must not resurface as collateral.
+        // Another mounted composer may have replaced this draft. Preserve its
+        // work; local input/debounce tails cannot change the locked snapshot.
         if (untouched) clearInputDraft(keyAtSend);
         for (const key of options?.extraDraftKeys ?? []) {
-          if (key !== keyAtSend) clearInputDraft(key);
+          const extraDraft = useChatStore.getState().inputDrafts[key];
+          if (key !== keyAtSend && (extraDraft === undefined || extraDraft === draftValueAtSend)) clearInputDraft(key);
         }
+        if (sendAttemptsRef.current.get(sendTarget) === submission) sendAttemptsRef.current.delete(sendTarget);
       };
       logger.info("input.send", {
         contentLength: content.length,
         draftKey: keyAtSend,
         attachmentCount: uniqueActiveIds.length,
       });
-      const accepted = await onSend(
-        content,
-        uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
-        commitInput,
-        draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
-      );
-      // Owner rejected the send (or threw, which useComposerSubmit also treats
-      // as a rejection): the draft was never committed, so it stays put for
-      // retry. Only a commit — here or by the owner — clears it.
-      if (accepted === false) return false;
-      if (!committed) commitInput();
-      return true;
+      try {
+        const accepted = await onSend(
+          content,
+          uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
+          commitInput,
+          draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
+          submission.attempt,
+        );
+        // Failure retains both the draft and its submission identity for retry.
+        if (accepted === false) return false;
+        if (!committed) commitInput();
+        return true;
+      } finally {
+        // A queued composition transaction may have reached the document even
+        // after contenteditable was disabled. Failure restores the sent snapshot,
+        // unless another composer replaced it or navigation changed the document.
+        if (!committed && editorDraftKeyRef.current === keyAtSend &&
+          useChatStore.getState().inputDrafts[keyAtSend] === draftValueAtSend) {
+          editorRef.current?.adoptContent(markdownAtSend);
+        }
+        activeSendRef.current = null;
+        editorRef.current?.setInputLocked(false);
+      }
     },
   });
 
@@ -708,7 +751,7 @@ export function ChatInput({
             )}
           </div>
         )}
-        <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2" inert={submitting || undefined} aria-disabled={submitting || undefined}>
           <ContentEditor
             // See the editorKey / draftKey split note above — editor identity
             // intentionally tracks neither the session nor the agent.
@@ -717,6 +760,7 @@ export function ChatInput({
             value={inputDraft}
             placeholder={placeholder}
             onUpdate={(md) => {
+              if (activeSendRef.current !== null) return;
               setIsEmpty(!md.trim());
               // The LOADED key, not the selected one: while an upload pins the
               // document this fires for the source draft's body — including the
@@ -742,7 +786,7 @@ export function ChatInput({
           />
         </div>
         {(uploadEnabled || projectSelectionEnabled || leftAdornment) && (
-          <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
+          <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1" inert={submitting || undefined}>
             {(uploadEnabled || projectSelectionEnabled) && (
               <ChatAddMenu
                 onSelectFile={uploadEnabled

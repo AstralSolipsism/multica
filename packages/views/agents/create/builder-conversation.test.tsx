@@ -130,7 +130,7 @@ describe("BuilderConversation send-follow wiring", () => {
     expect(scroll.distanceFromBottom()).toBe(100);
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onSend).toHaveBeenCalledWith("hello", expect.any(Function));
+    expect(onSend).toHaveBeenCalledWith("hello", expect.any(Function), undefined);
     // The bump waits for the server to accept the send — a still-pending
     // roundtrip must not move the reader.
     expect(scroll.pinCalls()).toHaveLength(0);

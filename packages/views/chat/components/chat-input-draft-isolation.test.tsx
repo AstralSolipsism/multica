@@ -117,6 +117,7 @@ vi.mock("@tiptap/react", () => ({
           setContent: mockSetContent,
           setTextSelection: vi.fn(),
         },
+        setEditable: vi.fn(),
         getMarkdown: () => editorState.markdown,
         on: (event: string, cb: () => void) => {
           if (event === "transaction") transactionListeners.current.push(cb);
@@ -318,7 +319,7 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
 
     rerender(element({ onSend, conversationStarterRequest: { id: 1, content: prompt } }));
     await act(async () => {});
-    expect(onSend).toHaveBeenCalledWith(prompt, undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith(prompt, undefined, expect.any(Function), [], expect.objectContaining({ clientMessageId: expect.any(String) }));
     expect(store().inputDrafts["__new__"]).toBe(prompt);
   });
 

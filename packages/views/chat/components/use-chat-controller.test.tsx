@@ -1102,6 +1102,26 @@ describe("useChatController.handleSend — compose target tracking", () => {
     };
   }
 
+  it("retries a lost first-send response with the same session and client id", async () => {
+    h.store.activeSessionId = null;
+    h.store.selectedAgentId = "agent-a";
+    h.sessions = [];
+    h.agents = [agentA];
+    vi.mocked(api.sendChatMessage).mockRejectedValueOnce(new Error("response lost"));
+    const { result } = renderHook(() => useChatController());
+    const attempt = { clientMessageId: "stable-client-id", sessionId: undefined as string | undefined };
+    await act(async () => {
+      expect(await result.current.handleSend("hello", undefined, vi.fn(), [], attempt)).toBe(false);
+    });
+    expect(attempt.sessionId).toBe("new-session");
+    await act(async () => {
+      expect(await result.current.handleSend("hello", undefined, vi.fn(), [], attempt)).toBe(true);
+    });
+    expect(h.createSessionMutate).toHaveBeenCalledTimes(1);
+    expect(api.sendChatMessage).toHaveBeenNthCalledWith(1, "new-session", "hello", undefined, "stable-client-id");
+    expect(api.sendChatMessage).toHaveBeenNthCalledWith(2, "new-session", "hello", undefined, "stable-client-id");
+  });
+
   it("scrubs the composer after a new chat's first send", async () => {
     const { commitInput, send } = sendFrom(null);
     await send();
