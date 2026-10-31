@@ -124,13 +124,18 @@ describe("useActorName", () => {
     });
 
     const first = result.current.getActorName;
+    const avatarFirst = result.current.getActorAvatarUrl;
     rerender();
     const second = result.current.getActorName;
-    rerender();
     const third = result.current.getActorName;
+    rerender();
+    const avatarSecond = result.current.getActorAvatarUrl;
 
     expect(second).toBe(first);
     expect(third).toBe(first);
+    // The avatar resolver shares the same memoized snapshot, so it must be
+    // referentially stable across those renders too (same MUL-4985 class).
+    expect(avatarSecond).toBe(avatarFirst);
     // A stable resolver over an empty directory still resolves gracefully.
     expect(first("member", "user-1")).toBe("Unknown");
     expect(result.current.hasActor("member", "user-1")).toBeUndefined();
@@ -141,8 +146,8 @@ describe("useActorName", () => {
     // first render — this guards that stabilizing the loading default did not
     // break name resolution when data IS present.
     const members = [{ user_id: "user-1", name: "Ada", avatar_url: "/api/avatars/sig/a.png" }];
-    const agents = [{ id: "agent-1", name: "Walt", avatar_url: null }];
-    const squads = [{ id: "squad-1", name: "Core", avatar_url: null }];
+    const agents = [{ id: "agent-1", name: "Walt", avatar_url: "/api/avatars/sig/b.png" }];
+    const squads = [{ id: "squad-1", name: "Core", avatar_url: "/api/avatars/sig/c.png" }];
     setApiInstance({
       listMembers: () => Promise.resolve(members),
       listAgents: () => Promise.resolve(agents),
@@ -162,13 +167,18 @@ describe("useActorName", () => {
     expect(result.current.getActorName("squad", "squad-1")).toBe("Core");
     expect(result.current.hasActor("member", "user-1")).toBe(true);
     expect(result.current.hasActor("member", "departed-user")).toBe(false);
-    // Avatar lookup goes through the same directory snapshot: a relative
-    // avatar URL resolves against the API base, a null stays null, and an
-    // actor outside the directory is null rather than a crash.
+    // Avatar lookup goes through the same directory snapshot. Each actor
+    // type resolves against its OWN directory entry — distinct relative URLs
+    // prove the member/agent/squad Maps are keyed and read independently.
     expect(result.current.getActorAvatarUrl("member", "user-1")).toBe(
       "https://api.test/api/avatars/sig/a.png",
     );
-    expect(result.current.getActorAvatarUrl("agent", "agent-1")).toBeNull();
+    expect(result.current.getActorAvatarUrl("agent", "agent-1")).toBe(
+      "https://api.test/api/avatars/sig/b.png",
+    );
+    expect(result.current.getActorAvatarUrl("squad", "squad-1")).toBe(
+      "https://api.test/api/avatars/sig/c.png",
+    );
     expect(result.current.getActorAvatarUrl("member", "departed-user")).toBeNull();
   });
 });
