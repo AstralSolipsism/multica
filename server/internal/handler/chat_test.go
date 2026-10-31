@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
 // withChatTestWorkspaceCtx injects the workspace+member context that the
@@ -170,9 +172,11 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	})
 
 	// 2. Send a chat message that references the attachment.
+	clientMessageID := uuidToString(dbid.NewV7())
 	sendReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
-		"content":        "look at this ![](" + uploadResp.URL + ")",
-		"attachment_ids": []string{attachmentID},
+		"content":           "look at this ![](" + uploadResp.URL + ")",
+		"attachment_ids":    []string{attachmentID},
+		"client_message_id": clientMessageID,
 	})
 	sendReq = withURLParam(sendReq, "sessionId", sessionID)
 	sendReq = withChatTestWorkspaceCtx(t, sendReq)
@@ -192,6 +196,26 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	if sendResp.TaskID == "" {
 		t.Fatal("expected non-empty task_id in send response")
 	}
+
+	// A retry must retain the original binding even though the attachment is
+	// no longer unbound and cannot be linked to a second message.
+	replayReq := newRequest("POST", "/api/chat/sessions/"+sessionID+"/messages", map[string]any{
+		"content":           "look at this ![](" + uploadResp.URL + ")",
+		"attachment_ids":    []string{attachmentID, attachmentID},
+		"client_message_id": clientMessageID,
+	})
+	replayReq = withChatTestWorkspaceCtx(t, withURLParam(replayReq, "sessionId", sessionID))
+	var replay SendChatMessageResponse
+	testutil.Call(t, testHandler.SendChatMessage, replayReq).Want(http.StatusCreated).JSON(&replay)
+	if replay.MessageID != sendResp.MessageID || replay.TaskID != sendResp.TaskID || len(replay.AttachmentIDs) != 1 || replay.AttachmentIDs[0] != attachmentID {
+		t.Fatalf("replay lost the receipt or attachment binding: %+v", replay)
+	}
+	replayReq = newRequest("POST", "/api/chat/sessions/"+sessionID+"/messages", map[string]any{
+		"content":           "look at this ![](" + uploadResp.URL + ")",
+		"client_message_id": clientMessageID,
+	})
+	replayReq = withChatTestWorkspaceCtx(t, withURLParam(replayReq, "sessionId", sessionID))
+	testutil.Call(t, testHandler.SendChatMessage, replayReq).Want(http.StatusConflict)
 
 	var messageTaskID string
 	if err := testPool.QueryRow(

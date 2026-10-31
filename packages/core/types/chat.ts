@@ -1,5 +1,11 @@
 import type { AgentTask } from "./agent";
 
+/** One composer submission, retained across retries including lazy session creation. */
+export interface ChatSendAttempt {
+  clientMessageId: string;
+  sessionId?: string;
+}
+
 /** A user's pinned "quick agent" for the Chat list top bar. */
 export interface ChatPinnedAgent {
   agent_id: string;
