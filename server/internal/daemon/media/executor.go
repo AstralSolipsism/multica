@@ -21,6 +21,12 @@ type Executor interface {
 
 type RateLimitError struct{ RetryAfter int64 }
 
+// RequestError contains an adapter-owned validation message, without provider
+// diagnostics, credentials, or user-supplied prompt content.
+type RequestError struct{ Message string }
+
+func (e *RequestError) Error() string { return e.Message }
+
 func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("provider rate limited (retry after %ds)", e.RetryAfter)
 }

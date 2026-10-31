@@ -17,14 +17,62 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/media"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (d *Daemon) mediaExecutor(provider, profileID string) media.Executor {
-	if d.cfg.MediaExecutor == nil {
+	if d.cfg.MediaExecutor != nil {
+		return d.cfg.MediaExecutor(provider, profileID)
+	}
+	if profileID != "" {
 		return nil
 	}
-	return d.cfg.MediaExecutor(provider, profileID)
+	d.nativeMediaMu.Lock()
+	defer d.nativeMediaMu.Unlock()
+	return d.nativeMediaExecutors[provider]
+}
+
+func builtinMediaFromPayload(entries []map[string]string) map[string]string {
+	result := map[string]string{}
+	for _, entry := range entries {
+		if entry["profile_id"] == "" {
+			result[entry["type"]] = entry["native_media_capability"]
+		}
+	}
+	return result
+}
+
+// Discovery runs with the existing CLI inspection cadence, never on the WS
+// reader. Only built-in identities are eligible; a protocol-compatible custom
+// profile does not establish native provider support or subscription identity.
+func (d *Daemon) probeNativeMedia(ctx context.Context, provider string, entry AgentEntry) string {
+	if !d.cfg.DiscoverNativeMedia || d.cfg.MediaExecutor != nil || provider != "codex" {
+		return ""
+	}
+	// Publish only complete probe results to workers.
+	d.nativeMediaMu.Lock()
+	defer d.nativeMediaMu.Unlock()
+	resolved, _ := d.resolveAgentEntry(ctx, provider, entry)
+	home := os.Getenv("CODEX_HOME")
+	if home == "" {
+		if userHome, err := os.UserHomeDir(); err == nil {
+			home = filepath.Join(userHome, ".codex")
+		}
+	}
+	if d.nativeMediaExecutors == nil {
+		d.nativeMediaExecutors = map[string]media.Executor{}
+	}
+	delete(d.nativeMediaExecutors, provider)
+	if home == "" {
+		return ""
+	}
+	executor := &media.Codex{Command: agent.NewCommand(resolved.Path, nil), Home: home}
+	if executor.Probe(ctx) != nil {
+		return ""
+	}
+	d.nativeMediaExecutors[provider] = executor
+	return "media-image-codex-v1"
 }
 
 func (d *Daemon) withMediaCapabilities(entries []map[string]string) []map[string]any {
@@ -32,10 +80,17 @@ func (d *Daemon) withMediaCapabilities(entries []map[string]string) []map[string
 	for _, entry := range entries {
 		out := make(map[string]any, len(entry)+1)
 		for k, v := range entry {
+			if k == "native_media_capability" {
+				continue
+			}
 			out[k] = v
 		}
 		caps := []string{}
-		if executor := d.mediaExecutor(entry["type"], entry["profile_id"]); executor != nil {
+		if d.cfg.MediaExecutor == nil {
+			if cap := entry["native_media_capability"]; entry["profile_id"] == "" && protocol.ValidMediaTag(entry["type"], cap) {
+				caps = append(caps, cap)
+			}
+		} else if executor := d.mediaExecutor(entry["type"], entry["profile_id"]); executor != nil {
 			for _, cap := range executor.Capabilities() {
 				if protocol.ValidMediaTag(entry["type"], cap) && !slices.Contains(caps, cap) {
 					caps = append(caps, cap)
@@ -195,8 +250,11 @@ func (d *Daemon) executeMedia(parent context.Context, rt Runtime, assignment pro
 	artifact, err := executor.Submit(ctx, assignment.Job.Request, inputs, dir)
 	if err != nil {
 		var limited *media.RateLimitError
+		var invalid *media.RequestError
 		if errors.As(err, &limited) {
 			result.RateLimited, result.RetryAfter = true, limited.RetryAfter
+		} else if errors.As(err, &invalid) {
+			result.Error = invalid.Message
 		} else {
 			result.Error = "media executor failed"
 		}

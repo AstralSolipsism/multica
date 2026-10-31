@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/jevsample"
+	"github.com/multica-ai/multica/server/internal/daemon/media"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -389,7 +390,8 @@ type workspaceState struct {
 	// re-creates the mismatch for its own workspace, and the next round
 	// revisits it. A failed register records nothing, so the workspace stays
 	// behind and is retried. Guarded by Daemon.mu.
-	builtinVersions map[string]string
+	builtinVersions          map[string]string
+	builtinMediaCapabilities map[string]string
 }
 
 // contextLock is a zero-value-ready mutex whose wait can be cancelled. Repo
@@ -464,9 +466,11 @@ type Daemon struct {
 	// (MUL-3284). Populated in registerRuntimesForWorkspace when a profile's
 	// command resolves; read by runTask to launch the custom command for a
 	// claimed task. Guarded by mu.
-	profileLaunchSpecs map[string]profileLaunchSpec
-	reloading          sync.Mutex         // prevents concurrent workspace syncs
-	runtimeSet         *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
+	profileLaunchSpecs   map[string]profileLaunchSpec
+	nativeMediaMu        sync.Mutex
+	nativeMediaExecutors map[string]media.Executor
+	reloading            sync.Mutex         // prevents concurrent workspace syncs
+	runtimeSet           *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
 
 	// lifecycleCtx is the context Run was handed, kept so background work that
 	// must outlive a single probe round — the DSH profile install — is tied to
@@ -968,6 +972,7 @@ func (d *Daemon) withWorkspaceRegisterLock(workspaceID string, fn func() error) 
 // the sync path seeds the record when it creates the workspaceState.
 func (d *Daemon) recordBuiltinVersionsSent(workspaceID string, runtimes []map[string]string) {
 	sent := builtinVersionsFromPayload(runtimes)
+	mediaSent := builtinMediaFromPayload(runtimes)
 	if len(sent) == 0 {
 		return
 	}
@@ -980,6 +985,9 @@ func (d *Daemon) recordBuiltinVersionsSent(workspaceID string, runtimes []map[st
 	if ws.builtinVersions == nil {
 		ws.builtinVersions = make(map[string]string, len(sent))
 	}
+	if ws.builtinMediaCapabilities == nil {
+		ws.builtinMediaCapabilities = make(map[string]string, len(sent))
+	}
 	for provider, version := range sent {
 		// Demoted while this register was in flight: its rows are being
 		// deregistered, so recording what the payload carried would tell the
@@ -989,6 +997,7 @@ func (d *Daemon) recordBuiltinVersionsSent(workspaceID string, runtimes []map[st
 			continue
 		}
 		ws.builtinVersions[provider] = version
+		ws.builtinMediaCapabilities[provider] = mediaSent[provider]
 	}
 }
 
@@ -2898,8 +2907,9 @@ probeLoop:
 // a transient probe failure is not evidence that a runtime should be demoted.
 func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string, map[string]runtimeVerdict, map[string]string) {
 	type detected struct {
-		name    string
-		version string
+		name            string
+		version         string
+		mediaCapability string
 	}
 	// Snapshot before any probe runs: everything sampled below is at least as
 	// new as every verdict recorded up to this point, which is exactly the
@@ -2933,8 +2943,9 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 				return nil
 			}
 			d.clearCondemned(name)
+			mediaCapability := d.probeNativeMedia(ctx, name, entry)
 			mu.Lock()
-			results = append(results, detected{name: name, version: version})
+			results = append(results, detected{name: name, version: version, mediaCapability: mediaCapability})
 			mu.Unlock()
 			return nil
 		})
@@ -2972,10 +2983,11 @@ func (d *Daemon) detectBuiltinRuntimes(ctx context.Context) ([]map[string]string
 			displayName = fmt.Sprintf("%s (%s)", displayName, d.cfg.DeviceName)
 		}
 		runtimes = append(runtimes, map[string]string{
-			"name":    displayName,
-			"type":    r.name,
-			"version": r.version,
-			"status":  "online",
+			"name":                    displayName,
+			"type":                    r.name,
+			"version":                 r.version,
+			"status":                  "online",
+			"native_media_capability": r.mediaCapability,
 		})
 	}
 	return runtimes, demotable, unavailable
@@ -4462,6 +4474,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 			// register call above ran before this workspaceState existed, so
 			// recordBuiltinVersionsSent inside it had nowhere to write).
 			ws.builtinVersions = builtinVersionsFromPayload(payload)
+			ws.builtinMediaCapabilities = builtinMediaFromPayload(payload)
 			for provider := range ws.builtinVersions {
 				// Same reason recordBuiltinVersionsSent skips these: a version
 				// record for a provider whose rows are being refused reads as

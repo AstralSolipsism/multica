@@ -109,6 +109,51 @@ func TestMediaBrowserCapabilitiesUseExistingRuntime(t *testing.T) {
 	}
 }
 
+func TestMediaNativeSnapshotDoesNotBroadcastToProfiles(t *testing.T) {
+	d := &Daemon{}
+	entries := d.withMediaCapabilities([]map[string]string{
+		{"type": "codex", "native_media_capability": "media-image-codex-v1"},
+		{"type": "antigravity", "native_media_capability": "media-image-codex-v1"},
+		{"type": "codex", "profile_id": "custom", "native_media_capability": "media-image-codex-v1"},
+	})
+	for i, entry := range entries {
+		caps := entry["media_capabilities"].([]string)
+		if (len(caps) == 1) != (i == 0) {
+			t.Fatalf("capability crossed runtime boundary: %v", entries)
+		}
+		if _, ok := entry["native_media_capability"]; ok {
+			t.Fatal("internal snapshot leaked into registration")
+		}
+	}
+}
+
+func TestMediaCapabilityRefreshWithoutCLIVersionChange(t *testing.T) {
+	fx := newVersionRefreshFixture(t)
+	d := fx.daemon
+	d.mu.Lock()
+	for _, ws := range d.workspaces {
+		ws.builtinMediaCapabilities = map[string]string{"codex": "media-image-codex-v1"}
+	}
+	d.mu.Unlock()
+	before := fx.registerCallCount()
+	fx.failRegisterFor("ws-2", true)
+	d.refreshAgentVersions(t.Context())
+	d.mu.Lock()
+	if d.workspaces["ws-1"].builtinMediaCapabilities["codex"] != "" || d.workspaces["ws-2"].builtinMediaCapabilities["codex"] == "" {
+		t.Error("capability acknowledgement did not follow successful registration")
+	}
+	d.mu.Unlock()
+	fx.failRegisterFor("ws-2", false)
+	d.refreshAgentVersions(t.Context())
+	if got := fx.registerCallCount() - before; got != 2 {
+		t.Fatalf("successful registrations=%d, want one per workspace", got)
+	}
+	d.refreshAgentVersions(t.Context())
+	if got := fx.registerCallCount() - before; got != 2 {
+		t.Fatalf("unchanged capabilities re-registered: %d", got)
+	}
+}
+
 func TestMediaWorkerReportsDuringShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

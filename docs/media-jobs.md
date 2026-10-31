@@ -1,9 +1,63 @@
 # Media jobs
 
-Stage 1 provides the shared scheduler, transfer path and CLI. Native adapters
-plug into `daemon.Config.MediaExecutor(provider, profileID)` in Stage 2. A nil
-or unavailable adapter advertises no media capability; installing an agent CLI
-alone does not claim native image/video support.
+The shared scheduler, transfer path and CLI use native adapters on the host
+daemon. `daemon.Config.MediaExecutor(provider, profileID)` can supply an embedded
+adapter; otherwise normal daemon configuration enables native discovery.
+Installing an agent CLI alone does not establish image support.
+
+## Native Codex images
+
+The daemon probes the resolved built-in Codex executable during registration
+and periodic CLI inspection. It requires a file-backed ChatGPT login, the
+provider's `imageGeneration` capability, and an enabled `image_generation`
+feature. API-key authentication, unavailable features, and custom runtime
+profiles do not advertise `media-image-codex-v1`. Capability changes refresh
+registration even when the CLI version has not changed. Failed registrations
+retain the previous acknowledgement and are retried on the next inspection.
+
+Each job starts one fresh Codex App Server turn in its private temporary
+directory. Its private `CODEX_HOME` links only the host's authentication file;
+the CLI owns authentication and refresh. Native images, session state and
+generated configuration stay in that directory and are removed after the
+transfer. No host credentials enter a job request, receipt, or upload.
+File-backed authentication and local symbolic-link support are required.
+
+The adapter accepts only the current thread's completed `imageGeneration`
+receipt and its `savedPath`. Assistant text is not an artifact manifest.
+Duplicate item receipts are ignored; multiple distinct images fail closed.
+The daemon enforces its existing artifact/symlink boundary before uploading.
+Only a structured `usageLimitExceeded` image failure permits quota failover;
+ambiguous process/transport failures do not replay the model. Cancellation
+terminates the owned subprocess tree before temporary files are removed.
+
+The native image tool selects its image model. It does not expose a model
+selector through the App Server protocol used here, so `--model` is rejected
+instead of being passed as a reasoning-model identifier. `--size` and `--aspect`
+are supplied as image instructions; they are not exact pixel guarantees.
+This integration does not certify a particular GPT Image model version.
+The protocol was verified with `codex-cli 0.160.1`.
+
+An explicitly authorized host smoke test generates an image and edits it:
+
+```sh
+cd server
+MULTICA_RUN_REAL_AGENT_SMOKE=1 go test -tags=agentintegration ./pkg/agent \
+  -run '^TestCodexNativeImageLive$' -count=1 -v
+```
+
+Ordinary tests use test-owned CLI processes and synthetic credentials. They
+cover native receipts, login/capability gating, cancellation, explicit quota
+failures, registration refresh/retry, and three HTTP upload attempts with one
+native generation. The live test verifies the native CLI; the cross-container
+acceptance additionally requires deploying the daemon and running the commands
+below from a separate caller without provider credentials.
+
+Antigravity native execution is not implemented by this adapter. In the
+inspected `agy 1.4.12`, `image-generator` is a built-in subagent invoked from a
+normal conversation; `--agent image-generator` is rejected as an unknown custom
+agent. An authenticated host trace is still required to establish its artifact
+receipt and image-edit contract. Merely finding `agy` does not advertise
+`media-image-agy-v1`.
 
 ## Request and receipt
 

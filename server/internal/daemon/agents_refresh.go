@@ -389,6 +389,7 @@ func (d *Daemon) refreshAgentVersions(ctx context.Context) {
 	// mention it would otherwise turn into one register call per workspace
 	// every few minutes, forever.
 	carried := builtinVersionsFromPayload(builtins)
+	mediaCarried := builtinMediaFromPayload(builtins)
 
 	// A workspace is behind when some carried provider's last accepted register
 	// call for it carried a different version. A provider with no record for a
@@ -401,7 +402,7 @@ func (d *Daemon) refreshAgentVersions(ctx context.Context) {
 		lagging := false
 		for provider, version := range carried {
 			sent, has := ws.builtinVersions[provider]
-			if !has || sent == version {
+			if !has || (sent == version && ws.builtinMediaCapabilities[provider] == mediaCarried[provider]) {
 				continue
 			}
 			lagging = true
