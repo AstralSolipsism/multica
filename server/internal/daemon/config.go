@@ -105,8 +105,11 @@ var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
 // Config holds all daemon configuration.
 type Config struct {
-	// MediaExecutor resolves verified adapters per provider/profile. Nil advertises no media capabilities.
+	// MediaExecutor overrides native discovery for embedded/test executors.
 	MediaExecutor func(provider, profileID string) media.Executor
+	// DiscoverNativeMedia is enabled by LoadConfig. Literal test configs do not
+	// probe host credentials or user-installed CLIs implicitly.
+	DiscoverNativeMedia bool
 
 	ServerBaseURL                  string
 	DaemonID                       string
@@ -719,6 +722,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 
 	return Config{
+		DiscoverNativeMedia:             true,
 		ServerBaseURL:                   serverBaseURL,
 		DaemonID:                        daemonID,
 		LegacyDaemonIDs:                 legacyDaemonIDs,
