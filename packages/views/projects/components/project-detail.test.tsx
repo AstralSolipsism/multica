@@ -9,6 +9,7 @@ import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
   role: "admin",
+  engineering: null as null | { engineering?: { enabled?: boolean } },
   copyText: vi.fn(),
   deleteProject: vi.fn(),
   getShareableUrl: vi.fn((path: string) => `https://app.example${path}`),
@@ -28,6 +29,8 @@ vi.mock("@tanstack/react-query", () => ({
     switch (options.queryKey?.[0]) {
       case "project-detail":
         return { data: PROJECT, isLoading: false };
+      case "project-engineering":
+        return { data: mocks.engineering, isLoading: false };
       case "members":
         return {
           data: [{ user_id: "user-1", name: "User One", role: mocks.role }],
@@ -44,6 +47,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/projects/queries", () => ({
   projectDetailOptions: () => ({ queryKey: ["project-detail"] }),
+  projectEngineeringOptions: () => ({ queryKey: ["project-engineering"] }),
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
@@ -80,6 +84,7 @@ vi.mock("@multica/core/chat", () => ({
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     projects: () => "/test-workspace/projects",
+    projectEngineering: (id: string) => `/test-workspace/projects/${id}/engineering`,
   }),
 }));
 
@@ -297,12 +302,62 @@ function renderProjectDetail() {
 
 beforeEach(() => {
   mocks.role = "admin";
+  mocks.engineering = null;
   mocks.copyText.mockReset().mockResolvedValue(true);
   mocks.deleteProject.mockReset();
   mocks.getShareableUrl.mockClear();
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
   mocks.toastSuccess.mockReset();
+});
+
+describe("ProjectDetail engineering entry", () => {
+  it("links to the project engineering overview when explicitly enabled", () => {
+    mocks.engineering = { engineering: { enabled: true } };
+
+    renderProjectDetail();
+
+    expect(screen.getByRole("link", { name: "Engineering overview" })).toHaveAttribute(
+      "href",
+      "/test-workspace/projects/project-1/engineering",
+    );
+  });
+
+  it("offers admins an enable entry when engineering is disabled", () => {
+    mocks.engineering = { engineering: { enabled: false } };
+
+    renderProjectDetail();
+
+    expect(screen.queryByRole("link", { name: "Engineering overview" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Enable overview" })).toHaveAttribute(
+      "href",
+      "/test-workspace/projects/project-1/engineering",
+    );
+    expect(screen.getByText("Launch Plan")).toBeInTheDocument();
+  });
+
+  it("hides the enable entry from regular members", () => {
+    mocks.role = "member";
+    mocks.engineering = { engineering: { enabled: false } };
+
+    renderProjectDetail();
+
+    expect(screen.queryByRole("link", { name: "Enable overview" })).not.toBeInTheDocument();
+    expect(screen.getByText("Launch Plan")).toBeInTheDocument();
+  });
+
+  it.each([null, {}])(
+    "keeps the existing project UI for a null or malformed engineering response",
+    (engineering) => {
+      mocks.engineering = engineering;
+
+      renderProjectDetail();
+
+      expect(screen.queryByRole("link", { name: "Engineering overview" })).not.toBeInTheDocument();
+      expect(screen.getByText("Launch Plan")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    },
+  );
 });
 
 describe("ProjectDetail sharing", () => {

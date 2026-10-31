@@ -4,6 +4,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { createPersistStorage, defaultStorage } from "@multica/core/platform";
 import { createSafeId } from "@multica/core/utils";
 import { workspaceSlugForPath } from "@multica/core/paths";
+import { isEngineeringCandidatePath } from "@/platform/engineering-deep-links";
 
 // Tab sessions hold serializable URLs, identity, virtual history, and view
 // mementos. The coordinator projects the active session onto the single router;
@@ -429,6 +430,22 @@ function makeSession(url: string, title: string): TabSession {
   };
 }
 
+function withRequestedEngineeringCandidate(
+  tab: TabSession,
+  url: string,
+): TabSession {
+  if (!isEngineeringCandidatePath(url) || tab.url === url) return tab;
+  return {
+    ...tab,
+    url,
+    resourceKey: resourceKeyForUrl(url),
+    history: {
+      stack: [...tab.history.stack.slice(0, tab.history.index + 1), url],
+      index: tab.history.index + 1,
+    },
+  };
+}
+
 /** Index of the first unpinned tab in a group (== pinned count). */
 function pinnedBoundary(tabs: TabSession[]): number {
   let i = 0;
@@ -762,10 +779,14 @@ export const useTabStore = create<TabStore>()(
             const key = resourceKeyForUrl(clean);
             const match = existing.tabs.find((t) => t.resourceKey === key);
             if (match) {
+              const nextMatch = withRequestedEngineeringCandidate(match, clean);
+              const nextTabs = nextMatch === match
+                ? existing.tabs
+                : existing.tabs.map((tab) => tab.id === match.id ? nextMatch : tab);
               const nextGroup = withBrowsingVisit(
-                reconcileGroup(existing, existing.tabs, match.id),
+                reconcileGroup(existing, nextTabs, match.id),
                 slug,
-                match.url,
+                nextMatch.url,
                 { title: match.title },
               );
               set({
@@ -810,19 +831,23 @@ export const useTabStore = create<TabStore>()(
         const group = byWorkspace[activeWorkspaceSlug];
         if (!group) return "";
 
-        // Dedup by resourceKey: the existing tab keeps its own url (its
-        // filters/anchor are its view state); we only focus it.
+        // Dedup by resourceKey: the existing tab keeps its own view state,
+        // except that a fresh engineering candidate is new landing intent.
         const key = resourceKeyForUrl(clean);
         const existing = group.tabs.find((t) => t.resourceKey === key);
         if (existing) {
+          const nextExisting = withRequestedEngineeringCandidate(existing, clean);
+          const nextTabs = nextExisting === existing
+            ? group.tabs
+            : group.tabs.map((tab) => tab.id === existing.id ? nextExisting : tab);
           const historyBase = withActiveSessionVisit(
             group,
             activeWorkspaceSlug,
           );
           const nextGroup = withBrowsingVisit(
-            reconcileGroup(historyBase, group.tabs, existing.id),
+            reconcileGroup(historyBase, nextTabs, existing.id),
             activeWorkspaceSlug,
-            existing.url,
+            nextExisting.url,
             { title: existing.title },
           );
           set({

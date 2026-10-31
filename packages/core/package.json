@@ -98,6 +98,7 @@
     "./projects": "./projects/index.ts",
     "./projects/queries": "./projects/queries.ts",
     "./projects/mutations": "./projects/mutations.ts",
+    "./projects/engineering-candidate": "./projects/engineering-candidate.ts",
     "./projects/config": "./projects/config.ts",
     "./plugins": "./plugins/index.ts",
     "./plugins/queries": "./plugins/queries.ts",

@@ -38,6 +38,7 @@ import type squads from "../locales/en/squads.json";
 import type billing from "../locales/en/billing.json";
 import type messageDelivery from "../locales/en/message-delivery.json";
 import type youShouldKnow from "../locales/en/you-should-know.json";
+import type engineering from "../locales/en/engineering.json";
 
 // Module augmentation enables i18next v26 selector API across the monorepo:
 // `t($ => $.signin.title)` resolves to the value in en/auth.json.
@@ -90,6 +91,7 @@ declare global {
     billing: typeof billing;
     "message-delivery": typeof messageDelivery;
     "you-should-know": typeof youShouldKnow;
+    engineering: typeof engineering;
   }
 }
 

@@ -1,0 +1,30 @@
+{
+  "title": "엔지니어링 개요",
+  "summary": { "label": "프로젝트 엔지니어링 요약", "decisions": "결정 대기", "stage": "현재 단계", "blocked": "차단된 태스크", "recent": "최근 결정" },
+  "stage": {
+    "title": "엔지니어링 단계와 추진 전략", "flowLabel": "엔지니어링 단계", "summaryLabel": "추진 전략",
+    "defaults": { "1": "0→1 요구사항 탐색", "2": "명세와 기준선 확정", "3": "증분 개발", "4": "4축 검토", "5": "검수와 보관" }
+  },
+  "decisions": { "title": "결정이 필요한 사항", "count": "{{count}}건 대기 중", "emptyTitle": "현재 결정이 필요한 사항이 없습니다", "noComment": "아직 설명 댓글이 없습니다" },
+  "progress": {
+    "title": "단계별 진행과 차단", "emptyTitle": "이 프로젝트에는 태스크가 없습니다", "unstaged": "단계 없음", "stage": "{{number}}단계", "closed": "{{total}}개 중 {{count}}개 완료", "blocked": "{{count}}개 차단됨", "percent": "{{percent}}% 완료"
+  },
+  "recent": { "title": "지난 확인 이후 결정된 사항", "empty": "아직 결정된 기준선 버전이 없습니다", "noSummary": "기준선 버전이 결정되었습니다" },
+  "baseline": {
+    "title": "관리 기준선과 수정 승인", "chaptersLabel": "기준선 장", "adoptedTitle": "채택된 기준선", "candidateTitle": "후보와 구조화된 Diff", "adoptedLabel": "채택됨", "candidateLabel": "후보", "noAdopted": "이 장에는 채택된 기준선이 없습니다", "noCandidate": "이 장에는 승인 대기 후보가 없습니다", "candidateMissing": "요청한 수정 버전을 찾을 수 없습니다", "candidateMissingDescription": "현재 또는 이전 버전과 일치하지 않아 다른 후보를 선택하지 않았습니다.", "warningTitle": "필수 규칙 downgrade 경고", "unchanged": "앵커 {{count}}개는 변경되지 않음", "added": "추가됨", "modified": "수정됨", "removed": "삭제됨", "noChanges": "앵커 변경이 없습니다", "openIssuesTitle": "결정 후 미완료 태스크", "inFlight": "진행 중", "queued": "대기 중", "openIssuesTruncated": "처음 200개의 미완료 태스크만 표시합니다.", "readOnlyRevision": "읽기 전용 이전 버전으로, 여기에서 채택할 수 없습니다."
+  },
+  "chapters": { "overview": "프로젝트 개요", "domain_rules": "도메인 용어와 필수 규칙", "architecture": "아키텍처와 기술 결정", "exclusions_and_risks": "제외 사항·연기·위험" },
+  "status": { "candidate": "승인 대기", "adopted": "채택됨", "superseded": "새 버전으로 대첨됨", "withdrawn": "철회됨", "rejected": "거절됨", "unknown": "알 수 없는 상태" },
+  "credentials": { "session": "대시보드에서 확인", "pat": "개인 토큰으로 확인", "task": "에이전트가 확인", "unknown": "알 수 없는 자격 증명" },
+  "warnings": { "rule_removed": "{{anchor}}이 필수 규칙을 삭제합니다", "rule_shrunk": "{{anchor}}이 필수 규칙을 크게 축소합니다", "rule_deferred": "{{anchor}}이 필수 규칙을 연기합니다", "defer_missing_pool": "{{anchor}}의 연기에 비차단 최적화 풀 태스크가 없습니다", "unknown": "{{anchor}}에 알 수 없는 규칙 경고가 있습니다" },
+  "history": { "title": "버전 기록", "revision": "제 {{number}}판", "empty": "이 장에는 버전 기록이 없습니다", "more": "이전 버전 불러오기" },
+  "settings": {
+    "title": "엔지니어링 설정", "enabledLabel": "엔지니어링 개요 사용", "enabledHint": "이 옵션을 꺼도 프로젝트 데이터는 변경되지 않습니다.", "agentLabel": "에이전트의 결정 허용", "agentHint": "에이전트가 자신의 신원으로 후보를 채택하거나 거절할 수 있습니다. 필수 규칙의 삭제·축소·연기는 계속 사용자 확인이 필요합니다.", "decidersLabel": "결정자", "decidersHint": "워크스페이스 owner와 admin은 항상 포함됩니다. 선택한 사람이 없으면 사람 프로젝트 리드가 결정합니다."
+  },
+  "actions": { "save": "저장", "reject": "거절", "adopt": "채택", "enable": "사용" },
+  "disabled": { "title": "엔지니어링 개요가 활성화되지 않았습니다", "description": "프로젝트는 기존 화면을 유지합니다. 워크스페이스 owner 또는 admin에게 활성화를 요청하세요.", "adminDescription": "Strixnova를 활성화하면 단계·결정 대기·진행·관리 기준선을 여기에서 볼 수 있습니다." },
+  "errors": {
+    "title": "엔지니어링 데이터를 불러올 수 없습니다", "overview": "엔지니어링 응답을 불러오지 못했거나 응답이 잘못되었습니다. 나중에 다시 시도하세요.", "timeline": "설명 댓글을 불러오지 못했습니다.", "decisionIssues": "결정 대기 태스크를 불러오지 못했습니다.", "graph": "단계별 진행을 불러오지 못했습니다.", "history": "버전 기록을 불러오지 못했습니다.", "chapter": "서버 응답에 이 기준선 장이 없습니다.", "decisionTitle": "후보를 결정하지 못했습니다", "decision": "후보가 변경되었거나 이미 결정되었을 수 있습니다. 현재 버전을 확인한 후 다시 시도하세요.", "configTitle": "엔지니어링 설정을 저장하지 못했습니다", "config": "변경 사항이 적용되지 않았습니다. 권한을 확인하고 다시 시도하세요."
+  },
+  "messages": { "configSaved": "엔지니어링 설정을 저장했습니다", "adopted": "후보를 채택했습니다", "rejected": "후보를 거절했습니다", "serverAuthoritative": "권한과 버전 검증은 서버에서 수행됩니다" }
+}

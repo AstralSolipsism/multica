@@ -266,6 +266,37 @@ describe("useTabStore actions", () => {
     expect(s.byWorkspace.acme.tabs[0].url).toBe("/acme/issues");
   });
 
+  it("openTab updates an existing engineering tab to the requested candidate", () => {
+    const first = "/acme/projects/p1/engineering?candidate=rev-1";
+    const second = "/acme/projects/p1/engineering?candidate=rev-2";
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme", first);
+    const tabId = getActiveTab(useTabStore.getState())!.id;
+
+    expect(store.openTab(second, "Engineering")).toBe(tabId);
+
+    const active = getActiveTab(useTabStore.getState())!;
+    expect(active.url).toBe(second);
+    expect(active.history).toEqual({ stack: [first, second], index: 1 });
+    expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(1);
+  });
+
+  it("switchWorkspace updates a deduped engineering tab to the requested candidate", () => {
+    const first = "/acme/projects/p1/engineering?candidate=rev-1";
+    const second = "/acme/projects/p1/engineering?candidate=rev-2";
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme", first);
+    const tabId = getActiveTab(useTabStore.getState())!.id;
+    store.switchWorkspace("butter");
+
+    store.switchWorkspace("acme", second);
+
+    const active = getActiveTab(useTabStore.getState())!;
+    expect(active.id).toBe(tabId);
+    expect(active.url).toBe(second);
+    expect(active.history).toEqual({ stack: [first, second], index: 1 });
+  });
+
   describe("openTab insertion position (MUL-5860)", () => {
     const urls = () =>
       useTabStore.getState().byWorkspace.acme.tabs.map((t) => t.url);

@@ -1,0 +1,137 @@
+{
+  "title": "工程总览",
+  "summary": {
+    "label": "项目工程速览",
+    "decisions": "待拍板",
+    "stage": "当前阶段",
+    "blocked": "阻塞任务",
+    "recent": "最近拍板"
+  },
+  "stage": {
+    "title": "工程阶段与推进策略",
+    "flowLabel": "工程阶段",
+    "summaryLabel": "推进策略",
+    "defaults": {
+      "1": "0→1 需求探索",
+      "2": "规格与基线锁定",
+      "3": "切片开发执行",
+      "4": "四轴审阅",
+      "5": "验收归档"
+    }
+  },
+  "decisions": {
+    "title": "需要你拍板的事项",
+    "count": "{{count}} 项待拍板",
+    "emptyTitle": "当前没有需要你拍板的事项",
+    "noComment": "暂时没有讲解评论"
+  },
+  "progress": {
+    "title": "阶段任务进展与阻塞",
+    "emptyTitle": "项目中还没有任务",
+    "unstaged": "未划分阶段",
+    "stage": "第 {{number}} 阶段",
+    "closed": "{{total}} 项中已闭环 {{count}} 项",
+    "blocked": "{{count}} 项阻塞",
+    "percent": "已闭环 {{percent}}%"
+  },
+  "recent": {
+    "title": "上次看过之后，定了什么",
+    "empty": "还没有已拍板的基线版本",
+    "noSummary": "基线版本已拍板"
+  },
+  "baseline": {
+    "title": "受管项目基线与修订审批",
+    "chaptersLabel": "基线章节",
+    "adoptedTitle": "已采用基线",
+    "candidateTitle": "修订候选与结构化 Diff",
+    "adoptedLabel": "已采用",
+    "candidateLabel": "修订候选",
+    "noAdopted": "本章还没有已采用的基线",
+    "noCandidate": "本章没有待确认候选",
+    "candidateMissing": "找不到链接指定的修订版本",
+    "candidateMissingDescription": "该链接不匹配任何当前或历史版本，未替你改选其他候选。",
+    "warningTitle": "核心规则降级红牌",
+    "unchanged": "{{count}} 个锚点未变化",
+    "added": "新增",
+    "modified": "修改",
+    "removed": "删除",
+    "noChanges": "没有锚点变化",
+    "openIssuesTitle": "拍板后的未完成任务",
+    "inFlight": "在途",
+    "queued": "排队",
+    "openIssuesTruncated": "仅显示前 200 项未完成任务。",
+    "readOnlyRevision": "这是历史版本的只读视图，不能在此处采用。"
+  },
+  "chapters": {
+    "overview": "项目概览",
+    "domain_rules": "领域词汇与核心规则",
+    "architecture": "架构与关键技术决定",
+    "exclusions_and_risks": "明确不做、延后与风险"
+  },
+  "status": {
+    "candidate": "待确认",
+    "adopted": "已采用",
+    "superseded": "已被新版取代",
+    "withdrawn": "已撤回",
+    "rejected": "已驳回",
+    "unknown": "未知状态"
+  },
+  "credentials": {
+    "session": "看板确认",
+    "pat": "经个人令牌",
+    "task": "智能体代为采用",
+    "unknown": "未知凭据"
+  },
+  "warnings": {
+    "rule_removed": "{{anchor}} 删除了必做规则",
+    "rule_shrunk": "{{anchor}} 明显缩减了必做规则",
+    "rule_deferred": "{{anchor}} 将必做规则延后",
+    "defer_missing_pool": "{{anchor}} 延后但未关联非阻断优化池任务",
+    "unknown": "{{anchor}} 出现未识别的规则告警"
+  },
+  "history": {
+    "title": "历史版本",
+    "revision": "第 {{number}} 版",
+    "empty": "本章还没有历史版本",
+    "more": "加载更早版本"
+  },
+  "settings": {
+    "title": "工程设置",
+    "enabledLabel": "启用工程总览",
+    "enabledHint": "关闭后隐藏总览，不改变项目数据。",
+    "agentLabel": "允许智能体代为拍板",
+    "agentHint": "智能体可以以自己的身份采用或驳回候选；删减、弱化或延后必做规则仍需你确认。",
+    "decidersLabel": "决定人",
+    "decidersHint": "工作区 owner 和 admin 始终是决定人。未选择任何人时，由人类项目负责人拍板。"
+  },
+  "actions": {
+    "save": "保存",
+    "reject": "驳回",
+    "adopt": "确认采用",
+    "enable": "启用总览"
+  },
+  "disabled": {
+    "title": "尚未启用工程总览",
+    "description": "项目仍保持原有界面。请联系工作区 owner 或 admin 启用。",
+    "adminDescription": "启用 Strixnova 后，可在这里查看阶段、待拍板事项、进展和受管基线。"
+  },
+  "errors": {
+    "title": "暂时无法读取工程数据",
+    "overview": "项目工程数据加载失败或响应无效，请稍后重试。",
+    "timeline": "讲解评论加载失败。",
+    "decisionIssues": "待拍板任务加载失败。",
+    "graph": "项目阶段进展加载失败。",
+    "history": "历史版本加载失败。",
+    "chapter": "服务端响应中没有这个基线章节。",
+    "decisionTitle": "候选未能完成拍板",
+    "decision": "候选可能已变化或已拍板，请核对当前版本后重试。",
+    "configTitle": "工程设置未保存",
+    "config": "修改未生效，请检查权限后重试。"
+  },
+  "messages": {
+    "configSaved": "工程设置已保存",
+    "adopted": "候选已采用",
+    "rejected": "候选已驳回",
+    "serverAuthoritative": "权限与版本校验均由服务端执行"
+  }
+}

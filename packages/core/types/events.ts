@@ -70,6 +70,8 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
+  | "project_engineering:updated"
+  | "project_baseline:changed"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -579,6 +581,15 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
+export interface ProjectEngineeringUpdatedPayload {
+  project_id: string;
+}
+
+export interface ProjectBaselineChangedPayload {
+  project_id: string;
+  chapter: import("../api/labrastro-engineering-schemas").BaselineChapter;
+}
+
 export interface InvitationCreatedPayload {
   invitation: Invitation;
   workspace_name?: string;
@@ -685,6 +696,8 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
+  "project_engineering:updated": ProjectEngineeringUpdatedPayload;
+  "project_baseline:changed": ProjectBaselineChangedPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;

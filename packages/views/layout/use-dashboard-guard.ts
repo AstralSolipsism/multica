@@ -11,7 +11,11 @@ import {
 } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { useRecentIssuesStore } from "@multica/core/issues/stores";
-import { useNavigation } from "../navigation";
+import { currentPath, useNavigation } from "../navigation";
+
+export function dashboardLoginPath(location: Parameters<typeof currentPath>[0]): string {
+  return `${paths.login()}?next=${encodeURIComponent(currentPath(location))}`;
+}
 
 /**
  * Auth + workspace gate for the dashboard.
@@ -39,7 +43,9 @@ import { useNavigation } from "../navigation";
  * before their workspace list arrives.
  */
 export function useDashboardGuard() {
-  const { pathname, replace } = useNavigation();
+  const navigation = useNavigation();
+  const { pathname, replace } = navigation;
+  const loginDestination = dashboardLoginPath(navigation);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const workspace = useCurrentWorkspace();
@@ -51,14 +57,14 @@ export function useDashboardGuard() {
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
-      replace(paths.login());
+      replace(loginDestination);
       return;
     }
     if (!workspaceListReady) return;
     if (!workspace) {
       replace(resolvePostAuthDestination(workspaces, hasOnboarded));
     }
-  }, [user, isLoading, workspaceListReady, workspace, workspaces, hasOnboarded, replace]);
+  }, [user, isLoading, workspaceListReady, workspace, workspaces, hasOnboarded, replace, loginDestination]);
 
   useEffect(() => {
     useNavigationStore.getState().onPathChange(pathname);

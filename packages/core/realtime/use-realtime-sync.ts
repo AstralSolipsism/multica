@@ -127,6 +127,8 @@ import type {
   ChatSession,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
+  ProjectEngineeringUpdatedPayload,
+  ProjectBaselineChangedPayload,
   Agent,
   AgentStatusPayload,
 } from "../types";
@@ -1404,6 +1406,23 @@ export function useRealtimeSync(
       if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.subscribers(issue_id) });
     });
 
+    const unsubProjectEngineeringUpdated = ws.on("project_engineering:updated", (p) => {
+      const { project_id } = p as ProjectEngineeringUpdatedPayload;
+      const wsId = getCurrentWsId();
+      if (wsId && project_id) {
+        qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
+      }
+    });
+
+    const unsubProjectBaselineChanged = ws.on("project_baseline:changed", (p) => {
+      const { project_id } = p as ProjectBaselineChangedPayload;
+      const wsId = getCurrentWsId();
+      if (wsId && project_id) {
+        qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
+        qc.invalidateQueries({ queryKey: projectKeys.engineeringHistoryAll(wsId, project_id) });
+      }
+    });
+
     // --- Side-effect handlers (toast, navigation) ---
 
     // After the current workspace disappears (deleted or we were kicked out),
@@ -1938,6 +1957,8 @@ export function useRealtimeSync(
       unsubIssueReactionRemoved();
       unsubSubscriberAdded();
       unsubSubscriberRemoved();
+      unsubProjectEngineeringUpdated();
+      unsubProjectBaselineChanged();
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();

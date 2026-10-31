@@ -347,6 +347,20 @@ describe("CallbackPage", () => {
     });
   });
 
+  it("preserves an engineering candidate query through the Google callback", async () => {
+    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+    mockLoginWithGoogle.mockResolvedValue(
+      makeUser({ onboarded_at: "2026-01-01T00:00:00Z" }),
+    );
+    mockSearchParams.set("state", `next:${next}`);
+
+    renderCallback();
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(next);
+    });
+  });
+
   it("falls through to /onboarding when listMyInvitations errors", async () => {
     mockListMyInvitations.mockRejectedValue(new Error("network"));
     renderCallback();

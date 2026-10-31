@@ -1,0 +1,137 @@
+{
+  "title": "Engineering overview",
+  "summary": {
+    "label": "Project engineering at a glance",
+    "decisions": "Decisions waiting",
+    "stage": "Current stage",
+    "blocked": "Blocked tasks",
+    "recent": "Latest decision"
+  },
+  "stage": {
+    "title": "Engineering stages and delivery strategy",
+    "flowLabel": "Engineering stages",
+    "summaryLabel": "Delivery strategy",
+    "defaults": {
+      "1": "Discovery",
+      "2": "Specification and baseline",
+      "3": "Incremental delivery",
+      "4": "Four-axis review",
+      "5": "Acceptance and archive"
+    }
+  },
+  "decisions": {
+    "title": "Decisions waiting for you",
+    "count": "{{count}} waiting",
+    "emptyTitle": "No decisions are waiting for you",
+    "noComment": "No explanatory comment is available yet"
+  },
+  "progress": {
+    "title": "Stage progress and blockers",
+    "emptyTitle": "No tasks in this project",
+    "unstaged": "Without a stage",
+    "stage": "Stage {{number}}",
+    "closed": "{{count}} of {{total}} closed",
+    "blocked": "{{count}} blocked",
+    "percent": "{{percent}}% closed"
+  },
+  "recent": {
+    "title": "What changed since your last visit",
+    "empty": "No baseline decisions have been made yet",
+    "noSummary": "Baseline revision decided"
+  },
+  "baseline": {
+    "title": "Managed baseline and revision approval",
+    "chaptersLabel": "Baseline chapters",
+    "adoptedTitle": "Adopted baseline",
+    "candidateTitle": "Candidate and structured diff",
+    "adoptedLabel": "Adopted",
+    "candidateLabel": "Candidate",
+    "noAdopted": "No baseline has been adopted in this chapter",
+    "noCandidate": "No candidate is waiting in this chapter",
+    "candidateMissing": "The requested revision was not found",
+    "candidateMissingDescription": "The link does not match any current or historical revision. No other candidate was selected.",
+    "warningTitle": "Rule downgrade warnings",
+    "unchanged": "{{count}} unchanged anchors",
+    "added": "Added",
+    "modified": "Modified",
+    "removed": "Removed",
+    "noChanges": "No anchor changes",
+    "openIssuesTitle": "Open tasks after the decision",
+    "inFlight": "In flight",
+    "queued": "Queued",
+    "openIssuesTruncated": "Only the first 200 open tasks are shown.",
+    "readOnlyRevision": "This historical revision is read-only and cannot be adopted from this view."
+  },
+  "chapters": {
+    "overview": "Overview",
+    "domain_rules": "Domain and rules",
+    "architecture": "Architecture",
+    "exclusions_and_risks": "Exclusions and risks"
+  },
+  "status": {
+    "candidate": "Candidate",
+    "adopted": "Adopted",
+    "superseded": "Superseded",
+    "withdrawn": "Withdrawn",
+    "rejected": "Rejected",
+    "unknown": "Unknown"
+  },
+  "credentials": {
+    "session": "Confirmed in the dashboard",
+    "pat": "Confirmed with a personal token",
+    "task": "Confirmed by an agent",
+    "unknown": "Unknown credential"
+  },
+  "warnings": {
+    "rule_removed": "{{anchor}} removes a mandatory rule",
+    "rule_shrunk": "{{anchor}} substantially weakens a mandatory rule",
+    "rule_deferred": "{{anchor}} defers a mandatory rule",
+    "defer_missing_pool": "{{anchor}} is deferred without a non-blocking pool task",
+    "unknown": "{{anchor}} has an unrecognized rule warning"
+  },
+  "history": {
+    "title": "Revision history",
+    "revision": "Revision {{number}}",
+    "empty": "No revisions in this chapter",
+    "more": "Load earlier revisions"
+  },
+  "settings": {
+    "title": "Engineering settings",
+    "enabledLabel": "Enable engineering overview",
+    "enabledHint": "Disabling this hides the overview without changing project data.",
+    "agentLabel": "Allow agents to decide",
+    "agentHint": "Agents can adopt or reject candidates as themselves. Removing, weakening, or deferring mandatory rules still requires your confirmation.",
+    "decidersLabel": "Decision makers",
+    "decidersHint": "Workspace owners and admins are always included. With nobody selected, the human project lead is used."
+  },
+  "actions": {
+    "save": "Save",
+    "reject": "Reject",
+    "adopt": "Adopt",
+    "enable": "Enable overview"
+  },
+  "disabled": {
+    "title": "Engineering overview is not enabled",
+    "description": "This project keeps its regular interface. Ask a workspace owner or admin to enable the overview.",
+    "adminDescription": "Enable Strixnova to see stages, decisions, progress, and the managed baseline here."
+  },
+  "errors": {
+    "title": "Engineering data is unavailable",
+    "overview": "The project engineering response could not be loaded or was invalid. Try again later.",
+    "timeline": "The decision comment could not be loaded.",
+    "decisionIssues": "Tasks waiting for a decision could not be loaded.",
+    "graph": "Project stage progress could not be loaded.",
+    "history": "Revision history could not be loaded.",
+    "chapter": "This baseline chapter is unavailable in the server response.",
+    "decisionTitle": "The candidate was not decided",
+    "decision": "The candidate may have changed or already been decided. Review the current revision before trying again.",
+    "configTitle": "Engineering settings were not saved",
+    "config": "Your changes were not applied. Check your permission and try again."
+  },
+  "messages": {
+    "configSaved": "Engineering settings saved",
+    "adopted": "Candidate adopted",
+    "rejected": "Candidate rejected",
+    "serverAuthoritative": "Permissions and revision checks are verified by the server"
+  }
+}

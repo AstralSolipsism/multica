@@ -114,9 +114,25 @@ beforeEach(() => {
   state.workspaceError = false;
   state.hasBeenSeen = false;
   state.pathname = "/acme/issues";
+  window.history.replaceState({}, "", "/acme/issues");
 });
 
 describe("WorkspaceLayout", () => {
+  it("preserves the full engineering candidate destination when login is required", async () => {
+    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+    state.user = null;
+    state.pathname = "/acme/projects/p1/engineering";
+    window.history.replaceState({}, "", next);
+
+    renderLayout();
+
+    await waitFor(() => {
+      expect(state.replace).toHaveBeenCalledWith(
+        `/login?next=${encodeURIComponent(next)}`,
+      );
+    });
+  });
+
   it("keeps loading instead of showing NoAccess when the initial list request fails", async () => {
     state.workspaceError = true;
     const { queryClient } = renderLayout();

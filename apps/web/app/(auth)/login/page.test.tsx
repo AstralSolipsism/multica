@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { configStore } from "@multica/core/config";
 import enCommon from "@multica/views/locales/en/common.json";
 import enAuth from "@multica/views/locales/en/auth.json";
 import enSettings from "@multica/views/locales/en/settings.json";
@@ -95,6 +97,7 @@ describe("LoginPage", () => {
     searchParamsState.params = new URLSearchParams();
     authStateRef.state.user = null;
     authStateRef.state.isLoading = false;
+    configStore.getState().setAuthConfig({ allowSignup: true, googleClientId: "" });
     mockListWorkspaces.mockResolvedValue([]);
     mockListMyInvitations.mockResolvedValue([]);
   });
@@ -102,6 +105,67 @@ describe("LoginPage", () => {
   // Shared LoginPage behavior is canonical in
   // packages/views/auth/login-page.test.tsx. This wrapper suite only owns web
   // platform handoff and redirect behavior.
+
+  describe("engineering candidate destination", () => {
+    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+
+    it("returns to the exact candidate after email-code login", async () => {
+      searchParamsState.params = new URLSearchParams({ next });
+      authStateRef.state.sendCode.mockResolvedValueOnce(undefined);
+      authStateRef.state.verifyCode.mockResolvedValueOnce(undefined);
+      const user = userEvent.setup();
+      render(<LoginPage />, { wrapper: createWrapper() });
+
+      await user.type(screen.getByLabelText(/email/i), "test@example.com");
+      await user.click(screen.getByRole("button", { name: /continue/i }));
+      await screen.findByText(/check your email/i);
+      await user.type(screen.getByRole("textbox", { hidden: true }), "123456");
+
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith(next);
+      });
+      expect(authStateRef.state.verifyCode).toHaveBeenCalledWith(
+        "test@example.com",
+        "123456",
+      );
+    });
+
+    it("carries the exact candidate through Google OAuth state", async () => {
+      searchParamsState.params = new URLSearchParams({ next });
+      configStore.getState().setAuthConfig({
+        allowSignup: true,
+        googleClientId: "google-client-id",
+      });
+      const hrefSetter = vi.fn();
+      const originalLocation = window.location;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: {
+          ...originalLocation,
+          set href(value: string) {
+            hrefSetter(value);
+          },
+        },
+      });
+
+      try {
+        const user = userEvent.setup();
+        render(<LoginPage />, { wrapper: createWrapper() });
+        await user.click(
+          screen.getByRole("button", { name: /continue with google/i }),
+        );
+
+        expect(hrefSetter).toHaveBeenCalledOnce();
+        const destination = new URL(hrefSetter.mock.calls[0]![0] as string);
+        expect(destination.searchParams.get("state")).toBe(`next:${next}`);
+      } finally {
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          value: originalLocation,
+        });
+      }
+    });
+  });
 
   // Regression: MUL-1080 — if the user is already authenticated on the web
   // and the Desktop app redirects them to /login?platform=desktop, the web

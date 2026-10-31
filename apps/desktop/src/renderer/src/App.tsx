@@ -6,7 +6,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { api } from "@multica/core/api";
-import { useHasOnboarded } from "@multica/core/paths";
+import { useHasOnboarded, workspaceSlugForPath } from "@multica/core/paths";
 import { setCurrentWorkspace } from "@multica/core/platform";
 import { ThemeProvider } from "@multica/ui/components/common/theme-provider";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
@@ -16,7 +16,7 @@ import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
 import { IssueWindow } from "./components/issue-window";
-import { useTabStore } from "./stores/tab-store";
+import { getActiveTab, useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
 import { useTabSelectionShortcut } from "./hooks/use-tab-selection-shortcut";
@@ -34,6 +34,11 @@ import {
   tearDownOnSessionExpiry,
   type SessionTeardown,
 } from "./platform/session-teardown";
+import {
+  clearPendingEngineeringDestination,
+  consumeEngineeringDestinationForReauth,
+  preserveEngineeringDestinationForReauth,
+} from "./platform/engineering-deep-links";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -288,11 +293,18 @@ function AppContent() {
     if (!workspaceListReady) return;
     const validSlugs = new Set(workspaces.map((w) => w.slug));
     useTabStore.getState().validateWorkspaceSlugs(validSlugs);
+    if (user) {
+      const pendingPath = consumeEngineeringDestinationForReauth(user.id);
+      const pendingSlug = pendingPath ? workspaceSlugForPath(pendingPath) : null;
+      if (pendingPath && pendingSlug && validSlugs.has(pendingSlug)) {
+        useTabStore.getState().switchWorkspace(pendingSlug, pendingPath);
+      }
+    }
     const { activeWorkspaceSlug, switchWorkspace } = useTabStore.getState();
     if (!activeWorkspaceSlug && workspaces.length > 0) {
       switchWorkspace(workspaces[0].slug);
     }
-  }, [workspaces, workspaceListReady]);
+  }, [user, workspaces, workspaceListReady]);
 
   // null = undecided (pre-login or list hasn't settled yet)
   // true  = session started with zero workspaces; next transition to >=1 triggers restart
@@ -368,10 +380,15 @@ const sessionTeardown: SessionTeardown = {
 };
 
 function handleDaemonLogout() {
+  clearPendingEngineeringDestination();
   return tearDownOnLogout(sessionTeardown);
 }
 
 function handleSessionExpired() {
+  preserveEngineeringDestinationForReauth(
+    useAuthStore.getState().user?.id,
+    getActiveTab(useTabStore.getState())?.url,
+  );
   tearDownOnSessionExpiry(sessionTeardown);
 }
 
