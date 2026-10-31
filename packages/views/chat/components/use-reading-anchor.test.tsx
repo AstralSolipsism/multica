@@ -34,7 +34,7 @@ function setup() {
   });
   return {
     root, hook, scrollBy,
-    grow: (delta: number) => { position += delta; act(() => hook.result.current()); },
+    grow: (delta: number, notify = true) => { position += delta; if (notify) act(() => hook.result.current()); },
     follow: () => { following = true; },
     compensate: (delta: number) => { root.scrollTop += delta; position -= delta; fireEvent.scroll(root); },
   };
@@ -58,6 +58,36 @@ describe("reading anchor", () => {
     const h = setup();
     h.grow(900);
     h.compensate(900);
+    frame(); frame();
+    expect(h.scrollBy).not.toHaveBeenCalled();
+  });
+  it("preserves the anchor when Virtuoso scrolls before the height notification", () => {
+    const h = setup();
+    h.grow(300, false);
+    h.compensate(240);
+    frame(); frame();
+    expect(h.scrollBy).toHaveBeenCalledExactlyOnceWith(60);
+  });
+  it("captures the reader's new position after an ordinary scroll", () => {
+    const h = setup();
+    h.compensate(80);
+    h.grow(300);
+    frame(); frame();
+    expect(h.scrollBy).toHaveBeenCalledExactlyOnceWith(300);
+  });
+  it.each(["pointerdown", "keydown"])("keeps a top fold in place after %s and delayed expansion", (event) => {
+    const h = setup();
+    const trigger = document.createElement("button");
+    trigger.dataset.slot = "collapsible-trigger";
+    trigger.textContent = "Execution process";
+    trigger.getBoundingClientRect = () => ({ top: 4, bottom: 24 }) as DOMRect;
+    h.root.querySelector("[data-chat-message-row]")!.prepend(trigger);
+    fireEvent(trigger, new Event(event, { bubbles: true }));
+    frame(); frame();
+
+    // The loading state has settled before the transcript pushes the answer
+    // down. The trigger above the new steps must retain the viewport.
+    h.grow(676);
     frame(); frame();
     expect(h.scrollBy).not.toHaveBeenCalled();
   });

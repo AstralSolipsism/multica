@@ -99,3 +99,51 @@ test("history retains its reading line through delayed media growth and older-pa
   await expect(page.getByText("No execution steps recorded.")).toBeVisible();
   expect(transcriptRequests).toBe(1);
 });
+
+for (const top of [4, 40]) {
+  test(`expanding a history fold ${top}px from the viewport top keeps its first steps visible`, async ({ page }, testInfo) => {
+    let transcriptRequests = 0;
+    let release!: () => void;
+    const response = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/api/tasks/*/messages", async (route) => {
+      transcriptRequests++;
+      await response;
+      await route.fulfill({ json: Array.from({ length: 30 }, (_, seq) => ({
+        task_id: "00000000-0000-4000-8000-000000000097",
+        seq,
+        type: "tool_use",
+        tool: "Bash",
+        input: { command: `history-step-${seq}` },
+      })) });
+    });
+    await page.goto(`${origin}test/chat-history-browser.html`);
+    const root = page.locator("[data-tab-scroll-root]");
+    await expect(root).not.toHaveClass(/invisible/);
+    await root.hover();
+    await page.mouse.wheel(0, -1000);
+    const row = root.locator("[data-chat-message-row]").filter({ hasText: "Reading message 97, paragraph 0." });
+    const trigger = row.getByRole("button", { name: "Execution process", exact: true });
+    await expect(trigger).toBeAttached();
+    await trigger.evaluate((el, top) => {
+      const root = el.closest<HTMLElement>("[data-tab-scroll-root]")!;
+      root.scrollTop += el.getBoundingClientRect().top - root.getBoundingClientRect().top - top;
+    }, top);
+    const triggerTop = () => trigger.evaluate((el) =>
+      el.getBoundingClientRect().top - el.closest("[data-tab-scroll-root]")!.getBoundingClientRect().top);
+    await expect.poll(triggerTop).toBeCloseTo(top, 0);
+    expect(transcriptRequests).toBe(0);
+    await page.screenshot({ path: testInfo.outputPath("fold-top-before.png") });
+    await trigger.click();
+    await expect(row.getByRole("status")).toBeVisible();
+    // Let input handling capture its anchor before a genuinely late response.
+    await page.waitForTimeout(150);
+    release();
+    await expect(row.getByRole("button", { name: "Bash history-step-29", exact: true })).toBeAttached();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: testInfo.outputPath("fold-top-after.png") });
+    expect(Math.abs(await triggerTop() - top)).toBeLessThan(2);
+    await expect(trigger).toBeInViewport();
+    await expect(row.getByRole("button", { name: "Bash history-step-0", exact: true })).toBeInViewport();
+    expect(transcriptRequests).toBe(1);
+  });
+}

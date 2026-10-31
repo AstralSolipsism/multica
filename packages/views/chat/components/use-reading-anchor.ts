@@ -29,7 +29,6 @@ export function useReadingAnchor(
     if (!active || !scrollRoot) return;
     let anchor: ReadingAnchor | null = null;
     let frame = 0;
-    let capturing = false;
     let touching = false;
     let dragging = false;
 
@@ -39,13 +38,15 @@ export function useReadingAnchor(
       const viewport = scrollRoot.getBoundingClientRect();
       // Anchor inside the row: anchoring only its top would miss an iframe
       // growing above the reading line in that SAME long message.
+      // Include fold triggers so an expansion grows below its own anchor.
       const candidates = scrollRoot.querySelectorAll(
         "[data-chat-message-row] p, [data-chat-message-row] pre, " +
         "[data-chat-message-row] li, [data-chat-message-row] h1, " +
         "[data-chat-message-row] h2, [data-chat-message-row] h3, " +
+        '[data-chat-message-row] [data-slot="collapsible-trigger"], ' +
         "[data-chat-message-row] [data-rich-block-shell], [data-chat-message-row]",
       );
-      // Rows are fallbacks only; prefer their visible paragraph/block.
+      // Rows are fallbacks only; prefer their visible content or fold trigger.
       const elements = Array.from(candidates);
       const element = elements.find((el) => {
         if (el.hasAttribute("data-chat-message-row")) return false;
@@ -64,11 +65,10 @@ export function useReadingAnchor(
 
     const settle = () => {
       frame = 0;
-      if (!capturing && !touching && !dragging && !callbacks.current.isFollowing() && anchor?.element.isConnected) {
+      if (!touching && !dragging && !callbacks.current.isFollowing() && anchor?.element.isConnected) {
         const delta = anchor.element.getBoundingClientRect().top - anchor.top;
         if (Math.abs(delta) > 1) callbacks.current.scrollBy(delta);
       }
-      capturing = false;
       capture();
     };
     const schedule = () => {
@@ -92,7 +92,6 @@ export function useReadingAnchor(
     const onInput = () => {
       // Reader input owns the viewport, including during a queued correction.
       anchor = null;
-      capturing = true;
       schedule();
     };
     const onTouchStart = () => { touching = true; onInput(); };
