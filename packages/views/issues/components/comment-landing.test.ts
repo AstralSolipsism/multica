@@ -18,6 +18,7 @@ const base: CommentLandingInput = {
   scrollContainerReady: true,
   virtuosoMounted: true,
   flat: false,
+  collapsedBarrierRootId: null,
   resolvedBarrierRootId: null,
 };
 
@@ -63,29 +64,47 @@ describe("decideCommentLanding", () => {
         decideCommentLanding({ ...base, flat: true, virtuosoMounted: false }),
       ).toEqual({ kind: "jump" });
     });
+
+    it("leaves both kinds of unfolding to jumpToReply", () => {
+      expect(
+        decideCommentLanding({
+          ...base,
+          collapsedBarrierRootId: "root-1",
+          resolvedBarrierRootId: "root-1",
+        }),
+      ).toEqual({ kind: "jump" });
+    });
   });
 
-  describe("arrival (flat deep-link landing)", () => {
+  describe("arrival (virtualized deep-link landing)", () => {
     const arrival: CommentLandingInput = { ...base, isArrival: true };
 
-    it("lands", () => {
+    it("lands through the mounted virtual list", () => {
       expect(decideCommentLanding(arrival)).toEqual({ kind: "land" });
     });
 
-    it("lands even when the target has no items hit (deleted reply lands above)", () => {
-      expect(decideCommentLanding({ ...arrival, targetInItems: false })).toEqual({ kind: "land" });
+    it("waits for the target, scroll container, and virtual list", () => {
+      expect(decideCommentLanding({ ...arrival, targetInItems: false })).toEqual({ kind: "wait" });
+      expect(decideCommentLanding({ ...arrival, scrollContainerReady: false })).toEqual({ kind: "wait" });
+      expect(decideCommentLanding({ ...arrival, virtuosoMounted: false })).toEqual({ kind: "wait" });
+    });
+
+    it("can land directly when in-page find already mounted every row", () => {
+      expect(
+        decideCommentLanding({ ...arrival, flat: true, virtuosoMounted: false }),
+      ).toEqual({ kind: "land" });
+    });
+
+    it("expands a manually collapsed thread before landing", () => {
+      expect(
+        decideCommentLanding({ ...arrival, collapsedBarrierRootId: "root-1" }),
+      ).toEqual({ kind: "expand-collapsed", rootId: "root-1" });
     });
 
     it("expands a folded resolved thread before landing", () => {
       expect(
         decideCommentLanding({ ...arrival, resolvedBarrierRootId: "root-1" }),
       ).toEqual({ kind: "expand-resolved", rootId: "root-1" });
-    });
-
-    it("never expands on the non-arrival path (the jump unfolds through jumpToReply)", () => {
-      expect(
-        decideCommentLanding({ ...base, resolvedBarrierRootId: "root-1" }),
-      ).toEqual({ kind: "jump" });
     });
   });
 });

@@ -16,22 +16,17 @@ export interface CommentLandingInput {
   alreadyLandedFor: string | null;
   /** The memento's consumed id — set when a restore already landed this link. */
   consumedId?: string;
-  /**
-   * The highlight is the one this detail ARRIVED with (captured on the first
-   * ready frame) — it owns the flat deep-link landing. Anything else changed
-   * on an already-mounted detail and gets the virtualized minimap jump.
-   */
+  /** The highlight was captured on this detail's first ready frame. */
   isArrival: boolean;
   /** The target (or its thread root for a reply) is in the issue's items. */
   targetInItems: boolean;
   scrollContainerReady: boolean;
   virtuosoMounted: boolean;
-  /** The timeline currently renders flat (arrival landing or in-page find). */
+  /** The timeline currently renders flat for in-page find. */
   flat: boolean;
-  /**
-   * Arrival only: this folded resolved thread must be expanded before the
-   * landing can find its anchor (the effect re-evaluates after the expand).
-   */
+  /** This manually collapsed thread hides the target. */
+  collapsedBarrierRootId: string | null;
+  /** This folded resolved thread hides the target. */
   resolvedBarrierRootId: string | null;
 }
 
@@ -40,11 +35,13 @@ export type CommentLandingDecision =
   | { kind: "skip" }
   /** Consumed by the memento: skip, and mark the guard so later runs skip cheaply. */
   | { kind: "skip-consumed" }
-  /** Same-page jump: land through Virtuoso without flattening the timeline. */
+  /** Same-page jump: land through the existing minimap path. */
   | { kind: "jump" }
+  /** Expand this manually collapsed thread first; the landing re-runs after. */
+  | { kind: "expand-collapsed"; rootId: string }
   /** Expand this folded resolved thread first; the landing re-runs after. */
   | { kind: "expand-resolved"; rootId: string }
-  /** Arrival landing on the flat timeline. */
+  /** Mount the target's virtual row, then center its exact comment anchor. */
   | { kind: "land" };
 
 export function decideCommentLanding(
@@ -57,18 +54,18 @@ export function decideCommentLanding(
   if (input.alreadyLandedFor === id) return { kind: "skip" };
   if (input.consumedId === id) return { kind: "skip-consumed" };
 
-  if (!input.isArrival) {
-    // A same-page jump. Consume nothing until the jump can actually run:
-    // scrollToIndex on an unmounted Virtuoso (or a target that isn't in this
-    // issue's items — e.g. a fragment left over from the previous page) is a
-    // silent no-op that would swallow the jump with the guards consumed.
-    if (!input.targetInItems || !input.scrollContainerReady) {
-      return { kind: "wait" };
-    }
-    if (!input.flat && !input.virtuosoMounted) return { kind: "wait" };
-    return { kind: "jump" };
+  // Consume nothing until the target can actually be mounted. In particular,
+  // scrollToIndex on an unmounted Virtuoso is a silent no-op that would
+  // swallow the landing with the guards consumed.
+  if (!input.targetInItems || !input.scrollContainerReady) {
+    return { kind: "wait" };
   }
+  if (!input.flat && !input.virtuosoMounted) return { kind: "wait" };
 
+  if (!input.isArrival) return { kind: "jump" };
+  if (input.collapsedBarrierRootId) {
+    return { kind: "expand-collapsed", rootId: input.collapsedBarrierRootId };
+  }
   if (input.resolvedBarrierRootId) {
     return { kind: "expand-resolved", rootId: input.resolvedBarrierRootId };
   }
