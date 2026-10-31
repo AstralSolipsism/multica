@@ -136,17 +136,18 @@ describe("useActorName", () => {
     expect(result.current.hasActor("member", "user-1")).toBeUndefined();
   });
 
-  it("resolves names once the directories are loaded", () => {
+  it("resolves names and avatar URLs once the directories are loaded", () => {
     // Seed the caches directly so the hook reads resolved directories on its
     // first render — this guards that stabilizing the loading default did not
     // break name resolution when data IS present.
-    const members = [{ user_id: "user-1", name: "Ada", avatar_url: null }];
+    const members = [{ user_id: "user-1", name: "Ada", avatar_url: "/api/avatars/sig/a.png" }];
     const agents = [{ id: "agent-1", name: "Walt", avatar_url: null }];
     const squads = [{ id: "squad-1", name: "Core", avatar_url: null }];
     setApiInstance({
       listMembers: () => Promise.resolve(members),
       listAgents: () => Promise.resolve(agents),
       listSquads: () => Promise.resolve(squads),
+      getBaseUrl: () => "https://api.test",
     } as unknown as ApiClient);
     qc.setQueryData(workspaceKeys.members("ws-1"), members);
     qc.setQueryData(workspaceKeys.agents("ws-1"), agents);
@@ -161,5 +162,13 @@ describe("useActorName", () => {
     expect(result.current.getActorName("squad", "squad-1")).toBe("Core");
     expect(result.current.hasActor("member", "user-1")).toBe(true);
     expect(result.current.hasActor("member", "departed-user")).toBe(false);
+    // Avatar lookup goes through the same directory snapshot: a relative
+    // avatar URL resolves against the API base, a null stays null, and an
+    // actor outside the directory is null rather than a crash.
+    expect(result.current.getActorAvatarUrl("member", "user-1")).toBe(
+      "https://api.test/api/avatars/sig/a.png",
+    );
+    expect(result.current.getActorAvatarUrl("agent", "agent-1")).toBeNull();
+    expect(result.current.getActorAvatarUrl("member", "departed-user")).toBeNull();
   });
 });

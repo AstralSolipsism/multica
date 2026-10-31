@@ -4,8 +4,12 @@
 // back the crop rectangle in source-image pixels via `onCropComplete`. This
 // module turns that rectangle into a fixed-size square, compressed avatar file.
 
-/** Square side of the encoded avatar. Avatars never need the original bitmap. */
-export const AVATAR_OUTPUT_SIZE = 512;
+/**
+ * Square side of the encoded avatar. The largest render is the detail page's
+ * 64 CSS px (128 device px on 2x), so 256 keeps Retina oversampling at a
+ * fraction of the 512 bitmap's bytes.
+ */
+export const AVATAR_OUTPUT_SIZE = 256;
 
 const AVATAR_QUALITY = 0.85;
 

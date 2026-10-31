@@ -185,10 +185,17 @@ func TestNormalizeStoredAvatarURL_RecoversObjectURL(t *testing.T) {
 }
 
 func serveAvatarRequest(t *testing.T, sig, key string) *httptest.ResponseRecorder {
+	return serveAvatarRequestWithHeaders(t, sig, key, nil)
+}
+
+func serveAvatarRequestWithHeaders(t *testing.T, sig, key string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := chi.NewRouter()
 	r.Get("/api/avatars/{sig}/*", testHandler.ServeAvatar)
 	req := httptest.NewRequest(http.MethodGet, "/api/avatars/"+sig+"/"+key, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
@@ -343,8 +350,72 @@ func TestServeAvatar_ProxiesPrivateHostBody(t *testing.T) {
 	if got := w.Header().Get("Content-Disposition"); got != "inline" {
 		t.Fatalf("Content-Disposition = %q, want inline", got)
 	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=86400" {
+		t.Fatalf("Cache-Control = %q, want a 24h private max-age", got)
+	}
+	if got := w.Header().Get("ETag"); got != avatarETag(key) {
+		t.Fatalf("ETag = %q, want %q", got, avatarETag(key))
+	}
 	if w.Body.String() != "PNGBYTES" {
 		t.Fatalf("body = %q, want the stored object", w.Body.String())
+	}
+}
+
+// TestServeAvatar_ETagConditionalShortCircuit — the proxy path answers a
+// matching If-None-Match with 304 and must not read the object from storage
+// at all: that is the whole point of the ETag on an immutable body. Covers
+// single tags, weak (W/) tags, comma-separated lists, and *.
+func TestServeAvatar_ETagConditionalShortCircuit(t *testing.T) {
+	store := &mockStorage{}
+	withAvatarStorage(t, store, "")
+	testHandler.cfg.AttachmentDownloadMode = "proxy"
+	key := seedAvatarObject(t, avatarObjectOpts{})
+	store.put(key, []byte("PNGBYTES"))
+	etag := avatarETag(key)
+
+	for _, header := range []string{
+		etag,
+		"W/" + etag,
+		`"other", ` + etag,
+		"W/" + etag + `, "other"`,
+		"*",
+	} {
+		w := serveAvatarRequestWithHeaders(t, signAvatarKey(key), key, map[string]string{"If-None-Match": header})
+		if w.Code != http.StatusNotModified {
+			t.Errorf("If-None-Match %q: status = %d, want 304", header, w.Code)
+		}
+		if w.Body.Len() != 0 {
+			t.Errorf("If-None-Match %q: body = %q, want empty", header, w.Body.String())
+		}
+		if got := w.Header().Get("ETag"); got != etag {
+			t.Errorf("If-None-Match %q: ETag = %q, want %q", header, got, etag)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "private, max-age=86400" {
+			t.Errorf("If-None-Match %q: Cache-Control = %q, want a 24h private max-age", header, got)
+		}
+	}
+	if getReader, _ := store.streamCopyCalls(); getReader != 0 {
+		t.Fatalf("GetReader called %d times on 304 path, want 0", getReader)
+	}
+}
+
+// TestServeAvatar_ETagMismatchStreamsBody — a stale or unrelated If-None-Match
+// must fall through to a normal 200 with the body.
+func TestServeAvatar_ETagMismatchStreamsBody(t *testing.T) {
+	store := &mockStorage{}
+	withAvatarStorage(t, store, "")
+	testHandler.cfg.AttachmentDownloadMode = "proxy"
+	key := seedAvatarObject(t, avatarObjectOpts{})
+	store.put(key, []byte("PNGBYTES"))
+
+	for _, header := range []string{"", `"stale"`, "W/\"stale\"", `"a", "b"`} {
+		w := serveAvatarRequestWithHeaders(t, signAvatarKey(key), key, map[string]string{"If-None-Match": header})
+		if w.Code != http.StatusOK {
+			t.Errorf("If-None-Match %q: status = %d, want 200", header, w.Code)
+		}
+		if w.Body.String() != "PNGBYTES" {
+			t.Errorf("If-None-Match %q: body = %q, want the stored object", header, w.Body.String())
+		}
 	}
 }
 
@@ -359,13 +430,27 @@ func TestServeAvatar_ProxiesPrivateHostBody(t *testing.T) {
 
 // TestServeAvatar_RejectsAttachmentBoundToIssue is the reproduced attack. Even
 // with a valid signature (i.e. the value really did get stored in avatar_url),
-// an object attached to workspace content must never be served.
+// an object attached to workspace content must never be served. The ETag/304
+// path sits after this check, so a matching If-None-Match must not bypass it.
 func TestServeAvatar_RejectsAttachmentBoundToIssue(t *testing.T) {
 	withAvatarStorage(t, &mockStorageNoCdn{}, "")
 	key := seedAvatarObject(t, avatarObjectOpts{boundToIssue: true})
+	etag := avatarETag(key)
 
-	if w := serveAvatarRequest(t, signAvatarKey(key), key); w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 for an issue attachment", w.Code)
+	for _, headers := range []map[string]string{
+		nil,
+		{"If-None-Match": etag},
+		{"If-None-Match": "*"},
+	} {
+		var w *httptest.ResponseRecorder
+		if headers == nil {
+			w = serveAvatarRequest(t, signAvatarKey(key), key)
+		} else {
+			w = serveAvatarRequestWithHeaders(t, signAvatarKey(key), key, headers)
+		}
+		if w.Code != http.StatusNotFound {
+			t.Errorf("headers %v: status = %d, want 404 for an issue attachment", headers, w.Code)
+		}
 	}
 }
 

@@ -140,11 +140,19 @@ export function useActorName() {
     [getActorName],
   );
 
-  const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {
-    if (type === "member") return resolvePublicFileUrl(members.find((m) => m.user_id === id)?.avatar_url);
-    if (type === "agent") return resolvePublicFileUrl(agents.find((a) => a.id === id)?.avatar_url);
-    if (type === "squad") return resolvePublicFileUrl(squads.find((s) => s.id === id)?.avatar_url);
-    return null;
+  const getActorAvatarUrl = useMemo(() => {
+    // Mirror buildActorNameResolver: index once per directory snapshot
+    // instead of a linear .find() per call. Resolution stays at lookup time
+    // so the api instance is only touched when a consumer asks for a URL.
+    const memberAvatars = new Map(members.map((m) => [m.user_id, m.avatar_url]));
+    const agentAvatars = new Map(agents.map((a) => [a.id, a.avatar_url]));
+    const squadAvatars = new Map(squads.map((s) => [s.id, s.avatar_url]));
+    return (type: string, id: string): string | null => {
+      if (type === "member") return resolvePublicFileUrl(memberAvatars.get(id));
+      if (type === "agent") return resolvePublicFileUrl(agentAvatars.get(id));
+      if (type === "squad") return resolvePublicFileUrl(squadAvatars.get(id));
+      return null;
+    };
   }, [agents, members, squads]);
 
   const hasActor = useCallback(
