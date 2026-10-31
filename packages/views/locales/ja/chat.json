@@ -47,6 +47,10 @@
     "action_failed_toast": "キュー内のメッセージを更新できませんでした"
   },
   "message_list": {
+    "process_history": "実行過程",
+    "process_loading": "実行過程を読み込み中…",
+    "process_retry": "読み込めませんでした。再試行",
+    "process_empty": "実行ステップの記録はありません。",
     "show_details": "詳細を表示",
     "replied_in": "{{elapsed}}で返信",
     "failed_after": "{{elapsed}}後に失敗",

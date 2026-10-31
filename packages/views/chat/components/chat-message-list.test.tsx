@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { api } from "@multica/core/api";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { Attachment, TaskMessagePayload } from "@multica/core/types";
 import type { ReactElement } from "react";
@@ -62,6 +63,11 @@ vi.mock("react-virtuoso", () => ({
 }));
 
 import { ChatMessageList } from "./chat-message-list";
+
+vi.mock("@multica/core/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/api")>();
+  return { ...actual, api: { listTaskMessages: vi.fn() } };
+});
 
 const TEST_RESOURCES = { en: { chat: enChat } };
 const TASK_ID = "6af44cbe-80ab-4dfe-b07d-bd3cfd588f4d";
@@ -357,7 +363,7 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
 
     expect(await screen.findByText("Complete canonical answer")).toBeInTheDocument();
     expect(screen.getAllByText("Complete canonical answer")).toHaveLength(1);
-    const foldTrigger = screen.getByText("1 step");
+    const foldTrigger = screen.getByText("Execution process");
     expect(screen.queryByText("first timeline fragment")).not.toBeInTheDocument();
     expect(screen.queryByText("second timeline fragment")).not.toBeInTheDocument();
 
@@ -407,7 +413,7 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     }], null));
 
     expect(await screen.findByText("Stable final answer")).toBe(answerBefore);
-    expect(screen.getByText("3 steps")).toBeInTheDocument();
+    expect(screen.getByText("Execution process")).toBeInTheDocument();
     expect(screen.queryByText("Intermediate narration")).not.toBeInTheDocument();
   });
 });
@@ -452,7 +458,7 @@ describe("ChatMessageList tool rows (#8835 regression)", () => {
       </I18nProvider>,
     );
 
-    fireEvent.click(await screen.findByText("3 steps"));
+    fireEvent.click(await screen.findByText("Execution process"));
 
     expect(screen.getByText("mcp__treg__call")).toBeInTheDocument();
     expect(screen.getByText("zerobounce.people.email.verify")).toBeInTheDocument();
@@ -1117,5 +1123,87 @@ describe("ChatMessageList onboarding starter cards", () => {
       await screen.findByRole("button", { name: "Get a board up in minutes" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Later chip" })).toBeEnabled();
+  });
+});
+
+
+describe("history transcript loading (OL-1166)", () => {
+  function history(qc: QueryClient, overrides = {}) {
+    return render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList messages={[{
+            id: "historical", chat_session_id: "session-1", role: "assistant",
+            content: "Saved answer", task_id: TASK_ID, created_at: "2026-09-17T00:00:00Z",
+            ...overrides,
+          }]} pendingTask={null} availability="online" />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+  }
+
+  it("renders a stable closed fold without a request, then loads only on expand", async () => {
+    let resolve!: (messages: TaskMessagePayload[]) => void;
+    const request = vi.spyOn(api, "listTaskMessages").mockImplementation(
+      () => new Promise((done) => { resolve = done; }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    history(qc);
+    const fold = screen.getByRole("button", { name: "Execution process" });
+    const answer = screen.getByText("Saved answer");
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(request).not.toHaveBeenCalled();
+    fireEvent.click(fold);
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading execution process");
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => resolve(INITIAL_MESSAGES));
+    expect(await screen.findByText("Bash")).toBeInTheDocument();
+    expect(screen.getByText("Saved answer")).toBe(answer);
+    fireEvent.click(fold);
+    fireEvent.click(fold);
+    expect(request).toHaveBeenCalledTimes(1);
+    request.mockRestore();
+  });
+
+  it("does not insert a fold or remount the answer when another observer fills the cache", async () => {
+    const request = vi.spyOn(api, "listTaskMessages").mockResolvedValue(INITIAL_MESSAGES);
+    const qc = new QueryClient();
+    const { container } = history(qc);
+    const before = container.innerHTML;
+    const answer = screen.getByText("Saved answer");
+    act(() => qc.setQueryData(chatKeys.taskMessages(TASK_ID), INITIAL_MESSAGES));
+    await waitFor(() => expect(qc.getQueryData(chatKeys.taskMessages(TASK_ID))).toEqual(INITIAL_MESSAGES));
+    expect(container.innerHTML).toBe(before);
+    expect(screen.getByText("Saved answer")).toBe(answer);
+    expect(request).not.toHaveBeenCalled();
+    request.mockRestore();
+  });
+
+  it.each([{}, { message_kind: "no_response", content: "" }, { failure_reason: "timeout" }])(
+    "keeps empty histories reachable, including failed and no-response turns: %j",
+    async (overrides) => {
+      const request = vi.spyOn(api, "listTaskMessages").mockResolvedValue([]);
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      history(qc, overrides);
+      const fold = screen.getByRole("button", { name: "Execution process" });
+      expect(request).not.toHaveBeenCalled();
+      fireEvent.click(fold);
+      expect(await screen.findByText("No execution steps recorded.")).toBeInTheDocument();
+      fireEvent.click(fold);
+      expect(fold).toBeInTheDocument();
+      expect(fold).toHaveAttribute("aria-expanded", "false");
+      request.mockRestore();
+    },
+  );
+
+  it("allows retrying a failed transcript request without replacing the answer", async () => {
+    const request = vi.spyOn(api, "listTaskMessages").mockRejectedValueOnce(new Error("offline")).mockResolvedValue(INITIAL_MESSAGES);
+    history(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    fireEvent.click(screen.getByRole("button", { name: "Execution process" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Couldn’t load the process. Retry" }));
+    expect(await screen.findByText("Bash")).toBeInTheDocument();
+    expect(screen.getByText("Saved answer")).toBeInTheDocument();
+    expect(request).toHaveBeenCalledTimes(2);
+    request.mockRestore();
   });
 });

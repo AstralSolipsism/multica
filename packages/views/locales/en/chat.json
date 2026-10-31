@@ -49,6 +49,10 @@
     "action_failed_toast": "Couldn't update the queued message"
   },
   "message_list": {
+    "process_history": "Execution process",
+    "process_loading": "Loading execution process…",
+    "process_retry": "Couldn’t load the process. Retry",
+    "process_empty": "No execution steps recorded.",
     "show_details": "Show details",
     "replied_in": "Replied in {{elapsed}}",
     "failed_after": "Failed after {{elapsed}}",

@@ -52,7 +52,7 @@ const useIsomorphicLayoutEffect =
 
 /**
  * How far outside the viewport a block starts mounting. Sized to cover
- * Virtuoso's own overscan (`increaseViewportBy` is 400px top / 600px bottom in
+ * Virtuoso's own overscan (`increaseViewportBy` is 600px top / 600px bottom in
  * the chat list) so a block is ready by the time it is scrolled into view,
  * without eagerly building the whole transcript.
  */
