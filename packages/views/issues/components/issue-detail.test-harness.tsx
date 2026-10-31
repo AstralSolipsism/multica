@@ -441,9 +441,7 @@ vi.mock("@multica/core/issues/stores", async () => ({
 
 // Mock react-virtuoso: jsdom has no real layout, so the real Virtuoso would
 // compute a 0-height viewport and render nothing. The mock renders every item
-// inline so id="comment-..." nodes are always present in the DOM — this
-// matches the production cold-path where `initialItemCount` force-mounts
-// items[0..targetIdx], giving the deep-link effect a real target node.
+// inline so id="comment-..." nodes are available to the exact-anchor effect.
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
     { data, itemContent, computeItemKey }: {
@@ -454,9 +452,6 @@ vi.mock("react-virtuoso", () => ({
     ref: any,
   ) {
     useImperativeHandle(ref, () => ({
-      // Real Virtuoso ref methods are not exercised by tests in this file
-      // since the deep-link cold-path drives the container's scrollTop on the
-      // real DOM node, not Virtuoso's imperative API.
       scrollIntoView: vi.fn(),
       scrollToIndex: scrollToIndexSpy,
     }));

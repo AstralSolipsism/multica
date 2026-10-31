@@ -1703,6 +1703,10 @@ describe("IssueDetail (shared)", () => {
   });
 
   describe("highlightCommentId scroll-to-comment", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     it("folds an assignment reply with its resolved parent and unfolds that thread for a notification", async () => {
       const run: AgentTask = { id: "ba2e8d1c-7f9b-4e2a-9c1d-123456789abc", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
         kind: "direct", status: "completed", priority: 0, created_at: "2026-01-16T00:00:00Z", started_at: null, dispatched_at: null,
@@ -1776,10 +1780,6 @@ describe("IssueDetail (shared)", () => {
     it("scrolls to the highlighted comment after both issue and timeline finish loading", async () => {
       renderIssueDetailWithHighlight("comment-2");
 
-      // Wait for the comment row to mount. With initialItemCount in
-      // production, items[0..targetIdx] are force-mounted on first commit;
-      // the mock unconditionally inline-renders every item, so this just
-      // waits for the regular render pass.
       await waitFor(() => {
         expect(
           document.getElementById("comment-comment-2"),
@@ -1795,10 +1795,8 @@ describe("IssueDetail (shared)", () => {
           hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
         ).toBe(true);
       });
-      // The arrival landing owns the FLAT timeline: no Virtuoso instance —
-      // if the arrival ever degrades into the virtualized jump path, long
-      // timelines lose the precise landing (I1).
-      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({ index: 1, align: "center" });
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
     });
 
     it("highlights only the target root comment, not the whole thread", async () => {
@@ -1936,6 +1934,113 @@ describe("IssueDetail (shared)", () => {
       });
     });
 
+    it("expands a manually collapsed thread for an arrival reply", async () => {
+      const root = { ...mockTimeline[0]!, id: "collapsed-root" };
+      const target = {
+        ...mockTimeline[1]!,
+        id: "collapsed-reply",
+        parent_id: root.id,
+        content: "Reply hidden by manual collapse",
+      };
+      mockApiObj.listTimeline.mockResolvedValue([root, target]);
+      useCommentCollapseStore.setState({
+        collapsedByIssue: { "issue-1": [root.id] },
+      });
+
+      renderIssueDetailWithHighlight(target.id);
+
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById(`comment-${target.id}`)),
+      ).toBe(true));
+      expect(useCommentCollapseStore.getState().isCollapsed("issue-1", root.id)).toBe(false);
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({ index: 0, align: "center" });
+    });
+
+    type TestResizeObserver = {
+      callback: ResizeObserverCallback;
+      observed: Element[];
+      disconnect: ReturnType<typeof vi.fn>;
+    };
+
+    const stubResizeObservers = () => {
+      const observers: TestResizeObserver[] = [];
+      vi.stubGlobal("ResizeObserver", class {
+        callback: ResizeObserverCallback;
+        observed: Element[] = [];
+        disconnect = vi.fn();
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback;
+          observers.push(this);
+        }
+
+        observe(element: Element) {
+          this.observed.push(element);
+        }
+
+        unobserve() {}
+      });
+      return observers;
+    };
+
+    const getLandingObserver = (observers: TestResizeObserver[]) => {
+      const observer = observers.find((candidate) =>
+        candidate.observed.some((element) => element.id === "comment-comment-2"),
+      );
+      if (!observer) throw new Error("Comment landing ResizeObserver not found");
+      return observer;
+    };
+
+    it("re-centers after async layout growth and releases on user scrolling", async () => {
+      const observers = stubResizeObservers();
+      const view = renderIssueDetailWithHighlight("comment-2");
+
+      await waitFor(() => {
+        expect(observers.some((observer) =>
+          observer.observed.some((element) => element.id === "comment-comment-2"),
+        )).toBe(true);
+      });
+      const observer = getLandingObserver(observers);
+      const scroller = view.container.querySelector<HTMLElement>("[data-tab-scroll-root]")!;
+      const target = document.getElementById("comment-comment-2")!;
+      let targetTop = 400;
+      Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 600 });
+      scroller.getBoundingClientRect = () => ({ top: 0 } as DOMRect);
+      target.getBoundingClientRect = () => ({ top: targetTop, height: 100 } as DOMRect);
+      scroller.scrollTop = 0;
+
+      act(() => observer.callback([], observer as unknown as ResizeObserver));
+      expect(scroller.scrollTop).toBe(150);
+      expect(observer.observed).toContain(scroller);
+      expect(observer.observed).toContain(scroller.firstElementChild);
+
+      targetTop = 600;
+      act(() => observer.callback([], observer as unknown as ResizeObserver));
+      expect(scroller.scrollTop).toBe(500);
+
+      fireEvent.wheel(scroller);
+      expect(observer.disconnect).toHaveBeenCalledTimes(1);
+      targetTop = 800;
+      act(() => observer.callback([], observer as unknown as ResizeObserver));
+      expect(scroller.scrollTop).toBe(500);
+    });
+
+    it("disconnects the landing observer on unmount", async () => {
+      const observers = stubResizeObservers();
+      const view = renderIssueDetailWithHighlight("comment-2");
+      await waitFor(() => {
+        expect(observers.some((observer) =>
+          observer.observed.some((element) => element.id === "comment-comment-2"),
+        )).toBe(true);
+      });
+      const observer = getLandingObserver(observers);
+
+      view.unmount();
+
+      expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    });
+
     it("still fades the highlight when timeline data changes right after the landing (OL-303)", async () => {
       // The tasks query resolving ~1.2s in recomputes timelineView/items into
       // new object identities, re-running the landing effect under the landed
@@ -1971,9 +2076,8 @@ describe("IssueDetail (shared)", () => {
   // IssueDetailRoute has no key) and same-page pushes on both platforms.
   // (Web's /issues/[id] page DOES remount on cross-issue pushes — measured on
   // Next 16.3.4 — so the prop-change path there is the same-page one.)
-  // Such a jump must reuse the minimap path (Virtuoso scroll-by-index,
-  // unfold resolved threads) instead of flattening the timeline for one jump;
-  // only an ARRIVAL (mount or issue switch) owns the flat deep-link landing.
+  // Such a jump reuses the minimap path (Virtuoso scroll-by-index and
+  // unfolding); an ARRIVAL additionally stabilizes its exact anchor on resize.
   describe("highlight change on an already-mounted detail", () => {
     const detailTree = (
       queryClient: QueryClient,
@@ -2084,6 +2188,7 @@ describe("IssueDetail (shared)", () => {
 
       await act(async () => { await new Promise((r) => setTimeout(r, 1500)); });
       rerender(detailTree(queryClient, "comment-2", "issue-1", 2));
+      await waitFor(() => expect(scrollToIndexSpy).toHaveBeenNthCalledWith(2, { index: 1, align: "center" }));
       // 1.2s after the replay (2.7s after the first landing): the first
       // landing's 2.5s timer has expired, the replay's has not.
       await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
@@ -2114,7 +2219,7 @@ describe("IssueDetail (shared)", () => {
       ).toBe(true);
     }, 10000);
 
-    it("keeps the flat deep-link landing when the issue switches under the detail", async () => {
+    it("keeps the virtualized deep-link landing when the issue switches under the detail", async () => {
       const issue2: Issue = { ...mockIssue, id: "issue-2", identifier: "TES-2", title: "Second issue" };
       const timeline2: TimelineEntry[] = [
         { ...mockTimeline[0]!, id: "comment-b", content: "Target in the second issue" },
@@ -2128,30 +2233,26 @@ describe("IssueDetail (shared)", () => {
 
       const queryClient = createTestQueryClient();
       const { rerender } = render(detailTree(queryClient, "comment-2"));
-      // Arrival highlight: flat landing, no Virtuoso instance.
       await waitFor(() => expect(
         hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
       ).toBe(true));
-      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
 
       // Cross-page jump (A → B#comment-b): the route swaps issueId under the
-      // mounted detail. The new arrival must land flat again — the minimap
-      // path's scrollToIndex never fires for it.
+      // mounted detail. The new arrival mounts its target through Virtuoso too.
       scrollToIndexSpy.mockClear();
       rerender(detailTree(queryClient, "comment-b", "issue-2"));
       await waitFor(() => expect(document.getElementById("comment-comment-b")).not.toBeNull());
       await waitFor(() => expect(
         hasHighlightedCommentBackground(document.getElementById("comment-comment-b")),
       ).toBe(true));
-      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
-      expect(scrollToIndexSpy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({ index: 0, align: "center" });
     });
 
     it("lands when the highlight arrives while the issue is still loading (timeline first)", async () => {
       // The timeline query resolves before the issue one: the landing must
-      // not be swallowed by guards consumed while Virtuoso wasn't mounted —
-      // with readiness-captured arrival this resolves through the flat
-      // landing; assert the user-visible outcome.
+      // not be swallowed by guards consumed while Virtuoso wasn't mounted.
       const issueResolvers: Array<(v: Issue) => void> = [];
       mockApiObj.getIssue.mockImplementation(() => new Promise<Issue>((r) => { issueResolvers.push(r); }));
       const queryClient = createTestQueryClient();
@@ -2168,10 +2269,8 @@ describe("IssueDetail (shared)", () => {
         hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
       ).toBe(true));
       // The highlight arrived inside the loading window, before the first
-      // ready frame — it IS the arrival, and the arrival landing owns the
-      // flat timeline. If the arrival ever degrades into the virtualized
-      // jump path, long timelines lose the precise landing (I1).
-      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+      // ready frame — it IS the arrival, and it stays virtualized.
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
     });
 
     it("does not flatten the timeline for a fragment whose target is not in this issue", async () => {
@@ -2185,16 +2284,15 @@ describe("IssueDetail (shared)", () => {
       expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
     });
 
-    it("does not re-flatten when the arrival anchor is revisited after a same-page jump", async () => {
-      // Arrive on #comment-1 (flat landing), same-page jump to comment-2,
-      // then back to comment-1 (browser back): the arrival is one-shot —
-      // the return is a jump, not another flat cold-mount.
+    it("keeps the timeline virtualized when the arrival anchor is revisited after a same-page jump", async () => {
+      // Arrive on #comment-1, same-page jump to comment-2, then back to
+      // comment-1 (browser back): the arrival is one-shot and the return is a jump.
       const queryClient = createTestQueryClient();
       const { rerender } = render(detailTree(queryClient, "comment-1"));
       await waitFor(() => expect(
         hasHighlightedCommentBackground(document.getElementById("comment-comment-1")),
       ).toBe(true));
-      expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
 
       rerender(detailTree(queryClient, "comment-2"));
       await waitFor(() => expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument());

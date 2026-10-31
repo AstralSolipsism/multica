@@ -178,8 +178,8 @@ describe("issue deep links under measured Next 16.3.4 timing (real adapters)", (
     await act(async () => adapterRef!.push(`/test/issues/${P_UUID}#comment-b`));
     await onParent();
     await waitLanded();
-    // The arrival landing owns a flat timeline (no Virtuoso instance).
-    expect(screen.queryByTestId("virtuoso-mock")).toBeNull();
+    // The arrival landing keeps the timeline virtualized.
+    expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
   }, 15000);
 
   it("AC1 second source jump (UUID URL), parent cached both times", async () => {
