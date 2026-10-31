@@ -17,11 +17,13 @@ import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
   ChatMessage,
+  ChatSendAttempt,
   ChatSession,
   MemberWithUser,
   StorageAdapter,
 } from "@multica/core/types";
 import { ChatWindow } from "../../chat/components/chat-window";
+import type { ChatInput } from "../../chat/components/chat-input";
 import { ChatPage } from "../../chat/chat-page";
 import { YouShouldKnowArchiveSection } from "../archive/archive-section";
 import {
@@ -50,6 +52,9 @@ const apiMock = vi.hoisted(() => ({
   listActiveTips: vi.fn(),
   setTipState: vi.fn(),
   getNotificationPreferences: vi.fn(),
+}));
+const composerProps = vi.hoisted(() => ({
+  current: null as React.ComponentProps<typeof ChatInput> | null,
 }));
 vi.mock("@multica/core/api", () => ({
   api: apiMock,
@@ -84,28 +89,25 @@ vi.mock("../../chat/components/chat-message-list", () => ({
   ChatMessageSkeleton: () => <div data-testid="messages-loading" />,
 }));
 vi.mock("../../chat/components/chat-input", () => ({
-  ChatInput: ({
-    agentName,
-    disabled,
-    leftAdornment,
-    onSend,
-  }: {
-    agentName?: string;
-    disabled?: boolean;
-    leftAdornment?: React.ReactNode;
-    onSend: (content: string) => Promise<boolean>;
-  }) => (
-    <div
-      data-testid="composer"
-      data-agent={agentName ?? ""}
-      data-disabled={String(!!disabled)}
-    >
-      {leftAdornment}
-      <button type="button" onClick={() => void onSend("hello")}>
-        send from composer
-      </button>
-    </div>
-  ),
+  ChatInput: (props: React.ComponentProps<typeof ChatInput>) => {
+    composerProps.current = props;
+    const { agentName, disabled, leftAdornment, onSend } = props;
+    return (
+      <div
+        data-testid="composer"
+        data-agent={agentName ?? ""}
+        data-disabled={String(!!disabled)}
+      >
+        {leftAdornment}
+        <button
+          type="button"
+          onClick={() => void onSend("hello", undefined, vi.fn(), [], { clientMessageId: "11111111-1111-4111-8111-111111111111" })}
+        >
+          send from composer
+        </button>
+      </div>
+    );
+  },
 }));
 
 function makeAgent(overrides: Partial<Agent>): Agent {
@@ -183,6 +185,7 @@ let messages: ChatMessage[];
 
 beforeEach(() => {
   for (const fn of Object.values(apiMock)) fn.mockReset();
+  composerProps.current = null;
   messages = [];
   apiMock.listChatSessions.mockResolvedValue([]);
   apiMock.getChatSession.mockResolvedValue(sideChat);
@@ -391,6 +394,41 @@ describe("the floating chat on a side chat", () => {
     expect(composer()).toHaveAttribute("data-agent", "Sigma");
     expect(composer()).toHaveAttribute("data-disabled", "false");
     expect(apiMock.getChatSession).not.toHaveBeenCalled();
+  });
+
+  it("retries a lost first-send response with the same session and client id", async () => {
+    apiMock.createChatSession.mockResolvedValue({
+      ...sideChat,
+      id: "new-1",
+      agent_id: "agent-2",
+      title: "hello",
+      tip_source: undefined,
+    });
+    apiMock.sendChatMessage.mockRejectedValueOnce(new Error("response lost"));
+    useChatStore.getState().setOpen(true);
+    renderWithYsk(<ChatWindow />);
+    await waitFor(() => expect(composer()).toHaveAttribute("data-agent", "Sigma"));
+
+    // ChatInput owns retry identity; exercise the floating window's real send
+    // callback with the same attempt while no session has been activated yet.
+    const attempt: ChatSendAttempt = { clientMessageId: "11111111-1111-4111-8111-111111111111" };
+    const commitInput = vi.fn();
+    await act(async () => {
+      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(false);
+    });
+    expect(useChatStore.getState().activeSessionId).toBeNull();
+    expect(attempt.sessionId).toBe("new-1");
+    expect(commitInput).not.toHaveBeenCalled();
+
+    await act(async () => {
+      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(true);
+    });
+    expect(apiMock.createChatSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.sendChatMessage).toHaveBeenCalledTimes(2);
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(1, "new-1", "hello", undefined, attempt.clientMessageId);
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(2, "new-1", "hello", undefined, attempt.clientMessageId);
+    expect(useChatStore.getState().activeSessionId).toBe("new-1");
+    expect(commitInput).toHaveBeenCalledTimes(1);
   });
 
   it("leaves an ordinary chat's agent and empty state alone", async () => {

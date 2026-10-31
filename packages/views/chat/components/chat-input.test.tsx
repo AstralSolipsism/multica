@@ -112,6 +112,7 @@ vi.mock("../../editor", async () => ({
     } = props;
     editorProps.last = props as unknown as Record<string, unknown>;
     const valueRef = useRef<string>(value ?? defaultValue ?? "");
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const uploadingRef = useRef(0);
     useEffect(() => {
       if (value !== undefined) valueRef.current = value;
@@ -122,6 +123,7 @@ vi.mock("../../editor", async () => ({
       clearContent: () => {
         editorState.cleared += 1;
         valueRef.current = "";
+        if (textareaRef.current) textareaRef.current.value = "";
       },
       blur: () => {
         editorState.blurred += 1;
@@ -180,6 +182,7 @@ vi.mock("../../editor", async () => ({
     }));
     return (
       <textarea
+        ref={textareaRef}
         data-testid="editor"
         defaultValue={value ?? defaultValue}
         placeholder={placeholder}
@@ -1718,9 +1721,11 @@ describe("chat send identity", () => {
     await submitInput();
     const edited = onSend.mock.calls[2]![4];
     expect(edited.clientMessageId).not.toBe(first.clientMessageId);
-    fireEvent.change(editor, { target: { value: "" } });
+    // Paste the same text in one update: an intermediate empty update would
+    // retire the ID via the edit path and mask missing success cleanup.
     fireEvent.change(editor, { target: { value: "hello" } });
     await submitInput();
+    expect(onSend).toHaveBeenCalledTimes(4);
     expect(onSend.mock.calls[3]![4].clientMessageId).not.toBe(edited.clientMessageId);
   });
 
