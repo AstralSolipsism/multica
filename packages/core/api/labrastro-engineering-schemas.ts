@@ -22,8 +22,8 @@ export const BaselineDiffSchema = z.object({
 export const EngineeringConfigSchema = z.object({
   project_id: id, workspace_id: id, enabled: z.boolean().default(false),
   current_stage: z.number().int().positive().default(1), mode_summary: z.string().default(""),
-  decider_member_ids: z.array(id).default([]), agent_decisions_enabled: z.boolean().default(false),
-}).transform((v) => ({ projectId: v.project_id, workspaceId: v.workspace_id, enabled: v.enabled, currentStage: v.current_stage, modeSummary: v.mode_summary, deciderMemberIds: v.decider_member_ids, agentDecisionsEnabled: v.agent_decisions_enabled }));
+  decider_member_ids: z.array(id).default([]),
+}).transform((v) => ({ projectId: v.project_id, workspaceId: v.workspace_id, enabled: v.enabled, currentStage: v.current_stage, modeSummary: v.mode_summary, deciderMemberIds: v.decider_member_ids }));
 
 export const BaselineRevisionSchema = z.object({
   id, workspace_id: id, project_id: id, chapter: BaselineChapterSchema,
@@ -35,7 +35,7 @@ export const BaselineRevisionSchema = z.object({
   created_by_type: actor, created_by_id: id, created_by_task_id: id.nullable().default(null), created_at: z.string(),
   decided_by_type: actor.nullable().default(null), decided_by_id: id.nullable().default(null), decided_by_task_id: id.nullable().default(null),
   decided_at: z.string().nullable().default(null),
-  decision_credential: z.enum(["session", "pat", "task", "unknown"]).catch("unknown").nullable().default(null),
+  decision_credential: z.enum(["session", "pat", "agent_task", "unknown"]).catch("unknown").nullable().default(null),
 }).transform((v) => ({
   id: v.id, workspaceId: v.workspace_id, projectId: v.project_id, chapter: v.chapter, revisionNumber: v.revision_number, status: v.status,
   contentMarkdown: v.content_markdown, changeSummary: v.change_summary, baseRevisionId: v.base_revision_id, replacesRevisionId: v.replaces_revision_id,

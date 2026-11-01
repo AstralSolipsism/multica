@@ -82,7 +82,7 @@ type baselineActor struct {
 }
 
 func engineeringActor(r *http.Request) (baselineActor, error) {
-	denied := baselineError(403, "baseline_human_required")
+	denied := baselineError(403, "baseline_credential_denied")
 	identity, hasIdentity := auth.IdentityFromContext(r.Context())
 	source := r.Header.Get("X-Actor-Source")
 	if isMachineCredentialActor(r) {
@@ -97,7 +97,7 @@ func engineeringActor(r *http.Request) (baselineActor, error) {
 		if err != nil {
 			return baselineActor{}, denied
 		}
-		return baselineActor{"agent", "task", agent, task}, nil
+		return baselineActor{"agent", "agent_task", agent, task}, nil
 	}
 	if source != "" {
 		return baselineActor{}, denied
@@ -261,11 +261,10 @@ func (h *Handler) LabrastroGetEngineering(w http.ResponseWriter, r *http.Request
 }
 
 type patchEngineeringRequest struct {
-	Enabled               *bool     `json:"enabled"`
-	CurrentStage          *int32    `json:"current_stage"`
-	ModeSummary           *string   `json:"mode_summary"`
-	DeciderMemberIDs      *[]string `json:"decider_member_ids"`
-	AgentDecisionsEnabled *bool     `json:"agent_decisions_enabled"`
+	Enabled          *bool     `json:"enabled"`
+	CurrentStage     *int32    `json:"current_stage"`
+	ModeSummary      *string   `json:"mode_summary"`
+	DeciderMemberIDs *[]string `json:"decider_member_ids"`
 }
 
 func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +287,7 @@ func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Reque
 	}
 	defer s.tx.Rollback(r.Context())
 	admin := roleAllowed(s.member.Role, "owner", "admin")
-	if !s.isDecider() || !admin && (req.Enabled != nil || req.DeciderMemberIDs != nil || req.AgentDecisionsEnabled != nil) {
+	if !s.isDecider() || !admin && (req.Enabled != nil || req.DeciderMemberIDs != nil) {
 		writeEngineeringError(w, baselineError(403, "baseline_not_decider"))
 		return
 	}
@@ -301,9 +300,6 @@ func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Reque
 	}
 	if req.ModeSummary != nil {
 		config.ModeSummary = *req.ModeSummary
-	}
-	if req.AgentDecisionsEnabled != nil {
-		config.AgentDecisionsEnabled = *req.AgentDecisionsEnabled
 	}
 	if req.DeciderMemberIDs != nil {
 		config.DeciderMemberIds = []pgtype.UUID{}
@@ -325,7 +321,7 @@ func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	s.config, err = s.q.LabrastroPutEngineering(r.Context(), db.LabrastroPutEngineeringParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Enabled: config.Enabled, CurrentStage: config.CurrentStage, ModeSummary: config.ModeSummary, DeciderMemberIds: config.DeciderMemberIds, AgentDecisionsEnabled: config.AgentDecisionsEnabled, UpdatedByType: actor.kind, UpdatedByID: actor.id})
+	s.config, err = s.q.LabrastroPutEngineering(r.Context(), db.LabrastroPutEngineeringParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Enabled: config.Enabled, CurrentStage: config.CurrentStage, ModeSummary: config.ModeSummary, DeciderMemberIds: config.DeciderMemberIds, UpdatedByType: actor.kind, UpdatedByID: actor.id})
 	if err != nil {
 		writeEngineeringError(w, err)
 		return
@@ -535,10 +531,6 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer s.tx.Rollback(r.Context())
-	if actor.kind == "agent" && !s.config.AgentDecisionsEnabled {
-		writeEngineeringError(w, baselineError(403, "baseline_human_required"))
-		return
-	}
 	if actor.kind == "member" && !s.isDecider() {
 		writeEngineeringError(w, baselineError(403, "baseline_not_decider"))
 		return
@@ -596,10 +588,6 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 		}
 		if !reflect.DeepEqual(stored, diff) {
 			writeEngineeringError(w, baselineError(409, "baseline_base_stale"))
-			return
-		}
-		if req.Action == "adopt" && actor.kind == "agent" && diff.HasRuleCut() {
-			writeEngineeringError(w, baselineError(403, "baseline_rule_cut_needs_human"))
 			return
 		}
 		revisions[i] = candidate

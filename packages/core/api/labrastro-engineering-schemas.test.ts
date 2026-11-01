@@ -11,7 +11,6 @@ describe("engineering API response contracts", () => {
   it("defaults disabled flags without inventing a baseline", () => {
     const parsed = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id }, chapters: [] });
     expect(parsed.engineering.enabled).toBe(false);
-    expect(parsed.engineering.agentDecisionsEnabled).toBe(false);
     expect(parsed.engineering.currentStage).toBe(1);
     expect(parsed.chapters).toEqual([]);
   });
@@ -25,8 +24,9 @@ describe("engineering API response contracts", () => {
     expect(BaselineDiffSchema.parse({ ...diff, warnings: [{ code: "future_warning", anchor: "Rule-一" }] }).warnings[0]?.code).toBe("unknown");
   });
   it("parses decisions and historical pagination", () => {
-    const adopted = { ...revision, status: "adopted" };
+    const adopted = { ...revision, status: "adopted", decision_credential: "agent_task" };
     const parsed = BaselineDecisionSchema.parse({ chapters: [{ chapter: "domain_rules", adopted, candidate: null }], open_issues: { in_flight: [], queued: [{ id, identifier: "OL-1", title: "Next", status: "backlog_2", status_category: "unstarted", assignee_type: null, assignee_id: null }], truncated: true } });
+    expect(parsed.chapters[0]?.adopted?.decisionCredential).toBe("agent_task");
     expect(parsed.openIssues.queued[0]?.statusCategory).toBe("unstarted");
     expect(parsed.openIssues.truncated).toBe(true);
     expect(BaselineHistorySchema.parse({ revisions: [revision], has_more: true, next_before: 1 }).nextBefore).toBe(1);

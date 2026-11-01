@@ -79,7 +79,7 @@
   "credentials": {
     "session": "看板确认",
     "pat": "经个人令牌",
-    "task": "智能体代为采用",
+    "agent_task": "智能体代为采用",
     "unknown": "未知凭据"
   },
   "warnings": {
@@ -99,8 +99,6 @@
     "title": "工程设置",
     "enabledLabel": "启用工程总览",
     "enabledHint": "关闭后隐藏总览，不改变项目数据。",
-    "agentLabel": "允许智能体代为拍板",
-    "agentHint": "智能体可以以自己的身份采用或驳回候选；删减、弱化或延后必做规则仍需你确认。",
     "decidersLabel": "决定人",
     "decidersHint": "工作区 owner 和 admin 始终是决定人。未选择任何人时，由人类项目负责人拍板。"
   },

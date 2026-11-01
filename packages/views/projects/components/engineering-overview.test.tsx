@@ -98,7 +98,6 @@ beforeEach(() => {
     currentStage: 1,
     modeSummary: "",
     deciderMemberIds: [],
-    agentDecisionsEnabled: false,
   };
   chapters = [
     { chapter: "overview", adopted: null, candidate: null },
@@ -172,7 +171,7 @@ describe("EngineeringOverview deep links", () => {
   });
 
   it("keeps a historical deep-linked revision read-only", async () => {
-    histories.domain_rules = [revision(HISTORICAL, "domain_rules", 1, "OLD-RULES", "withdrawn", "2026-10-29T01:00:00Z", "session")];
+    histories.domain_rules = [revision(HISTORICAL, "domain_rules", 1, "OLD-RULES", "withdrawn", "2026-10-29T01:00:00Z", "agent_task")];
     renderOverview(`candidate=${HISTORICAL}`);
 
     expect(await screen.findByText("OLD-RULES", { selector: "p" })).toBeInTheDocument();
@@ -207,6 +206,13 @@ describe("EngineeringOverview deep links", () => {
 });
 
 describe("EngineeringOverview permissions", () => {
+  it("offers only the engineering enable switch and human decider settings", async () => {
+    renderOverview();
+    expect(await screen.findByRole("switch", { name: "Enable engineering overview" })).toBeInTheDocument();
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Decision makers" })).toBeInTheDocument();
+  });
+
   it("lets an admin enable the overview", async () => {
     const user = userEvent.setup();
     config.enabled = false;
@@ -235,7 +241,7 @@ describe("EngineeringOverview permissions", () => {
 
 describe("EngineeringOverview recent decisions", () => {
   it("shows the latest decided revisions with their outcome, credential, and time", async () => {
-    histories.domain_rules = [revision("99999999-9999-4999-8999-999999999991", "domain_rules", 2, "Earlier decision", "adopted", "2026-10-29T01:00:00Z", "session")];
+    histories.domain_rules = [revision("99999999-9999-4999-8999-999999999991", "domain_rules", 2, "Earlier decision", "adopted", "2026-10-29T01:00:00Z", "agent_task")];
     histories.architecture = [revision("99999999-9999-4999-8999-999999999992", "architecture", 4, "Latest decision summary", "rejected", "2026-10-30T01:00:00Z", "pat")];
     renderOverview();
 
@@ -248,6 +254,7 @@ describe("EngineeringOverview recent decisions", () => {
     expect(within(region).getByText("Latest decision summary")).toBeInTheDocument();
     expect(within(region).getByText("Revision 4")).toBeInTheDocument();
     expect(within(region).getByText("Rejected")).toBeInTheDocument();
+    expect(within(region).getByText("Confirmed by an agent")).toBeInTheDocument();
     expect(within(region).getByText("Confirmed with a personal token")).toBeInTheDocument();
     expect(region.querySelector('time[datetime="2026-10-30T01:00:00Z"]')).not.toBeNull();
     expect(screen.getByText("Latest decision")).toBeInTheDocument();

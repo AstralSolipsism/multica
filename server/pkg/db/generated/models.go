@@ -1671,17 +1671,16 @@ type ProjectBaselineRevision struct {
 }
 
 type ProjectEngineering struct {
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
-	ProjectID             pgtype.UUID        `json:"project_id"`
-	Enabled               bool               `json:"enabled"`
-	CurrentStage          int32              `json:"current_stage"`
-	ModeSummary           string             `json:"mode_summary"`
-	DeciderMemberIds      []pgtype.UUID      `json:"decider_member_ids"`
-	AgentDecisionsEnabled bool               `json:"agent_decisions_enabled"`
-	UpdatedByType         string             `json:"updated_by_type"`
-	UpdatedByID           pgtype.UUID        `json:"updated_by_id"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Enabled          bool               `json:"enabled"`
+	CurrentStage     int32              `json:"current_stage"`
+	ModeSummary      string             `json:"mode_summary"`
+	DeciderMemberIds []pgtype.UUID      `json:"decider_member_ids"`
+	UpdatedByType    string             `json:"updated_by_type"`
+	UpdatedByID      pgtype.UUID        `json:"updated_by_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ProjectFile struct {

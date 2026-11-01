@@ -134,7 +134,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const adoptBaseline = useAdoptProjectBaseline();
   const rejectBaseline = useRejectProjectBaseline();
   const [configError, setConfigError] = useState(false);
-  const saveConfig = async (data: { enabled?: boolean; currentStage?: number; modeSummary?: string; deciderMemberIds?: string[]; agentDecisionsEnabled?: boolean }) => {
+  const saveConfig = async (data: { enabled?: boolean; currentStage?: number; modeSummary?: string; deciderMemberIds?: string[] }) => {
     setConfigError(false);
     try {
       const result = await updateEngineering.mutateAsync({ projectId, ...data });

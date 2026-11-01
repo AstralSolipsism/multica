@@ -15,11 +15,11 @@
   },
   "chapters": { "overview": "Présentation du projet", "domain_rules": "Domaine et règles obligatoires", "architecture": "Architecture et décisions techniques", "exclusions_and_risks": "Exclusions, reports et risques" },
   "status": { "candidate": "Candidat", "adopted": "Adopté", "superseded": "Remplacé", "withdrawn": "Retiré", "rejected": "Rejeté", "unknown": "État inconnu" },
-  "credentials": { "session": "Confirmé dans le tableau de bord", "pat": "Confirmé avec un jeton personnel", "task": "Confirmé par un agent", "unknown": "Identifiant inconnu" },
+  "credentials": { "session": "Confirmé dans le tableau de bord", "pat": "Confirmé avec un jeton personnel", "agent_task": "Confirmé par un agent", "unknown": "Identifiant inconnu" },
   "warnings": { "rule_removed": "{{anchor}} supprime une règle obligatoire", "rule_shrunk": "{{anchor}} réduit fortement une règle obligatoire", "rule_deferred": "{{anchor}} reporte une règle obligatoire", "defer_missing_pool": "{{anchor}} est reporté sans tâche du pool non bloquant", "unknown": "{{anchor}} présente une alerte de règle inconnue" },
   "history": { "title": "Historique des révisions", "revision": "Révision {{number}}", "empty": "Aucune révision dans ce chapitre", "more": "Charger les révisions précédentes" },
   "settings": {
-    "title": "Paramètres d’ingénierie", "enabledLabel": "Activer la vue d’ingénierie", "enabledHint": "La désactivation masque la vue sans modifier les données du projet.", "agentLabel": "Autoriser les agents à décider", "agentHint": "Les agents peuvent adopter ou rejeter des candidats en leur nom. La suppression, l’affaiblissement ou le report d’une règle obligatoire nécessite toujours votre confirmation.", "decidersLabel": "Décideurs", "decidersHint": "Les owners et admins de l’espace de travail sont toujours inclus. Sans sélection, le responsable humain du projet est utilisé."
+    "title": "Paramètres d’ingénierie", "enabledLabel": "Activer la vue d’ingénierie", "enabledHint": "La désactivation masque la vue sans modifier les données du projet.", "decidersLabel": "Décideurs", "decidersHint": "Les owners et admins de l’espace de travail sont toujours inclus. Sans sélection, le responsable humain du projet est utilisé."
   },
   "actions": { "save": "Enregistrer", "reject": "Rejeter", "adopt": "Adopter", "enable": "Activer" },
   "disabled": { "title": "La vue d’ingénierie n’est pas activée", "description": "Le projet conserve son interface habituelle. Demandez à un owner ou admin de l’espace de travail de l’activer.", "adminDescription": "Activez Strixnova pour voir ici les étapes, décisions, progrès et la référence gérée." },
