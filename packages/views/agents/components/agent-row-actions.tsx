@@ -59,6 +59,7 @@ interface AgentRowActionsProps {
   /** Labrastro fork (OL-1030): folder move/place actions when the folder
    *  tree loaded. */
   treeActions?: AgentTreeActions;
+  parentFolderId?: string | null;
 }
 
 /**
@@ -78,6 +79,7 @@ export function AgentRowActions({
   canManage,
   duplicateHref,
   treeActions,
+  parentFolderId,
 }: AgentRowActionsProps) {
   const { t } = useT("agents");
   const { t: tCommon } = useT("common");
@@ -200,6 +202,7 @@ export function AgentRowActions({
             agent={agent}
             canManage={canManage}
             treeActions={treeActions}
+            parentFolderId={parentFolderId}
           />
           {showRestore && (
             <DropdownMenuItem onClick={handleRestore}>

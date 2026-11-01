@@ -66,10 +66,12 @@ function useFolderErrorMessage() {
 export function SkillFolderFormDialog({
   wsId,
   state,
+  onCreated,
   onClose,
 }: {
   wsId: string;
   state: SkillFolderFormState;
+  onCreated?: (parentId: string | null) => void;
   onClose: () => void;
 }) {
   const { t } = useT("skill-packages");
@@ -104,6 +106,7 @@ export function SkillFolderFormDialog({
         setError(t(($) => $.folder_form.unconfirmed));
         return;
       }
+      if (state.mode === "create") onCreated?.(state.parentId);
       onClose();
     } catch (err) {
       setError(folderError(err, t(($) => $.folder_form.failed)));
