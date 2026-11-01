@@ -118,8 +118,6 @@ export function SkillListToolbar({
   onToggleColumn,
   allRows,
   visibleCount,
-  countLabel,
-  countTitle,
   folderActions,
 }: {
   search: string;
@@ -135,10 +133,8 @@ export function SkillListToolbar({
   onToggleColumn: (key: SkillColumnKey) => void;
   /** Unfiltered rows — option lists and counts derive from the full set. */
   allRows: SkillRow[];
-  /** Rows in the current filtered flat list or expanded folder tree. */
+  /** Rows surviving search + filters — shown as "n / total" when narrowed. */
   visibleCount: number;
-  countLabel?: string;
-  countTitle?: string;
   folderActions?: ReactNode;
 }) {
   const { t } = useT("skills");
@@ -214,6 +210,11 @@ export function SkillListToolbar({
 
   return (
     <div className={PAGE_TOOLBAR}>
+      {/* Left: name search + result count. The count only appears while
+          search/filters narrow the list — in the idle state it would just
+          duplicate the total already shown in the page header. Below md the
+          search (and its count) disappear entirely, following the issues
+          header's small-screen treatment. */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -225,12 +226,12 @@ export function SkillListToolbar({
             className="h-8 w-64 pl-8 text-body"
           />
         </div>
-        {(countLabel !== undefined || hasActiveFilters || search.trim().length > 0) && (
+        {(hasActiveFilters || search.trim().length > 0) && (
           <span
-            title={countTitle ?? t(($) => $.toolbar.result_count_title)}
-            className={`shrink-0 text-caption tabular-nums text-muted-foreground ${countLabel === undefined ? "hidden md:inline" : ""}`}
+            title={t(($) => $.toolbar.result_count_title)}
+            className="hidden shrink-0 text-caption tabular-nums text-muted-foreground md:inline"
           >
-            {countLabel ?? `${visibleCount} / ${allRows.length}`}
+            {visibleCount} / {allRows.length}
           </span>
         )}
       </div>

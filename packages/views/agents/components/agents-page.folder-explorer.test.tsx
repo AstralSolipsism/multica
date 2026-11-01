@@ -426,6 +426,7 @@ beforeEach(() => {
   mocks.virtualizerCount = 0;
   mocks.virtualizerKeys = [];
   mocks.viewState.scope = "all";
+  mocks.viewState.hiddenColumns = [];
   for (const key of Object.keys(mocks.viewState.filters) as (keyof typeof mocks.viewState.filters)[]) {
     mocks.viewState.filters[key] = [];
   }
@@ -472,6 +473,24 @@ describe("AgentsPage folder hierarchy", () => {
       folderRow.compareDocumentPosition(agentRow) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    const folderCells = within(folderRow).getAllByRole("cell");
+    const agentCells = within(agentRow).getAllByRole("cell");
+    expect(folderCells).toHaveLength(agentCells.length);
+    expect(folderCells[0]!.className).toBe(agentCells[0]!.className);
+  });
+
+  it("hides folder aggregation when the status column is hidden", async () => {
+    const first = renderPage();
+    const toggle = await screen.findByRole("button", { name: "Expand Design" });
+    const directory = toggle.closest('[role="row"]') as HTMLElement;
+    expect(within(directory).getByText("Offline")).toBeTruthy();
+    first.unmount();
+
+    mocks.viewState.hiddenColumns = ["status"];
+    renderPage();
+    const hiddenToggle = await screen.findByRole("button", { name: "Expand Design" });
+    const hiddenDirectory = hiddenToggle.closest('[role="row"]') as HTMLElement;
+    expect(within(hiddenDirectory).queryByText("Offline")).toBeNull();
   });
 
   it("renders four preview avatars and responsive overflow for a seven-member squad", async () => {
@@ -627,6 +646,10 @@ describe("AgentsPage folder actions", () => {
         name: "Research 2",
         parentId: "f-design",
       }),
+    );
+    expect(await screen.findByRole("button", { name: "Collapse Design" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
     );
   });
 

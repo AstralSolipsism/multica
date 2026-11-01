@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -136,7 +137,7 @@ export function AgentListToolbar({
   members: MemberWithUser[];
   /** Rows surviving the filters — shown as "n / total" when narrowed. */
   visibleCount: number;
-  folderActions?: import("react").ReactNode;
+  folderActions?: ReactNode;
 }) {
   const { t } = useT("agents");
 

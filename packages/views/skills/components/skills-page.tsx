@@ -50,7 +50,7 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { FolderExplorerDepth } from "../../common/folder-explorer/folder-explorer-row";
+import { FolderExplorerDepth } from "../../common/folder-explorer";
 import {
   rowLinkInteractiveProps,
   useNavigation,

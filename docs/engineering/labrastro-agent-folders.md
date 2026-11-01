@@ -259,11 +259,12 @@ the page's existing presence data for its status dot. Human members never enter
 the collection.
 
 Each preview shows 24px image, emoji or fallback avatars with name titles and
-inline-flex wrappers so all rings stay circular and vertically aligned. At
-container widths >= `@2xl`, four avatars precede overflow; below that breakpoint,
-three precede recalculated overflow. Empty folders show a dashed localized badge
-and zero count. Search/filter/archived flat views, selection, placement
-permissions and detail navigation retain their non-folder-query behavior.
+inline-flex wrappers so all rings stay circular and vertically aligned. Below
+`@7xl`, previews, type labels and counts stay hidden so folder names remain readable; at
+`@7xl` and above, four avatars precede overflow. Empty folders show a dashed
+localized badge and zero count when metadata is visible. Search/filter/archived
+flat views, selection, placement permissions and detail navigation retain their
+non-folder-query behavior.
 
 Squad detail mutations invalidate `agentFolderKeys.tree(wsId)` after successful
 updates (including avatar/name and the separate leader action), member add/remove

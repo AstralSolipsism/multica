@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import {
+  FolderExplorerDepth,
   FolderExplorerRow,
   NewFolderButton,
   flattenFolderExplorerRows,
@@ -48,7 +49,6 @@ import {
   type FolderExplorerEntry,
   type FolderExplorerFolder,
 } from "../../common/folder-explorer";
-import { FolderExplorerDepth } from "../../common/folder-explorer/folder-explorer-row";
 import { useT } from "../../i18n";
 import { CollectionPageHeaderAction } from "../../layout/collection-page";
 import {

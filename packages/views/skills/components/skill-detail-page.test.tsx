@@ -197,7 +197,6 @@ describe("SkillDetailPage tabs", () => {
       ),
     ).toBe("true");
   });
-
 });
 
 describe("SkillDetailPage file mode", () => {

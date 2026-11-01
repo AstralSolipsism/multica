@@ -403,7 +403,7 @@ export function useAgentsPageFolderExplorer({
           onOpen={() => toggleFolder(folder.id)}
           expanded={expanded}
           depth={row.depth}
-          leading={<ListGridCell className="px-0" />}
+          leading={<ListGridCell className="hidden justify-center px-0 @2xl:flex" />}
           trailing={<AgentFolderTrailingCells rows={row.memberRows} isColVisible={isColVisible} />}
           icon={
             squad ? (

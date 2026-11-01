@@ -21,9 +21,8 @@ import type { AgentListRow } from "./agents-page";
  *  when the workspace folder tree loaded; absent callers keep the pre-tree
  *  flat behavior. */
 export interface AgentTreeActions {
-  /** "place" inside a squad folder in the hierarchy view (the member keeps
-   *  its squad folder and additionally gets a custom placement); "move"
-   *  everywhere else, including flat search/filter results. */
+  /** Fallback for flat rows and mixed visible batch selections. Row menus
+   *  override this to "place" for a direct squad-folder parent. */
   defaultVariant: "move" | "place";
   squadFolderIds?: ReadonlySet<string>;
   /** Open the move dialog for the given agents. */

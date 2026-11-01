@@ -1113,7 +1113,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
             render={<AppLink href={paths.skills()} />}
             nativeButton={false}
           >
-            {t(($) => $.detail.not_found.back)}
+            {t(($) => $.detail.all_skills)}
           </Button>
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">

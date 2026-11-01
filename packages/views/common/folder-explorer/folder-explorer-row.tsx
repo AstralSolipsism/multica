@@ -145,12 +145,18 @@ export function FolderExplorerRow({
           )}
           <span className="min-w-0 truncate text-body font-medium">{name}</span>
           {typeLabel && (
-            <span className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption text-muted-foreground">
+            <span className={cn(
+              "shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption text-muted-foreground",
+              preview && "hidden @7xl:inline",
+            )}>
               {typeLabel}
             </span>
           )}
-          {preview}
-          <span className="ml-auto shrink-0 pl-2 text-caption tabular-nums text-muted-foreground">
+          {preview && <span className="hidden shrink-0 @7xl:contents">{preview}</span>}
+          <span className={cn(
+            "ml-auto shrink-0 pl-2 text-caption tabular-nums text-muted-foreground",
+            preview && "hidden @7xl:inline",
+          )}>
             {countLabel}
           </span>
         </button>

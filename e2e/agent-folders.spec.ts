@@ -165,6 +165,29 @@ test("agents page folder explorer: in-place tree, presence, and placements", asy
     await expect(page.getByRole("button", { name: "Collapse Design" })).toBeVisible();
     await expect(page.locator('[role="row"]', { hasText: "Gamma" })).toHaveCount(2);
     if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/03-reload-persisted.png`, fullPage: true });
+
+    await page.setViewportSize({ width: 1366, height: 900 });
+    const designNameBox = await designRow.getByText("Design", { exact: true }).boundingBox();
+    if (!designNameBox) throw new Error("Design folder name is not visible at 1366px");
+    expect(designNameBox.width).toBeGreaterThan(40);
+    const squadNameBox = await page.getByText("Game design", { exact: true }).boundingBox();
+    if (!squadNameBox) throw new Error("Squad folder name is not visible at 1366px");
+    expect(squadNameBox.width).toBeGreaterThan(40);
+    if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/04-laptop-1366.png`, fullPage: true });
+
+    await page.setViewportSize({ width: 600, height: 900 });
+    const alphaRowForLayout = page.locator('[role="row"]', { hasText: "Alpha" });
+    const visibleCellCount = (row: typeof designRow) => row.evaluate((element) =>
+      Array.from(element.querySelectorAll<HTMLElement>('[role="cell"]'))
+        .filter((cell) => getComputedStyle(cell).display !== "none")
+        .length,
+    );
+    expect(await visibleCellCount(designRow)).toBe(await visibleCellCount(alphaRowForLayout));
+    const folderStatusBox = await designRow.getByRole("cell").filter({ hasText: "1 running" }).boundingBox();
+    const agentStatusBox = await alphaRowForLayout.getByRole("cell").filter({ hasText: "Online" }).boundingBox();
+    if (!folderStatusBox || !agentStatusBox) throw new Error("Status cells missing at 600px");
+    expect(Math.abs(folderStatusBox.x - agentStatusBox.x)).toBeLessThanOrEqual(1);
+    if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/05-narrow-600.png`, fullPage: true });
   } finally {
     if (squadId) {
       await db.query(`DELETE FROM squad_member WHERE squad_id = $1`, [squadId]);
