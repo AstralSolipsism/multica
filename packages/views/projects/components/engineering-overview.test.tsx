@@ -232,6 +232,7 @@ describe("EngineeringOverview permissions", () => {
     const toggle = await screen.findByRole("switch", { name: "Enable engineering overview" });
     expect(toggle).toBeChecked();
     expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Decision makers" })).toBeInTheDocument();
   });
   it("lets an admin enable the overview", async () => {
     const user = userEvent.setup();

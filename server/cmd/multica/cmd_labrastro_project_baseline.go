@@ -56,7 +56,7 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 		case "adopt":
 			sub.Short = "Decide explicitly named chapter versions using the current credentials"
 			sub.Long = "Adopt chapter:number versions atomically. The server checks decider permissions,\n" +
-				"the project's engineering switch, workspace credentials and concurrent changes."
+				"task credential scope and concurrent changes. Rule warnings do not block adoption."
 			sub.Flags().StringArray("revision", nil, "Chapter:number to adopt (required, repeatable for different chapters)")
 			sub.Flags().Bool("reject", false, "Reject the specified candidates instead of adopting")
 		case "export":
@@ -273,7 +273,7 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		if lookupErr != nil {
-			return baselineRequestError(cmd, client, "", lookupErr, false)
+			return baselineRequestError(lookupErr, false)
 		}
 		return baselineFailure(2, "%s", err)
 	}
@@ -282,7 +282,7 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		query := url.Values{"chapter": {mustString(cmd, "chapter")}, "diff_from": {mustString(cmd, "from")}, "diff_to": {mustString(cmd, "to")}}
 		var raw json.RawMessage
 		if err := client.GetJSON(ctx, path+"/baseline/revisions?"+query.Encode(), &raw); err != nil {
-			return baselineRequestError(cmd, client, project.ID, err, false)
+			return baselineRequestError(err, false)
 		}
 		var diff engineering.Diff
 		if json.Unmarshal(raw, &diff) != nil || !engineering.ValidChapter(diff.Chapter) {
@@ -362,7 +362,7 @@ func baselineReadState(ctx context.Context, cmd *cobra.Command, client *cli.APIC
 	var state baselineCLIState
 	err := client.GetJSON(ctx, "/api/projects/"+project+"/engineering", &state)
 	if err != nil {
-		return state, baselineRequestError(cmd, client, project, err, false)
+		return state, baselineRequestError(err, false)
 	}
 	seen := map[string]bool{}
 	for _, c := range state.Chapters {
@@ -397,7 +397,7 @@ func baselineLookupRevision(ctx context.Context, cmd *cobra.Command, client *cli
 		Revisions []json.RawMessage `json:"revisions"`
 	}
 	if err := client.GetJSON(ctx, "/api/projects/"+project+"/baseline/revisions?"+q.Encode(), &result); err != nil {
-		return nil, nil, baselineRequestError(cmd, client, project, err, false)
+		return nil, nil, baselineRequestError(err, false)
 	}
 	if len(result.Revisions) == 1 {
 		raw := result.Revisions[0]
@@ -449,7 +449,7 @@ func baselinePropose(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	if source := mustString(cmd, "source-issue"); source != "" {
 		ref, err := resolveIssueRef(ctx, client, source)
 		if err != nil {
-			return baselineRequestError(cmd, client, project, err, false)
+			return baselineRequestError(err, false)
 		}
 		body["source_issue_id"] = ref.ID
 	}
@@ -464,7 +464,7 @@ func baselinePropose(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 				}
 			}
 		}
-		return baselineRequestError(cmd, client, project, err, true)
+		return baselineRequestError(err, true)
 	}
 	r, err := baselineDecodeRevision(raw)
 	if err != nil {
@@ -479,6 +479,11 @@ func baselinePropose(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%s: revision %d (%s)\n", r.Chapter, r.Number, r.Status)
 	baselinePrintDiff(cmd, r.Diff, true)
+	if link := baselineApprovalURL(cmd, client, project, r.ID); link != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Review candidate in the engineering overview: %s\n", link)
+	} else {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Review candidate in the project's engineering overview on the dashboard (approval link unavailable).")
+	}
 	return nil
 }
 
@@ -501,7 +506,7 @@ func baselineAdopt(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	}
 	var raw json.RawMessage
 	if err := client.PostJSON(ctx, "/api/projects/"+project+"/baseline/decisions", map[string]any{"action": action, "revisions": revisions}, &raw); err != nil {
-		return baselineRequestError(cmd, client, project, err, true, selected[0].ID)
+		return baselineRequestError(err, true)
 	}
 	var result struct {
 		Chapters []baselineCLIChapter `json:"chapters"`
@@ -540,7 +545,7 @@ func baselineAdopt(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	return nil
 }
 
-func baselineCandidateURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
+func baselineApprovalURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
 	ctx, cancel := cli.APIContext(cmd.Context())
 	defer cancel()
 	origin := tryResolveAppURL(cmd)
@@ -582,16 +587,10 @@ func baselineCandidateURL(cmd *cobra.Command, client *cli.APIClient, project str
 	return link
 }
 
-func baselineRequestError(cmd *cobra.Command, client *cli.APIClient, project string, err error, writing bool, candidateIDs ...string) error {
+func baselineRequestError(err error, writing bool) error {
 	var e *cli.HTTPError
 	if errors.As(err, &e) {
 		code := cli.ServerErrorCode(err)
-		if e.StatusCode == 403 && code == "baseline_not_decider" {
-			if link := baselineCandidateURL(cmd, client, project, candidateIDs...); link != "" {
-				return baselineFailure(1, "%s: decision permission denied; view the candidate in the engineering overview: %s", code, link)
-			}
-			return baselineFailure(1, "%s: decision permission denied; view the candidate in the project's engineering overview on the dashboard (candidate link unavailable)", code)
-		}
 		if e.StatusCode == 401 {
 			// Preserve the task-token stop instruction, even with ambient debug
 			// enabled, without retaining a response body in the error chain.

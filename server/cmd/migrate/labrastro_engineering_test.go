@@ -99,10 +99,19 @@ jsonb_agg(decision_credential ORDER BY revision_number)::text FROM project_basel
 		if after != before || credentials != want || !enabled || hasToggle != (direction == "down") {
 			t.Fatalf("%s lost audit/configuration: credentials=%s toggle=%v enabled=%v unchanged=%v", direction, credentials, hasToggle, enabled, after == before)
 		}
-	}
-	// The new CHECK permits only the public audit vocabulary.
-	if _, err := pool.Exec(ctx, `UPDATE project_baseline_revision SET decision_credential='task' WHERE revision_number=3`); err == nil {
-		t.Fatal("legacy audit value accepted after upgrade")
+		invalidCredential := "task"
+		if direction == "down" {
+			invalidCredential = "agent_task"
+			var restored bool
+			if err := pool.QueryRow(ctx, `SELECT agent_decisions_enabled FROM project_engineering`).Scan(&restored); err != nil || restored {
+				t.Fatalf("restored switch must default to false: %v, %v", restored, err)
+			}
+		}
+		for _, invalid := range []string{invalidCredential, "future"} {
+			if _, err := pool.Exec(ctx, `UPDATE project_baseline_revision SET decision_credential=$1 WHERE revision_number=3`, invalid); err == nil {
+				t.Fatalf("%s CHECK accepted invalid credential %s", direction, invalid)
+			}
+		}
 	}
 	versions = append(versions, upgrade)
 	reversed := slices.Clone(versions)

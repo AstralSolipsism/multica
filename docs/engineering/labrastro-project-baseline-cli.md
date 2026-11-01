@@ -1,9 +1,8 @@
 # Project baseline CLI
 
-`multica project baseline` implements Strixnova contract v3.1 section 7 using
-the engineering API, with the owner-approved OL-1171 decision-policy update.
-The four chapter keys are `overview`, `domain_rules`, `architecture`, and
-`exclusions_and_risks`.
+`multica project baseline` implements Strixnova contract v3.2 section 7 using
+the engineering API. The four chapter keys are `overview`, `domain_rules`,
+`architecture`, and `exclusions_and_risks`.
 
 ```sh
 multica project baseline get <project-id>
@@ -54,13 +53,14 @@ candidate or refreshes the expected base. A concurrently replaced candidate or
 changed base is rejected by the server. `--reject` uses the same selection and
 atomic decision endpoint with `action=reject`.
 
-Authorization remains with the server. The project must be enabled. Members
-must be deciders; workspace task tokens (`mat_`) may adopt or reject directly,
-including candidates with any of the four warnings. Warnings are informational,
-not permission gates. Audit fields retain `session`, `pat`, or `agent_task`.
-`baseline_not_decider` prints a permission error and the project engineering URL
-with the selected candidate. Cloud/unknown credentials remain denied.
-The URL uses `MULTICA_APP_URL`,
+Authorization remains with the server. Members must be deciders; tasks bound to
+the workspace can adopt or reject candidates, including those with rule warnings.
+`baseline_not_decider` and `baseline_credential_denied` exit 1 without looking up
+an approval link or suggesting another credential. The CLI uses its normal
+credential resolver and never switches credentials.
+
+After successful `propose` text output, stderr prints the new candidate's
+engineering URL for review. The URL uses `MULTICA_APP_URL`,
 `FRONTEND_ORIGIN`, or the selected profile's app URL, then `daemon_app_url` from
 `GET /api/config`. Known cloud deployments can fall back to their public app
 address (`https://api.multica.ai` maps to `https://multica.ai`; the fork's cloud
@@ -68,9 +68,8 @@ uses its configured cloud default). An arbitrary API address is never used as
 an app address. The workspace slug comes from `GET /api/workspaces/<workspace-id>`.
 If either the app address or slug is unavailable, the CLI instead asks the
 decider to open the project's engineering overview on the dashboard.
-The CLI uses its normal credential resolver and never switches credentials.
 
-The candidate deep link is
+The approval deep link is
 `<app-url>/<workspace-slug>/projects/<project-id>/engineering?candidate=<revision-id>`.
 The OL-92 Web/Desktop engineering view must preserve this workspace path and
 candidate through login, then display that revision's Diff without adopting it
@@ -81,8 +80,10 @@ the CLI change.
 Successful decision text prints Diff summaries followed by `open_issues` in
 the server's `in_flight`/`queued` groups, including custom statuses and a
 truncation notice. Decision JSON preserves the full server response. There is
-no approval-comment proof or candidate UUID flag: the v3.1 decision API uses
-explicit chapter versions and authenticated member/task identity checks.
+no approval-comment proof or candidate UUID flag: the v3.2 decision API uses
+explicit chapter versions and authenticated member/task checks. All four
+warning types are repeated on stderr after successful adoption, including JSON
+output; warnings do not change the successful exit code 0.
 
 `export` writes only adopted versions to `01-overview.md`, `02-domain-rules.md`,
 `03-architecture.md`, and `04-exclusions-and-risks.md`. Empty chapters have an

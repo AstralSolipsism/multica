@@ -42,8 +42,12 @@ func (f engineeringFixture) request(method, path string, body any, credential st
 	switch credential {
 	case "session":
 		return req
-	case "task":
+	case "task", "other_workspace_task":
+		identity.CredentialKind = "task"
 		identity.WorkspaceID = testWorkspaceID
+		if credential == "other_workspace_task" {
+			identity.WorkspaceID = uuid.NewString()
+		}
 		identity.AgentID = f.agent
 		identity.TaskID = f.task
 		req.Header.Set("X-Actor-Source", "task_token")
@@ -120,14 +124,18 @@ func TestLabrastroEngineeringDisabledAndRiskSeed(t *testing.T) {
 func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 	for _, tt := range []struct {
 		name, credential, action, code string
-		red                            bool
+		nonDecider, red                bool
 		status                         int
 	}{
 		{name: "session", credential: "session", action: "adopt", status: 200},
 		{name: "pat", credential: "pat", action: "adopt", status: 200},
-		{name: "task", credential: "task", action: "adopt", status: 200},
-		{name: "task rule warning", credential: "task", action: "adopt", red: true, status: 200},
-		{name: "task reject rule warning", credential: "task", action: "reject", red: true, status: 200},
+		{name: "non-decider session", credential: "session", action: "adopt", nonDecider: true, status: 403, code: "baseline_not_decider"},
+		{name: "non-decider pat", credential: "pat", action: "adopt", nonDecider: true, status: 403, code: "baseline_not_decider"},
+		{name: "task adopt", credential: "task", action: "adopt", nonDecider: true, status: 200},
+		{name: "task reject", credential: "task", action: "reject", nonDecider: true, status: 200},
+		{name: "task red card", credential: "task", action: "adopt", nonDecider: true, red: true, status: 200},
+		{name: "task reject red card", credential: "task", action: "reject", nonDecider: true, red: true, status: 200},
+		{name: "other workspace task", credential: "other_workspace_task", action: "adopt", status: 403, code: "baseline_credential_denied"},
 		{name: "cloud", credential: "cloud_pat", action: "adopt", status: 403, code: "baseline_credential_denied"},
 		{name: "unknown", credential: "future", action: "adopt", status: 403, code: "baseline_credential_denied"},
 	} {
@@ -143,7 +151,17 @@ func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 				content = ""
 			}
 			candidate := f.propose("domain_rules", content, base, nil)
-			response := testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision(tt.action, candidate), tt.credential)).Want(tt.status)
+			req := f.request("POST", "/baseline/decisions", decision(tt.action, candidate), tt.credential)
+			if tt.nonDecider {
+				member := dbfx.User(t, "Non-decider", uuid.NewString()+"@test.local")
+				dbfx.Member(t, testWorkspaceID, member, "member")
+				req.Header.Set("X-User-ID", member)
+				if identity, ok := auth.IdentityFromContext(req.Context()); ok {
+					identity.UserID = member
+					req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+				}
+			}
+			response := testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(tt.status)
 			got := f.readRevision(uuidToString(candidate.ID))
 			if tt.status != 200 {
 				wantEngineeringCode(t, response, tt.code)
@@ -157,7 +175,7 @@ func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 				wantStatus = "rejected"
 			}
 			wantCredential := tt.credential
-			if wantCredential == "task" {
+			if tt.credential == "task" {
 				wantCredential = "agent_task"
 			}
 			if got.Status != wantStatus || got.DecisionCredential.String != wantCredential {
@@ -171,6 +189,42 @@ func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 				t.Fatalf("wrong member attribution: %+v", got)
 			}
 		})
+	}
+}
+
+func TestLabrastroEngineeringTaskAdoptsAllWarningKinds(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	initial := f.propose("domain_rules", "### [Rule-1] Required\nAlways verify the complete result.\n### [Rule-2] Required too\nAlways preserve all required business behavior.", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "session")).Want(200)
+	var risk string
+	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
+	exclusions := f.propose("exclusions_and_risks", baselinePATRisk+"\n### [Defer-1] Later\nDefer Rule-1", &risk, nil)
+	cut := f.propose("domain_rules", "### [Rule-2] Required too\nVerify.", uuidToPtr(initial.ID), nil)
+	var response struct {
+		Chapters []baselineChapterResponse `json:"chapters"`
+	}
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", cut, exclusions), "task")).Want(200).JSON(&response)
+	warnings := map[string]bool{}
+	for _, chapter := range response.Chapters {
+		if chapter.Chapter != "domain_rules" && chapter.Chapter != "exclusions_and_risks" {
+			continue
+		}
+		if chapter.Candidate != nil || chapter.Adopted == nil || chapter.Adopted.DecisionCredential.String != "agent_task" {
+			t.Fatalf("task adoption missing from response: %+v", chapter)
+		}
+		var diff engineering.Diff
+		if err := json.Unmarshal(chapter.Adopted.AnchorsDiff, &diff); err != nil {
+			t.Fatal(err)
+		}
+		for _, warning := range diff.Warnings {
+			warnings[warning.Code] = true
+		}
+	}
+	for _, code := range []string{"rule_removed", "rule_shrunk", "rule_deferred", "defer_missing_pool"} {
+		if !warnings[code] {
+			t.Errorf("successful task adoption lost %s warning", code)
+		}
 	}
 }
 
@@ -195,67 +249,14 @@ func TestLabrastroEngineeringConfigurationPermissions(t *testing.T) {
 	req = f.request("POST", "/baseline/decisions", decision("adopt", candidate), "session")
 	req.Header.Set("X-User-ID", member)
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(200)
-	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "task")).Want(403)
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": true}, "task")).Want(403)
+	for _, removed := range []any{true, false, nil} {
+		wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"agent_decisions_enabled": removed}, "session")).Want(400), "invalid_request")
+	}
 	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"decider_member_ids": []string{uuid.NewString()}}, "session")).Want(422)
 	// The owner keeps decision authority even when an explicit list is present.
 	c := f.propose("architecture", "### [ADR-1] Decision\nUse PostgreSQL", nil, nil)
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", c), "pat")).Want(200)
-}
-
-func TestLabrastroEngineeringTaskWarningsRemainAdvisory(t *testing.T) {
-	f := newEngineeringFixture(t)
-	f.enable()
-	initial := f.propose("domain_rules", "### [Rule-1] Keep\n一二三四五六七八九十\n### [Rule-2] Remove\nRequired", nil, nil)
-	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "task")).Want(200)
-	var risk string
-	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
-	exclusions := f.propose("exclusions_and_risks", baselinePATRisk+"\n### [Defer-1] Later\nRule-1 deferred without a pool", &risk, nil)
-	rules := f.propose("domain_rules", "### [Rule-1] Keep\n一二三", uuidToPtr(initial.ID), nil)
-	wantWarnings := map[string][]engineering.Warning{
-		"domain_rules":         {{Code: "rule_shrunk", Anchor: "Rule-1"}, {Code: "rule_removed", Anchor: "Rule-2"}, {Code: "rule_deferred", Anchor: "Rule-1"}},
-		"exclusions_and_risks": {{Code: "defer_missing_pool", Anchor: "Defer-1"}},
-	}
-	for _, revision := range []baselineRevisionResponse{rules, exclusions} {
-		var diff engineering.Diff
-		if err := json.Unmarshal(revision.AnchorsDiff, &diff); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(diff.Warnings, wantWarnings[revision.Chapter]) || revision.Status != "candidate" || revision.DecidedByID.Valid {
-			t.Fatalf("proposal must preserve warnings without adopting: %+v, %+v", revision, diff)
-		}
-	}
-	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", rules, exclusions), "task")).Want(200)
-	for _, candidate := range []baselineRevisionResponse{rules, exclusions} {
-		got := f.readRevision(uuidToString(candidate.ID))
-		var diff engineering.Diff
-		if err := json.Unmarshal(got.AnchorsDiff, &diff); err != nil {
-			t.Fatal(err)
-		}
-		if got.Status != "adopted" || got.DecisionCredential.String != "agent_task" || got.DecidedByID != parseUUID(f.agent) || got.DecidedByTaskID != parseUUID(f.task) || !reflect.DeepEqual(diff.Warnings, wantWarnings[candidate.Chapter]) {
-			t.Fatalf("adoption lost audit or warnings: %+v", got)
-		}
-	}
-}
-
-func TestLabrastroEngineeringTaskIsolationAndCapabilitySwitch(t *testing.T) {
-	f := newEngineeringFixture(t)
-	f.enable()
-	candidate := f.propose("overview", "### [Stage-1] First", nil, nil)
-	req := f.request("POST", "/baseline/decisions", decision("adopt", candidate), "task")
-	identity, _ := auth.IdentityFromContext(req.Context())
-	identity.WorkspaceID = uuid.NewString()
-	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
-	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(403), "baseline_credential_denied")
-	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"agent_decisions_enabled": true}, "session")).Want(400)
-	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "session")).Want(200)
-	for _, credential := range []string{"session", "pat", "task"} {
-		for _, action := range []string{"adopt", "reject"} {
-			wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision(action, candidate), credential)).Want(409), "engineering_disabled")
-		}
-	}
-	if got := f.readRevision(uuidToString(candidate.ID)); got.Status != "candidate" || got.DecidedByID.Valid {
-		t.Fatal("denied decision changed the candidate")
-	}
 }
 
 func TestLabrastroEngineeringCandidateCASAtomicDecisionAndHistory(t *testing.T) {
@@ -563,5 +564,61 @@ func TestLabrastroEngineeringProposalWaitsForProjectDelete(t *testing.T) {
 		if n := dbfx.Count(t, "SELECT count(*) FROM "+table+" WHERE project_id=$1", f.project); n != 0 {
 			t.Fatalf("concurrent deletion left %s: %d", table, n)
 		}
+	}
+}
+
+func TestLabrastroEngineeringTaskWarningsRemainAdvisory(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	initial := f.propose("domain_rules", "### [Rule-1] Keep\n一二三四五六七八九十\n### [Rule-2] Remove\nRequired", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "task")).Want(200)
+	var risk string
+	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
+	exclusions := f.propose("exclusions_and_risks", baselinePATRisk+"\n### [Defer-1] Later\nRule-1 deferred without a pool", &risk, nil)
+	rules := f.propose("domain_rules", "### [Rule-1] Keep\n一二三", uuidToPtr(initial.ID), nil)
+	wantWarnings := map[string][]engineering.Warning{
+		"domain_rules":         {{Code: "rule_shrunk", Anchor: "Rule-1"}, {Code: "rule_removed", Anchor: "Rule-2"}, {Code: "rule_deferred", Anchor: "Rule-1"}},
+		"exclusions_and_risks": {{Code: "defer_missing_pool", Anchor: "Defer-1"}},
+	}
+	for _, revision := range []baselineRevisionResponse{rules, exclusions} {
+		var diff engineering.Diff
+		if err := json.Unmarshal(revision.AnchorsDiff, &diff); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(diff.Warnings, wantWarnings[revision.Chapter]) || revision.Status != "candidate" || revision.DecidedByID.Valid {
+			t.Fatalf("proposal must preserve warnings without adopting: %+v, %+v", revision, diff)
+		}
+	}
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", rules, exclusions), "task")).Want(200)
+	for _, candidate := range []baselineRevisionResponse{rules, exclusions} {
+		got := f.readRevision(uuidToString(candidate.ID))
+		var diff engineering.Diff
+		if err := json.Unmarshal(got.AnchorsDiff, &diff); err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "adopted" || got.DecisionCredential.String != "agent_task" || got.DecidedByID != parseUUID(f.agent) || got.DecidedByTaskID != parseUUID(f.task) || !reflect.DeepEqual(diff.Warnings, wantWarnings[candidate.Chapter]) {
+			t.Fatalf("adoption lost audit or warnings: %+v", got)
+		}
+	}
+}
+
+func TestLabrastroEngineeringTaskIsolationAndCapabilitySwitch(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	candidate := f.propose("overview", "### [Stage-1] First", nil, nil)
+	req := f.request("POST", "/baseline/decisions", decision("adopt", candidate), "task")
+	identity, _ := auth.IdentityFromContext(req.Context())
+	identity.WorkspaceID = uuid.NewString()
+	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(403), "baseline_credential_denied")
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"agent_decisions_enabled": true}, "session")).Want(400)
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "session")).Want(200)
+	for _, credential := range []string{"session", "pat", "task"} {
+		for _, action := range []string{"adopt", "reject"} {
+			wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision(action, candidate), credential)).Want(409), "engineering_disabled")
+		}
+	}
+	if got := f.readRevision(uuidToString(candidate.ID)); got.Status != "candidate" || got.DecidedByID.Valid {
+		t.Fatal("denied decision changed the candidate")
 	}
 }
