@@ -55,7 +55,6 @@ describe("project engineering mutations", () => {
       currentStage: 3,
       modeSummary: "Deliver the core slice",
       deciderMemberIds: ["member-1"],
-      agentDecisionsEnabled: false,
     };
 
     await act(async () => {
@@ -66,7 +65,6 @@ describe("project engineering mutations", () => {
       currentStage: 3,
       modeSummary: "Deliver the core slice",
       deciderMemberIds: ["member-1"],
-      agentDecisionsEnabled: false,
     });
     expect(qc.getQueryState(overviewKey)?.isInvalidated).toBe(true);
     expect(qc.getQueryState(decisionsKey)?.isInvalidated).toBe(true);

@@ -15,11 +15,11 @@
   },
   "chapters": { "overview": "プロジェクト概要", "domain_rules": "領域用語と必須ルール", "architecture": "アーキテクチャと技術決定", "exclusions_and_risks": "対象外・延期・リスク" },
   "status": { "candidate": "承認待ち", "adopted": "採用済み", "superseded": "新版に置換済み", "withdrawn": "撤回済み", "rejected": "却下済み", "unknown": "不明な状態" },
-  "credentials": { "session": "ダッシュボードで承認", "pat": "個人トークンで承認", "task": "エージェントが承認", "unknown": "不明な認証情報" },
+  "credentials": { "session": "ダッシュボードで承認", "pat": "個人トークンで承認", "agent_task": "エージェントが承認", "unknown": "不明な認証情報" },
   "warnings": { "rule_removed": "{{anchor}} が必須ルールを削除しています", "rule_shrunk": "{{anchor}} が必須ルールを大幅に縮小しています", "rule_deferred": "{{anchor}} が必須ルールを延期しています", "defer_missing_pool": "{{anchor}} の延期先となる非ブロッキングプールのタスクがありません", "unknown": "{{anchor}} に不明なルール警告があります" },
   "history": { "title": "改訂履歴", "revision": "第 {{number}} 版", "empty": "この章に改訂履歴はありません", "more": "以前の版を読み込む" },
   "settings": {
-    "title": "工程設定", "enabledLabel": "工程概要を有効にする", "enabledHint": "無効にしてもプロジェクトデータは変わりません。", "agentLabel": "エージェントに承認を許可", "agentHint": "エージェントは自身の身分で候補を採用・却下できます。必須ルールの削除・弱化・延期には引き続きあなたの承認が必要です。", "decidersLabel": "決定者", "decidersHint": "ワークスペースの owner と admin は常に含まれます。誰も選択しない場合は人間のプロジェクトリードを使用します。"
+    "title": "工程設定", "enabledLabel": "工程概要を有効にする", "enabledHint": "無効にしてもプロジェクトデータは変わりません。", "decidersLabel": "決定者", "decidersHint": "ワークスペースの owner と admin は常に含まれます。誰も選択しない場合は人間のプロジェクトリードを使用します。"
   },
   "actions": { "save": "保存", "reject": "却下", "adopt": "採用", "enable": "有効にする" },
   "disabled": { "title": "工程概要は有効ではありません", "description": "通常のプロジェクト画面のままです。ワークスペースの owner または admin に有効化を依頼してください。", "adminDescription": "Strixnova を有効にすると、段階・承認待ち・進捗・管理基線をここで確認できます。" },

@@ -98,7 +98,6 @@ beforeEach(() => {
     currentStage: 1,
     modeSummary: "",
     deciderMemberIds: [],
-    agentDecisionsEnabled: false,
   };
   chapters = [
     { chapter: "overview", adopted: null, candidate: null },
@@ -163,6 +162,27 @@ function renderOverview(search = "") {
 }
 
 describe("EngineeringOverview deep links", () => {
+  it("shows all warnings without blocking a decision or adopting on navigation", async () => {
+    const user = userEvent.setup();
+    const candidate = chapters.find((chapter) => chapter.chapter === "domain_rules")!.candidate!;
+    candidate.anchorsDiff.warnings = [
+      { code: "rule_removed", anchor: "Rule-1" },
+      { code: "rule_shrunk", anchor: "Rule-2" },
+      { code: "rule_deferred", anchor: "Rule-3" },
+      { code: "defer_missing_pool", anchor: "Defer-1" },
+    ];
+    renderOverview(`candidate=${RULES_CANDIDATE}`);
+    expect(await screen.findByText("Rule-1 removes a mandatory rule")).toBeInTheDocument();
+    expect(screen.getByText("Rule-2 substantially weakens a mandatory rule")).toBeInTheDocument();
+    expect(screen.getByText("Rule-3 defers a mandatory rule")).toBeInTheDocument();
+    expect(screen.getByText("Defer-1 is deferred without a non-blocking pool task")).toBeInTheDocument();
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+    const adopt = screen.getByRole("button", { name: "Adopt" });
+    expect(adopt).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    await user.click(adopt);
+    await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalledTimes(1));
+  });
   it("does not substitute the current candidate when the requested revision is missing", async () => {
     renderOverview(`candidate=${MISSING}`);
 
@@ -207,6 +227,12 @@ describe("EngineeringOverview deep links", () => {
 });
 
 describe("EngineeringOverview permissions", () => {
+  it("offers only the project capability switch", async () => {
+    renderOverview();
+    const toggle = await screen.findByRole("switch", { name: "Enable engineering overview" });
+    expect(toggle).toBeChecked();
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+  });
   it("lets an admin enable the overview", async () => {
     const user = userEvent.setup();
     config.enabled = false;
@@ -234,6 +260,11 @@ describe("EngineeringOverview permissions", () => {
 });
 
 describe("EngineeringOverview recent decisions", () => {
+  it("labels task-token decisions as confirmed by an agent", async () => {
+    histories.domain_rules = [revision(HISTORICAL, "domain_rules", 1, "Agent decision", "adopted", "2026-10-30T01:00:00Z", "agent_task")];
+    renderOverview();
+    expect(await screen.findByText("Confirmed by an agent")).toBeInTheDocument();
+  });
   it("shows the latest decided revisions with their outcome, credential, and time", async () => {
     histories.domain_rules = [revision("99999999-9999-4999-8999-999999999991", "domain_rules", 2, "Earlier decision", "adopted", "2026-10-29T01:00:00Z", "session")];
     histories.architecture = [revision("99999999-9999-4999-8999-999999999992", "architecture", 4, "Latest decision summary", "rejected", "2026-10-30T01:00:00Z", "pat")];

@@ -13,11 +13,11 @@ const labrastroEngineeringApi = {
     return parseWithFallback<z.infer<typeof EngineeringOverviewSchema> | null>(raw, EngineeringOverviewSchema, null, { endpoint });
   },
   async updateProjectEngineering(this: ApiClient, workspaceId: string, projectId: string, data: {
-    enabled?: boolean; currentStage?: number; modeSummary?: string; deciderMemberIds?: string[]; agentDecisionsEnabled?: boolean;
+    enabled?: boolean; currentStage?: number; modeSummary?: string; deciderMemberIds?: string[];
   }) {
     const endpoint = `${projectPath(projectId)}/engineering`;
     const raw = await clientFetch<unknown>(this, endpoint, { method: "PATCH", headers: headers(workspaceId), body: JSON.stringify({
-      enabled: data.enabled, current_stage: data.currentStage, mode_summary: data.modeSummary, decider_member_ids: data.deciderMemberIds, agent_decisions_enabled: data.agentDecisionsEnabled,
+      enabled: data.enabled, current_stage: data.currentStage, mode_summary: data.modeSummary, decider_member_ids: data.deciderMemberIds,
     }) });
     return parseWithFallback<z.infer<typeof EngineeringUpdatedSchema> | null>(raw, EngineeringUpdatedSchema, null, { endpoint });
   },

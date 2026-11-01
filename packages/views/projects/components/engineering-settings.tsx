@@ -11,7 +11,7 @@ interface EngineeringSettingsProps {
   config: EngineeringConfig;
   members: readonly MemberWithUser[];
   pending: boolean;
-  onChange: (data: { enabled?: boolean; deciderMemberIds?: string[]; agentDecisionsEnabled?: boolean }) => void;
+  onChange: (data: { enabled?: boolean; deciderMemberIds?: string[] }) => void;
 }
 
 export function EngineeringSettings({ config, members, pending, onChange }: EngineeringSettingsProps) {
@@ -23,12 +23,6 @@ export function EngineeringSettings({ config, members, pending, onChange }: Engi
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1"><label htmlFor="engineering-enabled" className="font-medium">{t(($) => $.settings.enabledLabel)}</label><p className="text-caption text-muted-foreground">{t(($) => $.settings.enabledHint)}</p></div>
           <Switch id="engineering-enabled" checked={config.enabled} disabled={pending} onCheckedChange={(enabled) => onChange({ enabled })} />
-        </div>
-        <div className="space-y-1">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1"><label htmlFor="engineering-agent-decisions" className="font-medium">{t(($) => $.settings.agentLabel)}</label><p className="text-caption text-muted-foreground">{t(($) => $.settings.agentHint)}</p></div>
-            <Switch id="engineering-agent-decisions" checked={config.agentDecisionsEnabled} disabled={pending} onCheckedChange={(agentDecisionsEnabled) => onChange({ agentDecisionsEnabled })} />
-          </div>
         </div>
         <fieldset className="space-y-2">
           <legend className="font-medium">{t(($) => $.settings.decidersLabel)}</legend>

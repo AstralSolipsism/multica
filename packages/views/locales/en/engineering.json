@@ -79,7 +79,7 @@
   "credentials": {
     "session": "Confirmed in the dashboard",
     "pat": "Confirmed with a personal token",
-    "task": "Confirmed by an agent",
+    "agent_task": "Confirmed by an agent",
     "unknown": "Unknown credential"
   },
   "warnings": {
@@ -99,8 +99,6 @@
     "title": "Engineering settings",
     "enabledLabel": "Enable engineering overview",
     "enabledHint": "Disabling this hides the overview without changing project data.",
-    "agentLabel": "Allow agents to decide",
-    "agentHint": "Agents can adopt or reject candidates as themselves. Removing, weakening, or deferring mandatory rules still requires your confirmation.",
     "decidersLabel": "Decision makers",
     "decidersHint": "Workspace owners and admins are always included. With nobody selected, the human project lead is used."
   },

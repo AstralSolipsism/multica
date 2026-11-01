@@ -63,6 +63,48 @@ SELECT '00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000
 		t.Fatal(err)
 	}
 	assertIndexValidity(t, pool, schema, "idx_project_engineering_identity", true)
+	// Upgrade real legacy audit rows without rewriting their content or identity.
+	if _, err := pool.Exec(ctx, `UPDATE project_engineering SET enabled=true, agent_decisions_enabled=true;
+INSERT INTO project_baseline_revision (workspace_id,project_id,chapter,revision_number,status,
+content_markdown,change_summary,anchors_diff,created_by_type,created_by_id,
+decided_by_type,decided_by_id,decided_by_task_id,decided_at,decision_credential)
+SELECT gen_random_uuid(),gen_random_uuid(),'overview',n,'adopted','Historical body','Original summary','{}',
+'agent',gen_random_uuid(),'agent',gen_random_uuid(),gen_random_uuid(),now(),credential
+FROM unnest(ARRAY['session','pat','task',NULL]) WITH ORDINALITY AS c(credential,n)`); err != nil {
+		t.Fatal(err)
+	}
+	var before string
+	if err := pool.QueryRow(ctx, `SELECT jsonb_agg(to_jsonb(r)-'decision_credential' ORDER BY revision_number)::text FROM project_baseline_revision r`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := "9046_labrastro_engineering_decisions"
+	for _, direction := range []string{"up", "down", "up"} {
+		opts.Direction, opts.Files, opts.Hooks = direction, realMigrationFiles(t, []string{upgrade}, direction), hooksForDirection(direction)
+		if err := runMigrations(ctx, pool, opts); err != nil {
+			t.Fatal(err)
+		}
+		var after, credentials string
+		var hasToggle, enabled bool
+		if err := pool.QueryRow(ctx, `SELECT jsonb_agg(to_jsonb(r)-'decision_credential' ORDER BY revision_number)::text,
+jsonb_agg(decision_credential ORDER BY revision_number)::text FROM project_baseline_revision r`).Scan(&after, &credentials); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT to_jsonb(e) ? 'agent_decisions_enabled',enabled FROM project_engineering e`).Scan(&hasToggle, &enabled); err != nil {
+			t.Fatal(err)
+		}
+		want := `["session", "pat", "agent_task", null]`
+		if direction == "down" {
+			want = `["session", "pat", "task", null]`
+		}
+		if after != before || credentials != want || !enabled || hasToggle != (direction == "down") {
+			t.Fatalf("%s lost audit/configuration: credentials=%s toggle=%v enabled=%v unchanged=%v", direction, credentials, hasToggle, enabled, after == before)
+		}
+	}
+	// The new CHECK permits only the public audit vocabulary.
+	if _, err := pool.Exec(ctx, `UPDATE project_baseline_revision SET decision_credential='task' WHERE revision_number=3`); err == nil {
+		t.Fatal("legacy audit value accepted after upgrade")
+	}
+	versions = append(versions, upgrade)
 	reversed := slices.Clone(versions)
 	slices.Reverse(reversed)
 	opts.Direction, opts.Files, opts.Hooks = "down", realMigrationFiles(t, reversed, "down"), hooksForDirection("down")

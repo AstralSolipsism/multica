@@ -15,11 +15,11 @@
   },
   "chapters": { "overview": "프로젝트 개요", "domain_rules": "도메인 용어와 필수 규칙", "architecture": "아키텍처와 기술 결정", "exclusions_and_risks": "제외 사항·연기·위험" },
   "status": { "candidate": "승인 대기", "adopted": "채택됨", "superseded": "새 버전으로 대첨됨", "withdrawn": "철회됨", "rejected": "거절됨", "unknown": "알 수 없는 상태" },
-  "credentials": { "session": "대시보드에서 확인", "pat": "개인 토큰으로 확인", "task": "에이전트가 확인", "unknown": "알 수 없는 자격 증명" },
+  "credentials": { "session": "대시보드에서 확인", "pat": "개인 토큰으로 확인", "agent_task": "에이전트가 확인", "unknown": "알 수 없는 자격 증명" },
   "warnings": { "rule_removed": "{{anchor}}이 필수 규칙을 삭제합니다", "rule_shrunk": "{{anchor}}이 필수 규칙을 크게 축소합니다", "rule_deferred": "{{anchor}}이 필수 규칙을 연기합니다", "defer_missing_pool": "{{anchor}}의 연기에 비차단 최적화 풀 태스크가 없습니다", "unknown": "{{anchor}}에 알 수 없는 규칙 경고가 있습니다" },
   "history": { "title": "버전 기록", "revision": "제 {{number}}판", "empty": "이 장에는 버전 기록이 없습니다", "more": "이전 버전 불러오기" },
   "settings": {
-    "title": "엔지니어링 설정", "enabledLabel": "엔지니어링 개요 사용", "enabledHint": "이 옵션을 꺼도 프로젝트 데이터는 변경되지 않습니다.", "agentLabel": "에이전트의 결정 허용", "agentHint": "에이전트가 자신의 신원으로 후보를 채택하거나 거절할 수 있습니다. 필수 규칙의 삭제·축소·연기는 계속 사용자 확인이 필요합니다.", "decidersLabel": "결정자", "decidersHint": "워크스페이스 owner와 admin은 항상 포함됩니다. 선택한 사람이 없으면 사람 프로젝트 리드가 결정합니다."
+    "title": "엔지니어링 설정", "enabledLabel": "엔지니어링 개요 사용", "enabledHint": "이 옵션을 꺼도 프로젝트 데이터는 변경되지 않습니다.", "decidersLabel": "결정자", "decidersHint": "워크스페이스 owner와 admin은 항상 포함됩니다. 선택한 사람이 없으면 사람 프로젝트 리드가 결정합니다."
   },
   "actions": { "save": "저장", "reject": "거절", "adopt": "채택", "enable": "사용" },
   "disabled": { "title": "엔지니어링 개요가 활성화되지 않았습니다", "description": "프로젝트는 기존 화면을 유지합니다. 워크스페이스 owner 또는 admin에게 활성화를 요청하세요.", "adminDescription": "Strixnova를 활성화하면 단계·결정 대기·진행·관리 기준선을 여기에서 볼 수 있습니다." },

@@ -52,9 +52,9 @@ func (f engineeringFixture) request(method, path string, body any, credential st
 	}
 	return req.WithContext(auth.WithIdentity(req.Context(), identity))
 }
-func (f engineeringFixture) enable(agent bool) {
+func (f engineeringFixture) enable() {
 	f.t.Helper()
-	testutil.Call(f.t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": true, "agent_decisions_enabled": agent}, "session")).Want(200)
+	testutil.Call(f.t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": true}, "session")).Want(200)
 }
 func (f engineeringFixture) propose(chapter, content string, base, replaces *string) baselineRevisionResponse {
 	f.t.Helper()
@@ -95,7 +95,7 @@ func TestLabrastroEngineeringDisabledAndRiskSeed(t *testing.T) {
 		Chapters    []baselineChapterResponse `json:"chapters"`
 	}
 	testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(200).JSON(&out)
-	if out.Engineering.Enabled || out.Engineering.AgentDecisionsEnabled || out.Engineering.CurrentStage != 1 || len(out.Chapters) != 4 {
+	if out.Engineering.Enabled || out.Engineering.CurrentStage != 1 || len(out.Chapters) != 4 {
 		t.Fatalf("defaults=%+v", out)
 	}
 	for _, c := range out.Chapters {
@@ -104,14 +104,14 @@ func TestLabrastroEngineeringDisabledAndRiskSeed(t *testing.T) {
 		}
 	}
 	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", map[string]any{"chapter": "overview", "content_markdown": "hi"}, "session")).Want(409), "engineering_disabled")
-	f.enable(false)
+	f.enable()
 	testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(200).JSON(&out)
 	risk := out.Chapters[3].Adopted
 	if risk == nil || risk.ContentMarkdown != baselinePATRisk || risk.DecisionCredential.String != "session" || risk.DecidedByID != parseUUID(testUserID) {
 		t.Fatalf("risk=%+v", risk)
 	}
 	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "pat")).Want(200)
-	f.enable(false)
+	f.enable()
 	if n := dbfx.Count(t, `SELECT count(*) FROM project_baseline_revision WHERE project_id=$1`, f.project); n != 1 {
 		t.Fatalf("risk reseeded: %d", n)
 	}
@@ -120,21 +120,20 @@ func TestLabrastroEngineeringDisabledAndRiskSeed(t *testing.T) {
 func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 	for _, tt := range []struct {
 		name, credential, action, code string
-		delegated, red                 bool
+		red                            bool
 		status                         int
 	}{
 		{name: "session", credential: "session", action: "adopt", status: 200},
 		{name: "pat", credential: "pat", action: "adopt", status: 200},
-		{name: "task disabled", credential: "task", action: "adopt", status: 403, code: "baseline_human_required"},
-		{name: "task delegated", credential: "task", action: "adopt", delegated: true, status: 200},
-		{name: "task red card", credential: "task", action: "adopt", delegated: true, red: true, status: 403, code: "baseline_rule_cut_needs_human"},
-		{name: "task reject red card", credential: "task", action: "reject", delegated: true, red: true, status: 200},
-		{name: "cloud", credential: "cloud_pat", action: "adopt", delegated: true, status: 403, code: "baseline_human_required"},
-		{name: "unknown", credential: "future", action: "adopt", delegated: true, status: 403, code: "baseline_human_required"},
+		{name: "task", credential: "task", action: "adopt", status: 200},
+		{name: "task rule warning", credential: "task", action: "adopt", red: true, status: 200},
+		{name: "task reject rule warning", credential: "task", action: "reject", red: true, status: 200},
+		{name: "cloud", credential: "cloud_pat", action: "adopt", status: 403, code: "baseline_credential_denied"},
+		{name: "unknown", credential: "future", action: "adopt", status: 403, code: "baseline_credential_denied"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newEngineeringFixture(t)
-			f.enable(tt.delegated)
+			f.enable()
 			var base *string
 			content := "### [Rule-1] Rule\nMust always verify the full result."
 			if tt.red {
@@ -157,7 +156,11 @@ func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 			if tt.action == "reject" {
 				wantStatus = "rejected"
 			}
-			if got.Status != wantStatus || got.DecisionCredential.String != tt.credential {
+			wantCredential := tt.credential
+			if wantCredential == "task" {
+				wantCredential = "agent_task"
+			}
+			if got.Status != wantStatus || got.DecisionCredential.String != wantCredential {
 				t.Fatalf("audit=%+v", got)
 			}
 			if tt.credential == "task" {
@@ -173,7 +176,7 @@ func TestLabrastroEngineeringDecisionCredentialMatrix(t *testing.T) {
 
 func TestLabrastroEngineeringConfigurationPermissions(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	member := dbfx.User(t, "Decider", uuid.NewString()+"@test.local")
 	dbfx.Member(t, testWorkspaceID, member, "member")
 	candidate := f.propose("overview", "### [Stage-1] First\nStart", nil, nil)
@@ -181,7 +184,7 @@ func TestLabrastroEngineeringConfigurationPermissions(t *testing.T) {
 	req.Header.Set("X-User-ID", member)
 	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(403), "baseline_not_decider")
 	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"decider_member_ids": []string{member}}, "session")).Want(200)
-	for _, body := range []map[string]any{{"enabled": false}, {"agent_decisions_enabled": true}, {"decider_member_ids": []string{}}} {
+	for _, body := range []map[string]any{{"enabled": false}, {"decider_member_ids": []string{}}} {
 		req := f.request("PATCH", "/engineering", body, "session")
 		req.Header.Set("X-User-ID", member)
 		testutil.Call(t, testHandler.LabrastroPatchEngineering, req).Want(403)
@@ -192,16 +195,72 @@ func TestLabrastroEngineeringConfigurationPermissions(t *testing.T) {
 	req = f.request("POST", "/baseline/decisions", decision("adopt", candidate), "session")
 	req.Header.Set("X-User-ID", member)
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(200)
-	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"agent_decisions_enabled": true}, "task")).Want(403)
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "task")).Want(403)
 	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"decider_member_ids": []string{uuid.NewString()}}, "session")).Want(422)
 	// The owner keeps decision authority even when an explicit list is present.
 	c := f.propose("architecture", "### [ADR-1] Decision\nUse PostgreSQL", nil, nil)
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", c), "pat")).Want(200)
 }
 
+func TestLabrastroEngineeringTaskWarningsRemainAdvisory(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	initial := f.propose("domain_rules", "### [Rule-1] Keep\n一二三四五六七八九十\n### [Rule-2] Remove\nRequired", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "task")).Want(200)
+	var risk string
+	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
+	exclusions := f.propose("exclusions_and_risks", baselinePATRisk+"\n### [Defer-1] Later\nRule-1 deferred without a pool", &risk, nil)
+	rules := f.propose("domain_rules", "### [Rule-1] Keep\n一二三", uuidToPtr(initial.ID), nil)
+	wantWarnings := map[string][]engineering.Warning{
+		"domain_rules":         {{Code: "rule_shrunk", Anchor: "Rule-1"}, {Code: "rule_removed", Anchor: "Rule-2"}, {Code: "rule_deferred", Anchor: "Rule-1"}},
+		"exclusions_and_risks": {{Code: "defer_missing_pool", Anchor: "Defer-1"}},
+	}
+	for _, revision := range []baselineRevisionResponse{rules, exclusions} {
+		var diff engineering.Diff
+		if err := json.Unmarshal(revision.AnchorsDiff, &diff); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(diff.Warnings, wantWarnings[revision.Chapter]) || revision.Status != "candidate" || revision.DecidedByID.Valid {
+			t.Fatalf("proposal must preserve warnings without adopting: %+v, %+v", revision, diff)
+		}
+	}
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", rules, exclusions), "task")).Want(200)
+	for _, candidate := range []baselineRevisionResponse{rules, exclusions} {
+		got := f.readRevision(uuidToString(candidate.ID))
+		var diff engineering.Diff
+		if err := json.Unmarshal(got.AnchorsDiff, &diff); err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "adopted" || got.DecisionCredential.String != "agent_task" || got.DecidedByID != parseUUID(f.agent) || got.DecidedByTaskID != parseUUID(f.task) || !reflect.DeepEqual(diff.Warnings, wantWarnings[candidate.Chapter]) {
+			t.Fatalf("adoption lost audit or warnings: %+v", got)
+		}
+	}
+}
+
+func TestLabrastroEngineeringTaskIsolationAndCapabilitySwitch(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	candidate := f.propose("overview", "### [Stage-1] First", nil, nil)
+	req := f.request("POST", "/baseline/decisions", decision("adopt", candidate), "task")
+	identity, _ := auth.IdentityFromContext(req.Context())
+	identity.WorkspaceID = uuid.NewString()
+	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, req).Want(403), "baseline_credential_denied")
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"agent_decisions_enabled": true}, "session")).Want(400)
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"enabled": false}, "session")).Want(200)
+	for _, credential := range []string{"session", "pat", "task"} {
+		for _, action := range []string{"adopt", "reject"} {
+			wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision(action, candidate), credential)).Want(409), "engineering_disabled")
+		}
+	}
+	if got := f.readRevision(uuidToString(candidate.ID)); got.Status != "candidate" || got.DecidedByID.Valid {
+		t.Fatal("denied decision changed the candidate")
+	}
+}
+
 func TestLabrastroEngineeringCandidateCASAtomicDecisionAndHistory(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	first := f.propose("overview", "### [Stage-1] First\nOne", nil, nil)
 	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", map[string]any{"chapter": "overview", "content_markdown": "Changed"}, "session")).Want(409), "baseline_candidate_open")
 	second := f.propose("overview", "### [Stage-1] First\nTwo", nil, uuidToPtr(first.ID))
@@ -243,7 +302,7 @@ func TestLabrastroEngineeringCandidateCASAtomicDecisionAndHistory(t *testing.T) 
 
 func TestLabrastroEngineeringConcurrentProposals(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	var wg sync.WaitGroup
 	results := make(chan int, 2)
 	for i := 0; i < 2; i++ {
@@ -271,14 +330,14 @@ func TestLabrastroEngineeringConcurrentProposals(t *testing.T) {
 
 func TestLabrastroEngineeringDiffRecheckedAcrossChapters(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(true)
+	f.enable()
 	initial := f.propose("domain_rules", "### [Rule-1] Required\nAlways verify", nil, nil)
-	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "session")).Want(200)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", initial), "task")).Want(200)
 	cut := f.propose("domain_rules", "", uuidToPtr(initial.ID), nil)
 	var risk string
 	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
 	f.propose("exclusions_and_risks", baselinePATRisk+"\n### [Defer-1] Later\nRule-1 goes to OL-1", &risk, nil)
-	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", cut), "session")).Want(409), "baseline_base_stale")
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", cut), "task")).Want(409), "baseline_base_stale")
 	if f.readRevision(uuidToString(cut.ID)).Status != "candidate" {
 		t.Fatal("changed diff was adopted")
 	}
@@ -294,7 +353,7 @@ func TestLabrastroEngineeringDiffRecheckedAcrossChapters(t *testing.T) {
 
 func TestLabrastroEngineeringDeferUsesCurrentWorkspacePrefix(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	var prefix, risk string
 	dbfx.QueryRow(t, `SELECT issue_prefix FROM workspace WHERE id=$1`, testWorkspaceID).Scan(&prefix)
 	dbfx.QueryRow(t, `SELECT adopted_revision_id::text FROM project_baseline_doc WHERE project_id=$1 AND chapter='exclusions_and_risks'`, f.project).Scan(&risk)
@@ -337,7 +396,7 @@ func TestLabrastroEngineeringDeferUsesCurrentWorkspacePrefix(t *testing.T) {
 
 func TestLabrastroEngineeringOpenIssuesAndIsolation(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	dbfx.Insert(t, "issue_status", testutil.Cols{"workspace_id": testWorkspaceID, "key": "eng_discussion", "name": "Discuss", "category": "unstarted", "color": "#888888", "position": 99, "is_system": false})
 	dbfx.Issue(t, "custom queued", testutil.Cols{"project_id": f.project, "status": "eng_discussion"})
 	dbfx.Issue(t, "started", testutil.Cols{"project_id": f.project, "status": "in_review", "assignee_type": "agent", "assignee_id": f.agent})
@@ -359,8 +418,8 @@ func TestLabrastroEngineeringOpenIssuesAndIsolation(t *testing.T) {
 
 func TestLabrastroEngineeringDeleteProjectCleansOnlyItsRows(t *testing.T) {
 	a, b := newEngineeringFixture(t), newEngineeringFixture(t)
-	a.enable(false)
-	b.enable(false)
+	a.enable()
+	b.enable()
 	a.propose("overview", "### [Stage-1] First", nil, nil)
 	testutil.Call(t, testHandler.DeleteProject, a.request("DELETE", "", nil, "session")).Want(204)
 	for _, table := range []string{"project_engineering", "project_baseline_doc", "project_baseline_revision"} {
@@ -375,7 +434,7 @@ func TestLabrastroEngineeringDeleteProjectCleansOnlyItsRows(t *testing.T) {
 
 func TestLabrastroEngineeringRejectsInvalidInputAndAuditFields(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	for _, body := range []any{
 		map[string]any{"chapter": "overview", "content_markdown": "### [Rule-1] Wrong chapter"},
 		map[string]any{"chapter": "overview", "content_markdown": strings.Repeat("x", 65537)},
@@ -387,7 +446,7 @@ func TestLabrastroEngineeringRejectsInvalidInputAndAuditFields(t *testing.T) {
 
 func TestLabrastroEngineeringWorkspaceDeleteAndOpenListBound(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	for i := 0; i < 201; i++ {
 		dbfx.Issue(t, "Queued", testutil.Cols{"project_id": f.project})
 	}
@@ -427,7 +486,7 @@ func TestLabrastroEngineeringWorkspaceDeleteAndOpenListBound(t *testing.T) {
 
 func TestLabrastroEngineeringDefaultLeadAndConcurrentDecision(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	lead := dbfx.User(t, "Lead", uuid.NewString()+"@test.local")
 	dbfx.Member(t, testWorkspaceID, lead, "member")
 	dbfx.Exec(t, `UPDATE project SET lead_type='member',lead_id=$2 WHERE id=$1`, f.project, lead)
@@ -461,7 +520,7 @@ func TestLabrastroEngineeringDefaultLeadAndConcurrentDecision(t *testing.T) {
 
 func TestLabrastroEngineeringProposalWaitsForProjectDelete(t *testing.T) {
 	f := newEngineeringFixture(t)
-	f.enable(false)
+	f.enable()
 	ctx := context.Background()
 	tx, err := testPool.Begin(ctx)
 	if err != nil {

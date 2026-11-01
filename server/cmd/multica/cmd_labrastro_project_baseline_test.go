@@ -41,7 +41,7 @@ func baselineTestRevision(chapter string, n int, status string) map[string]any {
 	return map[string]any{
 		"id": id, "chapter": chapter, "revision_number": n, "status": status, "base_revision_id": base,
 		"content_markdown": "### [Rule-中文] 保留规则\nMUST keep body\n", "change_summary": "中文摘要", "decided_at": "2026-10-30T00:00:00Z",
-		"decision_credential": "task", "future_audit_field": "preserved",
+		"decision_credential": "agent_task", "future_audit_field": "preserved",
 		"anchors_diff": map[string]any{"chapter": chapter, "base_revision_number": 1, "added": []any{}, "modified": []any{},
 			"removed": []any{map[string]any{"anchor": "Rule-中文", "title": "保留规则", "before": "MUST keep body"}}, "unchanged_count": 0,
 			"warnings": []any{map[string]any{"code": "rule_removed", "anchor": "Rule-中文"}, map[string]any{"code": "rule_shrunk", "anchor": "Rule-2"}, map[string]any{"code": "rule_deferred", "anchor": "Rule-3"}, map[string]any{"code": "defer_missing_pool", "anchor": "Defer-4"}}},
@@ -282,7 +282,7 @@ func TestLabrastroBaselineProposeCAS(t *testing.T) {
 					t.Error("proposal response lost fields")
 				}
 				if !strings.Contains(stderr, "[RULE DOWNGRADE WARNING]") {
-					t.Error("proposal red card absent")
+					t.Error("proposal warning absent")
 				}
 			} else if out != "" {
 				t.Error("failure polluted stdout")
@@ -292,7 +292,7 @@ func TestLabrastroBaselineProposeCAS(t *testing.T) {
 }
 
 func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
-	for _, mode := range []string{"adopt", "reject", "multi", "closed", "stale", "human", "rule cut", "forbidden", "invalid", "server failure", "missing"} {
+	for _, mode := range []string{"adopt", "reject", "multi", "closed", "stale", "credential denied", "forbidden", "invalid", "server failure", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("MULTICA_AGENT_ID", baselineTestIssue)
 			t.Setenv("MULTICA_TASK_ID", baselineTestCandidate)
@@ -352,10 +352,8 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 					status, code = 409, "baseline_candidate_closed"
 				case "stale":
 					status, code = 409, "baseline_base_stale"
-				case "human":
-					status, code = 403, "baseline_human_required"
-				case "rule cut":
-					status, code = 403, "baseline_rule_cut_needs_human"
+				case "credential denied":
+					status, code = 403, "baseline_credential_denied"
 				case "forbidden":
 					status, code = 403, "baseline_not_decider"
 				case "invalid":
@@ -401,13 +399,16 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 				}
 			}
 			if mode == "adopt" || mode == "reject" {
+				if strings.Count(stderr, "[RULE DOWNGRADE WARNING]") != 3 || !strings.Contains(stderr, "[BASELINE WARNING] domain_rules [Defer-4] defer_missing_pool") {
+					t.Fatalf("successful task decision lost warnings: %s", stderr)
+				}
 				if !strings.Contains(out, "OL-93") || !strings.Contains(out, "OL-94") || strings.Index(out, "base 1") > strings.Index(out, "Open issues:") || !strings.Contains(stderr, "truncated") {
 					t.Errorf("missing ordered Diff/issues/truncation: %s %s", out, stderr)
 				}
 			}
-			if mode == "human" || mode == "rule cut" {
+			if mode == "forbidden" {
 				link := "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
-				if !strings.Contains(stderr, link) || !strings.Contains(stderr, "human decider") || strings.Contains(stderr, "PAT") {
+				if !strings.Contains(stderr, link) || !strings.Contains(stderr, "decision permission denied") || strings.Contains(stderr, "PAT") {
 					t.Errorf("incorrect refusal guidance: %s", stderr)
 				}
 			}
@@ -468,7 +469,7 @@ type baselineRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f baselineRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestLabrastroBaselineApprovalURL(t *testing.T) {
+func TestLabrastroBaselineCandidateURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, appEnv, frontendEnv, profileApp, advertised, apiURL, wantOrigin string
 		configStatus, workspaceStatus                                         int
@@ -531,21 +532,21 @@ func TestLabrastroBaselineApprovalURL(t *testing.T) {
 					return srv.Client().Transport.RoundTrip(clone)
 				})
 			}
-			err := baselineRequestError(cmd, client, baselineTestProject, &cli.HTTPError{StatusCode: 403, Body: `{"code":"baseline_human_required"}`}, true, baselineTestCandidate)
+			err := baselineRequestError(cmd, client, baselineTestProject, &cli.HTTPError{StatusCode: 403, Body: `{"code":"baseline_not_decider"}`}, true, baselineTestCandidate)
 			if err.(*baselineCLIError).code != 1 || strings.Contains(err.Error(), "SECRET_METADATA") {
 				t.Fatalf("metadata lookup changed refusal semantics: %v", err)
 			}
 			if tc.wantOrigin != "" {
 				want := tc.wantOrigin + "/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
 				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("approval URL missing: want %s; got %v", want, err)
+					t.Fatalf("candidate URL missing: want %s; got %v", want, err)
 				}
-			} else if !strings.Contains(err.Error(), "engineering overview on the dashboard (approval link unavailable)") || strings.Contains(err.Error(), "http") {
+			} else if !strings.Contains(err.Error(), "engineering overview on the dashboard (candidate link unavailable)") || strings.Contains(err.Error(), "http") {
 				t.Fatalf("expected manual dashboard guidance without a guessed URL: %v", err)
 			}
 			for _, c := range calls() {
 				if c.Method != "GET" {
-					t.Error("approval lookup must not retry a decision")
+					t.Error("candidate lookup must not retry a decision")
 				}
 			}
 		})
@@ -691,7 +692,7 @@ func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
 		}
 		if strings.HasSuffix(r.URL.Path, "/decisions") {
 			w.WriteHeader(403)
-			json.NewEncoder(w).Encode(map[string]any{"code": "baseline_rule_cut_needs_human", "error": "SECRET_BASELINE_CONTENT"})
+			json.NewEncoder(w).Encode(map[string]any{"code": "baseline_not_decider", "error": "SECRET_BASELINE_CONTENT"})
 			return
 		}
 		json.NewEncoder(w).Encode(baselineTestState(baselineTestRevision("domain_rules", 1, "adopted"), nil))

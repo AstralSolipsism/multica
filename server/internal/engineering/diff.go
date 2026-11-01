@@ -222,12 +222,3 @@ func referencesRule(text, anchor string) bool {
 	// Delimit the identifier: Rule-1 must not match Rule-10.
 	return regexp.MustCompile(`(?:^|[^\pL\pN_-])` + regexp.QuoteMeta(anchor) + `(?:$|[^\pL\pN_-])`).MatchString(text)
 }
-
-func (d Diff) HasRuleCut() bool {
-	for _, w := range d.Warnings {
-		if w.Code == "rule_removed" || w.Code == "rule_shrunk" || w.Code == "rule_deferred" {
-			return true
-		}
-	}
-	return false
-}

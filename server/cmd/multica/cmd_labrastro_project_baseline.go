@@ -56,7 +56,7 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 		case "adopt":
 			sub.Short = "Decide explicitly named chapter versions using the current credentials"
 			sub.Long = "Adopt chapter:number versions atomically. The server checks decider permissions,\n" +
-				"the project's agent-delegation setting, rule warnings and concurrent changes."
+				"the project's engineering switch, workspace credentials and concurrent changes."
 			sub.Flags().StringArray("revision", nil, "Chapter:number to adopt (required, repeatable for different chapters)")
 			sub.Flags().Bool("reject", false, "Reject the specified candidates instead of adopting")
 		case "export":
@@ -540,7 +540,7 @@ func baselineAdopt(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	return nil
 }
 
-func baselineApprovalURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
+func baselineCandidateURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
 	ctx, cancel := cli.APIContext(cmd.Context())
 	defer cancel()
 	origin := tryResolveAppURL(cmd)
@@ -586,11 +586,11 @@ func baselineRequestError(cmd *cobra.Command, client *cli.APIClient, project str
 	var e *cli.HTTPError
 	if errors.As(err, &e) {
 		code := cli.ServerErrorCode(err)
-		if e.StatusCode == 403 && (code == "baseline_human_required" || code == "baseline_rule_cut_needs_human") {
-			if link := baselineApprovalURL(cmd, client, project, candidateIDs...); link != "" {
-				return baselineFailure(1, "%s: a human decider must review this candidate in the engineering overview: %s", code, link)
+		if e.StatusCode == 403 && code == "baseline_not_decider" {
+			if link := baselineCandidateURL(cmd, client, project, candidateIDs...); link != "" {
+				return baselineFailure(1, "%s: decision permission denied; view the candidate in the engineering overview: %s", code, link)
 			}
-			return baselineFailure(1, "%s: a human decider must review this candidate in the project's engineering overview on the dashboard (approval link unavailable)", code)
+			return baselineFailure(1, "%s: decision permission denied; view the candidate in the project's engineering overview on the dashboard (candidate link unavailable)", code)
 		}
 		if e.StatusCode == 401 {
 			// Preserve the task-token stop instruction, even with ambient debug
