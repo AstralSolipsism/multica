@@ -113,6 +113,7 @@ export function AgentListToolbar({
   allRows,
   members,
   visibleCount,
+  folderActions,
 }: {
   scope: AgentsScope;
   onScopeChange: (scope: AgentsScope) => void;
@@ -135,6 +136,7 @@ export function AgentListToolbar({
   members: MemberWithUser[];
   /** Rows surviving the filters — shown as "n / total" when narrowed. */
   visibleCount: number;
+  folderActions?: import("react").ReactNode;
 }) {
   const { t } = useT("agents");
 
@@ -285,6 +287,7 @@ export function AgentListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {folderActions}
         {/* Filter */}
         <DropdownMenu>
           <DropdownMenuTrigger

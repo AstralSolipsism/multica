@@ -59,8 +59,6 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useNavigation } from "../../navigation";
-// Labrastro fork (OL-1030): folder-aware back links (shared explorer model).
-import { folderLocationPath } from "../../common/folder-explorer";
 import { PAGE_GUTTER, PAGE_RAIL, PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
@@ -80,14 +78,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const navigation = useNavigation();
   const qc = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
-
-  // Labrastro fork (OL-1030): every "back to agents" link returns to the
-  // folder the user came from (`?folder=` travels with the detail URL).
-  const agentsPath = folderLocationPath(
-    paths.agents(),
-    new URLSearchParams(),
-    navigation.searchParams.get("folder"),
-  );
 
   const {
     data: agents = [],
@@ -241,7 +231,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (!agent && isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={agentsPath} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <Lock className="h-8 w-8 text-muted-foreground" />
           <div>
@@ -252,7 +242,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           </div>
           <Button
             size="sm"
-            render={<AppLink href={agentsPath} />}
+            render={<AppLink href={paths.agents()} />}
             nativeButton={false}
           >
             {t(($) => $.detail.back_to_agents_full)}
@@ -267,7 +257,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     const loadError = detailError ?? agentsError;
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={agentsPath} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <div>
@@ -297,7 +287,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             </Button>
             <Button
               size="sm"
-              render={<AppLink href={agentsPath} />}
+              render={<AppLink href={paths.agents()} />}
               nativeButton={false}
             >
               {t(($) => $.detail.back_to_agents_full)}
@@ -356,7 +346,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         agent={agent}
         runtime={runtime}
         presence={presence}
-        backHref={agentsPath}
+        backHref={paths.agents()}
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
         dmPending={permissionsLoading}
@@ -468,7 +458,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
                 onClick={() => {
                   setConfirmArchive(false);
                   handleArchive(agent.id);
-                  navigation.push(agentsPath);
+                  navigation.push(paths.agents());
                 }}
               >
                 {t(($) => $.detail.archive_dialog_confirm)}

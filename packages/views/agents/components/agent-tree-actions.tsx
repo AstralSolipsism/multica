@@ -25,6 +25,7 @@ export interface AgentTreeActions {
    *  its squad folder and additionally gets a custom placement); "move"
    *  everywhere else, including flat search/filter results. */
   defaultVariant: "move" | "place";
+  squadFolderIds?: ReadonlySet<string>;
   /** Open the move dialog for the given agents. */
   onMove: (agents: Agent[], variant: "move" | "place") => void;
 }
@@ -36,14 +37,18 @@ export function AgentTreeRowMenuItems({
   agent,
   canManage,
   treeActions,
+  parentFolderId,
 }: {
   agent: Agent;
   canManage: boolean;
   treeActions: AgentTreeActions | undefined;
+  parentFolderId?: string | null;
 }) {
   const { t } = useT("agent-folders");
   if (!treeActions || !canManage || agent.archived_at) return null;
-  const variant = treeActions.defaultVariant;
+  const variant = parentFolderId && treeActions.squadFolderIds?.has(parentFolderId)
+    ? "place"
+    : treeActions.defaultVariant;
   return (
     <DropdownMenuItem onClick={() => treeActions.onMove([agent], variant)}>
       <FolderInput className="size-3.5" />
@@ -55,9 +60,8 @@ export function AgentTreeRowMenuItems({
 }
 
 /** Batch toolbar move button; disabled with a reason tooltip when the
- *  selection contains agents the caller may not move. Inside a squad folder
- *  the whole flow uses the "place" wording — members never leave the squad
- *  folder, they only gain a custom placement. */
+ *  selection contains agents the caller may not move. Visible selections can
+ *  span several folders, so batch operations always use the move wording. */
 export function AgentTreeBatchMoveAction({
   rows,
   treeActions,

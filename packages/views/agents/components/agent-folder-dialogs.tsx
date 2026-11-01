@@ -68,10 +68,12 @@ function useFolderErrorMessage() {
 export function AgentFolderFormDialog({
   wsId,
   state,
+  onCreated,
   onClose,
 }: {
   wsId: string;
   state: AgentFolderFormState;
+  onCreated?: (parentId: string | null) => void;
   onClose: () => void;
 }) {
   const { t } = useT("agent-folders");
@@ -104,6 +106,7 @@ export function AgentFolderFormDialog({
         setError(t(($) => $.folder_form.unconfirmed));
         return;
       }
+      if (state.mode === "create") onCreated?.(state.parentId);
       onClose();
     } catch (err) {
       setError(folderError(err, t(($) => $.folder_form.failed)));

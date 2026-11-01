@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -120,6 +120,7 @@ export function SkillListToolbar({
   visibleCount,
   countLabel,
   countTitle,
+  folderActions,
 }: {
   search: string;
   onSearchChange: (v: string) => void;
@@ -134,10 +135,11 @@ export function SkillListToolbar({
   onToggleColumn: (key: SkillColumnKey) => void;
   /** Unfiltered rows — option lists and counts derive from the full set. */
   allRows: SkillRow[];
-  /** Skill rows in the current flat or folder view. */
+  /** Rows in the current filtered flat list or expanded folder tree. */
   visibleCount: number;
   countLabel?: string;
   countTitle?: string;
+  folderActions?: ReactNode;
 }) {
   const { t } = useT("skills");
   const [labelSearch, setLabelSearch] = useState("");
@@ -212,8 +214,6 @@ export function SkillListToolbar({
 
   return (
     <div className={PAGE_TOOLBAR}>
-      {/* Flat views show a count only while narrowed. Folder views provide a
-          label that distinguishes direct skills from the workspace total. */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative hidden md:block">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -236,6 +236,7 @@ export function SkillListToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
+        {folderActions}
         {/* Filter */}
         <DropdownMenu>
           <DropdownMenuTrigger
