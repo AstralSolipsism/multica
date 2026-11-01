@@ -493,7 +493,7 @@ describe("AgentsPage folder hierarchy", () => {
     expect(within(hiddenDirectory).queryByText("Offline")).toBeNull();
   });
 
-  it("renders four preview avatars and responsive overflow for a seven-member squad", async () => {
+  it("renders four preview avatars and one overflow badge for a seven-member squad", async () => {
     const extra = Array.from({ length: 4 }, (_, index) => makeAgent(`extra-${index}`, `Extra ${index}`));
     mocks.agents = [...mocks.agents, ...extra];
     mocks.folderTree = {
@@ -506,8 +506,8 @@ describe("AgentsPage folder hierarchy", () => {
     const directory = await screen.findByRole("button", { name: "Expand Game design" });
     expect([...directory.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
       .toEqual(["squad-leader", "squad-member", "dual-agent", "Extra 0"]);
-    expect(within(directory).getByText("+3").className).toContain("hidden @2xl:inline-flex");
-    expect(within(directory).getByText("+4").className).toContain("@2xl:hidden");
+    expect(within(directory).getByText("+3").className).toContain("inline-flex");
+    expect(within(directory).queryByText("+4")).toBeNull();
     expect(directory.textContent).toContain("7 agents");
   });
 

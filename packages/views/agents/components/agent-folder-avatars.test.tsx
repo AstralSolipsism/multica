@@ -25,7 +25,7 @@ function presence(availability: AgentPresenceDetail["availability"], workload: A
 }
 
 describe("AgentFolderAvatars", () => {
-  it("uses image, emoji and fallback avatars with names, and recalculates overflow at both widths", () => {
+  it("uses image, emoji and fallback avatars and caps the preview at four with one overflow badge", () => {
     render(
       <I18nProvider locale="en" resources={{ en: { agents: enAgents } }}>
         <AgentFolderAvatars agents={agents} count={7} emptyLabel="Empty" />
@@ -35,10 +35,10 @@ describe("AgentFolderAvatars", () => {
     expect(image.getAttribute("src")).toBe("/api/avatars/sig/avatar.png");
     expect(screen.getByRole("img", { name: "Emoji agent" }).textContent).toBe("🚀");
     expect(screen.getByTitle("Default agent").querySelector("svg")).toBeTruthy();
-    expect(screen.getByTitle("Fourth agent").className).toContain("hidden @2xl:inline-flex");
+    expect(screen.getByTitle("Fourth agent").className).not.toContain("hidden");
     expect(screen.queryByTitle("Fifth agent")).toBeNull();
-    expect(screen.getByText("+4").className).toContain("@2xl:hidden");
-    expect(screen.getByText("+3").className).toContain("hidden @2xl:inline-flex");
+    expect(screen.queryByText("+4")).toBeNull();
+    expect(screen.getByText("+3").className).toContain("inline-flex");
     fireEvent.error(image);
     expect(screen.queryByRole("img", { name: "Image agent" })).toBeNull();
     expect(screen.getByTitle("Image agent").querySelector("svg")).toBeTruthy();

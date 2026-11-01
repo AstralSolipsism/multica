@@ -175,6 +175,30 @@ test("agents page folder explorer: in-place tree, presence, and placements", asy
     expect(squadNameBox.width).toBeGreaterThan(40);
     if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/04-laptop-1366.png`, fullPage: true });
 
+    await page.getByRole("button", { name: "Last active", exact: true }).first().click();
+    await page.getByRole("switch", { name: "Model", exact: true }).click();
+    await page.getByRole("switch", { name: "Created", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const allColumnsNameBox = await page.getByText("Game design", { exact: true }).boundingBox();
+    if (!allColumnsNameBox) throw new Error("Squad folder name is not visible with all columns at 1440px");
+    expect(allColumnsNameBox.width).toBeGreaterThan(60);
+    const nameCellBox = await designRow
+      .getByRole("button", { name: "Collapse Design", exact: true })
+      .locator("..")
+      .boundingBox();
+    if (!nameCellBox) throw new Error("Folder name track missing with all columns");
+    const countLabel = designRow.getByText("3 agents", { exact: true });
+    const squadLabel = page.getByText("Squad", { exact: true });
+    if (nameCellBox.width <= 22 * 16) {
+      await expect(countLabel).toBeHidden();
+      await expect(squadLabel).toBeHidden();
+    } else {
+      await expect(countLabel).toBeVisible();
+      await expect(squadLabel).toBeVisible();
+    }
+    if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/05-all-columns-1440.png`, fullPage: true });
+
     await page.setViewportSize({ width: 600, height: 900 });
     const alphaRowForLayout = page.locator('[role="row"]', { hasText: "Alpha" });
     const visibleCellCount = (row: typeof designRow) => row.evaluate((element) =>
@@ -187,7 +211,7 @@ test("agents page folder explorer: in-place tree, presence, and placements", asy
     const agentStatusBox = await alphaRowForLayout.getByRole("cell").filter({ hasText: "Online" }).boundingBox();
     if (!folderStatusBox || !agentStatusBox) throw new Error("Status cells missing at 600px");
     expect(Math.abs(folderStatusBox.x - agentStatusBox.x)).toBeLessThanOrEqual(1);
-    if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/05-narrow-600.png`, fullPage: true });
+    if (SHOT_DIR) await page.screenshot({ path: `${SHOT_DIR}/06-narrow-600.png`, fullPage: true });
   } finally {
     if (squadId) {
       await db.query(`DELETE FROM squad_member WHERE squad_id = $1`, [squadId]);

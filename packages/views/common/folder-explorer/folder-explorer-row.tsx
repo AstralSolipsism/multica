@@ -121,7 +121,7 @@ export function FolderExplorerRow({
   return (
     <ListGridRow className={cn("cursor-pointer", className)} onClick={onOpen}>
       {leading}
-      <ListGridCell className="h-full px-0">
+      <ListGridCell className="h-full px-0 @container/folder-name">
         <button
           type="button"
           aria-label={openLabel}
@@ -147,15 +147,15 @@ export function FolderExplorerRow({
           {typeLabel && (
             <span className={cn(
               "shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption text-muted-foreground",
-              preview && "hidden @7xl:inline",
+              preview && "@max-[22rem]/folder-name:hidden",
             )}>
               {typeLabel}
             </span>
           )}
-          {preview && <span className="hidden shrink-0 @7xl:contents">{preview}</span>}
+          {preview && <span className="shrink-0 @max-[22rem]/folder-name:hidden">{preview}</span>}
           <span className={cn(
             "ml-auto shrink-0 pl-2 text-caption tabular-nums text-muted-foreground",
-            preview && "hidden @7xl:inline",
+            preview && "@max-[22rem]/folder-name:hidden",
           )}>
             {countLabel}
           </span>

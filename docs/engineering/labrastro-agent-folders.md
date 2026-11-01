@@ -259,9 +259,10 @@ the page's existing presence data for its status dot. Human members never enter
 the collection.
 
 Each preview shows 24px image, emoji or fallback avatars with name titles and
-inline-flex wrappers so all rings stay circular and vertically aligned. Below
-`@7xl`, previews, type labels and counts stay hidden so folder names remain readable; at
-`@7xl` and above, four avatars precede overflow. Empty folders show a dashed
+inline-flex wrappers so all rings stay circular and vertically aligned. The name
+cell is a named `folder-name` size container: at 22rem or below, previews, type
+labels and counts stay hidden so folder names remain readable; above that track
+width, four avatars precede one overflow badge. Empty folders show a dashed
 localized badge and zero count when metadata is visible. Search/filter/archived
 flat views, selection, placement permissions and detail navigation retain their
 non-folder-query behavior.

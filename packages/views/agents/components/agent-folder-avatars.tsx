@@ -41,14 +41,14 @@ export function AgentFolderAvatars({
   const overflow = "size-6 shrink-0 items-center justify-center rounded-full bg-border text-caption tabular-nums text-muted-foreground";
   return (
     <span className="flex shrink-0 items-center -space-x-1.5">
-      {orderedAgents.slice(0, 4).map((agent, index) => {
+      {orderedAgents.slice(0, 4).map((agent) => {
         const presence = presenceByAgentId?.get(agent.id);
         const visual = presence ? availabilityConfig[presence.availability] : null;
         return (
           <span
             key={agent.id}
             title={agent.name}
-            className={cn("relative inline-flex rounded-full", ring, index === 3 && "hidden @2xl:inline-flex")}
+            className={cn("relative inline-flex rounded-full", ring)}
           >
             <ActorAvatar
               name={agent.name}
@@ -71,8 +71,7 @@ export function AgentFolderAvatars({
           </span>
         );
       })}
-      {count > 3 && <span className={cn(overflow, ring, "inline-flex @2xl:hidden")}>+{count - 3}</span>}
-      {count > 4 && <span className={cn(overflow, ring, "hidden @2xl:inline-flex")}>+{count - 4}</span>}
+      {count > 4 && <span className={cn(overflow, ring, "inline-flex")}>+{count - 4}</span>}
     </span>
   );
 }
