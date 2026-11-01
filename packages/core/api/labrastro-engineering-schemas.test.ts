@@ -8,10 +8,10 @@ const diff = { chapter: "domain_rules", base_revision_number: 0, added: [], modi
 const revision = { id, workspace_id: id, project_id: id, chapter: "domain_rules", revision_number: 1, status: "candidate", content_markdown: "### [Rule-一] Text", change_summary: "Add", base_revision_id: null, anchors_diff: diff, created_by_type: "agent", created_by_id: id, created_at: "2026-10-30T00:00:00Z" };
 
 describe("engineering API response contracts", () => {
-  it("defaults disabled flags without inventing a baseline", () => {
+  it("defaults the capability to disabled without inventing a baseline", () => {
     const parsed = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id }, chapters: [] });
     expect(parsed.engineering.enabled).toBe(false);
-    expect(parsed.engineering.agentDecisionsEnabled).toBe(false);
+    expect(parsed.engineering).not.toHaveProperty("agentDecisionsEnabled");
     expect(parsed.engineering.currentStage).toBe(1);
     expect(parsed.chapters).toEqual([]);
   });
@@ -23,6 +23,12 @@ describe("engineering API response contracts", () => {
     expect(parsed.decidedByTaskId).toBe(id);
     expect(parsed.contentMarkdown).toContain("Rule-一");
     expect(BaselineDiffSchema.parse({ ...diff, warnings: [{ code: "future_warning", anchor: "Rule-一" }] }).warnings[0]?.code).toBe("unknown");
+  });
+  it.each(["session", "pat", "agent_task", "task"])("preserves %s decision attribution", (credential) => {
+    const parsed = BaselineRevisionSchema.parse({ ...revision, decision_credential: credential, decided_by_type: "agent", decided_by_id: id, decided_by_task_id: id });
+    expect(parsed.decisionCredential).toBe(credential === "task" ? "agent_task" : credential);
+    expect(parsed.decidedById).toBe(id);
+    expect(parsed.decidedByTaskId).toBe(id);
   });
   it("parses decisions and historical pagination", () => {
     const adopted = { ...revision, status: "adopted" };

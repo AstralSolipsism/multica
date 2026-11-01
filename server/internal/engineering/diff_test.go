@@ -19,7 +19,7 @@ func TestDiffChineseAnchorsAndWarnings(t *testing.T) {
 	if !reflect.DeepEqual(d.Warnings, want) {
 		t.Fatalf("warnings = %#v", d.Warnings)
 	}
-	if d.BaseRevisionNumber != 4 || len(d.Added) != 1 || len(d.Modified) != 2 || len(d.Removed) != 1 || d.UnchangedCount != 2 || !d.HasRuleCut() {
+	if d.BaseRevisionNumber != 4 || len(d.Added) != 1 || len(d.Modified) != 2 || len(d.Removed) != 1 || d.UnchangedCount != 2 {
 		t.Fatalf("unexpected diff: %#v", d)
 	}
 	if d.Modified[0].BeforeChars != 10 || d.Modified[0].AfterChars != 5 {
@@ -69,7 +69,7 @@ func TestDeferMissingPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(d.Warnings, []Warning{{"defer_missing_pool", "Defer-1"}}) || d.HasRuleCut() {
+	if !reflect.DeepEqual(d.Warnings, []Warning{{"defer_missing_pool", "Defer-1"}}) {
 		t.Fatalf("diff = %#v", d)
 	}
 }
@@ -105,7 +105,7 @@ func TestDeferIssueReferences(t *testing.T) {
 				if tt.missing {
 					want = append(want, Warning{"defer_missing_pool", "Defer-1"})
 				}
-				if !reflect.DeepEqual(d.Warnings, want) || d.HasRuleCut() {
+				if !reflect.DeepEqual(d.Warnings, want) {
 					t.Fatalf("content=%q warnings=%+v want=%+v", content, d.Warnings, want)
 				}
 			}
@@ -146,7 +146,7 @@ func TestDiffKeepsUnanchoredTextVisible(t *testing.T) {
 	before := "### [Rule-1] Keep\nRequired\n## Details\nOld detail"
 	after := strings.ReplaceAll(before, "Old detail", "New detail")
 	d, err := Compute("domain_rules", before, after, 1, "", "OL")
-	if err != nil || len(d.Modified) != 1 || d.Modified[0].Anchor != "_unanchored" || d.HasRuleCut() {
+	if err != nil || len(d.Modified) != 1 || d.Modified[0].Anchor != "_unanchored" {
 		t.Fatalf("unanchored edit hidden or extended rule: %+v, %v", d, err)
 	}
 }

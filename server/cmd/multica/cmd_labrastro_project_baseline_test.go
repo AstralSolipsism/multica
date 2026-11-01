@@ -41,7 +41,7 @@ func baselineTestRevision(chapter string, n int, status string) map[string]any {
 	return map[string]any{
 		"id": id, "chapter": chapter, "revision_number": n, "status": status, "base_revision_id": base,
 		"content_markdown": "### [Rule-中文] 保留规则\nMUST keep body\n", "change_summary": "中文摘要", "decided_at": "2026-10-30T00:00:00Z",
-		"decision_credential": "task", "future_audit_field": "preserved",
+		"decision_credential": "agent_task", "future_audit_field": "preserved",
 		"anchors_diff": map[string]any{"chapter": chapter, "base_revision_number": 1, "added": []any{}, "modified": []any{},
 			"removed": []any{map[string]any{"anchor": "Rule-中文", "title": "保留规则", "before": "MUST keep body"}}, "unchanged_count": 0,
 			"warnings": []any{map[string]any{"code": "rule_removed", "anchor": "Rule-中文"}, map[string]any{"code": "rule_shrunk", "anchor": "Rule-2"}, map[string]any{"code": "rule_deferred", "anchor": "Rule-3"}, map[string]any{"code": "defer_missing_pool", "anchor": "Defer-4"}}},
@@ -190,6 +190,65 @@ func baselineJSONRoundtrip(t *testing.T, v any) any {
 	return result
 }
 
+func TestLabrastroBaselineProposeReviewLink(t *testing.T) {
+	for _, mode := range []string{"text", "json", "metadata unavailable"} {
+		t.Run(mode, func(t *testing.T) {
+			file := writeBaselineInput(t)
+			t.Setenv("MULTICA_APP_URL", "https://workspace.example")
+			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/engineering"):
+					json.NewEncoder(w).Encode(baselineTestState(nil, nil))
+				case strings.HasSuffix(r.URL.Path, "/candidates"):
+					w.WriteHeader(201)
+					json.NewEncoder(w).Encode(baselineTestRevision("domain_rules", 2, "candidate"))
+				case r.URL.Path == "/api/workspaces/offline-workspace":
+					if mode == "metadata unavailable" {
+						w.WriteHeader(503)
+						return
+					}
+					json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			})
+			format := "text"
+			if mode == "json" {
+				format = "json"
+			}
+			out, stderr, code := executeBaseline(t, "propose", baselineTestProject, "--chapter", "domain_rules", "--summary", "change", "--content-file", file, "--output", format)
+			if code != 0 {
+				t.Fatalf("proposal failed: %s", stderr)
+			}
+			if !strings.Contains(stderr, "[RULE DOWNGRADE WARNING]") {
+				t.Fatalf("missing warning: %s", stderr)
+			}
+			link := "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
+			switch mode {
+			case "text":
+				if !strings.Contains(stderr, link) || strings.Contains(out, link) {
+					t.Fatalf("wrong review link streams: %s / %s", out, stderr)
+				}
+			case "json":
+				baselineJSON(t, out)
+				if strings.Contains(stderr, "Review candidate") {
+					t.Fatalf("unexpected JSON guidance: %s", stderr)
+				}
+				for _, call := range calls() {
+					if strings.HasPrefix(call.Path, "/api/workspaces/") {
+						t.Fatal("JSON proposal looked up review link")
+					}
+				}
+			default:
+				if !strings.Contains(stderr, "engineering overview on the dashboard (approval link unavailable)") {
+					t.Fatalf("missing dashboard fallback: %s", stderr)
+				}
+			}
+		})
+	}
+}
+
 func TestLabrastroBaselineProposeCAS(t *testing.T) {
 	for _, mode := range []string{"first", "explicit base", "current base", "replace", "existing candidate", "missing base", "racing base", "racing candidate"} {
 		t.Run(mode, func(t *testing.T) {
@@ -292,7 +351,7 @@ func TestLabrastroBaselineProposeCAS(t *testing.T) {
 }
 
 func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
-	for _, mode := range []string{"adopt", "reject", "multi", "closed", "stale", "human", "rule cut", "forbidden", "invalid", "server failure", "missing"} {
+	for _, mode := range []string{"adopt", "reject", "multi", "closed", "stale", "denied", "forbidden", "invalid", "server failure", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("MULTICA_AGENT_ID", baselineTestIssue)
 			t.Setenv("MULTICA_TASK_ID", baselineTestCandidate)
@@ -352,10 +411,8 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 					status, code = 409, "baseline_candidate_closed"
 				case "stale":
 					status, code = 409, "baseline_base_stale"
-				case "human":
-					status, code = 403, "baseline_human_required"
-				case "rule cut":
-					status, code = 403, "baseline_rule_cut_needs_human"
+				case "denied":
+					status, code = 403, "baseline_credential_denied"
 				case "forbidden":
 					status, code = 403, "baseline_not_decider"
 				case "invalid":
@@ -405,10 +462,21 @@ func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
 					t.Errorf("missing ordered Diff/issues/truncation: %s %s", out, stderr)
 				}
 			}
-			if mode == "human" || mode == "rule cut" {
-				link := "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
-				if !strings.Contains(stderr, link) || !strings.Contains(stderr, "human decider") || strings.Contains(stderr, "PAT") {
+			if mode == "denied" || mode == "forbidden" {
+				if strings.Contains(stderr, "engineering?candidate=") || strings.Contains(stderr, "human decider") || strings.Contains(stderr, "PAT") {
 					t.Errorf("incorrect refusal guidance: %s", stderr)
+				}
+				for _, call := range calls() {
+					if call.Path == "/api/config" || strings.HasPrefix(call.Path, "/api/workspaces/") {
+						t.Error("denied decision must not look up approval links")
+					}
+				}
+			}
+			if want == 0 {
+				for _, warning := range []string{"rule_removed", "rule_shrunk", "rule_deferred", "defer_missing_pool", "[RULE DOWNGRADE WARNING]", "[BASELINE WARNING]"} {
+					if !strings.Contains(stderr, warning) {
+						t.Errorf("successful decision lost warning %s: %s", warning, stderr)
+					}
 				}
 			}
 		})
@@ -531,17 +599,14 @@ func TestLabrastroBaselineApprovalURL(t *testing.T) {
 					return srv.Client().Transport.RoundTrip(clone)
 				})
 			}
-			err := baselineRequestError(cmd, client, baselineTestProject, &cli.HTTPError{StatusCode: 403, Body: `{"code":"baseline_human_required"}`}, true, baselineTestCandidate)
-			if err.(*baselineCLIError).code != 1 || strings.Contains(err.Error(), "SECRET_METADATA") {
-				t.Fatalf("metadata lookup changed refusal semantics: %v", err)
-			}
+			link := baselineApprovalURL(cmd, client, baselineTestProject, baselineTestCandidate)
 			if tc.wantOrigin != "" {
 				want := tc.wantOrigin + "/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("approval URL missing: want %s; got %v", want, err)
+				if link != want {
+					t.Fatalf("approval URL: want %s; got %s", want, link)
 				}
-			} else if !strings.Contains(err.Error(), "engineering overview on the dashboard (approval link unavailable)") || strings.Contains(err.Error(), "http") {
-				t.Fatalf("expected manual dashboard guidance without a guessed URL: %v", err)
+			} else if link != "" {
+				t.Fatalf("expected no guessed URL: %s", link)
 			}
 			for _, c := range calls() {
 				if c.Method != "GET" {
@@ -691,7 +756,7 @@ func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
 		}
 		if strings.HasSuffix(r.URL.Path, "/decisions") {
 			w.WriteHeader(403)
-			json.NewEncoder(w).Encode(map[string]any{"code": "baseline_rule_cut_needs_human", "error": "SECRET_BASELINE_CONTENT"})
+			json.NewEncoder(w).Encode(map[string]any{"code": "baseline_credential_denied", "error": "SECRET_BASELINE_CONTENT"})
 			return
 		}
 		json.NewEncoder(w).Encode(baselineTestState(baselineTestRevision("domain_rules", 1, "adopted"), nil))
@@ -703,7 +768,7 @@ func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
 	}{
 		{[]string{"get", baselineTestProject, "--output", "json"}, 0, ""},
 		{[]string{"get", baselineTestProject, "--revision", "domain_rules:999"}, 2, "404"},
-		{[]string{"adopt", baselineTestProject, "--revision", "domain_rules:2", "--output", "json", "--debug"}, 1, "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate},
+		{[]string{"adopt", baselineTestProject, "--revision", "domain_rules:2", "--output", "json", "--debug"}, 1, "baseline_credential_denied"},
 		{[]string{"get", baselineTestProject, "--unknown"}, 2, "unknown flag"},
 	} {
 		args := append([]string{"-test.run=^TestLabrastroBaselineCLIProcess$", "--", "project", "baseline"}, tc.args...)

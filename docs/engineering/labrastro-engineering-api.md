@@ -1,6 +1,6 @@
 # Project engineering and managed baselines
 
-OL-90 implements OL-464 contract v3.1 sections 2–6. This module stores project
+OL-90 and OL-1171 implement OL-464 contract v3.2 sections 2–6. This module stores project
 configuration and immutable Markdown revisions in PostgreSQL. It has no runtime,
 claim, skill-binding, Git repository, or model dependency.
 
@@ -16,12 +16,13 @@ policy. Routes use `/api/projects/{id}`:
 | POST | `/baseline/decisions` | Four updated `chapters` and `open_issues` |
 | GET | `/baseline/revisions` | `revisions`, `has_more`, `next_before`, or a historical Diff |
 
-Configuration defaults to disabled. Only owner/admin can change `enabled`,
-`decider_member_ids` or `agent_decisions_enabled`. Other configuration fields are
+Configuration defaults to disabled. Only owner/admin can change `enabled`
+or `decider_member_ids`. Other configuration fields are
 also writable by deciders. As with project `lead_id` and member actors elsewhere
 in the platform, decider IDs are **user IDs**, validated against current workspace
 membership. Empty lists use owner/admin and the human project lead; explicit lists
-replace the lead default while retaining owner/admin.
+replace the lead default while retaining owner/admin. Configuration remains human-only
+(`RequireHumanActor`); removed or unknown request fields return 400 `invalid_request`.
 
 The first enable adopts the accepted `[Risk-1]` text from contract 5.6 into
 `exclusions_and_risks`, attributed to the enabling member and their credential.
@@ -34,11 +35,16 @@ replaced with their exact `replaces_candidate_id`; replaced versions become
 
 Decisions contain `action: adopt|reject` and one to four `revisions`, each with
 `revision_id` and `expected_adopted_revision_id`. All revisions are checked before
-any changes commit. Session/PAT callers must be deciders. Task credentials require
-`agent_decisions_enabled`; adoption with `rule_removed`, `rule_shrunk` or
-`rule_deferred` warnings requires a human. Rejection and `defer_missing_pool`
-remain available to delegated agents. Cloud PATs and unknown credentials fail
-closed. Audit fields come exclusively from authentication, never request JSON.
+any changes commit. Session/PAT callers must be deciders, otherwise they receive
+403 `baseline_not_decider`. Tasks bound to the selected workspace can adopt or
+reject without a second switch or decider-list check. All four warning types
+remain visible and do not block adoption. Cloud PATs, tasks bound to a different
+workspace and unknown credentials receive 403 `baseline_credential_denied`.
+Audit fields come exclusively from authentication, never request JSON:
+`decision_credential` is `session`, `pat` or `agent_task` (the authentication
+layer still calls task credentials `task`). The server does not verify whether
+a decider approved the version in conversation; this accepted risk is seeded
+for newly enabled projects, while existing risk text is preserved.
 
 Revision content is limited to 64 KiB and summaries to 500 Unicode characters.
 Anchors support Chinese suffixes and chapter-specific prefixes. Diff normalization
@@ -74,10 +80,16 @@ cleanup uses the same transactions as existing deletion. Migration
 `9040_labrastro_engineering_config_identity_index` through
 `9045_labrastro_engineering_candidate_index` build six separate concurrent indexes.
 The migration runner can recover interrupted index builds; down migrations remove
-indexes before tables.
+indexes before tables. Migration `9046_labrastro_engineering_decisions`
+removes the redundant configuration column and converts historical `task` audit
+values to `agent_task`. It installs the new CHECK as NOT VALID before the
+backfill, then validates it in the same transaction. Down converts audit values
+back and restores the column with a false default; previous switch values
+cannot be recovered. Released migration `9039_labrastro_engineering_tables`
+remains unchanged. Regenerate query code with `make sqlc`.
 
 After commit, `project_engineering:updated` and `project_baseline:changed` publish
 only project/chapter identifiers. Shared API clients parse all responses through
 Zod and `parseWithFallback`; unknown statuses, warnings and credentials remain
 explicitly unknown. The [baseline CLI](labrastro-project-baseline-cli.md) exposes
-these APIs; the overview UI is a separate follow-up issue.
+these APIs; Web/Desktop share the engineering overview and credential badges.
