@@ -141,10 +141,10 @@ beforeEach(() => {
     stages: [{ stage: 1, title: "Foundation", goal: "Core contracts" }],
   };
   chapters = [
-    { chapter: "overview", adopted: null, candidate: null },
-    { chapter: "domain_rules", adopted: null, candidate: null },
-    { chapter: "architecture", adopted: null, candidate: null },
-    { chapter: "exclusions_and_risks", adopted: null, candidate: null },
+    { chapter: "overview", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "domain_rules", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "architecture", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "exclusions_and_risks", title: "", position: 0, adopted: null, candidate: null },
   ];
   histories = { overview: [], domain_rules: [], architecture: [], exclusions_and_risks: [] };
   proposeProjectBaseline = vi.fn(async (_ws: string, _project: string, data: {
@@ -163,7 +163,7 @@ beforeEach(() => {
       createdByType: "member" as const,
       createdById: currentUserId,
     };
-    if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...histories[data.chapter]];
+    if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...(histories[data.chapter] ?? [])];
     chapters = chapters.map((chapter) => chapter.chapter === data.chapter ? { ...chapter, candidate } : chapter);
     return candidate;
   });
@@ -177,8 +177,8 @@ beforeEach(() => {
       decidedAt: "2026-10-31T00:00:00Z",
       decisionCredential: "session" as const,
     };
-    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { chapter: chapter.chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
-    histories[candidate.chapter] = [decided, ...histories[candidate.chapter]];
+    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { ...chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
+    histories[candidate.chapter] = [decided, ...(histories[candidate.chapter] ?? [])];
     return { chapters: [], openIssues: { inFlight: [], queued: [], truncated: false } };
   });
   updateProjectEngineering = vi.fn(async (_ws: string, _project: string, data: Partial<EngineeringConfig>) => {
@@ -195,7 +195,7 @@ beforeEach(() => {
     getProjectEngineering: async () => ({ engineering: config, chapters }),
     getProjectBaselineHistory: async (_ws: string, _project: string, chapter: BaselineChapter, options: { limit?: number } = {}) => ({
       ...emptyHistory(),
-      revisions: histories[chapter].slice(0, options.limit ?? 50),
+      revisions: (histories[chapter] ?? []).slice(0, options.limit ?? 50),
     }),
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,
@@ -583,7 +583,7 @@ describe("EngineeringOverview baseline editing", () => {
     currentUserId = MEMBER;
     const current = revision("adopted-overview", "overview", 1, "ADOPTED", "adopted", "2026-10-29T00:00:00Z", "session");
     const pending = revision("old-candidate", "overview", 2, "OLD-CANDIDATE");
-    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", adopted: current, candidate: pending } : chapter);
+    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", title: chapter.title, position: chapter.position, adopted: current, candidate: pending } : chapter);
     renderOverview();
     await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
     await user.click(await screen.findByRole("button", { name: "Edit chapter" }));
