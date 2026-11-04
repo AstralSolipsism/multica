@@ -114,7 +114,8 @@
     "renameModuleDescription": "章の slug は変更せず、タイトル変更を基線改訂として保存します。",
     "moduleName": "モジュール名",
     "moduleSlug": "章の slug",
-    "moduleSlugPlaceholder": "billing-settlement"
+    "moduleSlugPlaceholder": "billing-settlement",
+    "pendingCandidateSectionEdit": "この章には確認待ちの候補があります。候補の他の変更を保持するには、章全体を編集してください。"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",

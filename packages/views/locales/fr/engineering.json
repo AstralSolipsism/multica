@@ -114,7 +114,8 @@
     "renameModuleDescription": "La modification du titre crée une révision de référence sans changer le slug du chapitre.",
     "moduleName": "Nom du module",
     "moduleSlug": "Slug du chapitre",
-    "moduleSlugPlaceholder": "facturation-reglement"
+    "moduleSlugPlaceholder": "facturation-reglement",
+    "pendingCandidateSectionEdit": "Ce chapitre a un candidat en attente. Modifiez le chapitre entier pour conserver ses autres changements."
   },
   "wiki": {
     "meta": "{{chapters}} chapitres · {{sections}} sections",

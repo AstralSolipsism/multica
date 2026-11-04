@@ -114,7 +114,8 @@
     "renameModuleDescription": "只修改显示标题，不改变章节 slug；标题变更会生成基线修订。",
     "moduleName": "模块名称",
     "moduleSlug": "章节 slug",
-    "moduleSlugPlaceholder": "ji-fei-yu-jie-suan"
+    "moduleSlugPlaceholder": "jifeiyujiesuanmokuai",
+    "pendingCandidateSectionEdit": "本章有待审候选。请改用整章编辑，以保留候选中的其他修改。"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 节",

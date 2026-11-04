@@ -11,6 +11,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode, OpenIssue } from "@multica/core/api";
+import { matchLocale } from "@multica/core/i18n";
 import { paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
@@ -20,10 +21,12 @@ import { useStatusLabel } from "../../issues/utils/status-label";
 import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
   baselineModuleSlug,
+  canEditBaselineSection,
   isBaselineModuleSlug,
   latestBaselineSectionRevision,
   mergeBaselineSections,
   orderedBaselineChapters,
+  parseBaselineChapter,
   plainBaselineText,
   scanBaselineReferences,
   type BaselineDisplayChapter,
@@ -167,7 +170,8 @@ function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, 
   onClose: () => void;
   onSave: (draft: BaselineSaveDraft, adopt: boolean) => Promise<BaselineSaveResult>;
 }) {
-  const { t } = useT("engineering");
+  const { t, i18n } = useT("engineering");
+  const locale = matchLocale([i18n.resolvedLanguage ?? i18n.language]);
   const isNew = chapter === null;
   const state = chapters.find((item) => item.chapter === chapter);
   const [title, setTitle] = useState(state?.title || chapter?.slice(7) || "");
@@ -181,7 +185,7 @@ function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, 
   const duplicateSlug = isNew && chapters.some((item) => item.chapter === `module:${normalizedSlug}`);
   const incomplete = !title.trim() || !summary.trim() || invalidSlug || duplicateSlug || (isNew && !content.trim());
   const save = async (adopt: boolean) => {
-    if (incomplete || pending) return;
+    if (incomplete || pending || (adopt && state?.candidate)) return;
     setError(null);
     try {
       const result = await onSave({
@@ -218,7 +222,7 @@ function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, 
               <Input id="baseline-module-title" value={title} autoFocus disabled={pending} required onChange={(event) => {
                 const value = event.target.value;
                 setTitle(value);
-                if (!slugCustomized) setSlug(baselineModuleSlug(value));
+                if (!slugCustomized) setSlug(baselineModuleSlug(value, locale));
               }} />
             </div>
             {isNew ? (
@@ -247,7 +251,7 @@ function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, 
             {canDecide ? (
               <>
                 <Button type="button" variant="outline" disabled={pending || incomplete} onClick={() => void save(false)}>{t(($) => $.actions.submitForReview)}</Button>
-                <Button type="button" disabled={pending || incomplete} aria-busy={pending} onClick={() => void save(true)}>{pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}</Button>
+                {state?.candidate ? null : <Button type="button" disabled={pending || incomplete} aria-busy={pending} onClick={() => void save(true)}>{pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}</Button>}
               </>
             ) : <Button type="submit" disabled={pending || incomplete} aria-busy={pending}>{pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.submitRevisionCandidate)}</Button>}
           </DialogFooter>
@@ -349,6 +353,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
   const [editingSection, setEditingSection] = useState<{ chapter: BaselineChapter; key: string; query: string } | null>(null);
   const [moduleEditor, setModuleEditor] = useState<{ chapter: BaselineChapter | null } | null>(null);
+  const moduleTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
@@ -371,6 +376,15 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   useEffect(() => setBack(null), [lens]);
   useEffect(() => setSaveError(null), [props.selectedChapter]);
 
+  const openModuleEditor = (chapter: BaselineChapter | null, trigger: HTMLButtonElement) => {
+    moduleTriggerRef.current = trigger;
+    setModuleEditor({ chapter });
+  };
+  const closeModuleEditor = () => {
+    setModuleEditor(null);
+    const trigger = moduleTriggerRef.current;
+    if (trigger) window.requestAnimationFrame(() => trigger.focus());
+  };
   const openChapterEditor = (chapter: BaselineChapter) => {
     const state = props.chapters.find((item) => item.chapter === chapter);
     props.onChapterChange(chapter);
@@ -436,6 +450,19 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       };
     });
   }, [props.chapters, revision, mode]);
+  const sectionEditTargets = useMemo(() => {
+    const targets = new Map<string, BaselineSection>();
+    for (const state of props.chapters) {
+      if (!state.adopted || state.candidate) continue;
+      const chapterRevision = revision?.chapter === state.chapter ? revision : null;
+      if (chapterRevision && chapterRevision.id !== state.adopted.id) continue;
+      const sections = parseBaselineChapter(state.chapter, state.adopted.contentMarkdown).sections;
+      for (const section of sections) {
+        if (canEditBaselineSection(section, sections)) targets.set(section.key, section);
+      }
+    }
+    return targets;
+  }, [props.chapters, revision]);
   const activeSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "removed"), [displayChapters]);
   const changedSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "same"), [displayChapters]);
   const referencesBySection = useMemo(() => new Map(activeSections.map((section) => [
@@ -540,6 +567,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const changeCount = revision ? revision.anchorsDiff.added.length + revision.anchorsDiff.modified.length + revision.anchorsDiff.removed.length : 0;
   const globalChapters = displayChapters.filter((chapter) => !chapter.chapter.startsWith("module:"));
   const moduleChapters = displayChapters.filter((chapter) => chapter.chapter.startsWith("module:"));
+  const selectedChapterHasCandidate = props.chapters.some((chapter) => chapter.chapter === props.selectedChapter && chapter.candidate);
   const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
     <div key={chapter.chapter} className="mb-3">
       <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
@@ -650,7 +678,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
                     <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
                     {moduleChapters.map(renderChapterNavigation)}
-                    <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={() => setModuleEditor({ chapter: null })}>
+                    <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
                       <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
                     </Button>
                   </section>
@@ -668,7 +696,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   {props.selectedChapter === chapter.chapter && !editingChapter && !editingSection ? (
                     <div className="flex flex-wrap gap-2">
                       {chapter.chapter.startsWith("module:") ? (
-                        <Button type="button" variant="ghost" size="sm" disabled={props.savePending} onClick={() => setModuleEditor({ chapter: chapter.chapter })}>
+                        <Button type="button" variant="ghost" size="sm" disabled={props.savePending} onClick={(event) => openModuleEditor(chapter.chapter, event.currentTarget)}>
                           <Pencil aria-hidden="true" />{t(($) => $.actions.editModuleTitle)}
                         </Button>
                       ) : null}
@@ -678,6 +706,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     </div>
                   ) : null}
                 </div>
+                {props.selectedChapter === chapter.chapter && selectedChapterHasCandidate && !editingChapter ? <p className="mt-2 text-caption text-muted-foreground" data-section-edit-hint>{t(($) => $.baseline.pendingCandidateSectionEdit)}</p> : null}
                 {editingChapter === chapter.chapter ? (
                   <BaselineEditorForm
                     idPrefix={`baseline-chapter-${chapter.chapter}`}
@@ -706,8 +735,11 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                       <span className="font-mono text-caption font-normal text-muted-foreground">{section.change === "removed" ? "—" : `${chapterIndex + 1}.${sectionIndex + 1}`}</span>
                       <span className={section.change === "removed" ? "line-through opacity-70" : undefined}>{section.title || t(($) => $.wiki.untitled)}</span>
                       {section.change !== "same" ? <Badge variant={section.change === "removed" ? "destructive" : "secondary"}>{t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)}</Badge> : null}
-                      {props.selectedChapter === chapter.chapter && section.level > 0 && section.change !== "removed" && !editingChapter && !editingSection ? (
-                        <Button type="button" variant="ghost" size="xs" disabled={props.savePending} onClick={() => openSectionEditor(section)}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
+                      {props.selectedChapter === chapter.chapter && sectionEditTargets.has(section.key) && section.change !== "removed" && !editingChapter && !editingSection ? (
+                        <Button type="button" variant="ghost" size="xs" disabled={props.savePending} onClick={() => {
+                          const target = sectionEditTargets.get(section.key);
+                          if (target) openSectionEditor(target);
+                        }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
                       ) : null}
                     </h3>
                     {editingSection?.key === section.key ? (
@@ -775,7 +807,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             chapters={props.chapters}
             canDecide={props.canDecide}
             pending={props.savePending}
-            onClose={() => setModuleEditor(null)}
+            onClose={closeModuleEditor}
             onSave={saveModule}
           />
         ) : null}

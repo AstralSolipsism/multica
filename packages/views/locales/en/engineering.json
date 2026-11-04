@@ -114,7 +114,8 @@
     "renameModuleDescription": "The title change creates a baseline revision without changing the chapter slug.",
     "moduleName": "Module name",
     "moduleSlug": "Chapter slug",
-    "moduleSlugPlaceholder": "billing-settlement"
+    "moduleSlugPlaceholder": "billing-settlement",
+    "pendingCandidateSectionEdit": "This chapter has a pending candidate. Use Edit chapter to preserve its changes."
   },
   "wiki": {
     "meta": "{{chapters}} chapters · {{sections}} sections",
