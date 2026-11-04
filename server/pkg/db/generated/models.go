@@ -1778,6 +1778,26 @@ type QuickAction struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type QuotaSource struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OwnerID              pgtype.UUID        `json:"owner_id"`
+	Kind                 string             `json:"kind"`
+	Name                 string             `json:"name"`
+	BaseUrl              pgtype.Text        `json:"base_url"`
+	CredentialCiphertext []byte             `json:"credential_ciphertext"`
+	CredentialHint       string             `json:"credential_hint"`
+	Enabled              bool               `json:"enabled"`
+	Visibility           string             `json:"visibility"`
+	Snapshot             []byte             `json:"snapshot"`
+	LastPolledAt         pgtype.Timestamptz `json:"last_polled_at"`
+	LastErrorCode        pgtype.Text        `json:"last_error_code"`
+	LastErrorMessage     pgtype.Text        `json:"last_error_message"`
+	ConsecutiveFailures  int32              `json:"consecutive_failures"`
+	NextPollAt           pgtype.Timestamptz `json:"next_poll_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

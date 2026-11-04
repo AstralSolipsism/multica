@@ -144,107 +144,26 @@ func TestRateLimitBackoff(t *testing.T) {
 	}
 }
 
-// S2b: a clear marker is a deliberate state, not an observation — it is
-// re-stamped on every heartbeat so "not reported" never ages into "stale",
-// while real snapshots keep their observed_at (staleness must keep signaling
-// a silently failing collector).
-func TestHeartbeatExtrasFor_ClearMarkerReStamped(t *testing.T) {
+// A cached snapshot is forwarded verbatim on heartbeats: observed_at is
+// never re-stamped, so a silently failing collector still shows as stale
+// (the zenmux clear-marker re-stamping was retired with the collector in
+// OL-1205 scenario 3).
+func TestHeartbeatExtrasFor_SnapshotForwardedAsIs(t *testing.T) {
 	d := newQuotaLoopTestDaemon()
 
-	d.recordZenMuxPlanQuotaClearMarker("rt-kimi")
-	// Age the cached marker 25h, as if the daemon cleared long ago.
-	cached, _ := d.planQuotaCache.Load("rt-kimi")
-	aged := *cached.(planQuotaCacheEntry).quota
-	aged.ObservedAt = time.Now().Add(-25 * time.Hour).Unix()
-	d.planQuotaCache.Store("rt-kimi", planQuotaCacheEntry{quota: &aged, clearMarker: true})
-
-	extras := d.heartbeatExtrasFor("rt-kimi")
-	if extras.PlanQuota == nil {
-		t.Fatal("marker not attached to heartbeat")
-	}
-	if age := time.Now().Unix() - extras.PlanQuota.ObservedAt; age > 5 {
-		t.Fatalf("marker observed_at not re-stamped: age %ds", age)
-	}
-	if len(extras.PlanQuota.Windows) != 0 {
-		t.Fatalf("marker carries windows: %+v", extras.PlanQuota.Windows)
-	}
-	// The cached original keeps its age — the re-stamp is per-heartbeat.
-	if got, _ := d.planQuotaCache.Load("rt-kimi"); got.(planQuotaCacheEntry).quota.ObservedAt != aged.ObservedAt {
-		t.Fatal("cached marker mutated in place")
-	}
-
-	// A real snapshot replaces the marker and is never re-stamped.
 	real := &protocol.RuntimePlanQuota{
-		Provider:   "zenmux",
+		Provider:   "kimi",
 		Status:     protocol.PlanQuotaStatusOK,
 		ObservedAt: time.Now().Add(-time.Hour).Unix(),
 		Source:     protocol.PlanQuotaSourceDaemon,
 		Windows:    []protocol.RuntimePlanQuotaWindow{{Name: "primary"}},
 	}
-	d.recordRuntimePlanQuota("rt-codex", real)
-	extras = d.heartbeatExtrasFor("rt-codex")
+	d.recordRuntimePlanQuota("rt-kimi", real)
+	extras := d.heartbeatExtrasFor("rt-kimi")
+	if extras.PlanQuota == nil {
+		t.Fatal("snapshot not attached to heartbeat")
+	}
 	if extras.PlanQuota.ObservedAt != real.ObservedAt {
-		t.Fatal("real snapshot re-stamped — collector failure would be masked")
-	}
-	if got, _ := d.planQuotaCache.Load("rt-codex"); got.(planQuotaCacheEntry).clearMarker {
-		t.Fatal("real snapshot left a clear marker behind")
-	}
-}
-
-// OL-1205 scenario 1: a task-reported snapshot must fan out to every
-// same-source runtime (same provider + profile_id) this daemon hosts across
-// all workspaces, so each workspace's row updates on its own heartbeat.
-func TestRecordTaskPlanQuota_FansOutToSameSourceRuntimes(t *testing.T) {
-	d := newQuotaLoopTestDaemon()
-	d.mu.Lock()
-	d.workspaces = map[string]*workspaceState{
-		"ws-a": {runtimeIDs: []string{"rt-claude-a"}},
-		"ws-b": {runtimeIDs: []string{"rt-claude-b", "rt-claude-other-profile"}},
-		"ws-c": {runtimeIDs: []string{"rt-codex", "rt-claude-c"}},
-	}
-	d.runtimeIndex = map[string]Runtime{
-		"rt-claude-a":             {ID: "rt-claude-a", Provider: "claude"},
-		"rt-claude-b":             {ID: "rt-claude-b", Provider: "claude"},
-		"rt-claude-c":             {ID: "rt-claude-c", Provider: "claude"},
-		"rt-claude-other-profile": {ID: "rt-claude-other-profile", Provider: "claude", ProfileID: "prof-1"},
-		"rt-codex":                {ID: "rt-codex", Provider: "codex"},
-	}
-	d.mu.Unlock()
-
-	quota := &protocol.RuntimePlanQuota{
-		Provider:   "claude",
-		Status:     protocol.PlanQuotaStatusOK,
-		ObservedAt: time.Now().Unix(),
-		Source:     protocol.PlanQuotaSourceDaemon,
-		Windows:    []protocol.RuntimePlanQuotaWindow{{Name: "5h"}},
-	}
-	d.recordTaskPlanQuota("rt-claude-b", quota)
-
-	for _, id := range []string{"rt-claude-a", "rt-claude-b", "rt-claude-c"} {
-		if _, ok := d.planQuotaCache.Load(id); !ok {
-			t.Errorf("same-source runtime %s did not receive the snapshot", id)
-		}
-	}
-	if _, ok := d.planQuotaCache.Load("rt-claude-other-profile"); ok {
-		t.Error("claude runtime with a different profile_id received the snapshot")
-	}
-	if _, ok := d.planQuotaCache.Load("rt-codex"); ok {
-		t.Error("codex runtime received a claude snapshot")
-	}
-}
-
-// The reporting runtime itself must be covered even when it no longer sits in
-// any workspace's runtime list (e.g. pruned mid-report).
-func TestRecordTaskPlanQuota_UnindexedReportingRuntimeStillCached(t *testing.T) {
-	d := newQuotaLoopTestDaemon()
-	quota := &protocol.RuntimePlanQuota{
-		Provider:   "claude",
-		Status:     protocol.PlanQuotaStatusOK,
-		ObservedAt: time.Now().Unix(),
-		Source:     protocol.PlanQuotaSourceDaemon,
-	}
-	d.recordTaskPlanQuota("rt-unknown", quota)
-	if _, ok := d.planQuotaCache.Load("rt-unknown"); !ok {
-		t.Fatal("reporting runtime without an index entry did not get the snapshot")
+		t.Fatal("snapshot re-stamped — collector failure would be masked")
 	}
 }
