@@ -107,7 +107,15 @@
     "readOnlyRevision": "Cette révision historique est en lecture seule et ne peut pas être adoptée ici.",
     "editorMarkdown": "Contenu Markdown",
     "editorSummary": "Résumé des modifications",
-    "editorSummaryPlaceholder": "Résumez cette révision..."
+    "editorSummaryPlaceholder": "Résumez cette révision...",
+    "createModule": "Ajouter un chapitre de module",
+    "renameModule": "Modifier le titre du module",
+    "createModuleDescription": "Le slug est l’identifiant stable du chapitre. Le premier brouillon Markdown suit le processus habituel de révision de la référence.",
+    "renameModuleDescription": "La modification du titre crée une révision de référence sans changer le slug du chapitre.",
+    "moduleName": "Nom du module",
+    "moduleSlug": "Slug du chapitre",
+    "moduleSlugPlaceholder": "facturation-reglement",
+    "pendingCandidateSectionEdit": "Ce chapitre a un candidat en attente. Modifiez le chapitre entier pour conserver ses autres changements."
   },
   "wiki": {
     "meta": "{{chapters}} chapitres · {{sections}} sections",
@@ -117,6 +125,8 @@
       "manage": "Gestion du projet"
     },
     "tocLabel": "Sommaire de la référence",
+    "globalChapters": "Cadre global",
+    "moduleChapters": "Modules fonctionnels",
     "searchPlaceholder": "Rechercher dans la référence",
     "searchCount": "{{count}} résultats",
     "searchEmpty": "Aucun résultat pour « {{query}} »",
@@ -184,6 +194,9 @@
     "enable": "Activer la vue",
     "editChapter": "Modifier le chapitre",
     "initializeChapter": "Initialiser le chapitre",
+    "addModule": "Ajouter un module",
+    "editModuleTitle": "Modifier le titre",
+    "editSection": "Modifier la section",
     "saveAndAdopt": "Enregistrer et adopter",
     "submitForReview": "Soumettre pour relecture",
     "submitRevisionCandidate": "Soumettre le candidat de révision"
@@ -206,7 +219,9 @@
     "configTitle": "Les paramètres d’ingénierie n’ont pas été enregistrés",
     "config": "Vos modifications n’ont pas été appliquées. Vérifiez vos permissions et réessayez.",
     "baselineSaveTitle": "La révision de référence n’a pas été enregistrée",
-    "baselineSave": "Votre brouillon est conservé. Vérifiez vos permissions et la révision actuelle, puis réessayez."
+    "baselineSave": "Votre brouillon est conservé. Vérifiez vos permissions et la révision actuelle, puis réessayez.",
+    "moduleSlug": "Utilisez 1 à 63 lettres minuscules, chiffres, tirets ou traits de soulignement, en commençant par une lettre ou un chiffre.",
+    "moduleSlugDuplicate": "Ce chapitre de module existe déjà."
   },
   "messages": {
     "configSaved": "Paramètres d’ingénierie enregistrés",

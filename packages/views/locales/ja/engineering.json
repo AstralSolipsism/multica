@@ -107,7 +107,15 @@
     "readOnlyRevision": "これは読み取り専用の過去の改訂です。このビューでは採用できません。",
     "editorMarkdown": "Markdown コンテンツ",
     "editorSummary": "変更概要",
-    "editorSummaryPlaceholder": "今回の変更を一文で入力..."
+    "editorSummaryPlaceholder": "今回の変更を一文で入力...",
+    "createModule": "機能モジュール章を追加",
+    "renameModule": "モジュール名を編集",
+    "createModuleDescription": "slug は章の固定識別子です。最初の Markdown 下書きも通常の基線レビュー手順に従います。",
+    "renameModuleDescription": "章の slug は変更せず、タイトル変更を基線改訂として保存します。",
+    "moduleName": "モジュール名",
+    "moduleSlug": "章の slug",
+    "moduleSlugPlaceholder": "billing-settlement",
+    "pendingCandidateSectionEdit": "この章には確認待ちの候補があります。候補の他の変更を保持するには、章全体を編集してください。"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -117,6 +125,8 @@
       "manage": "プロジェクト管理"
     },
     "tocLabel": "基線の目次",
+    "globalChapters": "全体総論",
+    "moduleChapters": "機能モジュール",
     "searchPlaceholder": "基線内を検索",
     "searchCount": "{{count}} 件一致",
     "searchEmpty": "「{{query}}」は見つかりませんでした",
@@ -184,6 +194,9 @@
     "enable": "概要を有効化",
     "editChapter": "この章を編集",
     "initializeChapter": "この章を初期化",
+    "addModule": "モジュール章を追加",
+    "editModuleTitle": "タイトルを編集",
+    "editSection": "この節を編集",
     "saveAndAdopt": "保存して採用",
     "submitForReview": "レビュー候補として提出",
     "submitRevisionCandidate": "改訂候補を提出"
@@ -206,7 +219,9 @@
     "configTitle": "工程設定を保存できませんでした",
     "config": "変更は適用されませんでした。権限を確認して再試行してください。",
     "baselineSaveTitle": "基線改訂を保存できませんでした",
-    "baselineSave": "下書きは保持されています。権限と現在の版を確認して再試行してください。"
+    "baselineSave": "下書きは保持されています。権限と現在の版を確認して再試行してください。",
+    "moduleSlug": "英小文字、数字、ハイフン、アンダースコアを 1～63 文字で入力し、先頭は英数字にしてください。",
+    "moduleSlugDuplicate": "この機能モジュール章はすでに存在します。"
   },
   "messages": {
     "configSaved": "工程設定を保存しました",

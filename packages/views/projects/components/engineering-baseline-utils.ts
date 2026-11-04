@@ -2,9 +2,12 @@ import type {
   BaselineChapter,
   BaselineChange,
   BaselineRevision,
+  ChapterState,
   IssueGraphNode,
 } from "@multica/core/api";
-import type { EngineeringStageSummary } from "./engineering-utils";
+import type { SupportedLocale } from "@multica/core/i18n";
+import { nameToWorkspaceSlug } from "../../workspace/slug";
+import { ENGINEERING_CHAPTERS, type EngineeringStageSummary } from "./engineering-utils";
 
 export interface BaselineSection {
   key: string;
@@ -12,6 +15,7 @@ export interface BaselineSection {
   anchor: string;
   title: string;
   level: number;
+  markdown: string;
   body: string;
   firstParagraph: string;
   why: string;
@@ -46,15 +50,42 @@ export interface BaselineReferenceMatch {
   reference: BaselineReference;
 }
 
-const HEADING = /^(#{1,3})[ \t]+(.+?)[ \t]*#*[ \t]*$/;
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-
-function cleanTitle(title: string): string {
-  return title.replace(/^\[([^\]]+)]\s*/, "").trim();
+export function orderedBaselineChapters(chapters: readonly ChapterState[]): BaselineChapter[] {
+  const modules = chapters
+    .filter((item) => item.chapter.startsWith("module:"))
+    .sort((a, b) => a.position - b.position || a.chapter.localeCompare(b.chapter));
+  return [
+    ...ENGINEERING_CHAPTERS,
+    ...modules.map((item) => item.chapter),
+  ];
 }
 
-function sectionAnchor(title: string): string {
-  return title.match(/^\[([^\]]+)]\s*/)?.[1]?.trim() ?? cleanTitle(title);
+export function baselineModuleSlug(title: string, locale?: SupportedLocale): string {
+  return nameToWorkspaceSlug(title, locale).slice(0, 63).replace(/[-_]+$/, "");
+}
+
+export function isBaselineModuleSlug(slug: string): boolean {
+  return /^[a-z0-9][a-z0-9_-]{0,62}$/.test(slug);
+}
+
+const HEADING = /^ {0,3}(#{1,3})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const EXPLICIT_KEY = /^\[([\p{L}\p{N}_]+-[^\]\r\n]{1,64})\][ \t]*(.*)$/u;
+
+function normalizeHeadingTitle(title: string): string {
+  return title.split(/\s+/u).join(" ").trim();
+}
+
+function headingIdentity(rawTitle: string, level: number, parent: string): { anchor: string; title: string } {
+  const explicit = EXPLICIT_KEY.exec(rawTitle.trim());
+  const title = explicit ? explicit[2] ?? "" : normalizeHeadingTitle(rawTitle);
+  let anchor = explicit?.[1] ?? title;
+  if (!explicit && level === 3 && parent) anchor = `${parent} / ${anchor}`;
+  return { anchor, title };
+}
+
+function cleanTitle(title: string): string {
+  return headingIdentity(title, 2, "").title;
 }
 
 export function plainBaselineText(markdown: string): string {
@@ -86,50 +117,71 @@ function labeledParagraphs(body: string): { body: string; why: string; example: 
 }
 
 export function parseBaselineChapter(chapter: BaselineChapter, markdown: string): BaselineChapterDocument {
-  const sections: BaselineSection[] = [];
+  type PositionedSection = Omit<BaselineSection, "markdown"> & { startLine: number };
+  const sections: PositionedSection[] = [];
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
-  let current: { title: string; level: number; lines: string[] } = { title: "", level: 0, lines: [] };
+  let current = { title: "", anchor: "intro", level: 0, lines: [] as string[], startLine: 0 };
+  let parent = "";
   let fence = "";
-  const usedKeys = new Map<string, number>();
+  let hasHeadings = false;
+  const seen = new Set<string>();
   const flush = () => {
     const rawBody = current.lines.join("\n").trim();
     if (!current.title && !rawBody) return;
     const labeled = labeledParagraphs(rawBody);
-    const anchor = current.title ? sectionAnchor(current.title) : "intro";
-    const baseKey = `${chapter}:${anchor}`;
-    const count = (usedKeys.get(baseKey) ?? 0) + 1;
-    usedKeys.set(baseKey, count);
     sections.push({
-      key: count === 1 ? baseKey : `${baseKey} (${count})`,
+      key: `${chapter}:${current.anchor}`,
       chapter,
-      anchor,
-      title: cleanTitle(current.title),
+      anchor: current.anchor,
+      title: current.title,
       level: current.level,
+      startLine: current.startLine,
       body: labeled.body,
       firstParagraph: plainBaselineText(labeled.body.split(/\n\s*\n/)[0] ?? ""),
       why: labeled.why,
       example: labeled.example,
     });
   };
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const fenceMatch = line.match(FENCE);
     if (fenceMatch) {
       const marker = fenceMatch[1] ?? "";
-      if (!fence) fence = marker[0] ?? "";
-      else if (marker[0] === fence) fence = "";
+      if (!fence) fence = marker;
+      else if (marker.startsWith(fence) && line.slice(line.indexOf(marker) + marker.length).trim() === "") fence = "";
       current.lines.push(line);
       continue;
     }
     const heading = !fence ? line.match(HEADING) : null;
     if (heading) {
+      if (!hasHeadings && current.lines.join("\n").trim()) seen.add("_preamble");
       flush();
-      current = { title: heading[2]?.trim() ?? "", level: heading[1]?.length ?? 0, lines: [] };
+      const level = heading[1]?.length ?? 0;
+      const identity = headingIdentity(heading[2]?.trim() ?? "", level, parent);
+      const base = identity.anchor;
+      let anchor = base;
+      for (let count = 2; seen.has(anchor); count += 1) anchor = `${base} (${count})`;
+      seen.add(anchor);
+      if (level < 3) parent = anchor;
+      current = { title: identity.title, anchor, level, lines: [], startLine: lineIndex };
+      hasHeadings = true;
     } else {
       current.lines.push(line);
     }
   }
   flush();
-  return { chapter, sections };
+  return {
+    chapter,
+    sections: sections.map((section, index) => {
+      const next = sections.slice(index + 1).find((candidate) => candidate.level > 0 && (section.level === 0 || candidate.level <= section.level));
+      const { startLine, ...rest } = section;
+      return { ...rest, markdown: lines.slice(startLine, next?.startLine ?? lines.length).join("\n").trim() };
+    }),
+  };
+}
+
+export function canEditBaselineSection(section: BaselineSection, sections: readonly BaselineSection[]): boolean {
+  if (section.level === 0) return false;
+  return sections.filter((candidate) => candidate.level > 0 && (candidate.anchor === section.anchor || candidate.title === section.anchor)).length === 1;
 }
 
 function changeMatches(section: BaselineSection, change: BaselineChange): boolean {

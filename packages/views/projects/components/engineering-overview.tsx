@@ -23,13 +23,14 @@ import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { EngineeringBaseline, type BaselineSaveResult } from "./engineering-baseline";
+import { EngineeringBaseline, type BaselineSaveDraft, type BaselineSaveResult } from "./engineering-baseline";
 import type { BaselineLens } from "./engineering-baseline-markdown";
+import { orderedBaselineChapters } from "./engineering-baseline-utils";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
-import { buildEngineeringRoadmap, ENGINEERING_CHAPTERS, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings } from "./engineering-utils";
+import { buildEngineeringRoadmap, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
@@ -173,15 +174,16 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     const last = pages.at(-1);
     return { revisions: pages.flatMap((page) => page.revisions), hasMore: last?.hasMore ?? false, nextBefore: last?.nextBefore ?? null };
   }, [historyQuery.data]);
+  const baselineChapters = useMemo(() => orderedBaselineChapters(overview?.chapters ?? []), [overview?.chapters]);
   const recentQueries = useQueries({
-    queries: ENGINEERING_CHAPTERS.map((chapter) => ({
+    queries: baselineChapters.map((chapter) => ({
       ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 10 }),
       enabled: enabled && activeView === "baseline",
     })),
   });
   const chapterRevisions = useMemo<Partial<Record<BaselineChapter, readonly BaselineRevision[]>>>(() => Object.fromEntries(
-    ENGINEERING_CHAPTERS.map((chapter, index) => [chapter, recentQueries[index]?.data?.revisions ?? []]),
-  ), [recentQueries]);
+    baselineChapters.map((chapter, index) => [chapter, recentQueries[index]?.data?.revisions ?? []]),
+  ), [baselineChapters, recentQueries]);
 
   const updateEngineering = useUpdateProjectEngineering();
   const proposeBaseline = useProposeProjectBaseline();
@@ -218,7 +220,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     }
   };
   const saveBaseline = async (
-    draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string },
+    draft: BaselineSaveDraft,
     adopt: boolean,
   ): Promise<BaselineSaveResult> => {
     setDecisionError(false);
