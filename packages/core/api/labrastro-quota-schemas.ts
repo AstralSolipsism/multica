@@ -70,6 +70,95 @@ export const RuntimePlanQuotaSchema = z.object({
   source: z.string().default(""),
 }).loose();
 
+export type QuotaSourceKind = "glm" | "zenmux";
+export type QuotaSourceVisibility = "private" | "shared";
+
+export const QuotaSourceErrorSchema = z.object({
+  code: z.string().catch(""),
+  message: z.string().catch(""),
+}).loose();
+export type QuotaSourceError = z.infer<typeof QuotaSourceErrorSchema>;
+
+export const QuotaSourceProbeErrorBodySchema = z.object({
+  code: z.string().catch(""),
+  reason: z.string().optional().catch(""),
+  message: z.string().optional().catch(""),
+}).loose();
+
+const quotaSourceTimestamps = {
+  last_polled_at: z.string().nullable().optional().catch(null),
+  created_at: z.string().optional().catch(""),
+  updated_at: z.string().optional().catch(""),
+};
+
+export const QuotaSourceSchema = z.object({
+  id: z.string().catch(""),
+  kind: z.string().catch(""),
+  name: z.string().catch(""),
+  base_url: z.string().nullable().optional().catch(null),
+  credential_hint: z.string().optional().catch(""),
+  enabled: z.boolean().catch(false),
+  visibility: z.string().catch("private"),
+  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
+  ...quotaSourceTimestamps,
+}).loose();
+export type QuotaSource = z.infer<typeof QuotaSourceSchema>;
+
+export const WorkspaceQuotaSourceSchema = z.object({
+  id: z.string().catch(""),
+  kind: z.string().catch(""),
+  name: z.string().catch(""),
+  owner_id: z.string().optional().catch(""),
+  visibility: z.string().catch("private"),
+  is_own: z.boolean().optional().catch(false),
+  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  last_polled_at: quotaSourceTimestamps.last_polled_at,
+  last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
+}).loose();
+export type WorkspaceQuotaSource = z.infer<typeof WorkspaceQuotaSourceSchema>;
+
+function identifiedSources<T extends { id: string }>(sources: (T | null)[]): T[] {
+  return sources.filter((source): source is T => source !== null && source.id.length > 0);
+}
+
+export const QuotaSourceListResponseSchema = z.object({
+  encryption_configured: z.boolean().catch(false),
+  sources: z.array(QuotaSourceSchema.nullable().catch(null)).catch([])
+    .transform(identifiedSources),
+}).loose();
+export type QuotaSourceListResponse = z.infer<typeof QuotaSourceListResponseSchema>;
+
+export const WorkspaceQuotaSourceListResponseSchema = z.object({
+  sources: z.array(WorkspaceQuotaSourceSchema.nullable().catch(null)).catch([])
+    .transform(identifiedSources),
+}).loose();
+export type WorkspaceQuotaSourceListResponse = z.infer<typeof WorkspaceQuotaSourceListResponseSchema>;
+
+export const EMPTY_QUOTA_SOURCE_LIST: QuotaSourceListResponse = {
+  encryption_configured: false,
+  sources: [],
+};
+export const EMPTY_WORKSPACE_QUOTA_SOURCE_LIST: WorkspaceQuotaSourceListResponse = {
+  sources: [],
+};
+
+export interface CreateQuotaSourceInput {
+  kind: QuotaSourceKind;
+  name: string;
+  credential: string;
+  base_url?: string;
+  visibility: QuotaSourceVisibility;
+}
+
+export interface UpdateQuotaSourceInput {
+  name?: string;
+  credential?: string;
+  base_url?: string;
+  enabled?: boolean;
+  visibility?: QuotaSourceVisibility;
+}
+
 // Machine-level CPU/memory sample. `stale` is computed by the server at read
 // time and defaults to false for older backends. Unlike plan_quota (helper-
 // parsed per runtime, see the note above), system_stats is validated at the

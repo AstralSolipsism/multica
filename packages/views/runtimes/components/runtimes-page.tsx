@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  BarChart3,
   Check,
   ChevronDown,
   ChevronRight,
@@ -32,7 +33,12 @@ import {
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
-import { runtimeListOptions, runtimeKeys, glmQuotaOptions } from "@multica/core/runtimes/queries";
+import {
+  quotaSourceListOptions,
+  runtimeListOptions,
+  runtimeKeys,
+  workspaceQuotaSourceListOptions,
+} from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import {
   agentListOptions,
@@ -91,7 +97,8 @@ import { RuntimeList, buildWorkloadIndex } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
-import { GlmQuotaCard } from "./glm-quota-card";
+import { SubscriptionQuotaCards } from "./subscription-quota-cards";
+import { QuotaSourcesDialog } from "./quota-sources-dialog";
 import { HostMetricsBars } from "./host-metrics-bars";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
@@ -160,6 +167,7 @@ export function RuntimesPage({
   const [qoderDialogOpen, setQoderDialogOpen] = useState(false);
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
+  const [showQuotaSourcesDialog, setShowQuotaSourcesDialog] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
@@ -172,7 +180,10 @@ export function RuntimesPage({
   const { data: agents = [], isLoading: agentsLoading } = useQuery(
     agentListOptions(wsId),
   );
-  const { data: glmQuota } = useQuery(glmQuotaOptions());
+  const { data: quotaSourceData } = useQuery(quotaSourceListOptions());
+  const { data: workspaceQuotaSourceData } = useQuery(
+    workspaceQuotaSourceListOptions(wsId),
+  );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   // The Mika entrypoint is per member, not per workspace: the agent alone does
@@ -304,21 +315,33 @@ export function RuntimesPage({
         title={t(($) => $.page.title)}
         count={totalCount}
         actions={
-          <AddRuntimeMenu
-            isDesktop={isDesktop}
-            localMachineName={localMachineName ?? localMachine?.title ?? null}
-            qoder={qoder}
-            cloudRuntimeEnabled={cloudRuntimeEnabled}
-            onAddMachine={() => setShowConnectDialog(true)}
-            onQoder={openQoder}
-            onCloudRuntime={() => setShowCloudRuntimeDialog(true)}
-          />
+          <>
+            <Button variant="outline" size="sm" onClick={() => setShowQuotaSourcesDialog(true)}>
+              <BarChart3 aria-hidden="true" />
+              {t(($) => $.quota_sources.action)}
+              <span className="tabular-nums text-muted-foreground">
+                {quotaSourceData?.sources.length ?? 0}
+              </span>
+            </Button>
+            <AddRuntimeMenu
+              isDesktop={isDesktop}
+              localMachineName={localMachineName ?? localMachine?.title ?? null}
+              qoder={qoder}
+              cloudRuntimeEnabled={cloudRuntimeEnabled}
+              onAddMachine={() => setShowConnectDialog(true)}
+              onQoder={openQoder}
+              onCloudRuntime={() => setShowCloudRuntimeDialog(true)}
+            />
+          </>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_RAIL, PAGE_GUTTER, "flex flex-col gap-3 py-4 sm:py-6", "2xl:max-w-[1920px]")}>
-          <GlmQuotaCard data={glmQuota} now={now} />
+          <SubscriptionQuotaCards
+            sources={workspaceQuotaSourceData?.sources}
+            now={now}
+          />
           <RuntimesToolbar
             query={query}
             onQueryChange={setQuery}
@@ -455,6 +478,10 @@ export function RuntimesPage({
         </div>
       </div>
 
+      <QuotaSourcesDialog
+        open={showQuotaSourcesDialog}
+        onOpenChange={setShowQuotaSourcesDialog}
+      />
       {qoderDialogOpen && (
         <RemoteRuntimeDialog onClose={() => setQoderDialogOpen(false)} />
       )}
