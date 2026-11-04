@@ -317,6 +317,15 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seed the workspace's preset skills (OL-1207): ordinary visible skill
+	// rows the creator can edit, delete, or bind per-agent — not the
+	// invisible builtin_skills injection list. Deletion sticks.
+	if err := seedPresetSkills(r.Context(), qtx, ws.ID, parseUUID(userID)); err != nil {
+		slog.Warn("seed preset skills failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to seed preset skills")
+		return
+	}
+
 	// NOTE: CreateWorkspace deliberately does NOT mark the user as
 	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
 	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an
