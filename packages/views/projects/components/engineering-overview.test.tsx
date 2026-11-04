@@ -502,6 +502,9 @@ describe("EngineeringOverview baseline navigation", () => {
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
     expect(document.querySelector("[data-open-issues]")).toBeInTheDocument();
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+    await user.click(within(toc).getByRole("button", { name: "Architecture and decisions" }));
+    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
   });
 
   it("opens a candidate deep link without adopting on navigation", async () => {
@@ -618,6 +621,43 @@ describe("EngineeringOverview baseline editing", () => {
     expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
     await user.click(within(toc).getByRole("button", { name: "Project overview" }));
     expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
+  });
+
+  it("does not report a missing revision when changing chapters after direct adoption", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nShip safely.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Initialize overview");
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+
+    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Initialize chapter" })).toBeEnabled();
+  });
+
+  it("returns to the edited chapter and keeps its candidate actionable after cross-chapter browsing", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nCross chapter.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Cross chapter revision");
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+    expect(screen.queryByRole("button", { name: "Initialize chapter" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Submit for review" }));
+
+    expect(await screen.findByText("Cross chapter revision", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+    expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Project understanding" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps a replacement candidate actionable after submitting from a candidate deep link", async () => {

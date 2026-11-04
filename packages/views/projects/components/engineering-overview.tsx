@@ -151,7 +151,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [decisionError, setDecisionError] = useState(false);
   useEffect(() => {
     const saved = savedRevisionRef.current;
-    if (saved?.id === manualCandidateId && saved.chapter === selectedChapter) return;
+    const selectedRevisionId = manualCandidateId || candidateId;
+    if (saved?.chapter === selectedChapter && (!selectedRevisionId || saved.id === selectedRevisionId)) return;
     savedRevisionRef.current = null;
     setDecisionResult(null);
     setDecisionError(false);
@@ -241,7 +242,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     }
     savedRevisionRef.current = candidate;
     setLocalRevision(candidate);
-    setManualCandidateId(candidate.id);
+    setSelectedChapter(draft.chapter);
+    if (candidateId || manualCandidateId) setManualCandidateId(candidate.id);
     clearCandidateParam();
     if (!adopt) {
       toast.success(t(($) => $.messages.candidateSubmitted));
@@ -270,6 +272,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     params.delete("candidate");
     const query = params.toString();
     navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
+  };
+  const changeChapter = (chapter: BaselineChapter) => {
+    setManualCandidateId("");
+    setSelectedChapter(chapter);
   };
   const openOverview = () => {
     setManualCandidateId("");
@@ -416,7 +422,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             projectTitle={projectQuery.data?.title ?? ""}
             chapters={overview.chapters}
             selectedChapter={selectedChapter}
-            onChapterChange={setSelectedChapter}
+            onChapterChange={changeChapter}
             revision={revision}
             currentCandidate={currentCandidate}
             candidateLoading={showDeepLinkedRevision && candidateQuery.isLoading}
