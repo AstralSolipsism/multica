@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/multica-ai/multica/server/internal/skill"
 	"github.com/multica-ai/multica/server/internal/testutil"
-	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 )
 
 // TestPresetSkillsFrontmatterParses guards the embedded preset SKILL.md files
@@ -31,7 +33,7 @@ func TestPresetSkillsFrontmatterParses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("preset %s: read SKILL.md: %v", entry.Name(), err)
 		}
-		name, description := skillpkg.ParseSkillFrontmatter(string(content))
+		name, description := skill.ParseSkillFrontmatter(string(content))
 		if name == "" || description == "" {
 			t.Fatalf("preset %s: frontmatter missing name or description", entry.Name())
 		}
@@ -84,10 +86,54 @@ func TestCreateWorkspaceSeedsPresetSkills(t *testing.T) {
 	if got, _ := seeded["created_by"].(string); got != testUserID {
 		t.Fatalf("image-studio created_by: expected creator %s, got %v", testUserID, seeded["created_by"])
 	}
+	skillID, _ := seeded["id"].(string)
+
+	// The preset is an ordinary skill row: editing it through UpdateSkill
+	// works like any user skill.
+	w = testutil.Call(t, testHandler.UpdateSkill, updateSkillRequest(t, created.ID, skillID, "image-studio edited body")).Want(http.StatusOK)
+	var updated map[string]any
+	w.JSON(&updated)
+	if got, _ := updated["content"].(string); got != "image-studio edited body" {
+		t.Fatalf("UpdateSkill: expected edited content, got %q", got)
+	}
+
+	// Binding: an agent in the new workspace can bind the preset skill, and
+	// only the bound agent receives it — an unbound agent's execution skill
+	// list must not contain image-studio.
+	boundAgentID := insertPresetSkillTestAgent(t, created.ID, "preset-bound")
+	unboundAgentID := insertPresetSkillTestAgent(t, created.ID, "preset-unbound")
+
+	addReq := newRequest(http.MethodPost, "/api/agents/"+boundAgentID+"/skills/add", map[string]any{"skill_ids": []string{skillID}})
+	addReq.Header.Set("X-Workspace-ID", created.ID)
+	addReq = withURLParam(addReq, "id", boundAgentID)
+	testutil.Call(t, testHandler.AddAgentSkills, addReq).Want(http.StatusOK)
+
+	for _, tc := range []struct{ agentID, want string }{
+		{boundAgentID, "image-studio"},
+		{unboundAgentID, ""},
+	} {
+		skills, err := testHandler.Queries.ListAgentSkills(ctx, parseUUID(tc.agentID))
+		if err != nil {
+			t.Fatalf("ListAgentSkills(%s): %v", tc.agentID, err)
+		}
+		var names []string
+		found := false
+		for _, s := range skills {
+			names = append(names, s.Name)
+			if s.Name == "image-studio" {
+				found = true
+			}
+		}
+		if tc.want == "image-studio" && !found {
+			t.Fatalf("bound agent: image-studio missing from execution skills: %v", names)
+		}
+		if tc.want == "" && found {
+			t.Fatalf("unbound agent: image-studio must not be injected into execution skills: %v", names)
+		}
+	}
 
 	// Deleting the preset must stick: it is an ordinary skill row, and no
 	// read path may resurrect it.
-	skillID, _ := seeded["id"].(string)
 	delReq := withURLParam(wsReq(http.MethodDelete, "/api/skills/"+skillID), "id", skillID)
 	testutil.Call(t, testHandler.DeleteSkill, delReq).Want(http.StatusNoContent)
 
@@ -101,4 +147,35 @@ func TestCreateWorkspaceSeedsPresetSkills(t *testing.T) {
 			t.Fatal("ListSkills: deleted image-studio resurrected")
 		}
 	}
+}
+
+// updateSkillRequest builds a PUT /api/skills/{id} request carrying an
+// UpdateSkillRequest body, pointed at the given workspace.
+func updateSkillRequest(t *testing.T, workspaceID, skillID, content string) *http.Request {
+	t.Helper()
+	req := newRequest(http.MethodPut, "/api/skills/"+skillID, UpdateSkillRequest{
+		Content: &content,
+	})
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	return withURLParam(req, "id", skillID)
+}
+
+// insertPresetSkillTestAgent creates a minimal agent in the given workspace,
+// owned by the test user, so canManageAgent admits the binding call.
+func insertPresetSkillTestAgent(t *testing.T, workspaceID, name string) string {
+	t.Helper()
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, runtime_mode, visibility, permission_mode, owner_id
+		)
+		VALUES ($1, $2, 'local', 'workspace', 'public_to', $3)
+		RETURNING id
+	`, workspaceID, fmt.Sprintf("%s %d", name, time.Now().UnixNano()), testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	return agentID
 }
