@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { AlertCircle, LoaderCircle, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { EngineeringBaseline } from "./engineering-baseline";
+import { EngineeringBaseline, type BaselineSaveResult } from "./engineering-baseline";
 import type { BaselineLens } from "./engineering-baseline-markdown";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringSettings } from "./engineering-settings";
@@ -135,6 +135,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const chapterState = overview?.chapters.find((chapter) => chapter.chapter === selectedChapter);
   const [conflictRevision, setConflictRevision] = useState<BaselineRevision | null>(null);
   const [localRevision, setLocalRevision] = useState<BaselineRevision | null>(null);
+  const savedRevisionRef = useRef<BaselineRevision | null>(null);
   const deepLinkChapter = candidateQuery.data?.chapter ?? "overview";
   const showDeepLinkedRevision = !manualCandidateId && !!candidateId && selectedChapter === deepLinkChapter;
   const manualRevision = manualCandidateId
@@ -149,6 +150,9 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [decisionResult, setDecisionResult] = useState<BaselineDecision | null>(null);
   const [decisionError, setDecisionError] = useState(false);
   useEffect(() => {
+    const saved = savedRevisionRef.current;
+    if (saved?.id === manualCandidateId && saved.chapter === selectedChapter) return;
+    savedRevisionRef.current = null;
     setDecisionResult(null);
     setDecisionError(false);
     setConflictRevision(null);
@@ -215,37 +219,48 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const saveBaseline = async (
     draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string },
     adopt: boolean,
-  ): Promise<BaselineRevision | null> => {
+  ): Promise<BaselineSaveResult> => {
     setDecisionError(false);
     setDecisionResult(null);
     setConflictRevision(null);
     setLocalRevision(null);
+    savedRevisionRef.current = null;
     const current = overview?.chapters.find((chapter) => chapter.chapter === draft.chapter);
+    let candidate: BaselineRevision;
     try {
-      const candidate = await proposeBaseline.mutateAsync({
+      const proposed = await proposeBaseline.mutateAsync({
         projectId,
         ...draft,
         baseRevisionId: current?.adopted?.id ?? null,
         replacesCandidateId: current?.candidate?.id,
       });
-      if (!candidate) throw new Error("Invalid baseline candidate response");
-      setLocalRevision(candidate);
-      if (!adopt) {
-        toast.success(t(($) => $.messages.candidateSubmitted));
-        return candidate;
-      }
+      if (!proposed) throw new Error("Invalid baseline candidate response");
+      candidate = proposed;
+    } catch {
+      return { revision: null, error: "save" };
+    }
+    savedRevisionRef.current = candidate;
+    setLocalRevision(candidate);
+    setManualCandidateId(candidate.id);
+    clearCandidateParam();
+    if (!adopt) {
+      toast.success(t(($) => $.messages.candidateSubmitted));
+      return { revision: candidate };
+    }
+    try {
       const result = await adoptBaseline.mutateAsync({
         projectId,
         revisions: [{ revisionId: candidate.id, expectedAdoptedRevisionId: candidate.baseRevisionId }],
       });
       if (!result) throw new Error("Invalid decision response");
       const adopted = { ...candidate, status: "adopted" as const };
+      savedRevisionRef.current = adopted;
       setLocalRevision(adopted);
       setDecisionResult(result);
       toast.success(t(($) => $.messages.adopted));
-      return adopted;
+      return { revision: adopted };
     } catch {
-      return null;
+      return { revision: candidate, error: "decision" };
     }
   };
 
@@ -331,7 +346,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     <div className="min-w-0">
       {header}
       <main className={cn("mx-auto p-4 md:p-6", activeView === "overview" ? "max-w-5xl" : "max-w-7xl")}>
-        <nav className="flex flex-wrap items-center gap-5 border-b" aria-label={t(($) => $.views.label)}>
+        <nav className="flex flex-wrap items-center gap-5 border-b">
           <div className="flex gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
             {(["overview", "baseline"] as const).map((view) => (
               <button

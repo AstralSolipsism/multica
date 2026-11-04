@@ -37,6 +37,12 @@ import { ENGINEERING_CHAPTERS, type EngineeringRoadmap } from "./engineering-uti
 
 type DecisionAction = "adopt" | "reject";
 type ReviewMode = "base" | "compare";
+type BaselineSaveError = "save" | "decision";
+
+export interface BaselineSaveResult {
+  revision: BaselineRevision | null;
+  error?: BaselineSaveError;
+}
 
 interface EngineeringBaselineProps {
   workspaceSlug: string;
@@ -56,7 +62,7 @@ interface EngineeringBaselineProps {
   decisionResult: BaselineDecision | null;
   onDecision: (action: DecisionAction, revision: BaselineRevision) => void;
   savePending: boolean;
-  onSave: (draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string }, adopt: boolean) => Promise<BaselineRevision | null>;
+  onSave: (draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string }, adopt: boolean) => Promise<BaselineSaveResult>;
   history: BaselineHistory | null | undefined;
   historyLoading: boolean;
   historyError: boolean;
@@ -185,7 +191,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
-  const [saveError, setSaveError] = useState(false);
+  const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
   const [query, setQuery] = useState("");
   const [readIds, setReadIds] = useState<readonly string[]>(() => {
     try {
@@ -203,37 +209,38 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     else if (!revision) setMode("base");
   }, [props.reviewRequested, revision]);
   useEffect(() => setBack(null), [lens]);
-  useEffect(() => {
-    if (editingChapter !== props.selectedChapter) setEditingChapter(null);
-    setSaveError(false);
-  }, [props.selectedChapter, editingChapter]);
+  useEffect(() => setSaveError(null), [props.selectedChapter]);
 
   const openChapterEditor = (chapter: BaselineChapter) => {
     const state = props.chapters.find((item) => item.chapter === chapter);
     props.onChapterChange(chapter);
     setDraftContent(state?.candidate?.contentMarkdown ?? state?.adopted?.contentMarkdown ?? "");
     setChangeSummary("");
-    setSaveError(false);
+    setSaveError(null);
     setEditingChapter(chapter);
   };
   const saveChapter = async (adopt: boolean) => {
     if (!editingChapter || props.savePending || !draftContent.trim() || !changeSummary.trim()) return;
-    setSaveError(false);
+    setSaveError(null);
     try {
-      const saved = await props.onSave({
+      const result = await props.onSave({
         chapter: editingChapter,
         contentMarkdown: draftContent,
         changeSummary: changeSummary.trim(),
       }, adopt);
-      if (!saved) {
-        setSaveError(true);
+      if (result.error) {
+        setSaveError(result.error);
+        return;
+      }
+      if (!result.revision) {
+        setSaveError("save");
         return;
       }
       setMode("compare");
       setEditingChapter(null);
       setChangeSummary("");
     } catch {
-      setSaveError(true);
+      setSaveError("save");
     }
   };
 
@@ -464,15 +471,15 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
               <section key={chapter.chapter} id={`baseline-chapter-${chapter.chapter}`} className="mb-10 scroll-mt-28" data-baseline-chapter={chapter.chapter}>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2">
                   <h2 className="text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{t(($) => $.chapters[chapter.chapter])}</h2>
-                  {props.selectedChapter === chapter.chapter && editingChapter !== chapter.chapter ? (
+                  {props.selectedChapter === chapter.chapter && !editingChapter ? (
                     <Button type="button" variant="outline" size="sm" disabled={props.savePending} onClick={() => openChapterEditor(chapter.chapter)}>
                       {t(($) => props.chapters.some((item) => item.chapter === chapter.chapter && (item.adopted || item.candidate)) ? $.actions.editChapter : $.actions.initializeChapter)}
                     </Button>
                   ) : null}
                 </div>
                 {editingChapter === chapter.chapter ? (
-                  <form className="mt-4 space-y-4 rounded-md border p-4" data-baseline-editor onSubmit={(event) => { event.preventDefault(); void saveChapter(props.canDecide); }}>
-                    {saveError ? <Alert variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => $.errors.baselineSaveTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.baselineSave)}</AlertDescription></Alert> : null}
+                  <form className="mt-4 space-y-4 rounded-md border p-4" data-baseline-editor onSubmit={(event) => { event.preventDefault(); void saveChapter(false); }}>
+                    {saveError ? <Alert variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => saveError === "decision" ? $.errors.decisionTitle : $.errors.baselineSaveTitle)}</AlertTitle><AlertDescription>{t(($) => saveError === "decision" ? $.errors.decision : $.errors.baselineSave)}</AlertDescription></Alert> : null}
                     <div className="space-y-2">
                       <label className="text-caption font-medium" htmlFor={`baseline-markdown-${chapter.chapter}`}>{t(($) => $.baseline.editorMarkdown)}</label>
                       <Textarea id={`baseline-markdown-${chapter.chapter}`} value={draftContent} onChange={(event) => setDraftContent(event.target.value)} disabled={props.savePending} required className="min-h-64 font-mono text-caption" />
@@ -482,11 +489,11 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                       <Input id={`baseline-summary-${chapter.chapter}`} value={changeSummary} onChange={(event) => setChangeSummary(event.target.value)} placeholder={t(($) => $.baseline.editorSummaryPlaceholder)} disabled={props.savePending} required />
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Button type="button" variant="outline" disabled={props.savePending} onClick={() => { setEditingChapter(null); setSaveError(false); }}>{t(($) => $.actions.cancel)}</Button>
+                      <Button type="button" variant="outline" disabled={props.savePending} onClick={() => { setEditingChapter(null); setSaveError(null); }}>{t(($) => $.actions.cancel)}</Button>
                       {props.canDecide ? (
                         <>
                           <Button type="button" variant="outline" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} onClick={() => void saveChapter(false)}>{t(($) => $.actions.submitForReview)}</Button>
-                          <Button type="submit" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} aria-busy={props.savePending}>
+                          <Button type="button" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} aria-busy={props.savePending} onClick={() => void saveChapter(true)}>
                             {props.savePending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}
                           </Button>
                         </>

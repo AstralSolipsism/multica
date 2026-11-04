@@ -132,6 +132,15 @@ describe("baseline references", () => {
     expect(matches.map((match) => match.reference.label)).toEqual(["权限", "接口约束", "权限规则"]);
     expect(matches.every((match) => match.reference.kind === "concept")).toBe(true);
   });
+
+  it("does not duplicate a long-title natural match inside an explicit link in management mode", () => {
+    const explicitSections = parseBaselineChapter("domain_rules", "## 权限模型\n定义权限模型。").sections;
+    const text = "见 [[权限模型]] 与权限模型";
+    const matches = matchBaselineReferences(text, { sections: explicitSections, conceptsOnly: false });
+
+    expect(matches.map((match) => text.slice(match.start, match.end))).toEqual(["[[权限模型]]", "权限模型"]);
+    expect(matches[0]!.end).toBeLessThan(matches[1]!.start);
+  });
 });
 
 describe("mergeBaselineSections", () => {
