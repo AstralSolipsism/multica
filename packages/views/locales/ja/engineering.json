@@ -104,7 +104,10 @@
     "inFlight": "進行中",
     "queued": "キュー待ち",
     "openIssuesTruncated": "未完了タスクの最初の 200 件のみを表示しています。",
-    "readOnlyRevision": "これは読み取り専用の過去の改訂です。このビューでは採用できません。"
+    "readOnlyRevision": "これは読み取り専用の過去の改訂です。このビューでは採用できません。",
+    "editorMarkdown": "Markdown コンテンツ",
+    "editorSummary": "変更概要",
+    "editorSummaryPlaceholder": "今回の変更を一文で入力..."
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -178,7 +181,12 @@
     "collapse": "折りたたむ",
     "reject": "修正を依頼",
     "adopt": "採用",
-    "enable": "概要を有効化"
+    "enable": "概要を有効化",
+    "editChapter": "この章を編集",
+    "initializeChapter": "この章を初期化",
+    "saveAndAdopt": "保存して採用",
+    "submitForReview": "レビュー候補として提出",
+    "submitRevisionCandidate": "改訂候補を提出"
   },
   "disabled": {
     "title": "工程概要は有効ではありません",
@@ -196,12 +204,15 @@
     "decisionTitle": "候補を処理できませんでした",
     "decision": "候補が変更されたか、すでに処理された可能性があります。現在の改訂を確認して再試行してください。",
     "configTitle": "工程設定を保存できませんでした",
-    "config": "変更は適用されませんでした。権限を確認して再試行してください。"
+    "config": "変更は適用されませんでした。権限を確認して再試行してください。",
+    "baselineSaveTitle": "基線改訂を保存できませんでした",
+    "baselineSave": "下書きは保持されています。権限と現在の版を確認して再試行してください。"
   },
   "messages": {
     "configSaved": "工程設定を保存しました",
     "adopted": "候補を採用しました",
     "rejected": "候補を修正依頼に戻しました",
+    "candidateSubmitted": "改訂候補を提出しました",
     "serverAuthoritative": "権限と版のチェックはサーバーで検証されます"
   }
 }

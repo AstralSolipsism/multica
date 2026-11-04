@@ -39,6 +39,7 @@ const RULES_CANDIDATE = "44444444-4444-4444-8444-444444444444";
 const ARCHITECTURE_CANDIDATE = "55555555-5555-4555-8555-555555555555";
 const HISTORICAL = "77777777-7777-4777-8777-777777777777";
 const MISSING = "88888888-8888-4888-8888-888888888888";
+const WEB_CANDIDATE = "99999999-9999-4999-8999-999999999999";
 
 let currentUserId = OWNER;
 let config: EngineeringConfig;
@@ -49,6 +50,7 @@ let agents: Agent[];
 let decisionIssues: Issue[];
 let timelineEntries: TimelineEntry[];
 let decideProjectBaseline: ReturnType<typeof vi.fn>;
+let proposeProjectBaseline: ReturnType<typeof vi.fn>;
 let updateProjectEngineering: ReturnType<typeof vi.fn>;
 let queryClient: QueryClient;
 
@@ -145,6 +147,25 @@ beforeEach(() => {
     { chapter: "exclusions_and_risks", adopted: null, candidate: null },
   ];
   histories = { overview: [], domain_rules: [], architecture: [], exclusions_and_risks: [] };
+  proposeProjectBaseline = vi.fn(async (_ws: string, _project: string, data: {
+    chapter: BaselineChapter;
+    contentMarkdown: string;
+    changeSummary: string;
+    baseRevisionId: string | null;
+    replacesCandidateId?: string;
+  }) => {
+    const current = chapters.find((chapter) => chapter.chapter === data.chapter);
+    const candidate = {
+      ...revision(WEB_CANDIDATE, data.chapter, Math.max(current?.adopted?.revisionNumber ?? 0, current?.candidate?.revisionNumber ?? 0) + 1, data.changeSummary),
+      contentMarkdown: data.contentMarkdown,
+      baseRevisionId: data.baseRevisionId,
+      replacesRevisionId: data.replacesCandidateId ?? null,
+      createdByType: "member" as const,
+      createdById: currentUserId,
+    };
+    chapters = chapters.map((chapter) => chapter.chapter === data.chapter ? { ...chapter, candidate } : chapter);
+    return candidate;
+  });
   decideProjectBaseline = vi.fn(async (_ws: string, _project: string, action: "adopt" | "reject", revisions: { revisionId: string }[]) => {
     const id = revisions[0]?.revisionId;
     const candidate = chapters.map((chapter) => chapter.candidate).find((item) => item?.id === id);
@@ -177,6 +198,7 @@ beforeEach(() => {
     }),
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,
+    proposeProjectBaseline,
     decideProjectBaseline,
     updateProjectEngineering,
   } as unknown as ApiClient);
@@ -450,6 +472,23 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(screen.getByText(/Agent agent-1/)).toBeInTheDocument();
   });
 
+  it("places the perspective switch at the top nav right and remembers the choice", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    const baselineTab = await screen.findByRole("tab", { name: "Project baseline" });
+    await user.click(baselineTab);
+
+    const understand = await screen.findByRole("tab", { name: "Project understanding" });
+    expect(understand.closest("nav")).toBe(baselineTab.closest("nav"));
+    expect(understand.parentElement).toHaveClass("ml-auto");
+    expect(document.querySelector('[data-engineering-region="baseline"] > header [aria-label="Perspective"]')).not.toBeInTheDocument();
+    const manage = screen.getByRole("tab", { name: "Project management" });
+    await user.click(manage);
+
+    expect(manage).toHaveAttribute("aria-selected", "true");
+    expect(window.localStorage.getItem(`multica.engineering-baseline.lens.${PROJECT}`)).toBe("manage");
+  });
+
   it("keeps the decided revision and decision result after adopting from the waiting list", async () => {
     const user = userEvent.setup();
     renderOverview();
@@ -501,6 +540,65 @@ describe("EngineeringOverview baseline navigation", () => {
     await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalled());
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
+  });
+});
+
+describe("EngineeringOverview baseline editing", () => {
+  it("initializes an empty chapter and chains the proposal into adoption for a decider", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nShip safely.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Initialize overview");
+
+    expect(screen.getByRole("button", { name: "Submit for review" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "overview",
+      contentMarkdown: "## Goal\nShip safely.",
+      changeSummary: "Initialize overview",
+      baseRevisionId: null,
+      replacesCandidateId: undefined,
+    }));
+    await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, "adopt", [{
+      revisionId: WEB_CANDIDATE,
+      expectedAdoptedRevisionId: null,
+    }]));
+    expect(proposeProjectBaseline.mock.invocationCallOrder[0]).toBeLessThan(decideProjectBaseline.mock.invocationCallOrder[0]!);
+    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
+    expect(document.querySelector("[data-baseline-editor]")).not.toBeInTheDocument();
+  });
+
+  it("lets a non-decider replace the pending candidate without exposing direct adoption", async () => {
+    const user = userEvent.setup();
+    currentUserId = MEMBER;
+    const current = revision("adopted-overview", "overview", 1, "ADOPTED", "adopted", "2026-10-29T00:00:00Z", "session");
+    const pending = revision("old-candidate", "overview", 2, "OLD-CANDIDATE");
+    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", adopted: current, candidate: pending } : chapter);
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Edit chapter" }));
+    const markdown = screen.getByRole("textbox", { name: "Markdown content" });
+    await user.clear(markdown);
+    await user.type(markdown, "## Revised\nMember edit.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Member revision");
+
+    expect(screen.queryByRole("button", { name: "Save and adopt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit revision candidate" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "overview",
+      contentMarkdown: "## Revised\nMember edit.",
+      changeSummary: "Member revision",
+      baseRevisionId: "adopted-overview",
+      replacesCandidateId: "old-candidate",
+    }));
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+    expect(await screen.findByText("Member revision", { selector: "p" })).toBeInTheDocument();
+    expect(document.querySelector("[data-baseline-editor]")).not.toBeInTheDocument();
   });
 });
 

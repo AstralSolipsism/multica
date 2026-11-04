@@ -113,6 +113,22 @@ export function useUpdateProjectEngineering() {
   });
 }
 
+type ProposeProjectBaselineInput = { projectId: string } &
+  Parameters<ApiClient["proposeProjectBaseline"]>[2];
+
+export function useProposeProjectBaseline() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ projectId, ...data }: ProposeProjectBaselineInput) =>
+      api.proposeProjectBaseline(wsId, projectId, data),
+    retry: false,
+    onSettled: (_data, _error, { projectId }) => {
+      qc.invalidateQueries({ queryKey: projectKeys.engineeringAll(wsId, projectId) });
+    },
+  });
+}
+
 type DecideProjectBaselineInput = {
   projectId: string;
   revisions: Parameters<ApiClient["decideProjectBaseline"]>[3];

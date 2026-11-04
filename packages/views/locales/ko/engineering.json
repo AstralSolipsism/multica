@@ -104,7 +104,10 @@
     "inFlight": "진행 중",
     "queued": "대기 중",
     "openIssuesTruncated": "미완료 작업 중 처음 200개만 표시합니다.",
-    "readOnlyRevision": "이전 수정 버전은 읽기 전용이며 이 화면에서 채택할 수 없습니다."
+    "readOnlyRevision": "이전 수정 버전은 읽기 전용이며 이 화면에서 채택할 수 없습니다.",
+    "editorMarkdown": "Markdown 내용",
+    "editorSummary": "변경 요약",
+    "editorSummaryPlaceholder": "이번 변경을 한 문장으로 입력..."
   },
   "wiki": {
     "meta": "장 {{chapters}}개 · 섹션 {{sections}}개",
@@ -178,7 +181,12 @@
     "collapse": "접기",
     "reject": "수정 요청",
     "adopt": "채택",
-    "enable": "개요 사용"
+    "enable": "개요 사용",
+    "editChapter": "이 장 편집",
+    "initializeChapter": "이 장 초기화",
+    "saveAndAdopt": "저장하고 채택",
+    "submitForReview": "검토 후보로 제출",
+    "submitRevisionCandidate": "수정 후보 제출"
   },
   "disabled": {
     "title": "엔지니어링 개요가 활성화되지 않았습니다",
@@ -196,12 +204,15 @@
     "decisionTitle": "후보를 처리하지 못했습니다",
     "decision": "후보가 변경되었거나 이미 처리되었을 수 있습니다. 현재 버전을 확인한 후 다시 시도하세요.",
     "configTitle": "엔지니어링 설정을 저장하지 못했습니다",
-    "config": "변경 사항이 적용되지 않았습니다. 권한을 확인하고 다시 시도하세요."
+    "config": "변경 사항이 적용되지 않았습니다. 권한을 확인하고 다시 시도하세요.",
+    "baselineSaveTitle": "기준 수정을 저장하지 못했습니다",
+    "baselineSave": "초안은 그대로 유지됩니다. 권한과 현재 버전을 확인한 후 다시 시도하세요."
   },
   "messages": {
     "configSaved": "엔지니어링 설정을 저장했습니다",
     "adopted": "후보를 채택했습니다",
     "rejected": "후보에 수정을 요청했습니다",
+    "candidateSubmitted": "수정 후보를 제출했습니다",
     "serverAuthoritative": "권한과 버전 검사는 서버에서 확인합니다"
   }
 }
