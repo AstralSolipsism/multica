@@ -101,6 +101,46 @@ describe("baseline references", () => {
     });
     expect(matches.map((match) => match.reference.kind)).toEqual(["concept", "concept", "issue", "stage"]);
   });
+
+  it("does not mark generic short Chinese or English headings in natural text", () => {
+    const shortSections = [
+      ...parseBaselineChapter("domain_rules", "## 权限\n定义权限。").sections,
+      ...parseBaselineChapter("architecture", "## 阶段\n定义阶段。").sections,
+      ...parseBaselineChapter("exclusions_and_risks", "## API\n定义接口。").sections,
+      ...parseBaselineChapter("overview", "## 权限模型\n定义权限模型。").sections,
+      ...parseBaselineChapter("domain_rules", "## Auth\n定义认证。").sections,
+    ];
+    const text = "权限、阶段、API、权限模型与 Auth";
+    const matches = matchBaselineReferences(text, { sections: shortSections, conceptsOnly: true });
+
+    expect(matches.map((match) => text.slice(match.start, match.end))).toEqual(["权限模型", "Auth"]);
+  });
+
+  it("matches explicit links even for short titles and preserves their display labels", () => {
+    const explicitSections = [
+      ...parseBaselineChapter("domain_rules", "## [Rule] 权限\n定义权限。").sections,
+      ...parseBaselineChapter("architecture", "## API\n定义接口。").sections,
+    ];
+    const text = "先见 [[权限]]，再见 [[API|接口约束]] 与 [[#Rule|权限规则]]。";
+    const matches = matchBaselineReferences(text, {
+      sections: explicitSections,
+      conceptsOnly: true,
+      seenConcepts: new Set(),
+    });
+
+    expect(matches.map((match) => text.slice(match.start, match.end))).toEqual(["[[权限]]", "[[API|接口约束]]", "[[#Rule|权限规则]]"]);
+    expect(matches.map((match) => match.reference.label)).toEqual(["权限", "接口约束", "权限规则"]);
+    expect(matches.every((match) => match.reference.kind === "concept")).toBe(true);
+  });
+
+  it("does not duplicate a long-title natural match inside an explicit link in management mode", () => {
+    const explicitSections = parseBaselineChapter("domain_rules", "## 权限模型\n定义权限模型。").sections;
+    const text = "见 [[权限模型]] 与权限模型";
+    const matches = matchBaselineReferences(text, { sections: explicitSections, conceptsOnly: false });
+
+    expect(matches.map((match) => text.slice(match.start, match.end))).toEqual(["[[权限模型]]", "权限模型"]);
+    expect(matches[0]!.end).toBeLessThan(matches[1]!.start);
+  });
 });
 
 describe("mergeBaselineSections", () => {
