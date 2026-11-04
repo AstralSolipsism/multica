@@ -151,15 +151,18 @@ multica project baseline adopt <project-id> --revision module:billing:2
 `--index` returns metadata and an ordered H1–H3 outline; `--section` returns full
 matching subtrees plus a one-hop `referenced_sections` list of definitions and
 rationale. Text output places references under `### 关联概念摘要`. These modes
-make a compact server request and do not download all chapter bodies. Exact
-titles/anchors win over case-insensitive substring matches. `--chapter` limits
+make a compact server request and do not download all chapter bodies. For reads,
+exact titles/anchors win over case-insensitive substring matches. `--chapter` limits
 matches but references may come from other chapters. `--candidate` reads current
 candidates. `--index`, `--section`, and `--revision` are mutually exclusive.
 
-For a local proposal, a missing heading is restored automatically; a missing
-section is appended. Replacements include descendants and must preserve the
-existing heading depth. Ambiguous matches fail; use the unique anchor from the
-index. Deletion requires no content file and fails if the section does not exist.
+Local proposals and deletions require an exact, case-sensitive title or anchor;
+they never fall back to substring matching. For a local proposal, a missing heading
+is restored automatically; a section without an exact match is appended, even if
+another title or anchor contains the query. Replacements include descendants and
+must preserve the existing heading depth. Ambiguous matches fail; use the unique
+anchor from the index. Deletion requires no content file and fails if the section
+does not exist.
 The server merges against the specified adopted version, checks the resulting
 64 KiB chapter limit, and produces the same reviewable candidate and Diff as a
 whole-chapter proposal. `--replaces` remains required for an existing candidate.

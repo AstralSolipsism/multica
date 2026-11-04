@@ -156,8 +156,8 @@ level}]}]}`. Missing versions have null ID, number 0, empty status and outline.
 Ordered levels represent the heading tree. Neither mode sends other chapter
 bodies or a full engineering overview over HTTP.
 
-Section lookup matches exact title/anchor first across the selected scope, then
-case-insensitive substrings. All matches are returned. Reads and local edits
+Section reads match exact title/anchor first across the selected scope, then
+case-insensitive substrings. All read matches are returned. Reads and local edits
 include descendant headings up to the next heading of equal or lower depth;
 Diff still compares each individual H1–H3 anchor. Slice JSON is `{sections:
 [{chapter, anchor, title, level, content_markdown}], referenced_sections:
@@ -169,13 +169,16 @@ labelled 为什么/原因/理由/Why/Rationale, including a descendant heading. 
 rationale stays empty. Referenced text is not scanned again. Already selected
 sections and descendants are excluded from references.
 
-Candidate requests may include `section`. `content_markdown` then contains only
-that section subtree; a missing H1–H3 heading is filled with the original heading
-(or `## <section>` when appending). An explicit replacement heading must preserve
-the original depth and may have descendants, but not siblings. `delete_section:
-true` requires `section` and empty/omitted content, and removes that subtree.
+Candidate requests may include `section`. Local proposals and deletions match
+only an exact, case-sensitive title or anchor, with no substring fallback.
+`content_markdown` then contains only that section subtree; a missing H1–H3
+heading is filled with the original heading (or `## <section>` when appending).
+An explicit replacement heading must preserve the original depth and may have
+descendants, but not siblings. `delete_section: true` requires `section` and
+empty/omitted content, and removes that subtree.
 Multiple matches return 422 `baseline_section_ambiguous`; a missing section on
-delete/read returns 404 `baseline_section_not_found`. An unmatched replacement
-appends. Existing base/candidate checks run before merge, and the merged chapter
-must still fit 65536 bytes. The normal Diff, candidate creation and human decision
-flow is unchanged; unrelated source bytes are preserved.
+delete/read returns 404 `baseline_section_not_found`. A replacement with no exact
+match appends, even if another title or anchor contains the query. Existing
+base/candidate checks run before merge, and the merged chapter must still fit
+65536 bytes. The normal Diff, candidate creation and human decision flow is
+unchanged; unrelated source bytes are preserved.

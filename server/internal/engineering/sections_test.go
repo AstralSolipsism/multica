@@ -43,6 +43,28 @@ func TestSectionIndexAndOneHopRead(t *testing.T) {
 	if err != nil || got.Sections[0].Title != "Account" {
 		t.Fatalf("anchor=%+v err=%v", got, err)
 	}
+	t.Run("same chapter and overlapping cross chapter offsets", func(t *testing.T) {
+		chapters := []ChapterContent{
+			{"module:billing", "## Selected\nUses [[Term-1]], Plain concept and Cross concept.\n## [Term-1] Account\nSame-chapter anchor reference.\n## Plain concept\nSame-chapter title reference."},
+			// This heading starts at byte 0, inside the selected section's byte range
+			// in the other chapter. Offsets alone must not mark it as selected.
+			{"domain_rules", "## Cross concept\nCross-chapter reference."},
+		}
+		got, err := ReadSections(chapters, "module:billing", "Selected")
+		if err != nil || len(got.Sections) != 1 || len(got.ReferencedSections) != 3 {
+			t.Fatalf("slice=%+v err=%v", got, err)
+		}
+		for i, want := range []struct{ chapter, anchor, definition string }{
+			{"module:billing", "Term-1", "Same-chapter anchor reference."},
+			{"module:billing", "Plain concept", "Same-chapter title reference."},
+			{"domain_rules", "Cross concept", "Cross-chapter reference."},
+		} {
+			ref := got.ReferencedSections[i]
+			if ref.Chapter != want.chapter || ref.Anchor != want.anchor || ref.Definition != want.definition {
+				t.Errorf("reference[%d]=%+v, want %+v", i, ref, want)
+			}
+		}
+	})
 }
 
 func TestMergeSectionPreservesOtherBytesAndDiff(t *testing.T) {
@@ -73,6 +95,7 @@ func TestSectionEditErrors(t *testing.T) {
 	}{
 		{"## Same\nA\n## Same\nB", "Same", "New", false, "baseline_section_ambiguous"},
 		{"## One", "Missing", "", true, "baseline_section_not_found"},
+		{"## 计费规则\nKeep this body.\n", "规则", "", true, "baseline_section_not_found"},
 		{"## One", "", "Text", false, "invalid_request"},
 		{"## One", "One", "Text", true, "invalid_request"},
 		{"## One", "One", "## One\nBody\n## Unrelated\nOops", false, "invalid_request"},
@@ -84,6 +107,27 @@ func TestSectionEditErrors(t *testing.T) {
 			t.Fatalf("%+v error=%v", tt, err)
 		}
 	}
+}
+
+func TestMergeSectionAppendsWithoutExactMatch(t *testing.T) {
+	before := "## 计费规则\nKeep this body.\n"
+	for _, replacement := range []string{"New rule.", "## 规则\nNew rule."} {
+		t.Run(replacement, func(t *testing.T) {
+			got, err := MergeSection("module:billing", before, "规则", replacement, false)
+			want := before + "## 规则\nNew rule.\n\n"
+			if err != nil || got != want {
+				t.Fatalf("merged=%q err=%v, want %q", got, err, want)
+			}
+		})
+	}
+
+	t.Run("adopted content without trailing newline", func(t *testing.T) {
+		got, err := MergeSection("overview", "## A\nbody", "B", "New body", false)
+		want := "## A\nbody\n## B\nNew body\n\n"
+		if err != nil || got != want {
+			t.Fatalf("merged=%q err=%v, want %q", got, err, want)
+		}
+	})
 }
 
 func TestSectionWhitespaceHeadingsAndLabeledRationale(t *testing.T) {

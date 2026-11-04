@@ -35,6 +35,10 @@ func TestLabrastroBaselineModulesAndSectionLifecycle(t *testing.T) {
 	if len(index.Chapters) != 5 || len(index.Chapters[4].Sections) != 2 || index.Chapters[4].RevisionNumber != 1 || strings.Contains(string(raw), "UNRELATED_BODY") || strings.Contains(string(raw), "content_markdown") || strings.Contains(string(raw), "anchors_diff") {
 		t.Fatalf("index=%s", raw)
 	}
+	testutil.Call(t, testHandler.LabrastroReadBaseline, f.request("GET", "/baseline?index=true&chapter=module:billing", nil, "task")).Want(200).JSON(&index)
+	if len(index.Chapters) != 1 || index.Chapters[0].Chapter != "module:billing" || len(index.Chapters[0].Sections) != 2 || index.Chapters[0].RevisionNumber != 1 {
+		t.Fatalf("filtered index=%+v", index.Chapters)
+	}
 	var slice engineering.Slice
 	testutil.Call(t, testHandler.LabrastroReadBaseline, f.request("GET", "/baseline?chapter=module:billing&section=Pay", nil, "task")).Want(200).JSON(&slice)
 	raw, _ = json.Marshal(slice)
@@ -46,6 +50,9 @@ func TestLabrastroBaselineModulesAndSectionLifecycle(t *testing.T) {
 		t.Fatalf("context=%s", context)
 	}
 	base := initial
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", map[string]any{
+		"chapter": "module:billing", "section": "eep", "delete_section": true, "base_revision_id": uuidToString(base.ID),
+	}, "task")).Want(404), "baseline_section_not_found")
 	for _, tc := range []struct {
 		section, content string
 		deleting         bool

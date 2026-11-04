@@ -99,20 +99,28 @@ func Index(chapter, content string) ([]Heading, error) {
 	return out, nil
 }
 
-// Exact matches across the entire scope win over case-insensitive substrings.
-func matchingHeadings(headings []documentHeading, query string) []int {
-	exact, partial := []int{}, []int{}
-	query = strings.TrimSpace(query)
+func exactMatchingHeadings(headings []documentHeading, query string) []int {
+	exact := []int{}
 	for i, h := range headings {
 		if h.Anchor == query || h.Title == query {
 			exact = append(exact, i)
 		}
-		if strings.Contains(strings.ToLower(h.Anchor), strings.ToLower(query)) || strings.Contains(strings.ToLower(h.Title), strings.ToLower(query)) {
+	}
+	return exact
+}
+
+// Reads prefer exact matches across the entire scope, then case-insensitive substrings.
+func matchingHeadings(headings []documentHeading, query string) []int {
+	query = strings.TrimSpace(query)
+	if exact := exactMatchingHeadings(headings, query); len(exact) > 0 {
+		return exact
+	}
+	partial := []int{}
+	query = strings.ToLower(query)
+	for i, h := range headings {
+		if strings.Contains(strings.ToLower(h.Anchor), query) || strings.Contains(strings.ToLower(h.Title), query) {
 			partial = append(partial, i)
 		}
-	}
-	if len(exact) > 0 {
-		return exact
 	}
 	return partial
 }
@@ -129,7 +137,7 @@ func MergeSection(chapter, before, query, replacement string, deleting bool) (st
 		return "", err
 	}
 	headings := scanHeadings(before)
-	matches := matchingHeadings(headings, query)
+	matches := exactMatchingHeadings(headings, query)
 	if len(matches) > 1 {
 		return "", &Error{"baseline_section_ambiguous"}
 	}
