@@ -10,10 +10,12 @@ policy. Routes use `/api/projects/{id}`:
 
 | Method | Suffix | Result |
 | --- | --- | --- |
-| GET | `/engineering` | `engineering` and four `chapters`, each with nullable `adopted` and `candidate` |
+| GET | `/engineering` | `engineering` and all `chapters` (four built-ins plus persisted modules), with `title`, `position`, nullable `adopted` and `candidate` |
 | PATCH | `/engineering` | Updated `engineering` configuration |
 | POST | `/baseline/candidates` | New revision, including structured `anchors_diff` |
-| POST | `/baseline/decisions` | Four updated `chapters` and `open_issues` |
+| POST | `/baseline/decisions` | All updated `chapters` and `open_issues` |
+| GET | `/baseline?index=true` | Chapter metadata and H1–H3 outlines, without content or Diffs |
+| GET | `/baseline?section=<query>` | Matching section subtrees and one-hop referenced definitions |
 | GET | `/baseline/revisions` | `revisions`, `has_more`, `next_before`, or a historical Diff |
 
 Configuration defaults to disabled. Only owner/admin can change `enabled`
@@ -44,7 +46,7 @@ Candidate requests contain `chapter`, `content_markdown`, `change_summary`, and
 replaced with their exact `replaces_candidate_id`; replaced versions become
 `withdrawn`. Optional `source_issue_id` must belong to the same project.
 
-Decisions contain `action: adopt|reject` and one to four `revisions`, each with
+Decisions contain `action: adopt|reject` and one to 100 `revisions`, each with
 `revision_id` and `expected_adopted_revision_id`. All revisions are checked before
 any changes commit. Session/PAT callers must be deciders, otherwise they receive
 403 `baseline_not_decider`. A task token bound to the selected workspace receives
@@ -127,3 +129,53 @@ only project/chapter identifiers. Shared API clients parse all responses through
 Zod and `parseWithFallback`; unknown statuses, warnings and credentials remain
 explicitly unknown. The [baseline CLI](labrastro-project-baseline-cli.md) exposes
 these APIs; Web/Desktop share the engineering overview and credential badges.
+
+## Dynamic module chapters and section access
+
+Migration `9048_labrastro_baseline_module_chapters` adds `title TEXT NOT NULL
+DEFAULT ''` and `position INTEGER NOT NULL DEFAULT 0` to the existing document
+table and widens both chapter CHECK constraints. The published keys remain
+`overview`, `domain_rules`, `architecture`, `exclusions_and_risks`; dynamic keys
+match `^module:[a-z0-9][a-z0-9_-]{0,62}$`. No new baseline tables are created.
+Built-ins appear first in their established order, followed by modules sorted
+by position and chapter key. Unset titles are empty. Module creation is lazy,
+through the first successful proposal. Optional `chapter_title` (single line,
+at most 200 Unicode characters) updates document metadata in that transaction;
+it is not a versioned content field. Position is reserved metadata with default 0.
+
+Apply 9048 before deploying the binary. Downgrade refuses while either table
+contains a module chapter, preserving revision history rather than deleting it.
+Once module data has been explicitly handled, down restores the old constraints
+and drops title/position; that metadata is not recoverable. Migrations 9039–9047
+are unchanged. This migration has no concurrent index and is discovered by stem.
+
+Both compact GET modes accept `chapter` and `candidate=true`. They require exactly
+one of `index=true` or a nonempty `section`. Index JSON is `{chapters: [{chapter,
+title, position, revision_id, revision_number, status, sections: [{anchor, title,
+level}]}]}`. Missing versions have null ID, number 0, empty status and outline.
+Ordered levels represent the heading tree. Neither mode sends other chapter
+bodies or a full engineering overview over HTTP.
+
+Section lookup matches exact title/anchor first across the selected scope, then
+case-insensitive substrings. All matches are returned. Reads and local edits
+include descendant headings up to the next heading of equal or lower depth;
+Diff still compares each individual H1–H3 anchor. Slice JSON is `{sections:
+[{chapter, anchor, title, level, content_markdown}], referenced_sections:
+[{chapter, anchor, title, level, definition, why}]}`. References come from
+`[[title]]`, `[[anchor]]` or literal occurrences of another heading title in the
+selected bodies, case-insensitively. Resolution can cross chapters even with a
+chapter filter. Each definition is its first paragraph; `why` extracts a paragraph
+labelled 为什么/原因/理由/Why/Rationale, including a descendant heading. Missing
+rationale stays empty. Referenced text is not scanned again. Already selected
+sections and descendants are excluded from references.
+
+Candidate requests may include `section`. `content_markdown` then contains only
+that section subtree; a missing H1–H3 heading is filled with the original heading
+(or `## <section>` when appending). An explicit replacement heading must preserve
+the original depth and may have descendants, but not siblings. `delete_section:
+true` requires `section` and empty/omitted content, and removes that subtree.
+Multiple matches return 422 `baseline_section_ambiguous`; a missing section on
+delete/read returns 404 `baseline_section_not_found`. An unmatched replacement
+appends. Existing base/candidate checks run before merge, and the merged chapter
+must still fit 65536 bytes. The normal Diff, candidate creation and human decision
+flow is unchanged; unrelated source bytes are preserved.

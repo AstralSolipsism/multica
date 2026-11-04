@@ -3,6 +3,7 @@ package main
 // Keep fork migration registration separate from the upstream index catalog.
 // SQL files (including 9009_labrastro_wakeup_conversation_provenance, which has
 // no concurrent index) are discovered automatically by full stem.
+// 9048_labrastro_baseline_module_chapters is DDL-only and needs no index hook.
 // Both maps are needed: the runner uses hooks, and the migration audit checks
 // the catalog against every concurrent CREATE INDEX statement.
 func init() {

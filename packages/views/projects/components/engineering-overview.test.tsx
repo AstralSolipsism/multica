@@ -139,10 +139,10 @@ beforeEach(() => {
     stages: [{ stage: 1, title: "Foundation", goal: "Core contracts" }],
   };
   chapters = [
-    { chapter: "overview", adopted: null, candidate: null },
-    { chapter: "domain_rules", adopted: null, candidate: null },
-    { chapter: "architecture", adopted: null, candidate: null },
-    { chapter: "exclusions_and_risks", adopted: null, candidate: null },
+    { chapter: "overview", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "domain_rules", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "architecture", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "exclusions_and_risks", title: "", position: 0, adopted: null, candidate: null },
   ];
   histories = { overview: [], domain_rules: [], architecture: [], exclusions_and_risks: [] };
   decideProjectBaseline = vi.fn(async (_ws: string, _project: string, action: "adopt" | "reject", revisions: { revisionId: string }[]) => {
@@ -155,8 +155,8 @@ beforeEach(() => {
       decidedAt: "2026-10-31T00:00:00Z",
       decisionCredential: "session" as const,
     };
-    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { chapter: chapter.chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
-    histories[candidate.chapter] = [decided, ...histories[candidate.chapter]];
+    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { ...chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
+    histories[candidate.chapter] = [decided, ...(histories[candidate.chapter] ?? [])];
     return { chapters: [], openIssues: { inFlight: [], queued: [], truncated: false } };
   });
   updateProjectEngineering = vi.fn(async (_ws: string, _project: string, data: Partial<EngineeringConfig>) => {
@@ -173,7 +173,7 @@ beforeEach(() => {
     getProjectEngineering: async () => ({ engineering: config, chapters }),
     getProjectBaselineHistory: async (_ws: string, _project: string, chapter: BaselineChapter, options: { limit?: number } = {}) => ({
       ...emptyHistory(),
-      revisions: histories[chapter].slice(0, options.limit ?? 50),
+      revisions: (histories[chapter] ?? []).slice(0, options.limit ?? 50),
     }),
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,

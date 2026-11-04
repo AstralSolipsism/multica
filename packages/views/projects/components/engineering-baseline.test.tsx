@@ -75,7 +75,7 @@ const adopted = (): BaselineRevision => ({
   contentMarkdown: "### [Rule-1] 幂等键\n所有写接口应该携带幂等键。\n\n### [Rule-old] 旧规则\n删除这段旧规则。",
   anchorsDiff: { ...revision().anchorsDiff, added: [], modified: [], removed: [] },
 });
-const chapter = (candidate: BaselineRevision | null, current: BaselineRevision | null = null): ChapterState => ({ chapter: "domain_rules", adopted: current, candidate });
+const chapter = (candidate: BaselineRevision | null, current: BaselineRevision | null = null): ChapterState => ({ chapter: "domain_rules", title: "", position: 0, adopted: current, candidate });
 const nodes = [{ id: "issue-42", identifier: "OL-42", title: "Implement idempotency", stage: 6, status: "in_progress", statusCategory: "started" }] as IssueGraphNode[];
 const roadmap = buildEngineeringRoadmap(nodes, [{ stage: 6, title: "Frontend", goal: "Ship the views" }], 6);
 const baseProps = {

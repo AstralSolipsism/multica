@@ -20,6 +20,8 @@ export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
 export {
+  BaselineIndexSchema,
+  BaselineSliceSchema,
   BaselineChapterSchema,
   BaselineDecisionSchema,
   BaselineDiffSchema,
@@ -31,6 +33,8 @@ export {
   EngineeringUpdatedSchema,
 } from "./labrastro-engineering-schemas";
 export type {
+  BaselineIndex,
+  BaselineSlice,
   BaselineChapter,
   BaselineDecision,
   BaselineDiff,

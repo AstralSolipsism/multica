@@ -44,5 +44,5 @@ export function installLabrastroApi(target: { prototype: ApiClient }): void {
   installLabrastroGitHubApi(target);
 }
 
-export { EngineeringConfigSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, BaselineRevisionSchema, BaselineDiffSchema, BaselineDecisionSchema, BaselineHistorySchema, BaselineChapterSchema } from "./labrastro-engineering-schemas";
-export type { EngineeringConfig, EngineeringOverview, BaselineRevision, BaselineDiff, BaselineDecision, BaselineHistory, BaselineChapter } from "./labrastro-engineering-schemas";
+export { EngineeringConfigSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, BaselineRevisionSchema, BaselineDiffSchema, BaselineDecisionSchema, BaselineHistorySchema, BaselineChapterSchema, BaselineIndexSchema, BaselineSliceSchema } from "./labrastro-engineering-schemas";
+export type { EngineeringConfig, EngineeringOverview, BaselineRevision, BaselineDiff, BaselineDecision, BaselineHistory, BaselineChapter, BaselineIndex, BaselineSlice } from "./labrastro-engineering-schemas";

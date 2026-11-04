@@ -15,7 +15,7 @@ import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
 import { AppLink, useNavigation } from "../../navigation";
 import { useStatusLabel } from "../../issues/utils/status-label";
-import { useFormatRelativeDate } from "./labels";
+import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
   latestBaselineSectionRevision,
   mergeBaselineSections,
@@ -170,6 +170,7 @@ function SectionRelations({ section, relations, lens, onConcept }: {
 }
 
 export function EngineeringBaseline(props: EngineeringBaselineProps) {
+  const chapterLabel = useEngineeringChapterLabel(props.chapters);
   const { t } = useT("engineering");
   const navigation = useNavigation();
   const { getActorName } = useActorName();
@@ -405,7 +406,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   <button key={section.key} type="button" className="block w-full border-b py-2 text-left" onClick={() => onConcept(section, false)}>
                     <span className="block text-caption font-medium"><Highlight text={section.title || t(($) => $.wiki.untitled)} query={query.trim()} /></span>
                     <span className="line-clamp-2 text-micro text-muted-foreground"><Highlight text={snippet} query={query.trim()} /></span>
-                    <span className="block text-micro text-muted-foreground">{t(($) => $.chapters[section.chapter])}</span>
+                    <span className="block text-micro text-muted-foreground">{chapterLabel(section.chapter)}</span>
                   </button>
                 )) : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.searchEmpty, { query: query.trim() })}</p>}
               </div>
@@ -421,7 +422,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                 <nav>
                   {displayChapters.map((chapter) => (
                     <div key={chapter.chapter} className="mb-3">
-                      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.chapters[chapter.chapter])}</button>
+                      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{chapterLabel(chapter.chapter)}</button>
                       {chapter.sections.map((section) => (
                         <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
                           <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
@@ -440,7 +441,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
           <div ref={articleRef} className="min-w-0 max-w-3xl">
             {displayChapters.map((chapter, chapterIndex) => (
               <section key={chapter.chapter} id={`baseline-chapter-${chapter.chapter}`} className="mb-10 scroll-mt-28" data-baseline-chapter={chapter.chapter}>
-                <h2 className="border-b pb-2 text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{t(($) => $.chapters[chapter.chapter])}</h2>
+                <h2 className="border-b pb-2 text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{chapterLabel(chapter.chapter)}</h2>
                 {chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
                   <article
                     key={section.key}
@@ -488,7 +489,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="flex items-center gap-2 text-title-sm font-medium"><FileClock className="size-4" aria-hidden="true" />{t(($) => $.history.title)}</h2>
                 <div className="flex flex-wrap gap-1" role="tablist" aria-label={t(($) => $.baseline.chaptersLabel)}>
-                  {ENGINEERING_CHAPTERS.map((chapter) => <Button key={chapter} type="button" role="tab" aria-selected={props.selectedChapter === chapter} size="sm" variant={props.selectedChapter === chapter ? "brand" : "ghost"} onClick={() => props.onChapterChange(chapter)}>{t(($) => $.chapters[chapter])}</Button>)}
+                  {ENGINEERING_CHAPTERS.map((chapter) => <Button key={chapter} type="button" role="tab" aria-selected={props.selectedChapter === chapter} size="sm" variant={props.selectedChapter === chapter ? "brand" : "ghost"} onClick={() => props.onChapterChange(chapter)}>{chapterLabel(chapter)}</Button>)}
                 </div>
               </div>
               <div className="mt-3"><BaselineHistoryList history={props.history} loading={props.historyLoading} error={props.historyError} onMore={props.onHistoryMore} /></div>
