@@ -163,7 +163,7 @@ beforeEach(() => {
       createdByType: "member" as const,
       createdById: currentUserId,
     };
-    if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...histories[data.chapter]];
+    if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...(histories[data.chapter] ?? [])];
     chapters = chapters.map((chapter) => chapter.chapter === data.chapter ? { ...chapter, candidate } : chapter);
     return candidate;
   });
@@ -583,7 +583,7 @@ describe("EngineeringOverview baseline editing", () => {
     currentUserId = MEMBER;
     const current = revision("adopted-overview", "overview", 1, "ADOPTED", "adopted", "2026-10-29T00:00:00Z", "session");
     const pending = revision("old-candidate", "overview", 2, "OLD-CANDIDATE");
-    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", adopted: current, candidate: pending } : chapter);
+    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", title: chapter.title, position: chapter.position, adopted: current, candidate: pending } : chapter);
     renderOverview();
     await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
     await user.click(await screen.findByRole("button", { name: "Edit chapter" }));
