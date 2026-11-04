@@ -153,6 +153,7 @@ beforeEach(() => {
     changeSummary: string;
     baseRevisionId: string | null;
     replacesCandidateId?: string;
+    chapterTitle?: string;
   }) => {
     const current = chapters.find((chapter) => chapter.chapter === data.chapter);
     const candidate = {
@@ -164,7 +165,16 @@ beforeEach(() => {
       createdById: currentUserId,
     };
     if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...(histories[data.chapter] ?? [])];
-    chapters = chapters.map((chapter) => chapter.chapter === data.chapter ? { ...chapter, candidate } : chapter);
+    const nextState: ChapterState = {
+      chapter: data.chapter,
+      title: data.chapterTitle ?? current?.title ?? "",
+      position: current?.position ?? chapters.filter((chapter) => chapter.chapter.startsWith("module:")).length + 1,
+      adopted: current?.adopted ?? null,
+      candidate,
+    };
+    chapters = current
+      ? chapters.map((chapter) => chapter.chapter === data.chapter ? nextState : chapter)
+      : [...chapters, nextState];
     return candidate;
   });
   decideProjectBaseline = vi.fn(async (_ws: string, _project: string, action: "adopt" | "reject", revisions: { revisionId: string }[]) => {
@@ -551,6 +561,31 @@ describe("EngineeringOverview baseline navigation", () => {
 });
 
 describe("EngineeringOverview baseline editing", () => {
+  it("creates a dynamic module and shows its first candidate", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Add module chapter" }));
+    const dialog = screen.getByRole("dialog", { name: "Add module chapter" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Module name" }), "Billing");
+    expect(within(dialog).getByRole("textbox", { name: "Chapter slug" })).toHaveValue("billing");
+    await user.type(within(dialog).getByRole("textbox", { name: "Markdown content" }), "## Billing rules\nCharge once.");
+    await user.type(within(dialog).getByRole("textbox", { name: "Change summary" }), "Create billing module");
+    await user.click(within(dialog).getByRole("button", { name: "Submit for review" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "module:billing",
+      chapterTitle: "Billing",
+      contentMarkdown: "## Billing rules\nCharge once.",
+      changeSummary: "Create billing module",
+      baseRevisionId: null,
+      replacesCandidateId: undefined,
+    }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="module:billing"]')).toHaveTextContent("Charge once."));
+    expect(document.querySelector('[data-baseline-chapter="module:billing"]')).toHaveTextContent("Billing");
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+  });
+
   it("initializes an empty chapter and chains the proposal into adoption for a decider", async () => {
     const user = userEvent.setup();
     renderOverview();

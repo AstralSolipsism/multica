@@ -31,6 +31,7 @@ export interface BaselineSectionRelations {
 interface BaselineWikiContextValue {
   lens: BaselineLens;
   workspaceId: string;
+  chapters: readonly { chapter: BaselineChapter; title: string }[];
   sections: readonly BaselineSection[];
   nodes: readonly IssueGraphNode[];
   stages: readonly EngineeringStageSummary[];
@@ -107,9 +108,9 @@ function RelatedConceptButton({ section }: { section: BaselineSection }) {
 }
 
 function ReferenceCard({ reference }: { reference: BaselineReference }) {
-  const chapterLabel = useEngineeringChapterLabel();
   const { t } = useT("engineering");
-  const { lens, workspaceId, stages, relations, referenceCounts, onNavigate } = useBaselineWiki();
+  const { lens, workspaceId, chapters, stages, relations, referenceCounts, onNavigate } = useBaselineWiki();
+  const chapterLabel = useEngineeringChapterLabel(chapters);
   const statusLabel = useStatusLabel(workspaceId);
   const open = <ButtonLink onClick={() => onNavigate(reference)}>{reference.kind === "concept" ? t(($) => $.wiki.goToSection) : t(($) => $.wiki.openInOverview)}</ButtonLink>;
   if (reference.kind === "concept") {

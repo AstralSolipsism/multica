@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { BaselineRevision, IssueGraphNode } from "@multica/core/api";
-import { matchBaselineReferences, mergeBaselineSections, parseBaselineChapter } from "./engineering-baseline-utils";
+import { baselineModuleSlug, isBaselineModuleSlug, matchBaselineReferences, mergeBaselineSections, orderedBaselineChapters, parseBaselineChapter, scanBaselineReferences } from "./engineering-baseline-utils";
 import type { EngineeringStageSummary } from "./engineering-utils";
 
 const revision = (): BaselineRevision => ({
@@ -66,6 +66,15 @@ describe("parseBaselineChapter", () => {
   it("keeps content before the first heading instead of dropping it", () => {
     const document = parseBaselineChapter("overview", "项目的自然语言简介。");
     expect(document.sections[0]).toMatchObject({ anchor: "intro", title: "", body: "项目的自然语言简介。" });
+  });
+
+  it("keeps a section's complete Markdown subtree for local editing", () => {
+    const document = parseBaselineChapter("module:billing", "## 计费规则\n定义。\n\n### 结算周期\n按月结算。\n\n## 退款\n原路退回。");
+    expect(document.sections.map((section) => section.markdown)).toEqual([
+      "## 计费规则\n定义。\n\n### 结算周期\n按月结算。",
+      "### 结算周期\n按月结算。",
+      "## 退款\n原路退回。",
+    ]);
   });
 });
 
@@ -162,5 +171,34 @@ describe("mergeBaselineSections", () => {
   it("uses the adopted document outside comparison mode", () => {
     const sections = mergeBaselineSections("domain_rules", "## 正本\n内容。", revision(), false);
     expect(sections).toEqual([expect.objectContaining({ title: "正本", change: "same" })]);
+  });
+});
+
+describe("module chapters", () => {
+  it("orders global chapters before position-sorted modules", () => {
+    const state = (chapter: "module:billing" | "module:attendance", position: number) => ({ chapter, title: chapter, position, adopted: null, candidate: null });
+    expect(orderedBaselineChapters([state("module:billing", 20), state("module:attendance", 10)])).toEqual([
+      "overview",
+      "domain_rules",
+      "architecture",
+      "exclusions_and_risks",
+      "module:attendance",
+      "module:billing",
+    ]);
+  });
+
+  it("generates valid customizable slugs from Latin and Chinese module names", () => {
+    expect(baselineModuleSlug("Billing & Settlement")).toBe("billing-settlement");
+    expect(baselineModuleSlug("计费与结算模块")).toBe("jifeiyujiesuanmokuai");
+    expect(isBaselineModuleSlug("billing-settlement")).toBe(true);
+    expect(isBaselineModuleSlug("Billing/settlement")).toBe(false);
+    expect(isBaselineModuleSlug("-billing")).toBe(false);
+  });
+
+  it("resolves concept references from a module to the global outline", () => {
+    const global = parseBaselineChapter("domain_rules", "## 幂等键\n全局定义。").sections;
+    const module = parseBaselineChapter("module:billing", "## 计费请求\n使用 [[幂等键]] 防止重复扣款。").sections;
+    const references = scanBaselineReferences(module[0]!, [...global, ...module], [], []);
+    expect(references).toEqual([expect.objectContaining({ kind: "concept", section: expect.objectContaining({ chapter: "domain_rules", title: "幂等键" }) })]);
   });
 });

@@ -107,7 +107,14 @@
     "readOnlyRevision": "This historical revision is read-only and cannot be adopted from this view.",
     "editorMarkdown": "Markdown content",
     "editorSummary": "Change summary",
-    "editorSummaryPlaceholder": "Summarize this revision..."
+    "editorSummaryPlaceholder": "Summarize this revision...",
+    "createModule": "Add module chapter",
+    "renameModule": "Edit module title",
+    "createModuleDescription": "The slug is the stable chapter identifier. The first Markdown draft follows the standard baseline review flow.",
+    "renameModuleDescription": "The title change creates a baseline revision without changing the chapter slug.",
+    "moduleName": "Module name",
+    "moduleSlug": "Chapter slug",
+    "moduleSlugPlaceholder": "billing-settlement"
   },
   "wiki": {
     "meta": "{{chapters}} chapters · {{sections}} sections",
@@ -117,6 +124,8 @@
       "manage": "Project management"
     },
     "tocLabel": "Baseline contents",
+    "globalChapters": "Global outline",
+    "moduleChapters": "Functional modules",
     "searchPlaceholder": "Search the baseline",
     "searchCount": "{{count}} matches",
     "searchEmpty": "No results for \"{{query}}\"",
@@ -184,6 +193,9 @@
     "enable": "Enable overview",
     "editChapter": "Edit chapter",
     "initializeChapter": "Initialize chapter",
+    "addModule": "Add module chapter",
+    "editModuleTitle": "Edit title",
+    "editSection": "Edit section",
     "saveAndAdopt": "Save and adopt",
     "submitForReview": "Submit for review",
     "submitRevisionCandidate": "Submit revision candidate"
@@ -206,7 +218,9 @@
     "configTitle": "Engineering settings were not saved",
     "config": "Your changes were not applied. Check your permission and try again.",
     "baselineSaveTitle": "The baseline revision was not saved",
-    "baselineSave": "Your draft is still here. Check your permission and the current revision, then try again."
+    "baselineSave": "Your draft is still here. Check your permission and the current revision, then try again.",
+    "moduleSlug": "Use 1–63 lowercase letters, numbers, hyphens, or underscores, starting with a letter or number.",
+    "moduleSlugDuplicate": "This module chapter already exists."
   },
   "messages": {
     "configSaved": "Engineering settings saved",

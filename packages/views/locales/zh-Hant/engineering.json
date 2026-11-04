@@ -107,7 +107,14 @@
     "readOnlyRevision": "這是歷史版本的唯讀視圖，不能在此處採用。",
     "editorMarkdown": "Markdown 內容",
     "editorSummary": "修改說明",
-    "editorSummaryPlaceholder": "用一句話說明本次修改..."
+    "editorSummaryPlaceholder": "用一句話說明本次修改...",
+    "createModule": "新增功能模組章節",
+    "renameModule": "編輯模組標題",
+    "createModuleDescription": "slug 是章節的固定標識，首版 Markdown 內容仍按基線流程提交或生效。",
+    "renameModuleDescription": "只修改顯示標題，不改變章節 slug；標題變更會生成基線修訂。",
+    "moduleName": "模組名稱",
+    "moduleSlug": "章節 slug",
+    "moduleSlugPlaceholder": "ji-fei-yu-jie-suan"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -117,6 +124,8 @@
       "manage": "專案管理"
     },
     "tocLabel": "基線目錄",
+    "globalChapters": "全局總綱",
+    "moduleChapters": "功能模組",
     "searchPlaceholder": "在基線中查找",
     "searchCount": "{{count}} 處匹配",
     "searchEmpty": "沒有找到「{{query}}」",
@@ -184,6 +193,9 @@
     "enable": "啟用總覽",
     "editChapter": "編輯本章",
     "initializeChapter": "初始化本章",
+    "addModule": "新增功能模組章節",
+    "editModuleTitle": "編輯標題",
+    "editSection": "編輯本節",
     "saveAndAdopt": "儲存並直接生效",
     "submitForReview": "僅提交為待審候選",
     "submitRevisionCandidate": "提交修訂候選"
@@ -206,7 +218,9 @@
     "configTitle": "工程設定未儲存",
     "config": "修改未生效，請檢查權限後重試。",
     "baselineSaveTitle": "基線修訂未儲存",
-    "baselineSave": "草稿已保留。請檢查權限和目前版本後重試。"
+    "baselineSave": "草稿已保留。請檢查權限和目前版本後重試。",
+    "moduleSlug": "使用 1–63 個小寫字母、數字、連字號或底線，並以字母或數字開頭。",
+    "moduleSlugDuplicate": "該功能模組章節已存在。"
   },
   "messages": {
     "configSaved": "工程設定已儲存",

@@ -2,9 +2,11 @@ import type {
   BaselineChapter,
   BaselineChange,
   BaselineRevision,
+  ChapterState,
   IssueGraphNode,
 } from "@multica/core/api";
-import type { EngineeringStageSummary } from "./engineering-utils";
+import { nameToWorkspaceSlug } from "../../workspace/slug";
+import { ENGINEERING_CHAPTERS, type EngineeringStageSummary } from "./engineering-utils";
 
 export interface BaselineSection {
   key: string;
@@ -12,6 +14,7 @@ export interface BaselineSection {
   anchor: string;
   title: string;
   level: number;
+  markdown: string;
   body: string;
   firstParagraph: string;
   why: string;
@@ -44,6 +47,24 @@ export interface BaselineReferenceMatch {
   start: number;
   end: number;
   reference: BaselineReference;
+}
+
+export function orderedBaselineChapters(chapters: readonly ChapterState[]): BaselineChapter[] {
+  const modules = chapters
+    .filter((item) => item.chapter.startsWith("module:"))
+    .sort((a, b) => a.position - b.position || a.chapter.localeCompare(b.chapter));
+  return [
+    ...ENGINEERING_CHAPTERS,
+    ...modules.map((item) => item.chapter),
+  ];
+}
+
+export function baselineModuleSlug(title: string): string {
+  return nameToWorkspaceSlug(title).slice(0, 63).replace(/[-_]+$/, "");
+}
+
+export function isBaselineModuleSlug(slug: string): boolean {
+  return /^[a-z0-9][a-z0-9_-]{0,62}$/.test(slug);
 }
 
 const HEADING = /^(#{1,3})[ \t]+(.+?)[ \t]*#*[ \t]*$/;
@@ -86,9 +107,10 @@ function labeledParagraphs(body: string): { body: string; why: string; example: 
 }
 
 export function parseBaselineChapter(chapter: BaselineChapter, markdown: string): BaselineChapterDocument {
-  const sections: BaselineSection[] = [];
+  type PositionedSection = Omit<BaselineSection, "markdown"> & { startLine: number };
+  const sections: PositionedSection[] = [];
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
-  let current: { title: string; level: number; lines: string[] } = { title: "", level: 0, lines: [] };
+  let current: { title: string; level: number; lines: string[]; startLine: number } = { title: "", level: 0, lines: [], startLine: 0 };
   let fence = "";
   const usedKeys = new Map<string, number>();
   const flush = () => {
@@ -105,13 +127,14 @@ export function parseBaselineChapter(chapter: BaselineChapter, markdown: string)
       anchor,
       title: cleanTitle(current.title),
       level: current.level,
+      startLine: current.startLine,
       body: labeled.body,
       firstParagraph: plainBaselineText(labeled.body.split(/\n\s*\n/)[0] ?? ""),
       why: labeled.why,
       example: labeled.example,
     });
   };
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const fenceMatch = line.match(FENCE);
     if (fenceMatch) {
       const marker = fenceMatch[1] ?? "";
@@ -123,13 +146,20 @@ export function parseBaselineChapter(chapter: BaselineChapter, markdown: string)
     const heading = !fence ? line.match(HEADING) : null;
     if (heading) {
       flush();
-      current = { title: heading[2]?.trim() ?? "", level: heading[1]?.length ?? 0, lines: [] };
+      current = { title: heading[2]?.trim() ?? "", level: heading[1]?.length ?? 0, lines: [], startLine: lineIndex };
     } else {
       current.lines.push(line);
     }
   }
   flush();
-  return { chapter, sections };
+  return {
+    chapter,
+    sections: sections.map((section, index) => {
+      const next = sections.slice(index + 1).find((candidate) => candidate.level > 0 && (section.level === 0 || candidate.level <= section.level));
+      const { startLine, ...rest } = section;
+      return { ...rest, markdown: lines.slice(startLine, next?.startLine ?? lines.length).join("\n").trim() };
+    }),
+  };
 }
 
 function changeMatches(section: BaselineSection, change: BaselineChange): boolean {
