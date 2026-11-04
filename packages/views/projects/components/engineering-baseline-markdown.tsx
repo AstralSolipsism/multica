@@ -85,7 +85,7 @@ function createReferencePlugin(options: {
               type: "element",
               tagName: "baseline-reference",
               properties: { referenceId: referenceId(match.reference) },
-              children: [{ type: "text", value: value.slice(match.start, match.end) }],
+              children: [{ type: "text", value: match.reference.label }],
             });
             cursor = match.end;
           }

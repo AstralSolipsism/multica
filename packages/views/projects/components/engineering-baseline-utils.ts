@@ -191,6 +191,12 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function allowsNaturalConceptMatch(title: string): boolean {
+  if (/^\p{Script=Han}+$/u.test(title)) return Array.from(title).length >= 3;
+  if (/^[A-Za-z]+$/.test(title)) return title.length >= 4;
+  return true;
+}
+
 export function matchBaselineReferences(
   text: string,
   options: {
@@ -203,14 +209,42 @@ export function matchBaselineReferences(
   },
 ): BaselineReferenceMatch[] {
   const concepts = new Map<string, BaselineSection>();
+  const conceptAnchors = new Map<string, BaselineSection>();
+  const conceptKeys = new Map<string, BaselineSection>();
   for (const section of options.sections) {
-    if (section.key === options.currentSectionKey || !section.title || concepts.has(section.title)) continue;
-    concepts.set(section.title, section);
+    if (section.key === options.currentSectionKey || !section.title) continue;
+    if (!concepts.has(section.title)) concepts.set(section.title, section);
+    if (!conceptAnchors.has(section.anchor)) conceptAnchors.set(section.anchor, section);
+    if (!conceptKeys.has(section.key)) conceptKeys.set(section.key, section);
   }
+  const naturalConcepts = new Map([...concepts].filter(([title]) => allowsNaturalConceptMatch(title)));
   const nodes = new Map((options.nodes ?? []).map((node) => [node.identifier, node]));
   const stages = new Map((options.stages ?? []).map((stage) => [stage.stage, stage]));
+  const matches: BaselineReferenceMatch[] = [];
+  const explicitRanges: { start: number; end: number }[] = [];
+  for (const match of text.matchAll(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    explicitRanges.push({ start, end });
+    const target = match[1]?.trim() ?? "";
+    const targetName = target.startsWith("#") ? target.slice(1).trim() : target;
+    const concept = concepts.get(targetName) ?? conceptAnchors.get(targetName) ?? conceptKeys.get(targetName);
+    const label = match[2]?.trim() || (target.startsWith("#") ? targetName : target.startsWith("stage:") ? `Stage ${target.slice(6)}` : target);
+    let reference: BaselineReference | undefined;
+    if (concept) {
+      reference = { kind: "concept", key: concept.key, label, section: concept };
+      options.seenConcepts?.add(concept.key);
+    } else if (!options.conceptsOnly) {
+      const node = nodes.get(targetName.toUpperCase());
+      if (node) reference = { kind: "issue", key: node.identifier, label, node };
+      const stageNumber = target.match(/^stage:(\d+)$/)?.[1];
+      const stage = stageNumber ? stages.get(Number(stageNumber)) : undefined;
+      if (!reference && stage) reference = { kind: "stage", key: String(stage.stage), label, stage };
+    }
+    if (reference) matches.push({ start, end, reference });
+  }
   const alternatives = [
-    ...[...concepts.keys()].map((title) => ({ value: title, kind: "concept" as const })),
+    ...[...naturalConcepts.keys()].map((title) => ({ value: title, kind: "concept" as const })),
     ...(options.conceptsOnly ? [] : [
       ...[...nodes.keys()].map((identifier) => ({ value: identifier, kind: "issue" as const })),
       ...[...stages.keys()].flatMap((stage) => [
@@ -220,17 +254,18 @@ export function matchBaselineReferences(
       ]),
     ]),
   ].sort((a, b) => b.value.length - a.value.length);
-  if (!alternatives.length) return [];
+  if (!alternatives.length) return matches.sort((a, b) => a.start - b.start);
   const pattern = new RegExp(alternatives.map((item) => escapeRegExp(item.value)).join("|"), "gi");
-  const matches: BaselineReferenceMatch[] = [];
   for (const match of text.matchAll(pattern)) {
     const start = match.index;
     const raw = match[0];
+    const end = start + raw.length;
+    if (explicitRanges.some((range) => start < range.end && end > range.start)) continue;
     const before = text[start - 1];
-    const after = text[start + raw.length];
+    const after = text[end];
     if (before && /[A-Za-z0-9_]/.test(before) && /^[A-Za-z0-9_]/.test(raw)) continue;
     if (after && /[A-Za-z0-9_]/.test(after) && /[A-Za-z0-9_]$/.test(raw)) continue;
-    const concept = concepts.get(raw);
+    const concept = naturalConcepts.get(raw);
     let reference: BaselineReference | undefined;
     if (concept) {
       if (options.seenConcepts?.has(concept.key)) continue;
@@ -243,9 +278,9 @@ export function matchBaselineReferences(
       const stage = stageNumber ? stages.get(Number(stageNumber)) : undefined;
       if (!reference && stage) reference = { kind: "stage", key: String(stage.stage), label: raw, stage };
     }
-    if (reference) matches.push({ start, end: start + raw.length, reference });
+    if (reference) matches.push({ start, end, reference });
   }
-  return matches;
+  return matches.sort((a, b) => a.start - b.start);
 }
 
 export function scanBaselineReferences(

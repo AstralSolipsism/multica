@@ -104,7 +104,10 @@
     "inFlight": "In flight",
     "queued": "Queued",
     "openIssuesTruncated": "Only the first 200 open tasks are shown.",
-    "readOnlyRevision": "This historical revision is read-only and cannot be adopted from this view."
+    "readOnlyRevision": "This historical revision is read-only and cannot be adopted from this view.",
+    "editorMarkdown": "Markdown content",
+    "editorSummary": "Change summary",
+    "editorSummaryPlaceholder": "Summarize this revision..."
   },
   "wiki": {
     "meta": "{{chapters}} chapters · {{sections}} sections",
@@ -178,7 +181,12 @@
     "collapse": "Show less",
     "reject": "Return for changes",
     "adopt": "Adopt",
-    "enable": "Enable overview"
+    "enable": "Enable overview",
+    "editChapter": "Edit chapter",
+    "initializeChapter": "Initialize chapter",
+    "saveAndAdopt": "Save and adopt",
+    "submitForReview": "Submit for review",
+    "submitRevisionCandidate": "Submit revision candidate"
   },
   "disabled": {
     "title": "Engineering overview is not enabled",
@@ -196,12 +204,15 @@
     "decisionTitle": "The candidate was not decided",
     "decision": "The candidate may have changed or already been decided. Review the current revision before trying again.",
     "configTitle": "Engineering settings were not saved",
-    "config": "Your changes were not applied. Check your permission and try again."
+    "config": "Your changes were not applied. Check your permission and try again.",
+    "baselineSaveTitle": "The baseline revision was not saved",
+    "baselineSave": "Your draft is still here. Check your permission and the current revision, then try again."
   },
   "messages": {
     "configSaved": "Engineering settings saved",
     "adopted": "Candidate adopted",
     "rejected": "Candidate returned for changes",
+    "candidateSubmitted": "Revision candidate submitted",
     "serverAuthoritative": "Permissions and revision checks are verified by the server"
   }
 }

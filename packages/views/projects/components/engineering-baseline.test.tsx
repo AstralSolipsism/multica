@@ -91,6 +91,8 @@ const baseProps = {
   decisionPending: false,
   decisionError: false,
   decisionResult: null,
+  savePending: false,
+  onSave: vi.fn(),
   history: null,
   historyLoading: false,
   historyError: false,
@@ -98,6 +100,7 @@ const baseProps = {
   chapterRevisions: {},
   roadmap,
   reviewRequested: false,
+  lens: "understand" as const,
   onOpenStage: vi.fn(),
 };
 
@@ -160,27 +163,36 @@ describe("EngineeringBaseline review", () => {
 });
 
 describe("EngineeringBaseline Wiki", () => {
-  it("switches between concept and management lenses and remembers the choice", async () => {
+  it("renders concept and management references from the controlled lens", async () => {
     const user = userEvent.setup();
     const current = revision();
     const wikiContent = current.contentMarkdown.replace("下单时记录库存快照。", "预占快照依赖幂等键，由 OL-42 在 Stage 6 实现。");
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, { ...adopted(), contentMarkdown: wikiContent })]} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
+    const chapters = [chapter(null, { ...adopted(), contentMarkdown: wikiContent })];
+    const view = renderBaseline(<EngineeringBaseline {...baseProps} chapters={chapters} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
 
-    expect(screen.getByRole("tab", { name: "Project understanding" })).toHaveAttribute("aria-selected", "true");
     const article = document.querySelector('[data-baseline-section-key="domain_rules:预占快照"]')!;
     expect(within(article.querySelector("[data-baseline-markdown]") as HTMLElement).getByRole("button", { name: "幂等键" })).toBeInTheDocument();
     expect(within(article.querySelector("[data-baseline-markdown]") as HTMLElement).queryByRole("button", { name: "OL-42" })).not.toBeInTheDocument();
     expect(screen.getByText("Why this rule exists")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Project management" }));
-    expect(screen.getByRole("tab", { name: "Project management" })).toHaveAttribute("aria-selected", "true");
-    expect(window.localStorage.getItem("multica.engineering-baseline.lens.project-1")).toBe("manage");
+    view.rerender(<NavigationProvider value={navigation}><EngineeringBaseline {...baseProps} chapters={chapters} revision={null} currentCandidate={false} onDecision={vi.fn()} lens="manage" /></NavigationProvider>);
     const issue = within(article.querySelector("[data-baseline-markdown]") as HTMLElement).getByRole("button", { name: "OL-42" });
     await user.hover(issue);
     expect(await screen.findByText("Implement idempotency")).toBeInTheDocument();
     expect(document.querySelector('[data-reference-card="issue"]')).toHaveTextContent("Stage 6");
     await user.click(issue);
     expect(navigation.push).toHaveBeenCalledWith("/acme/issues/issue-42");
+  });
+
+  it("renders explicit short-title links with their display text and no bracket residue", () => {
+    const content = "### 权限\n权限定义。\n\n### 调用约束\n显式 [[权限|权限规则]]，普通权限不标。";
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, { ...adopted(), contentMarkdown: content })]} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
+
+    const article = document.querySelector('[data-baseline-section-key="domain_rules:调用约束"]')!;
+    const markdown = article.querySelector("[data-baseline-markdown]") as HTMLElement;
+    expect(within(markdown).getByRole("button", { name: "权限规则" })).toBeInTheDocument();
+    expect(within(markdown).queryByRole("button", { name: "权限" })).not.toBeInTheDocument();
+    expect(markdown.textContent).not.toContain("[[");
   });
 
   it("searches the full Wiki and exposes reading guidance", async () => {

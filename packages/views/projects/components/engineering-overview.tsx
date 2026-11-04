@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { AlertCircle, LoaderCircle, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { paths } from "@multica/core/paths";
 import { projectBaselineHistoryOptions, projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectKeys } from "@multica/core/projects/queries";
-import { useAdoptProjectBaseline, useRejectProjectBaseline, useUpdateProjectEngineering } from "@multica/core/projects/mutations";
+import { useAdoptProjectBaseline, useProposeProjectBaseline, useRejectProjectBaseline, useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { engineeringCandidateOptions } from "@multica/core/projects/engineering-candidate";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import type { Issue, IssueTableQuerySpec } from "@multica/core/types";
@@ -23,7 +23,8 @@ import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { EngineeringBaseline } from "./engineering-baseline";
+import { EngineeringBaseline, type BaselineSaveResult } from "./engineering-baseline";
+import type { BaselineLens } from "./engineering-baseline-markdown";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringSkills } from "./engineering-skills";
@@ -56,6 +57,14 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [selectedChapter, setSelectedChapter] = useState<BaselineChapter>("overview");
   const [selectedStage, setSelectedStage] = useState(1);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const baselineLensKey = `multica.engineering-baseline.lens.${projectId}`;
+  const [baselineLensPreference, setBaselineLensPreference] = useState<BaselineLens | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const value = window.localStorage.getItem(baselineLensKey);
+      return value === "manage" || value === "understand" ? value : null;
+    } catch { return null; }
+  });
   const projectQuery = useQuery(projectDetailOptions(wsId, projectId));
   const overviewQuery = useQuery(projectEngineeringOptions(wsId, projectId));
   const membersQuery = useQuery(memberListOptions(wsId));
@@ -125,7 +134,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const chapterState = overview?.chapters.find((chapter) => chapter.chapter === selectedChapter);
   const [conflictRevision, setConflictRevision] = useState<BaselineRevision | null>(null);
-  const [decidedRevision, setDecidedRevision] = useState<BaselineRevision | null>(null);
+  const [localRevision, setLocalRevision] = useState<BaselineRevision | null>(null);
+  const savedRevisionRef = useRef<BaselineRevision | null>(null);
   const deepLinkChapter = candidateQuery.data?.chapter ?? "overview";
   const showDeepLinkedRevision = !manualCandidateId && !!candidateId && selectedChapter === deepLinkChapter;
   const manualRevision = manualCandidateId
@@ -134,16 +144,20 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const queriedRevision: BaselineRevision | null = manualCandidateId
     ? manualRevision
     : showDeepLinkedRevision ? candidateQuery.data?.revision ?? null : chapterState?.candidate ?? null;
-  const revision = conflictRevision ?? decidedRevision ?? queriedRevision;
+  const revision = conflictRevision ?? localRevision ?? queriedRevision;
   const currentCandidate = !conflictRevision && revision?.status === "candidate" && chapterState?.candidate?.id === revision.id
     && (manualCandidateId ? true : !showDeepLinkedRevision || candidateQuery.data?.current === true);
   const [decisionResult, setDecisionResult] = useState<BaselineDecision | null>(null);
   const [decisionError, setDecisionError] = useState(false);
   useEffect(() => {
+    const saved = savedRevisionRef.current;
+    const selectedRevisionId = manualCandidateId || candidateId;
+    if (saved?.chapter === selectedChapter && (!selectedRevisionId || saved.id === selectedRevisionId)) return;
+    savedRevisionRef.current = null;
     setDecisionResult(null);
     setDecisionError(false);
     setConflictRevision(null);
-    setDecidedRevision(null);
+    setLocalRevision(null);
   }, [candidateId, manualCandidateId, selectedChapter]);
 
   const historyQuery = useInfiniteQuery({
@@ -170,6 +184,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   ), [recentQueries]);
 
   const updateEngineering = useUpdateProjectEngineering();
+  const proposeBaseline = useProposeProjectBaseline();
   const adoptBaseline = useAdoptProjectBaseline();
   const rejectBaseline = useRejectProjectBaseline();
   const [configError, setConfigError] = useState(false);
@@ -189,17 +204,65 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     setDecisionError(false);
     setDecisionResult(null);
     setConflictRevision(null);
-    setDecidedRevision(null);
+    setLocalRevision(null);
     const input = { projectId, revisions: [{ revisionId: target.id, expectedAdoptedRevisionId: target.baseRevisionId }] };
     try {
       const result = await (action === "adopt" ? adoptBaseline.mutateAsync(input) : rejectBaseline.mutateAsync(input));
       if (!result) throw new Error("Invalid decision response");
-      setDecidedRevision({ ...target, status: action === "adopt" ? "adopted" : "rejected" });
+      setLocalRevision({ ...target, status: action === "adopt" ? "adopted" : "rejected" });
       setDecisionResult(result);
       toast.success(t(($) => action === "adopt" ? $.messages.adopted : $.messages.rejected));
     } catch {
       setConflictRevision(target);
       setDecisionError(true);
+    }
+  };
+  const saveBaseline = async (
+    draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string },
+    adopt: boolean,
+  ): Promise<BaselineSaveResult> => {
+    setDecisionError(false);
+    setDecisionResult(null);
+    setConflictRevision(null);
+    setLocalRevision(null);
+    savedRevisionRef.current = null;
+    const current = overview?.chapters.find((chapter) => chapter.chapter === draft.chapter);
+    let candidate: BaselineRevision;
+    try {
+      const proposed = await proposeBaseline.mutateAsync({
+        projectId,
+        ...draft,
+        baseRevisionId: current?.adopted?.id ?? null,
+        replacesCandidateId: current?.candidate?.id,
+      });
+      if (!proposed) throw new Error("Invalid baseline candidate response");
+      candidate = proposed;
+    } catch {
+      return { revision: null, error: "save" };
+    }
+    savedRevisionRef.current = candidate;
+    setLocalRevision(candidate);
+    setSelectedChapter(draft.chapter);
+    if (candidateId || manualCandidateId) setManualCandidateId(candidate.id);
+    clearCandidateParam();
+    if (!adopt) {
+      toast.success(t(($) => $.messages.candidateSubmitted));
+      return { revision: candidate };
+    }
+    try {
+      const result = await adoptBaseline.mutateAsync({
+        projectId,
+        revisions: [{ revisionId: candidate.id, expectedAdoptedRevisionId: candidate.baseRevisionId }],
+      });
+      if (!result) throw new Error("Invalid decision response");
+      const adopted = { ...candidate, status: "adopted" as const };
+      savedRevisionRef.current = adopted;
+      setLocalRevision(adopted);
+      setDecisionResult(result);
+      toast.success(t(($) => $.messages.adopted));
+      return { revision: adopted };
+    } catch {
+      return { revision: candidate, error: "decision" };
     }
   };
 
@@ -209,6 +272,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     params.delete("candidate");
     const query = params.toString();
     navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
+  };
+  const changeChapter = (chapter: BaselineChapter) => {
+    setManualCandidateId("");
+    setSelectedChapter(chapter);
   };
   const openOverview = () => {
     setManualCandidateId("");
@@ -275,25 +342,47 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       }}
     />
   );
+  const reviewRequested = !!manualCandidateId || !!candidateId;
+  const baselineLens = baselineLensPreference ?? (reviewRequested ? "manage" : "understand");
+  const changeBaselineLens = (value: BaselineLens) => {
+    setBaselineLensPreference(value);
+    try { window.localStorage.setItem(baselineLensKey, value); } catch { /* Keep the in-memory preference when storage is unavailable. */ }
+  };
   return (
     <div className="min-w-0">
       {header}
       <main className={cn("mx-auto p-4 md:p-6", activeView === "overview" ? "max-w-5xl" : "max-w-7xl")}>
-        <nav className="flex gap-5 border-b" role="tablist" aria-label={t(($) => $.views.label)}>
-          {(["overview", "baseline"] as const).map((view) => (
-            <button
-              key={view}
-              type="button"
-              role="tab"
-              aria-label={t(($) => $.views[view])}
-              aria-selected={activeView === view}
-              className={cn("relative -mb-px border-b-2 px-1 pb-2 pt-1 text-body", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => view === "overview" ? openOverview() : openBaseline()}
-            >
-              {t(($) => $.views[view])}
-              {view === "baseline" && pendingCandidates.length ? <span className="absolute -right-2 top-1 size-1.5 rounded-full bg-destructive" aria-label={t(($) => $.views.pending)} /> : null}
-            </button>
-          ))}
+        <nav className="flex flex-wrap items-center gap-5 border-b">
+          <div className="flex gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
+            {(["overview", "baseline"] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                role="tab"
+                aria-label={t(($) => $.views[view])}
+                aria-selected={activeView === view}
+                className={cn("relative -mb-px border-b-2 px-1 pb-2 pt-1 text-body", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+                onClick={() => view === "overview" ? openOverview() : openBaseline()}
+              >
+                {t(($) => $.views[view])}
+                {view === "baseline" && pendingCandidates.length ? <span className="absolute -right-2 top-1 size-1.5 rounded-full bg-destructive" aria-label={t(($) => $.views.pending)} /> : null}
+              </button>
+            ))}
+          </div>
+          {activeView === "baseline" ? (
+            <div className="ml-auto inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.lensLabel)}>
+              {(["understand", "manage"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={baselineLens === value}
+                  className={cn("rounded-sm px-3 py-1.5 text-caption", baselineLens === value ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => changeBaselineLens(value)}
+                >{t(($) => $.wiki.lens[value])}</button>
+              ))}
+            </div>
+          ) : null}
         </nav>
         {configError ? <Alert className="mt-4" variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
         {activeView === "overview" ? (
@@ -333,23 +422,26 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             projectTitle={projectQuery.data?.title ?? ""}
             chapters={overview.chapters}
             selectedChapter={selectedChapter}
-            onChapterChange={setSelectedChapter}
+            onChapterChange={changeChapter}
             revision={revision}
             currentCandidate={currentCandidate}
             candidateLoading={showDeepLinkedRevision && candidateQuery.isLoading}
             candidateNotFound={(showDeepLinkedRevision || !!manualCandidateId) && !candidateQuery.isLoading && !candidateQuery.isError && !revision}
             canDecide={permissions.isDecider}
-            decisionPending={adoptBaseline.isPending || rejectBaseline.isPending}
+            decisionPending={proposeBaseline.isPending || adoptBaseline.isPending || rejectBaseline.isPending}
             decisionError={decisionError || (showDeepLinkedRevision && candidateQuery.isError)}
             decisionResult={decisionResult}
             onDecision={decide}
+            savePending={proposeBaseline.isPending || adoptBaseline.isPending}
+            onSave={saveBaseline}
             history={history}
             historyLoading={historyQuery.isLoading || historyQuery.isFetchingNextPage}
             historyError={historyQuery.isError}
             onHistoryMore={() => historyQuery.fetchNextPage()}
             chapterRevisions={chapterRevisions}
             roadmap={roadmap}
-            reviewRequested={!!manualCandidateId || !!candidateId}
+            reviewRequested={reviewRequested}
+            lens={baselineLens}
             onOpenStage={openOverviewStage}
           />
         )}

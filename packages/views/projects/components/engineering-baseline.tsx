@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/a
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode, OpenIssue } from "@multica/core/api";
@@ -36,6 +37,12 @@ import { ENGINEERING_CHAPTERS, type EngineeringRoadmap } from "./engineering-uti
 
 type DecisionAction = "adopt" | "reject";
 type ReviewMode = "base" | "compare";
+type BaselineSaveError = "save" | "decision";
+
+export interface BaselineSaveResult {
+  revision: BaselineRevision | null;
+  error?: BaselineSaveError;
+}
 
 interface EngineeringBaselineProps {
   workspaceSlug: string;
@@ -54,6 +61,8 @@ interface EngineeringBaselineProps {
   decisionError: boolean;
   decisionResult: BaselineDecision | null;
   onDecision: (action: DecisionAction, revision: BaselineRevision) => void;
+  savePending: boolean;
+  onSave: (draft: { chapter: BaselineChapter; contentMarkdown: string; changeSummary: string }, adopt: boolean) => Promise<BaselineSaveResult>;
   history: BaselineHistory | null | undefined;
   historyLoading: boolean;
   historyError: boolean;
@@ -61,6 +70,7 @@ interface EngineeringBaselineProps {
   chapterRevisions: Partial<Record<BaselineChapter, readonly BaselineRevision[]>>;
   roadmap: EngineeringRoadmap;
   reviewRequested: boolean;
+  lens: BaselineLens;
   onOpenStage: (stage: number) => void;
 }
 
@@ -176,14 +186,13 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const { getActorName } = useActorName();
   const formatRelativeDate = useFormatRelativeDate();
   const articleRef = useRef<HTMLDivElement>(null);
-  const lensKey = `multica.engineering-baseline.lens.${props.projectId}`;
   const readKey = `multica.engineering-baseline.read.${props.projectId}`;
-  const [lensPreference, setLensPreference] = useState<BaselineLens | null>(() => {
-    const value = readStorage(lensKey);
-    return value === "manage" || value === "understand" ? value : null;
-  });
-  const lens = lensPreference ?? (props.reviewRequested ? "manage" : "understand");
+  const lens = props.lens;
   const [mode, setMode] = useState<ReviewMode>(props.reviewRequested ? "compare" : "base");
+  const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
+  const [draftContent, setDraftContent] = useState("");
+  const [changeSummary, setChangeSummary] = useState("");
+  const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
   const [query, setQuery] = useState("");
   const [readIds, setReadIds] = useState<readonly string[]>(() => {
     try {
@@ -201,6 +210,40 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     else if (!revision) setMode("base");
   }, [props.reviewRequested, revision]);
   useEffect(() => setBack(null), [lens]);
+  useEffect(() => setSaveError(null), [props.selectedChapter]);
+
+  const openChapterEditor = (chapter: BaselineChapter) => {
+    const state = props.chapters.find((item) => item.chapter === chapter);
+    props.onChapterChange(chapter);
+    setDraftContent(state?.candidate?.contentMarkdown ?? state?.adopted?.contentMarkdown ?? "");
+    setChangeSummary("");
+    setSaveError(null);
+    setEditingChapter(chapter);
+  };
+  const saveChapter = async (adopt: boolean) => {
+    if (!editingChapter || props.savePending || !draftContent.trim() || !changeSummary.trim()) return;
+    setSaveError(null);
+    try {
+      const result = await props.onSave({
+        chapter: editingChapter,
+        contentMarkdown: draftContent,
+        changeSummary: changeSummary.trim(),
+      }, adopt);
+      if (result.error) {
+        setSaveError(result.error);
+        return;
+      }
+      if (!result.revision) {
+        setSaveError("save");
+        return;
+      }
+      setMode("compare");
+      setEditingChapter(null);
+      setChangeSummary("");
+    } catch {
+      setSaveError("save");
+    }
+  };
 
   const nodes = useMemo(() => [
     ...props.roadmap.stages.flatMap((stage) => stage.tasks),
@@ -329,27 +372,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       onNavigate,
     }}>
       <div className="mt-5" data-engineering-region="baseline">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
-            <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
-            <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
-          </div>
-          <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.lensLabel)}>
-            {(["understand", "manage"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={lens === value}
-                className={cn("rounded-sm px-3 py-1.5 text-caption", lens === value ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
-                onClick={() => {
-                  setLensPreference(value);
-                  writeStorage(lensKey, value);
-                }}
-              >{t(($) => $.wiki.lens[value])}</button>
-            ))}
-          </div>
+        <header>
+          <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
+          <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
+          <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
         </header>
 
         {props.candidateLoading ? <Skeleton className="mt-5 h-24 w-full" /> : null}
@@ -422,7 +448,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                 <nav>
                   {displayChapters.map((chapter) => (
                     <div key={chapter.chapter} className="mb-3">
-                      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{chapterLabel(chapter.chapter)}</button>
+                      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
+                        props.onChapterChange(chapter.chapter);
+                        document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+                      }}>{chapterLabel(chapter.chapter)}</button>
                       {chapter.sections.map((section) => (
                         <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
                           <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
@@ -441,7 +470,42 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
           <div ref={articleRef} className="min-w-0 max-w-3xl">
             {displayChapters.map((chapter, chapterIndex) => (
               <section key={chapter.chapter} id={`baseline-chapter-${chapter.chapter}`} className="mb-10 scroll-mt-28" data-baseline-chapter={chapter.chapter}>
-                <h2 className="border-b pb-2 text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{chapterLabel(chapter.chapter)}</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2">
+                  <h2 className="text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{chapterLabel(chapter.chapter)}</h2>
+                  {props.selectedChapter === chapter.chapter && !editingChapter ? (
+                    <Button type="button" variant="outline" size="sm" disabled={props.savePending} onClick={() => openChapterEditor(chapter.chapter)}>
+                      {t(($) => props.chapters.some((item) => item.chapter === chapter.chapter && (item.adopted || item.candidate)) ? $.actions.editChapter : $.actions.initializeChapter)}
+                    </Button>
+                  ) : null}
+                </div>
+                {editingChapter === chapter.chapter ? (
+                  <form className="mt-4 space-y-4 rounded-md border p-4" data-baseline-editor onSubmit={(event) => { event.preventDefault(); void saveChapter(false); }}>
+                    {saveError ? <Alert variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => saveError === "decision" ? $.errors.decisionTitle : $.errors.baselineSaveTitle)}</AlertTitle><AlertDescription>{t(($) => saveError === "decision" ? $.errors.decision : $.errors.baselineSave)}</AlertDescription></Alert> : null}
+                    <div className="space-y-2">
+                      <label className="text-caption font-medium" htmlFor={`baseline-markdown-${chapter.chapter}`}>{t(($) => $.baseline.editorMarkdown)}</label>
+                      <Textarea id={`baseline-markdown-${chapter.chapter}`} value={draftContent} onChange={(event) => setDraftContent(event.target.value)} disabled={props.savePending} required className="min-h-64 font-mono text-caption" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-caption font-medium" htmlFor={`baseline-summary-${chapter.chapter}`}>{t(($) => $.baseline.editorSummary)}</label>
+                      <Input id={`baseline-summary-${chapter.chapter}`} value={changeSummary} onChange={(event) => setChangeSummary(event.target.value)} placeholder={t(($) => $.baseline.editorSummaryPlaceholder)} disabled={props.savePending} required />
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button type="button" variant="outline" disabled={props.savePending} onClick={() => { setEditingChapter(null); setSaveError(null); }}>{t(($) => $.actions.cancel)}</Button>
+                      {props.canDecide ? (
+                        <>
+                          <Button type="button" variant="outline" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} onClick={() => void saveChapter(false)}>{t(($) => $.actions.submitForReview)}</Button>
+                          <Button type="button" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} aria-busy={props.savePending} onClick={() => void saveChapter(true)}>
+                            {props.savePending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}
+                          </Button>
+                        </>
+                      ) : (
+                        <Button type="submit" disabled={props.savePending || !draftContent.trim() || !changeSummary.trim()} aria-busy={props.savePending}>
+                          {props.savePending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.submitRevisionCandidate)}
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+                ) : null}
                 {chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
                   <article
                     key={section.key}
