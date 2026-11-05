@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -39,6 +39,7 @@ const RULES_CANDIDATE = "44444444-4444-4444-8444-444444444444";
 const ARCHITECTURE_CANDIDATE = "55555555-5555-4555-8555-555555555555";
 const HISTORICAL = "77777777-7777-4777-8777-777777777777";
 const MISSING = "88888888-8888-4888-8888-888888888888";
+const WEB_CANDIDATE = "99999999-9999-4999-8999-999999999999";
 
 let currentUserId = OWNER;
 let config: EngineeringConfig;
@@ -49,6 +50,7 @@ let agents: Agent[];
 let decisionIssues: Issue[];
 let timelineEntries: TimelineEntry[];
 let decideProjectBaseline: ReturnType<typeof vi.fn>;
+let proposeProjectBaseline: ReturnType<typeof vi.fn>;
 let updateProjectEngineering: ReturnType<typeof vi.fn>;
 let queryClient: QueryClient;
 
@@ -139,12 +141,42 @@ beforeEach(() => {
     stages: [{ stage: 1, title: "Foundation", goal: "Core contracts" }],
   };
   chapters = [
-    { chapter: "overview", adopted: null, candidate: null },
-    { chapter: "domain_rules", adopted: null, candidate: null },
-    { chapter: "architecture", adopted: null, candidate: null },
-    { chapter: "exclusions_and_risks", adopted: null, candidate: null },
+    { chapter: "overview", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "domain_rules", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "architecture", title: "", position: 0, adopted: null, candidate: null },
+    { chapter: "exclusions_and_risks", title: "", position: 0, adopted: null, candidate: null },
   ];
   histories = { overview: [], domain_rules: [], architecture: [], exclusions_and_risks: [] };
+  proposeProjectBaseline = vi.fn(async (_ws: string, _project: string, data: {
+    chapter: BaselineChapter;
+    contentMarkdown: string;
+    changeSummary: string;
+    baseRevisionId: string | null;
+    replacesCandidateId?: string;
+    chapterTitle?: string;
+  }) => {
+    const current = chapters.find((chapter) => chapter.chapter === data.chapter);
+    const candidate = {
+      ...revision(WEB_CANDIDATE, data.chapter, Math.max(current?.adopted?.revisionNumber ?? 0, current?.candidate?.revisionNumber ?? 0) + 1, data.changeSummary),
+      contentMarkdown: data.contentMarkdown,
+      baseRevisionId: data.baseRevisionId,
+      replacesRevisionId: data.replacesCandidateId ?? null,
+      createdByType: "member" as const,
+      createdById: currentUserId,
+    };
+    if (current?.candidate) histories[data.chapter] = [{ ...current.candidate, status: "superseded" as const }, ...(histories[data.chapter] ?? [])];
+    const nextState: ChapterState = {
+      chapter: data.chapter,
+      title: data.chapterTitle ?? current?.title ?? "",
+      position: current?.position ?? chapters.filter((chapter) => chapter.chapter.startsWith("module:")).length + 1,
+      adopted: current?.adopted ?? null,
+      candidate,
+    };
+    chapters = current
+      ? chapters.map((chapter) => chapter.chapter === data.chapter ? nextState : chapter)
+      : [...chapters, nextState];
+    return candidate;
+  });
   decideProjectBaseline = vi.fn(async (_ws: string, _project: string, action: "adopt" | "reject", revisions: { revisionId: string }[]) => {
     const id = revisions[0]?.revisionId;
     const candidate = chapters.map((chapter) => chapter.candidate).find((item) => item?.id === id);
@@ -155,8 +187,8 @@ beforeEach(() => {
       decidedAt: "2026-10-31T00:00:00Z",
       decisionCredential: "session" as const,
     };
-    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { chapter: chapter.chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
-    histories[candidate.chapter] = [decided, ...histories[candidate.chapter]];
+    chapters = chapters.map((chapter) => chapter.candidate?.id === id ? { ...chapter, adopted: action === "adopt" ? decided : chapter.adopted, candidate: null } : chapter);
+    histories[candidate.chapter] = [decided, ...(histories[candidate.chapter] ?? [])];
     return { chapters: [], openIssues: { inFlight: [], queued: [], truncated: false } };
   });
   updateProjectEngineering = vi.fn(async (_ws: string, _project: string, data: Partial<EngineeringConfig>) => {
@@ -173,10 +205,11 @@ beforeEach(() => {
     getProjectEngineering: async () => ({ engineering: config, chapters }),
     getProjectBaselineHistory: async (_ws: string, _project: string, chapter: BaselineChapter, options: { limit?: number } = {}) => ({
       ...emptyHistory(),
-      revisions: histories[chapter].slice(0, options.limit ?? 50),
+      revisions: (histories[chapter] ?? []).slice(0, options.limit ?? 50),
     }),
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,
+    proposeProjectBaseline,
     decideProjectBaseline,
     updateProjectEngineering,
   } as unknown as ApiClient);
@@ -450,6 +483,26 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(screen.getByText(/Agent agent-1/)).toBeInTheDocument();
   });
 
+  it("places the perspective switch at the top nav right and remembers the choice", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    const baselineTab = await screen.findByRole("tab", { name: "Project baseline" });
+    expect(screen.queryByRole("tab", { name: "Project understanding" })).not.toBeInTheDocument();
+    await user.click(baselineTab);
+
+    const understand = await screen.findByRole("tab", { name: "Project understanding" });
+    expect(understand.closest("nav")).toBe(baselineTab.closest("nav"));
+    expect(understand.parentElement).toHaveClass("ml-auto");
+    expect(document.querySelector('[data-engineering-region="baseline"] > header [aria-label="Perspective"]')).not.toBeInTheDocument();
+    const manage = screen.getByRole("tab", { name: "Project management" });
+    await user.click(manage);
+
+    expect(manage).toHaveAttribute("aria-selected", "true");
+    expect(window.localStorage.getItem(`multica.engineering-baseline.lens.${PROJECT}`)).toBe("manage");
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.queryByRole("tab", { name: "Project understanding" })).not.toBeInTheDocument();
+  });
+
   it("keeps the decided revision and decision result after adopting from the waiting list", async () => {
     const user = userEvent.setup();
     renderOverview();
@@ -459,6 +512,9 @@ describe("EngineeringOverview baseline navigation", () => {
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
     expect(document.querySelector("[data-open-issues]")).toBeInTheDocument();
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+    await user.click(within(toc).getByRole("button", { name: "Architecture and decisions" }));
+    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
   });
 
   it("opens a candidate deep link without adopting on navigation", async () => {
@@ -501,6 +557,207 @@ describe("EngineeringOverview baseline navigation", () => {
     await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalled());
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
+  });
+});
+
+describe("EngineeringOverview baseline editing", () => {
+  it("creates a dynamic module and shows its first candidate", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Add module chapter" }));
+    const dialog = screen.getByRole("dialog", { name: "Add module chapter" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Module name" }), "Billing");
+    expect(within(dialog).getByRole("textbox", { name: "Chapter slug" })).toHaveValue("billing");
+    await user.type(within(dialog).getByRole("textbox", { name: "Markdown content" }), "## Billing rules\nCharge once.");
+    await user.type(within(dialog).getByRole("textbox", { name: "Change summary" }), "Create billing module");
+    await user.click(within(dialog).getByRole("button", { name: "Submit for review" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "module:billing",
+      chapterTitle: "Billing",
+      contentMarkdown: "## Billing rules\nCharge once.",
+      changeSummary: "Create billing module",
+      baseRevisionId: null,
+      replacesCandidateId: undefined,
+    }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="module:billing"]')).toHaveTextContent("Charge once."));
+    expect(document.querySelector('[data-baseline-chapter="module:billing"]')).toHaveTextContent("Billing");
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+  });
+
+  it("initializes an empty chapter and chains the proposal into adoption for a decider", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nShip safely.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Initialize overview");
+
+    expect(screen.getByRole("button", { name: "Submit for review" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "overview",
+      contentMarkdown: "## Goal\nShip safely.",
+      changeSummary: "Initialize overview",
+      baseRevisionId: null,
+      replacesCandidateId: undefined,
+    }));
+    await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, "adopt", [{
+      revisionId: WEB_CANDIDATE,
+      expectedAdoptedRevisionId: null,
+    }]));
+    expect(proposeProjectBaseline.mock.invocationCallOrder[0]).toBeLessThan(decideProjectBaseline.mock.invocationCallOrder[0]!);
+    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
+    expect(document.querySelector("[data-baseline-editor]")).not.toBeInTheDocument();
+  });
+
+  it("lets a non-decider replace the pending candidate without exposing direct adoption", async () => {
+    const user = userEvent.setup();
+    currentUserId = MEMBER;
+    const current = revision("adopted-overview", "overview", 1, "ADOPTED", "adopted", "2026-10-29T00:00:00Z", "session");
+    const pending = revision("old-candidate", "overview", 2, "OLD-CANDIDATE");
+    chapters = chapters.map((chapter) => chapter.chapter === "overview" ? { chapter: "overview", title: chapter.title, position: chapter.position, adopted: current, candidate: pending } : chapter);
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Edit chapter" }));
+    const markdown = screen.getByRole("textbox", { name: "Markdown content" });
+    await user.clear(markdown);
+    await user.type(markdown, "## Revised\nMember edit.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Member revision");
+
+    expect(screen.queryByRole("button", { name: "Save and adopt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit revision candidate" }));
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalledWith(WS, PROJECT, {
+      chapter: "overview",
+      contentMarkdown: "## Revised\nMember edit.",
+      changeSummary: "Member revision",
+      baseRevisionId: "adopted-overview",
+      replacesCandidateId: "old-candidate",
+    }));
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+    expect(await screen.findByText("Member revision", { selector: "p" })).toBeInTheDocument();
+    expect(document.querySelector("[data-baseline-editor]")).not.toBeInTheDocument();
+  });
+
+  it("keeps an unsaved draft while browsing another chapter and returning", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    const markdown = screen.getByRole("textbox", { name: "Markdown content" });
+    await user.type(markdown, "Unsaved draft");
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+    expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
+    await user.click(within(toc).getByRole("button", { name: "Project overview" }));
+    expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
+  });
+
+  it("does not report a missing revision when changing chapters after direct adoption", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nShip safely.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Initialize overview");
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+
+    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Initialize chapter" })).toBeEnabled();
+  });
+
+  it("returns to the edited chapter and keeps its candidate actionable after cross-chapter browsing", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nCross chapter.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Cross chapter revision");
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+    expect(screen.queryByRole("button", { name: "Initialize chapter" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Submit for review" }));
+
+    expect(await screen.findByText("Cross chapter revision", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+    expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Project understanding" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("keeps a replacement candidate actionable after submitting from a candidate deep link", async () => {
+    const user = userEvent.setup();
+    chapters = chapters.map((chapter) => chapter.chapter === "domain_rules"
+      ? { ...chapter, candidate: revision(RULES_CANDIDATE, "domain_rules", 2, "RULES-CANDIDATE") }
+      : chapter);
+    renderOverview(`candidate=${RULES_CANDIDATE}`);
+    await user.click(await screen.findByRole("button", { name: "Edit chapter" }));
+    const markdown = screen.getByRole("textbox", { name: "Markdown content" });
+    await user.clear(markdown);
+    await user.type(markdown, "## Replacement\nNew candidate.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Deep link revision");
+    await user.click(screen.getByRole("button", { name: "Submit for review" }));
+
+    expect(await screen.findByText("Deep link revision", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+    expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+  });
+
+  it("submits only a candidate when a decider presses Enter in the summary", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nReview first.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Enter submission{Enter}");
+
+    await waitFor(() => expect(proposeProjectBaseline).toHaveBeenCalled());
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+  });
+
+  it("preserves the draft when proposal fails", async () => {
+    const user = userEvent.setup();
+    proposeProjectBaseline.mockRejectedValueOnce(new Error("offline"));
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "Keep this draft");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Keep this summary");
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+
+    expect(await screen.findByText("The baseline revision was not saved")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Keep this draft");
+    expect(screen.getByRole("textbox", { name: "Change summary" })).toHaveValue("Keep this summary");
+    expect(decideProjectBaseline).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a created candidate from a failed direct adoption", async () => {
+    const user = userEvent.setup();
+    decideProjectBaseline.mockRejectedValueOnce(new Error("baseline conflict"));
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    await user.click(await screen.findByRole("button", { name: "Initialize chapter" }));
+    await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nKeep candidate.");
+    await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Adoption conflict");
+    await user.click(screen.getByRole("button", { name: "Save and adopt" }));
+
+    expect(await screen.findByText("The candidate was not decided")).toBeInTheDocument();
+    expect(screen.queryByText("The baseline revision was not saved")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "candidate");
+    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("## Goal\nKeep candidate.");
   });
 });
 

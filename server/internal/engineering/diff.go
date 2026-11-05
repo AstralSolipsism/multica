@@ -4,7 +4,6 @@ package engineering
 import (
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -46,7 +45,11 @@ type Diff struct {
 	Warnings           []Warning `json:"warnings"`
 }
 
-func ValidChapter(chapter string) bool { return slices.Contains(Chapters, chapter) }
+var moduleChapterPattern = regexp.MustCompile(`^module:[a-z0-9][a-z0-9_-]{0,62}$`)
+
+func ValidChapter(chapter string) bool {
+	return slices.Contains(Chapters, chapter) || moduleChapterPattern.MatchString(chapter)
+}
 
 func normalize(s string) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
@@ -73,61 +76,17 @@ func Parse(chapter, content string) ([]Section, error) {
 	if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
 		return nil, &Error{"baseline_content_invalid"}
 	}
-	sections := []Section{{Anchor: "_preamble"}}
-	bodies := []*strings.Builder{new(strings.Builder)}
-	seen := map[string]bool{}
-	current := 0
-	parent := ""
-	fence := ""
-	for _, line := range strings.Split(normalize(content), "\n") {
-		trimmed := strings.TrimLeft(line, " ")
-		inFence := fence != ""
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			marker := trimmed[:1]
-			n := len(trimmed) - len(strings.TrimLeft(trimmed, marker))
-			if fence == "" {
-				fence = strings.Repeat(marker, n)
-			} else if strings.HasPrefix(trimmed, fence) && strings.TrimSpace(strings.TrimLeft(trimmed, marker)) == "" {
-				fence = ""
-			}
-			inFence = true
-		}
-		if !inFence {
-			if match := headingPattern.FindStringSubmatch(line); match != nil {
-				if current == 0 && normalize(bodies[0].String()) != "" {
-					seen["_preamble"] = true
-				}
-				title := strings.Join(strings.Fields(match[2]), " ")
-				key := title
-				if explicit := explicitKeyPattern.FindStringSubmatch(strings.TrimSpace(match[2])); explicit != nil {
-					key, title = explicit[1], explicit[2]
-				} else if len(match[1]) == 3 && parent != "" {
-					key = parent + " / " + key
-				}
-				base := key
-				for n := 2; seen[key]; n++ {
-					key = base + " (" + strconv.Itoa(n) + ")"
-				}
-				seen[key] = true
-				if len(match[1]) < 3 {
-					parent = key
-				}
-				sections = append(sections, Section{Anchor: key, Title: title})
-				bodies = append(bodies, new(strings.Builder))
-				current = len(sections) - 1
-				continue
-			}
-		}
-		if current >= 0 {
-			bodies[current].WriteString(line)
-			bodies[current].WriteByte('\n')
-		}
+	headings := scanHeadings(content)
+	sections := []Section{}
+	preambleEnd := len(content)
+	if len(headings) > 0 {
+		preambleEnd = headings[0].start
 	}
-	for i := range sections {
-		sections[i].Body = normalize(bodies[i].String())
+	if body := normalize(content[:preambleEnd]); body != "" {
+		sections = append(sections, Section{Anchor: "_preamble", Body: body})
 	}
-	if sections[0].Body == "" {
-		sections = sections[1:]
+	for _, h := range headings {
+		sections = append(sections, Section{Anchor: h.Anchor, Title: h.Title, Body: normalize(content[h.bodyStart:h.ownEnd])})
 	}
 	return sections, nil
 }

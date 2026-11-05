@@ -39,11 +39,16 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 		switch action {
 		case "get":
 			sub.Short = "Read adopted chapters or candidates, including a specific historical revision"
+			sub.Flags().Bool("index", false, "Read chapter metadata and heading outlines without bodies")
+			sub.Flags().String("section", "", "Read matching sections and one-hop referenced definitions")
 			sub.Flags().Bool("candidate", false, "Read candidates instead of adopted revisions")
 			sub.Flags().String("revision", "", "Historical revision as chapter:number")
 		case "propose":
 			sub.Short = "Submit a candidate and show its server-computed Diff"
-			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory (required)")
+			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory (required unless deleting a section)")
+			sub.Flags().String("chapter-title", "", "Chapter display title")
+			sub.Flags().String("section", "", "Replace or append one section by title or anchor")
+			sub.Flags().String("delete-section", "", "Remove one section by title or anchor")
 			sub.Flags().String("summary", "", "Change summary (required)")
 			sub.Flags().String("base", "", "Adopted revision number on which this proposal is based")
 			sub.Flags().Bool("base-current", false, "Use the adopted version read immediately before proposing")
@@ -61,11 +66,11 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 			sub.Flags().Bool("reject", false, "Reject the specified candidates instead of adopting")
 		case "export":
 			sub.Short = "Export adopted chapters as read-only Markdown snapshots"
-			sub.Flags().String("dir", "./docs/baseline", "Directory for the four numbered chapter files")
+			sub.Flags().String("dir", "./docs/baseline", "Directory for numbered chapter files")
 			sub.Flags().String("single-file", "", "Write all chapters to one Markdown file instead of --dir")
 		}
 		if action == "get" || action == "propose" || action == "diff" {
-			sub.Flags().String("chapter", "", "Chapter: overview, domain_rules, architecture, exclusions_and_risks")
+			sub.Flags().String("chapter", "", "Chapter: overview, domain_rules, architecture, exclusions_and_risks or module:<slug>")
 		}
 		sub.Flags().String("output", "text", "Output format: text or json (get also supports markdown)")
 		cmd.AddCommand(sub)
@@ -114,6 +119,8 @@ type baselineCLIRevision struct {
 }
 type baselineCLIChapter struct {
 	Chapter   string          `json:"chapter"`
+	Title     string          `json:"title"`
+	Position  int32           `json:"position"`
 	Adopted   json.RawMessage `json:"adopted"`
 	Candidate json.RawMessage `json:"candidate"`
 }
@@ -138,8 +145,12 @@ func baselineNumber(s string) (int32, error) {
 	return int32(n), nil
 }
 func baselineRef(s string) (baselineCLIRef, error) {
-	chapter, number, ok := strings.Cut(s, ":")
-	if !ok || !engineering.ValidChapter(chapter) {
+	i := strings.LastIndex(s, ":")
+	if i < 0 {
+		return baselineCLIRef{}, baselineFailure(2, "--revision must be chapter:number using a supported chapter")
+	}
+	chapter, number := s[:i], s[i+1:]
+	if !engineering.ValidChapter(chapter) {
 		return baselineCLIRef{}, baselineFailure(2, "--revision must be chapter:number using a supported chapter")
 	}
 	n, err := baselineNumber(number)
@@ -174,10 +185,15 @@ func baselineValidate(cmd *cobra.Command) error {
 	}
 	chapter := mustString(cmd, "chapter")
 	if chapter != "" && !engineering.ValidChapter(chapter) {
-		return baselineFailure(2, "unsupported --chapter; use overview, domain_rules, architecture or exclusions_and_risks")
+		return baselineFailure(2, "unsupported --chapter; use overview, domain_rules, architecture, exclusions_and_risks or module:<slug>")
 	}
 	switch action {
 	case "get":
+		index, _ := cmd.Flags().GetBool("index")
+		section := mustString(cmd, "section")
+		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" || index && section != "" || (index || section != "") && cmd.Flags().Changed("revision") {
+			return baselineFailure(2, "--index, --section and --revision are mutually exclusive; --section must not be empty")
+		}
 		if s := mustString(cmd, "revision"); cmd.Flags().Changed("revision") {
 			r, err := baselineRef(s)
 			if err != nil {
@@ -189,7 +205,11 @@ func baselineValidate(cmd *cobra.Command) error {
 			}
 		}
 	case "propose":
-		if chapter == "" || mustString(cmd, "content-file") == "" || strings.TrimSpace(mustString(cmd, "summary")) == "" {
+		section, deleting := mustString(cmd, "section"), mustString(cmd, "delete-section")
+		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" || cmd.Flags().Changed("delete-section") && strings.TrimSpace(deleting) == "" || section != "" && deleting != "" || deleting != "" && cmd.Flags().Changed("content-file") {
+			return baselineFailure(2, "use --section with --content-file, or --delete-section without content")
+		}
+		if chapter == "" || deleting == "" && mustString(cmd, "content-file") == "" || strings.TrimSpace(mustString(cmd, "summary")) == "" {
 			return baselineFailure(2, "--chapter, --content-file and --summary are required")
 		}
 		if utf8.RuneCountInString(mustString(cmd, "summary")) > 500 {
@@ -220,8 +240,8 @@ func baselineValidate(cmd *cobra.Command) error {
 		}
 	case "adopt":
 		refs, _ := cmd.Flags().GetStringArray("revision")
-		if len(refs) == 0 || len(refs) > 4 {
-			return baselineFailure(2, "specify one to four --revision chapter:number values")
+		if len(refs) == 0 || len(refs) > 100 {
+			return baselineFailure(2, "specify one to 100 --revision chapter:number values")
 		}
 		seen := map[string]bool{}
 		for _, s := range refs {
@@ -250,7 +270,7 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	var content string
-	if cmd.Name() == "propose" {
+	if cmd.Name() == "propose" && mustString(cmd, "delete-section") == "" {
 		var err error
 		content, err = baselineReadContent(mustString(cmd, "content-file"))
 		if err != nil {
@@ -305,6 +325,12 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		return baselinePrintSelection(cmd, nil, []baselineCLISelection{{ref.chapter, raw}})
+	}
+	if cmd.Name() == "get" {
+		index, _ := cmd.Flags().GetBool("index")
+		if index || mustString(cmd, "section") != "" {
+			return baselineReadSlice(ctx, cmd, client, project.ID, index)
+		}
 	}
 	state, err := baselineReadState(ctx, cmd, client, project.ID)
 	if err != nil {
@@ -380,8 +406,10 @@ func baselineReadState(ctx context.Context, cmd *cobra.Command, client *cli.APIC
 			}
 		}
 	}
-	if len(seen) != 4 {
-		return state, baselineFailure(1, "incomplete baseline chapters response")
+	for _, chapter := range engineering.Chapters {
+		if !seen[chapter] {
+			return state, baselineFailure(1, "incomplete baseline chapters response")
+		}
 	}
 	return state, nil
 }
@@ -443,6 +471,15 @@ func baselinePropose(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 		return baselineFailure(1, "409 baseline_candidate_open: candidate %s:%d (%s) already exists; inspect it before using --replaces %d", chapter, candidate.Number, candidate.ID, candidate.Number)
 	}
 	body := map[string]any{"chapter": chapter, "content_markdown": content, "change_summary": mustString(cmd, "summary"), "base_revision_id": base}
+	if cmd.Flags().Changed("chapter-title") {
+		body["chapter_title"] = mustString(cmd, "chapter-title")
+	}
+	if section := mustString(cmd, "section"); section != "" {
+		body["section"] = section
+	}
+	if section := mustString(cmd, "delete-section"); section != "" {
+		body["section"], body["delete_section"] = section, true
+	}
 	if replaces != nil {
 		body["replaces_candidate_id"] = replaces
 	}
@@ -741,8 +778,9 @@ func baselineExport(cmd *cobra.Command, state baselineCLIState) error {
 	files := []string{}
 	var combined strings.Builder
 	dir, single := mustString(cmd, "dir"), mustString(cmd, "single-file")
-	for i, chapter := range engineering.Chapters {
-		r, err := baselineDecodeRevision(baselineChapter(state, chapter).Adopted)
+	for i, c := range state.Chapters {
+		chapter := c.Chapter
+		r, err := baselineDecodeRevision(c.Adopted)
 		if err != nil {
 			return err
 		}
@@ -754,7 +792,14 @@ func baselineExport(cmd *cobra.Command, state baselineCLIState) error {
 			fmt.Fprintf(&combined, "# %s\n\n%s\n", chapter, content)
 			continue
 		}
-		path := filepath.Join(dir, filenames[i])
+		name := fmt.Sprintf("%02d-%s.md", i+1, strings.ReplaceAll(chapter, ":", "-"))
+		for j, builtin := range engineering.Chapters {
+			if chapter == builtin {
+				name = filenames[j]
+				break
+			}
+		}
+		path := filepath.Join(dir, name)
 		if err := baselineWriteSnapshot(path, content); err != nil {
 			return err
 		}

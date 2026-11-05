@@ -1,5 +1,6 @@
 "use client";
 
+import type { BaselineChapter } from "@multica/core/api";
 import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useT } from "../../i18n";
 
@@ -47,4 +48,15 @@ export function useFormatRelativeDate(): (date: string) => string {
     const months = Math.floor(days / 30);
     return t(($) => $.relative_date.months_ago, { count: months });
   };
+}
+
+export function useEngineeringChapterLabel(chapters: readonly { chapter: BaselineChapter; title: string }[] = []) {
+  const { t } = useT("engineering");
+  const labels: Partial<Record<BaselineChapter, string>> = {
+    overview: t(($) => $.chapters.overview),
+    domain_rules: t(($) => $.chapters.domain_rules),
+    architecture: t(($) => $.chapters.architecture),
+    exclusions_and_risks: t(($) => $.chapters.exclusions_and_risks),
+  };
+  return (chapter: BaselineChapter) => chapters.find((item) => item.chapter === chapter)?.title || labels[chapter] || chapter;
 }

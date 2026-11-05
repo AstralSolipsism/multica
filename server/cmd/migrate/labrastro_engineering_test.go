@@ -153,6 +153,55 @@ jsonb_agg(decision_credential ORDER BY revision_number)::text FROM project_basel
 		}
 	}
 	versions = append(versions, stagesMigration)
+	modulesMigration := "9048_labrastro_baseline_module_chapters"
+	for _, direction := range []string{"up", "down", "up"} {
+		opts.Direction, opts.Files, opts.Hooks = direction, realMigrationFiles(t, []string{modulesMigration}, direction), hooksForDirection(direction)
+		if err := runMigrations(ctx, pool, opts); err != nil {
+			t.Fatal(err)
+		}
+		var after string
+		if err := pool.QueryRow(ctx, `SELECT jsonb_agg(to_jsonb(r)-'decision_credential' ORDER BY revision_number)::text FROM project_baseline_revision r`).Scan(&after); err != nil || after != before {
+			t.Fatalf("module migration changed audit history: %v", err)
+		}
+		insertDoc := `INSERT INTO project_baseline_doc (workspace_id,project_id,chapter) VALUES (gen_random_uuid(),gen_random_uuid(),$1)`
+		insertRevision := `INSERT INTO project_baseline_revision (workspace_id,project_id,chapter,revision_number,status,content_markdown,change_summary,anchors_diff,created_by_type,created_by_id) VALUES (gen_random_uuid(),gen_random_uuid(),$1,1,'candidate','Body','','{}','member',gen_random_uuid())`
+		for _, table := range []struct{ name, insert string }{{"project_baseline_doc", insertDoc}, {"project_baseline_revision", insertRevision}} {
+			valid := []string{"module:billing", "module:auth-engine", "module:" + strings.Repeat("a", 63)}
+			if direction == "down" {
+				valid = nil
+			}
+			for _, chapter := range valid {
+				if _, err := pool.Exec(ctx, table.insert, chapter); err != nil {
+					t.Fatal(err)
+				}
+				if table.name == "project_baseline_doc" {
+					var title string
+					var position int
+					if err := pool.QueryRow(ctx, `SELECT title,position FROM project_baseline_doc WHERE chapter=$1`, chapter).Scan(&title, &position); err != nil || title != "" || position != 0 {
+						t.Fatalf("metadata defaults: %s %d %v", title, position, err)
+					}
+				}
+				rollback := opts
+				rollback.Direction, rollback.Files, rollback.Hooks = "down", realMigrationFiles(t, []string{modulesMigration}, "down"), hooksForDirection("down")
+				if err := runMigrations(ctx, pool, rollback); err == nil {
+					t.Fatal("rollback discarded module history")
+				}
+				if _, err := pool.Exec(ctx, "DELETE FROM "+table.name+" WHERE chapter=$1", chapter); err != nil {
+					t.Fatal(err)
+				}
+			}
+			invalid := []string{"module:", "module:-a", "module:A", "module:a/b", "module:" + strings.Repeat("a", 64), "unknown"}
+			if direction == "down" {
+				invalid = append(invalid, "module:billing")
+			}
+			for _, chapter := range invalid {
+				if _, err := pool.Exec(ctx, table.insert, chapter); err == nil {
+					t.Fatalf("%s accepted %q in %s", table.name, chapter, direction)
+				}
+			}
+		}
+	}
+	versions = append(versions, modulesMigration)
 	reversed := slices.Clone(versions)
 	slices.Reverse(reversed)
 	opts.Direction, opts.Files, opts.Hooks = "down", realMigrationFiles(t, reversed, "down"), hooksForDirection("down")

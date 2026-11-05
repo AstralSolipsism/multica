@@ -10,6 +10,7 @@ import type { ApiClient } from "../api/client";
 import { issueKeys } from "../issues/queries";
 import {
   useAdoptProjectBaseline,
+  useProposeProjectBaseline,
   useRejectProjectBaseline,
   useUpdateProjectEngineering,
 } from "./mutations";
@@ -68,6 +69,35 @@ describe("project engineering mutations", () => {
     });
     expect(qc.getQueryState(overviewKey)?.isInvalidated).toBe(true);
     expect(qc.getQueryState(decisionsKey)?.isInvalidated).toBe(true);
+  });
+
+  it("sends the exact baseline proposal and refreshes engineering projections", async () => {
+    const proposeProjectBaseline = vi.fn().mockResolvedValue({ id: "candidate-3" });
+    setApiInstance({ proposeProjectBaseline } as unknown as ApiClient);
+    const overviewKey = projectKeys.engineering("ws-1", "project-1");
+    const historyKey = projectKeys.engineeringHistoryAll("ws-1", "project-1");
+    qc.setQueryData(overviewKey, null);
+    qc.setQueryData(historyKey, null);
+    const { result } = renderHook(() => useProposeProjectBaseline(), {
+      wrapper: createWrapper(qc),
+    });
+    const input = {
+      projectId: "project-1",
+      chapter: "overview" as const,
+      contentMarkdown: "## Goal\nShip the core slice.",
+      changeSummary: "Initialize the overview",
+      baseRevisionId: null,
+      replacesCandidateId: "candidate-2",
+    };
+
+    await act(async () => {
+      await result.current.mutateAsync(input);
+    });
+
+    const { projectId, ...data } = input;
+    expect(proposeProjectBaseline).toHaveBeenCalledWith("ws-1", projectId, data);
+    expect(qc.getQueryState(overviewKey)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(historyKey)?.isInvalidated).toBe(true);
   });
 
   it.each([

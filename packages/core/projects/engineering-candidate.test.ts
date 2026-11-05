@@ -10,7 +10,7 @@ import { projectKeys } from "./queries";
 const revision = (id: string, status = "candidate") => ({ id, status }) as BaselineRevision;
 const overview = (candidate: BaselineRevision | null): EngineeringOverview => ({
   engineering: {} as EngineeringOverview["engineering"],
-  chapters: [{ chapter: "overview", adopted: null, candidate }],
+  chapters: [{ chapter: "overview", title: "", position: 0, adopted: null, candidate }],
 });
 
 describe("engineeringCandidateOptions", () => {

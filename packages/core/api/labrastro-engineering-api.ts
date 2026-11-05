@@ -2,11 +2,27 @@ import type { z } from "zod";
 import type { ApiClient } from "./client";
 import { clientFetch, installLabrastroApiMethods } from "./labrastro-api-helpers";
 import { parseWithFallback } from "./schema";
-import { BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, type BaselineChapter, type EngineeringStageSchema } from "./labrastro-engineering-schemas";
+import { BaselineIndexSchema, BaselineSliceSchema, BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, type BaselineChapter, type EngineeringStageSchema } from "./labrastro-engineering-schemas";
 
 const headers = (workspaceId: string) => ({ "X-Workspace-ID": workspaceId, "X-Workspace-Slug": "" });
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const labrastroEngineeringApi = {
+  async getProjectBaselineIndex(this: ApiClient, workspaceId: string, projectId: string, options: { chapter?: BaselineChapter; candidate?: boolean } = {}) {
+    const query = new URLSearchParams({ index: "true" });
+    if (options.chapter) query.set("chapter", options.chapter);
+    if (options.candidate) query.set("candidate", "true");
+    const endpoint = `${projectPath(projectId)}/baseline?${query}`;
+    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
+    return parseWithFallback<z.infer<typeof BaselineIndexSchema> | null>(raw, BaselineIndexSchema, null, { endpoint });
+  },
+  async getProjectBaselineSection(this: ApiClient, workspaceId: string, projectId: string, section: string, options: { chapter?: BaselineChapter; candidate?: boolean } = {}) {
+    const query = new URLSearchParams({ section });
+    if (options.chapter) query.set("chapter", options.chapter);
+    if (options.candidate) query.set("candidate", "true");
+    const endpoint = `${projectPath(projectId)}/baseline?${query}`;
+    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
+    return parseWithFallback<z.infer<typeof BaselineSliceSchema> | null>(raw, BaselineSliceSchema, null, { endpoint });
+  },
   async getProjectEngineering(this: ApiClient, workspaceId: string, projectId: string) {
     const endpoint = `${projectPath(projectId)}/engineering`;
     const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
@@ -22,11 +38,11 @@ const labrastroEngineeringApi = {
     return parseWithFallback<z.infer<typeof EngineeringUpdatedSchema> | null>(raw, EngineeringUpdatedSchema, null, { endpoint });
   },
   async proposeProjectBaseline(this: ApiClient, workspaceId: string, projectId: string, data: {
-    chapter: BaselineChapter; contentMarkdown: string; changeSummary: string; baseRevisionId: string | null; replacesCandidateId?: string; sourceIssueId?: string;
+    chapter: BaselineChapter; contentMarkdown: string; changeSummary: string; baseRevisionId: string | null; replacesCandidateId?: string; sourceIssueId?: string; section?: string; chapterTitle?: string; deleteSection?: boolean;
   }) {
     const endpoint = `${projectPath(projectId)}/baseline/candidates`;
     const raw = await clientFetch<unknown>(this, endpoint, { method: "POST", headers: headers(workspaceId), body: JSON.stringify({
-      chapter: data.chapter, content_markdown: data.contentMarkdown, change_summary: data.changeSummary, base_revision_id: data.baseRevisionId, replaces_candidate_id: data.replacesCandidateId, source_issue_id: data.sourceIssueId,
+      section: data.section, chapter_title: data.chapterTitle, delete_section: data.deleteSection, chapter: data.chapter, content_markdown: data.contentMarkdown, change_summary: data.changeSummary, base_revision_id: data.baseRevisionId, replaces_candidate_id: data.replacesCandidateId, source_issue_id: data.sourceIssueId,
     }) });
     return parseWithFallback<z.infer<typeof BaselineRevisionSchema> | null>(raw, BaselineRevisionSchema, null, { endpoint });
   },

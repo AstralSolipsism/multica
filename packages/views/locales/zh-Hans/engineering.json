@@ -104,7 +104,18 @@
     "inFlight": "在途",
     "queued": "排队",
     "openIssuesTruncated": "仅显示前 200 项未完成任务。",
-    "readOnlyRevision": "这是历史版本的只读视图，不能在此处采用。"
+    "readOnlyRevision": "这是历史版本的只读视图，不能在此处采用。",
+    "editorMarkdown": "Markdown 内容",
+    "editorSummary": "修改说明",
+    "editorSummaryPlaceholder": "用一句话说明本次修改...",
+    "createModule": "新增功能模块章节",
+    "renameModule": "编辑模块标题",
+    "createModuleDescription": "slug 是章节的固定标识，首版 Markdown 内容仍按基线流程提交或生效。",
+    "renameModuleDescription": "只修改显示标题，不改变章节 slug；标题变更会生成基线修订。",
+    "moduleName": "模块名称",
+    "moduleSlug": "章节 slug",
+    "moduleSlugPlaceholder": "jifeiyujiesuanmokuai",
+    "pendingCandidateSectionEdit": "本章有待审候选。请改用整章编辑，以保留候选中的其他修改。"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 节",
@@ -114,6 +125,8 @@
       "manage": "项目管理"
     },
     "tocLabel": "基线目录",
+    "globalChapters": "全局总纲",
+    "moduleChapters": "功能模块",
     "searchPlaceholder": "在基线中查找",
     "searchCount": "{{count}} 处匹配",
     "searchEmpty": "没有找到「{{query}}」",
@@ -178,7 +191,15 @@
     "collapse": "收起",
     "reject": "退回修改",
     "adopt": "采用",
-    "enable": "启用总览"
+    "enable": "启用总览",
+    "editChapter": "编辑本章",
+    "initializeChapter": "初始化本章",
+    "addModule": "新增功能模块章节",
+    "editModuleTitle": "编辑标题",
+    "editSection": "编辑本节",
+    "saveAndAdopt": "保存并直接生效",
+    "submitForReview": "仅提交为待审候选",
+    "submitRevisionCandidate": "提交修订候选"
   },
   "disabled": {
     "title": "尚未启用工程总览",
@@ -196,12 +217,17 @@
     "decisionTitle": "候选未能完成处理",
     "decision": "候选可能已变化或已处理，请核对当前版本后重试。",
     "configTitle": "工程设置未保存",
-    "config": "修改未生效，请检查权限后重试。"
+    "config": "修改未生效，请检查权限后重试。",
+    "baselineSaveTitle": "基线修订未保存",
+    "baselineSave": "草稿已保留。请检查权限和当前版本后重试。",
+    "moduleSlug": "使用 1–63 个小写字母、数字、连字符或下划线，并以字母或数字开头。",
+    "moduleSlugDuplicate": "该功能模块章节已存在。"
   },
   "messages": {
     "configSaved": "工程设置已保存",
     "adopted": "候选已采用",
     "rejected": "候选已退回修改",
+    "candidateSubmitted": "修订候选已提交",
     "serverAuthoritative": "权限与版本校验均由服务端执行"
   }
 }

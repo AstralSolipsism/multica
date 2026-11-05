@@ -1,5 +1,7 @@
 "use client";
 
+import { useEngineeringChapterLabel } from "./labels";
+
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,6 +31,7 @@ export interface BaselineSectionRelations {
 interface BaselineWikiContextValue {
   lens: BaselineLens;
   workspaceId: string;
+  chapters: readonly { chapter: BaselineChapter; title: string }[];
   sections: readonly BaselineSection[];
   nodes: readonly IssueGraphNode[];
   stages: readonly EngineeringStageSummary[];
@@ -83,7 +86,7 @@ function createReferencePlugin(options: {
               type: "element",
               tagName: "baseline-reference",
               properties: { referenceId: referenceId(match.reference) },
-              children: [{ type: "text", value: value.slice(match.start, match.end) }],
+              children: [{ type: "text", value: match.reference.label }],
             });
             cursor = match.end;
           }
@@ -106,7 +109,8 @@ function RelatedConceptButton({ section }: { section: BaselineSection }) {
 
 function ReferenceCard({ reference }: { reference: BaselineReference }) {
   const { t } = useT("engineering");
-  const { lens, workspaceId, stages, relations, referenceCounts, onNavigate } = useBaselineWiki();
+  const { lens, workspaceId, chapters, stages, relations, referenceCounts, onNavigate } = useBaselineWiki();
+  const chapterLabel = useEngineeringChapterLabel(chapters);
   const statusLabel = useStatusLabel(workspaceId);
   const open = <ButtonLink onClick={() => onNavigate(reference)}>{reference.kind === "concept" ? t(($) => $.wiki.goToSection) : t(($) => $.wiki.openInOverview)}</ButtonLink>;
   if (reference.kind === "concept") {
@@ -114,7 +118,7 @@ function ReferenceCard({ reference }: { reference: BaselineReference }) {
     const relation = relations.get(section.key);
     return (
       <div className="space-y-2" data-reference-card="concept">
-        <div className="text-caption text-muted-foreground">{t(($) => $.chapters[section.chapter])}</div>
+        <div className="text-caption text-muted-foreground">{chapterLabel(section.chapter)}</div>
         <h3 className="font-medium">{section.title || t(($) => $.wiki.untitled)}</h3>
         <p className="line-clamp-4 text-caption text-muted-foreground">{section.firstParagraph}</p>
         {lens === "understand" ? (

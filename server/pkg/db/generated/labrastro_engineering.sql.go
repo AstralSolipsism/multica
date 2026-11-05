@@ -339,7 +339,7 @@ func (q *Queries) LabrastroGetEngineering(ctx context.Context, arg LabrastroGetE
 }
 
 const labrastroListBaselineDocs = `-- name: LabrastroListBaselineDocs :many
-SELECT id, workspace_id, project_id, chapter, adopted_revision_id, candidate_revision_id, created_at, updated_at FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter
+SELECT id, workspace_id, project_id, chapter, adopted_revision_id, candidate_revision_id, created_at, updated_at, title, position FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter
 `
 
 type LabrastroListBaselineDocsParams struct {
@@ -365,6 +365,8 @@ func (q *Queries) LabrastroListBaselineDocs(ctx context.Context, arg LabrastroLi
 			&i.CandidateRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
+			&i.Position,
 		); err != nil {
 			return nil, err
 		}
@@ -439,7 +441,7 @@ func (q *Queries) LabrastroListBaselineRevisions(ctx context.Context, arg Labras
 }
 
 const labrastroLockBaselineDocs = `-- name: LabrastroLockBaselineDocs :many
-SELECT id, workspace_id, project_id, chapter, adopted_revision_id, candidate_revision_id, created_at, updated_at FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter FOR UPDATE
+SELECT id, workspace_id, project_id, chapter, adopted_revision_id, candidate_revision_id, created_at, updated_at, title, position FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter FOR UPDATE
 `
 
 type LabrastroLockBaselineDocsParams struct {
@@ -465,6 +467,8 @@ func (q *Queries) LabrastroLockBaselineDocs(ctx context.Context, arg LabrastroLo
 			&i.CandidateRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
+			&i.Position,
 		); err != nil {
 			return nil, err
 		}
@@ -630,6 +634,28 @@ func (q *Queries) LabrastroRetireBaselineRevision(ctx context.Context, arg Labra
 		arg.ProjectID,
 		arg.ID,
 		arg.Status,
+	)
+	return err
+}
+
+const labrastroSetBaselineTitle = `-- name: LabrastroSetBaselineTitle :exec
+UPDATE project_baseline_doc SET title = $4, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
+`
+
+type LabrastroSetBaselineTitleParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+	Chapter     string      `json:"chapter"`
+	Title       string      `json:"title"`
+}
+
+func (q *Queries) LabrastroSetBaselineTitle(ctx context.Context, arg LabrastroSetBaselineTitleParams) error {
+	_, err := q.db.Exec(ctx, labrastroSetBaselineTitle,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Chapter,
+		arg.Title,
 	)
 	return err
 }
