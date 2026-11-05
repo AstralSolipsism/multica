@@ -104,7 +104,7 @@ describe("IssueDetail (shared)", () => {
   });
 
   it("submits sandbox answers as top-level comments and reports failures", async () => {
-    const created = { ...mockTimeline[0], id: "html-answer", content: "answer", type: "comment", author_type: "member", author_id: "user-1" };
+    const created = { ...mockTimeline[0], id: "html-answer", content: "answer", type: "comment", author_type: "member", author_id: "user-1", created_at: "2026-08-13T00:00:00Z", updated_at: "2026-08-13T00:00:00Z" };
     mockApiObj.createComment.mockResolvedValue(created);
     renderIssueDetail();
     await screen.findByText("Implement authentication");
@@ -113,9 +113,13 @@ describe("IssueDetail (shared)", () => {
     await act(async () => { ok = await renderedIssueContext.current!.submitComment!("answer"); });
     expect(ok).toBe(true);
     expect(mockApiObj.createComment).toHaveBeenCalledWith(mockIssue.id, "answer", undefined, undefined, undefined, undefined, undefined);
+    await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledTimes(2));
+    expect(scrollToIndexSpy).toHaveBeenLastCalledWith({ index: 2, align: "end", offset: 0 });
+    scrollToIndexSpy.mockClear();
     mockApiObj.createComment.mockRejectedValueOnce(new Error("offline"));
     await act(async () => { ok = await renderedIssueContext.current!.submitComment!("retry"); });
     expect(ok).toBe(false);
+    expect(scrollToIndexSpy).not.toHaveBeenCalled();
   });
 
   it("writes sandbox answers to this issue's draft and scrolls to its composer", async () => {
@@ -128,6 +132,16 @@ describe("IssueDetail (shared)", () => {
     expect(setDraft).toHaveBeenCalledWith(`new:${mockIssue.id}`, "answer");
     expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "end" });
     getState.mockRestore();
+  });
+
+  it("explicitly adopts a filled panel answer in an already edited composer", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    fireEvent.click(screen.getByTestId("comment-composer-shell"));
+    const editor = await screen.findByPlaceholderText("Leave a comment...");
+    fireEvent.change(editor, { target: { value: "existing draft" } });
+    act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
+    expect(editor).toHaveValue("panel answer");
   });
 
   it("passes the issue's agent assignment to the local-directory hint", async () => {

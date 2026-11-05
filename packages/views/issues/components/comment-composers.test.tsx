@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { createRef, forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -7,7 +7,7 @@ import type { Attachment } from "@multica/core/types";
 import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../test/i18n";
-import { CommentInput } from "./comment-input";
+import { CommentInput, type CommentInputRef } from "./comment-input";
 import { ReplyInput } from "./reply-input";
 
 /** Shape of ContentEditor's `quickActionMenu` prop, as the composers pass it. */
@@ -247,8 +247,9 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 function renderCommentInput(onSubmit = vi.fn().mockResolvedValue(true)) {
-  const view = renderWithProviders(<CommentInput issueId="issue-1" onSubmit={onSubmit} />);
-  return { ...view, onSubmit };
+  const ref = createRef<CommentInputRef>();
+  const view = renderWithProviders(<CommentInput ref={ref} issueId="issue-1" onSubmit={onSubmit} />);
+  return { ...view, onSubmit, ref };
 }
 
 function renderReplyInput({
@@ -427,13 +428,26 @@ describe("comment composers", () => {
   });
 
   it("adopts a panel answer over an edited draft and submits the displayed text", async () => {
-    const { container, onSubmit } = renderCommentInput();
+    const { container, onSubmit, ref } = renderCommentInput();
     activateComposer("comment-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "old draft" } });
-    act(() => useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer"));
+    act(() => {
+      ref.current!.adoptContent("panel answer");
+      useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer");
+    });
     await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
     fireEvent.click(getSubmitButton(container));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("panel answer", undefined, undefined, undefined));
+  });
+
+  it("keeps dirty editor text when a completed upload appends to the persisted draft", async () => {
+    const { container, onSubmit } = renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "latest typing" } });
+    act(() => useCommentDraftStore.getState().appendToDraftContent("new:issue-1", "![upload](https://cdn.example/finished.png)"));
+    expect(screen.getByTestId("editor")).toHaveValue("latest typing");
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("latest typing", undefined, undefined, undefined));
   });
 
   it("renders the main comment composer without a manual expand control", () => {

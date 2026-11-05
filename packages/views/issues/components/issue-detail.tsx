@@ -105,7 +105,7 @@ import { EMPTY_COMMENT_RUNS, buildCommentRunView, orderTimelineWithRuns, type Co
 import { issueTasksOptions } from "@multica/core/issues/queries";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
-import { CommentInput } from "./comment-input";
+import { CommentInput, type CommentInputRef } from "./comment-input";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { CurrentIssueRenderContextProvider } from "../current-issue-render-context";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
@@ -1411,6 +1411,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Bottom comment composer. Measured when scrolling a freshly posted comment
   // into view so its bottom lands above the composer rather than behind it.
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const commentInputRef = useRef<CommentInputRef>(null);
   // Pull-based scroll restoration (MUL-4741): the platform serves the offset
   // captured when this route was last left. The ref-attach assignment covers
   // the flat render modes (real heights at commit); the virtualized browsing
@@ -1660,6 +1661,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [submitComment, scrollToTimelineBottom]);
 
   const fillHtmlCommentDraft = useCallback((content: string) => {
+    commentInputRef.current?.adoptContent(content);
     useCommentDraftStore.getState().setDraft(`new:${id}`, content);
     composerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     // A cold composer activates and focuses through its draft subscription.
@@ -4110,6 +4112,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             )}
             <CommentInput
               key={id}
+              ref={commentInputRef}
               issueId={id}
               onSubmit={submitComment}
               onAccepted={scrollToTimelineBottom}
