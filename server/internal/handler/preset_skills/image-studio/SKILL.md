@@ -1,6 +1,6 @@
 ---
 name: image-studio
-description: Generate or edit images through the Labrastro runtime pool using multica media. Use for text-to-image requests or reference-image edits with Codex or Antigravity subscriptions, returning workspace attachment receipts.
+description: Generate or edit images through the Labrastro runtime pool using multica media. Use for text-to-image requests or reference-image edits with Codex (GPT Image 2 / 2.5) or Antigravity (Nano Banana 2 / Pro) subscriptions, returning workspace attachment receipts.
 ---
 
 # Image studio
@@ -24,17 +24,38 @@ multica media generate --capability image-edit --provider agy \
   --prompt-file ./prompt.txt --input-attachment subject=<attachment-id> --output json
 ```
 
-- Default to `--provider auto`; honor an explicit `codex` or `agy` choice. The
+### Provider & native model mapping
+
+Users often specify the image model name rather than the CLI provider flag. Map
+their request to `--provider` based on the actual host execution chain:
+
+| CLI `--provider` | Host capability & native execution chain | Actual underlying image models & user mentions |
+| --- | --- | --- |
+| `--provider auto` (default) | Server ranks online `codex` and `agy` hosts by `plan_quota` | Used when the user does not specify a model or provider |
+| `--provider codex` | `media-image-codex-v1`: `codex app-server` native `imageGeneration` tool | **Codex** native default image model: **`GPT Image 2`** (`gpt-image-2`) / **`GPT Image 2.5`** (`GPT Image`) |
+| `--provider agy` | `media-image-agy-v1`: `agy` built-in `image-generator` subagent -> `generate_image` tool | **Antigravity (`agy`)** native image models: **`Nano Banana 2`** (`gemini-nano-banana-2.1`), **`Nano Banana Pro`** (`nano-banana-pro-preview`), **`gemini-2.5-flash-image`** (`Nano Banana` / `nanobanana`) |
+
+- Default to `--provider auto`; honor an explicit `codex` or `agy` choice (including
+  when the user names a corresponding image model from the table above). The
   server handles quota ranking and definite 429 failover. Do not resubmit a job
   to perform your own provider rotation.
+- Omit `--model`: Codex `app-server` `imageGeneration` uses the subscription's
+  native default image model (`gpt-image-2` / `GPT Image 2.5`) without a model
+  selector, and `agy` CLI `--model` only controls the outer reasoning model while
+  its built-in `image-generator` (`generate_image`) uses its native Nano Banana
+  image models. `multica media generate` rejects `--model`; select the model
+  family strictly via `--provider codex|agy`. `--size` and `--aspect` are prompt
+  instructions, not exact pixel guarantees.
+- Host-independent routing: `--provider` dispatches to an authorized subscription
+  host in the workspace pool regardless of which conversation model or runtime
+  you are currently running on. Even if your own runtime has a local
+  `image-generator` subagent, use `multica media generate` with the requested
+  `--provider` so explicit model/provider choices and workspace attachment
+  receipts are honored.
 - `image-edit` requires at least one reference. Prefer `--input-attachment` for
   images already in the workspace; `--input` uploads a local reference once.
   Both flags are repeatable (up to 16 total); optional roles are `input`,
   `subject`, `scene`, and `style`.
-- Omit `--model`: Codex uses its subscription's native default image tool;
-  Antigravity uses its native image-generator (Nano Banana 2 / Pro). The current
-  adapters do not expose model selection. `--size` and `--aspect` are prompt
-  instructions, not exact pixel guarantees.
 - Inside a task, the server derives the task/issue/chat binding from the token.
   Outside a task, use `--issue <issue-id>` when an issue attachment is needed.
 

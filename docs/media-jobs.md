@@ -237,13 +237,13 @@ No real provider login or generation is needed for these checks.
 
 ## Workspace image-studio skill
 
-The importable skill is [image-studio](../.agents/skills/image-studio/SKILL.md).
-It only calls `multica media generate` and `multica media job`; it stores no
-credentials, host addresses or state. Import that directory as a `.skill`/`.zip`
-archive using `multica skill import --file`, then bind the returned workspace
-skill ID with `multica agent skills add`. Read bindings back with `skills list`;
+The skill source of truth is [image-studio](../server/internal/handler/preset_skills/image-studio/SKILL.md),
+embedded into the server. Every new workspace is seeded with it as an ordinary
+visible workspace skill (created by the workspace creator) — no manual import
+needed; it can be edited, deleted, or bound to agents with `multica agent
+skills add` like any workspace skill. Read bindings back with `skills list`;
 `skills set` would replace unrelated skills. This is a workspace skill, not a
-universal server built-in.
+universal server built-in, and deleting it is final — no read path resurrects it.
 
 `TestMediaCodexCredentialSeparatedCLI` and
 `TestMediaAntigravityCredentialSeparatedCLI` compile the actual CLI and run it
