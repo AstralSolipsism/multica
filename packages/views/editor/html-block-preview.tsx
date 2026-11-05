@@ -29,6 +29,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { HtmlPreviewSurface } from "./html-preview-surface";
 import { useT } from "../i18n";
+import { useCurrentIssueRenderContext } from "../issues/current-issue-render-context";
 import { CodeBlockIframe } from "./code-block-iframe";
 import {
   DYNAMIC_BLOCK_CHROME_PX,
@@ -200,6 +201,8 @@ function HtmlBlockBody({
   onError: (error: DynamicBlockError) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const currentIssue = useCurrentIssueRenderContext();
+  const currentIssueRef = useRef(currentIssue);
   const [measured, setMeasured] = useState(INITIAL_HTML_BLOCK_HEIGHT);
   const [cachedHeight, setCachedHeight] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -219,6 +222,7 @@ function HtmlBlockBody({
     // A full-size document's bridge must not overwrite its inline height.
     activeRef.current = active && !fullscreen;
     onErrorRef.current = onError;
+    currentIssueRef.current = currentIssue;
   });
 
   useEffect(() => {
@@ -232,12 +236,35 @@ function HtmlBlockBody({
   }, [active, fullscreen]);
 
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = async (event: MessageEvent) => {
       // Only this block's own frame; every block shares the window.
       const frame = iframeRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
       const message = readHtmlBlockMessage(event.data);
       if (!message) return;
+      if (message.type === "submit-comment" || message.type === "fill-comment") {
+        const issue = currentIssueRef.current;
+        let ok = false;
+        try {
+          if (message.type === "submit-comment") {
+            if (!issue?.submitComment) return;
+            ok = await issue.submitComment(message.content);
+          } else {
+            if (!issue?.fillCommentDraft) return;
+            issue.fillCommentDraft(message.content);
+            ok = true;
+          }
+        } catch {
+          // The card keeps its answer and offers a retry on failure.
+        }
+        frame.contentWindow?.postMessage({
+          [HTML_BLOCK_MESSAGE_KEY]: 1,
+          type: "action-result",
+          action: message.type,
+          ok,
+        }, "*");
+        return;
+      }
       if (message.type === "error") {
         onErrorRef.current({ message: message.message, line: message.line || undefined });
         return;

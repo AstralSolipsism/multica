@@ -6,6 +6,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import { mockNativeDialog } from "./test-utils/native-dialog";
 
@@ -30,6 +31,7 @@ vi.mock("./code-block-static", () => ({
 
 import { HtmlBlockPreview } from "./html-block-preview";
 import { HTML_BLOCK_MESSAGE_KEY } from "./utils/html-block-document";
+import { CurrentIssueRenderContextProvider } from "../issues/current-issue-render-context";
 
 let restoreDialog: () => void;
 beforeEach(() => {
@@ -59,6 +61,51 @@ function post(frame: HTMLIFrameElement, data: Record<string, unknown>) {
     );
   });
 }
+
+describe("HtmlBlockPreview — comment actions", () => {
+  function mount(submitComment = vi.fn().mockResolvedValue(true), fillCommentDraft = vi.fn()) {
+    render(<CurrentIssueRenderContextProvider value={{ id: "issue-1", identifier: "OL-1223", submitComment, fillCommentDraft }}>
+      <HtmlBlockPreview html="<p>decision</p>" />
+    </CurrentIssueRenderContextProvider>);
+    const frame = inlineFrame();
+    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
+    return { frame, reply, submitComment, fillCommentDraft };
+  }
+
+  it.each(["submit-comment", "fill-comment"])("dispatches %s and acknowledges success", async (type) => {
+    const { frame, reply, submitComment, fillCommentDraft } = mount();
+    post(frame, { type, content: "**拍板结论**" });
+    await waitFor(() => expect(reply).toHaveBeenCalledWith({ __multicaHtmlBlock: 1, type: "action-result", action: type, ok: true }, "*"));
+    expect(type === "submit-comment" ? submitComment : fillCommentDraft).toHaveBeenCalledWith("**拍板结论**");
+    expect(type === "submit-comment" ? fillCommentDraft : submitComment).not.toHaveBeenCalled();
+  });
+
+  it.each([false, new Error("send failed")])("reports unsuccessful submissions", async (result) => {
+    const submit = result instanceof Error ? vi.fn().mockRejectedValue(result) : vi.fn().mockResolvedValue(result);
+    const { frame, reply } = mount(submit);
+    post(frame, { type: "submit-comment", content: "answer" });
+    await waitFor(() => expect(reply).toHaveBeenCalledWith(expect.objectContaining({ ok: false }), "*"));
+  });
+
+  it("ignores another frame even when its marker and action are valid", () => {
+    const { submitComment, fillCommentDraft, reply } = mount();
+    const foreign = document.createElement("iframe");
+    document.body.append(foreign);
+    for (const type of ["submit-comment", "fill-comment"]) post(foreign, { type, content: "answer" });
+    expect(submitComment).not.toHaveBeenCalled();
+    expect(fillCommentDraft).not.toHaveBeenCalled();
+    expect(reply).not.toHaveBeenCalled();
+    foreign.remove();
+  });
+
+  it("ignores actions without issue callbacks so the card can fall back to copy", () => {
+    render(<HtmlBlockPreview html="<p>decision</p>" />);
+    const frame = inlineFrame();
+    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
+    for (const type of ["submit-comment", "fill-comment"]) post(frame, { type, content: "answer" });
+    expect(reply).not.toHaveBeenCalled();
+  });
+});
 
 describe("HtmlBlockPreview — frame", () => {
   it("shows an always-visible title bar with the fence title and kind", () => {

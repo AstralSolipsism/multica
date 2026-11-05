@@ -153,6 +153,7 @@ import {
   selectExpandedResolved,
   useCommentCollapseStore,
   useRecentIssuesStore,
+  useCommentDraftStore,
   useResolvedExpandStore,
   useSubIssuesCollapseStore,
   useSubIssueDisplayStore,
@@ -1651,6 +1652,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
 
+  const submitHtmlComment = useCallback(async (content: string) => {
+    const commentId = await submitComment(content);
+    if (!commentId) return false;
+    scrollToTimelineBottom(commentId);
+    return true;
+  }, [submitComment, scrollToTimelineBottom]);
+
+  const fillHtmlCommentDraft = useCallback((content: string) => {
+    useCommentDraftStore.getState().setDraft(`new:${id}`, content);
+    composerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // A cold composer activates and focuses through its draft subscription.
+    composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+  }, [id]);
+
   const { data: commentTasks } = useQuery(issueTasksOptions(id));
   const enteringRunIds = useNewRunIds(id, commentTasks);
   const previousCommentRuns = useRef(new Map<string, CommentRun[]>());
@@ -2838,16 +2853,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     overrideTop: restoredScrollTop,
   });
 
-  // Keep the identity value stable across unrelated issue-detail updates so
-  // context consumers only re-render when the owning issue changes identity.
+  // Keep the context stable across unrelated issue-detail updates.
   const resolvedIssueId = issue?.id;
   const resolvedIssueIdentifier = issue?.identifier;
   const currentIssueRenderContext = useMemo(
     () =>
       resolvedIssueId && resolvedIssueIdentifier
-        ? { id: resolvedIssueId, identifier: resolvedIssueIdentifier }
+        ? {
+            id: resolvedIssueId,
+            identifier: resolvedIssueIdentifier,
+            submitComment: submitHtmlComment,
+            fillCommentDraft: fillHtmlCommentDraft,
+          }
         : null,
-    [resolvedIssueId, resolvedIssueIdentifier],
+    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft],
   );
 
   if (loading) {

@@ -167,7 +167,11 @@ export function buildHtmlBlockDocument(html: string, theme: HtmlBlockTheme): str
 
 export type HtmlBlockMessage =
   | { type: "height"; height: number }
-  | { type: "error"; message: string; line: number };
+  | { type: "error"; message: string; line: number }
+  | { type: "submit-comment"; content: string }
+  | { type: "fill-comment"; content: string };
+
+export const HTML_BLOCK_MAX_COMMENT_LENGTH = 16 * 1024;
 
 /** Upper bound on any reported height; a runaway document stops here. */
 export const HTML_BLOCK_MAX_CONTENT_PX = 10_000;
@@ -181,6 +185,13 @@ export function readHtmlBlockMessage(data: unknown): HtmlBlockMessage | null {
   if (typeof data !== "object" || data === null) return null;
   const record = data as Record<string, unknown>;
   if (record[HTML_BLOCK_MESSAGE_KEY] !== 1) return null;
+  if (record.type === "submit-comment" || record.type === "fill-comment") {
+    if (typeof record.content !== "string" || !record.content.trim()) return null;
+    return {
+      type: record.type,
+      content: record.content.slice(0, HTML_BLOCK_MAX_COMMENT_LENGTH),
+    };
+  }
   if (record.type === "height") {
     const height = record.height;
     if (typeof height !== "number" || !Number.isFinite(height)) return null;

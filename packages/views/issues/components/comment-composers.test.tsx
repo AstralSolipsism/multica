@@ -142,6 +142,7 @@ vi.mock("../../editor", async () => ({
     editorUploadSignal.notify = onUploadingChange;
     const initialValue = value ?? defaultValue ?? "";
     const valueRef = useRef(initialValue);
+    const dirtyRef = useRef(false);
     const [editorValue, setEditorValue] = useState(initialValue);
     // Mirrors the real editor's `uploading` node attrs: the placeholder exists
     // from before the await until the upload settles, `hasActiveUploads` reads
@@ -160,14 +161,20 @@ vi.mock("../../editor", async () => ({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     useEffect(() => {
-      if (value === undefined || value === valueRef.current) return;
+      if (value === undefined || value === valueRef.current || dirtyRef.current) return;
       valueRef.current = value;
       setEditorValue(value);
     }, [value]);
 
     useImperativeHandle(ref, () => ({
       getMarkdown: () => valueRef.current,
+      adoptContent: (markdown: string) => {
+        dirtyRef.current = false;
+        valueRef.current = markdown;
+        setEditorValue(markdown);
+      },
       clearContent: () => {
+        dirtyRef.current = false;
         valueRef.current = "";
         setEditorValue("");
       },
@@ -213,6 +220,7 @@ vi.mock("../../editor", async () => ({
         value={editorValue}
         placeholder={placeholder}
         onChange={(event) => {
+          dirtyRef.current = true;
           valueRef.current = event.target.value;
           setEditorValue(event.target.value);
           onUpdate?.(event.target.value);
@@ -410,6 +418,24 @@ async function chooseRecipientAction(chip: string, action: RegExp) {
 }
 
 describe("comment composers", () => {
+  it("activates and focuses the lazy editor when a panel fills its draft", async () => {
+    renderCommentInput();
+    expect(screen.getByTestId("comment-composer-shell")).toBeVisible();
+    act(() => useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer"));
+    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
+    expect(focusCalls.focused).toBeGreaterThan(0);
+  });
+
+  it("adopts a panel answer over an edited draft and submits the displayed text", async () => {
+    const { container, onSubmit } = renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "old draft" } });
+    act(() => useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer"));
+    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("panel answer", undefined, undefined, undefined));
+  });
+
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 

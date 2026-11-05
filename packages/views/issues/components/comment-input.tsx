@@ -118,6 +118,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     if (persistedDraft === undefined) return;
     const next = persistedDraft;
     if (next === content) return;
+    editorRef.current?.adoptContent(next);
     setContent(next);
     setIsEmpty(!next.trim());
     if (next.trim()) lazy.activate();
