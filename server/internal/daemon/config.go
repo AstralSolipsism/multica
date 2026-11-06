@@ -179,6 +179,10 @@ type Config struct {
 	// (MULTICA_KIMI_QUOTA_POLL_INTERVAL, default 2m).
 	PlanQuotaKimiInterval time.Duration
 
+	// PlanQuotaOmpInterval paces the omp collector
+	// (MULTICA_OMP_QUOTA_POLL_INTERVAL, default 2m).
+	PlanQuotaOmpInterval time.Duration
+
 	// Jev adaptive-thinking decision engine (OL-992 S1-3). All values are
 	// daemon-local in the MULTICA_ZENMUX_MANAGEMENT_API_KEY sense: secrets
 	// are read from the environment only, never logged, never serialized,
@@ -651,6 +655,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	ompQuotaInterval, err := durationFromEnv("MULTICA_OMP_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
+	if err != nil {
+		return Config{}, err
+	}
 
 	// Jev decision engine (OL-992 S1-3). Secrets stay daemon-local: read
 	// from the environment only, never logged, never serialized.
@@ -731,6 +739,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		QwenpawArgs:                     qwenpawArgs,
 		ProfileCommandOverrides:         profileCommandOverrides,
 		PlanQuotaKimiInterval:           kimiQuotaInterval,
+		PlanQuotaOmpInterval:            ompQuotaInterval,
 		JevDisabled:                     jevDisabled,
 		JevSources:                      jevSources,
 		JevTimeout:                      jevTimeout,

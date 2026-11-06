@@ -5,10 +5,15 @@
 // used-up window blocks the rest of its pool until it resets.
 
 import type {
+  PlanQuotaAccountStatus,
   RuntimePlanQuota,
+  RuntimePlanQuotaAccount,
+  RuntimePlanQuotaAccountPool,
   RuntimePlanQuotaWindow,
 } from "../types";
 import {
+  RuntimePlanQuotaAccountPoolSchema,
+  RuntimePlanQuotaAccountSchema,
   RuntimePlanQuotaSchema,
   RuntimePlanQuotaWindowSchema,
 } from "../api/schemas";
@@ -17,9 +22,9 @@ export type QuotaTone = "ok" | "warning" | "destructive";
 
 // Collectors poll every two minutes and can back off for up to 30 minutes.
 const COLLECTOR_QUOTA_INTERRUPTED_MS = 3600 * 1000;
-// Matches the daemon's Kimi and Antigravity quota collectors and the
+// Matches the daemon's Kimi, OMP and Antigravity quota collectors and the
 // server-side subscription quota-source poller.
-const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux"];
+const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux", "omp"];
 
 /**
  * Sanitize a raw `plan_quota` payload. A malformed snapshot returns null
@@ -43,13 +48,67 @@ export function parsePlanQuota(raw: unknown): RuntimePlanQuota | null {
       });
     }
   }
+  const accountPools = parseAccountPools(parsed.data.account_pools);
   return {
     provider: parsed.data.provider,
     status: parsed.data.status === "limited" ? "limited" : "ok",
     windows,
     observed_at: parsed.data.observed_at,
     source: parsed.data.source,
+    ...(accountPools ? { account_pools: accountPools } : {}),
   };
+}
+
+/**
+ * Sanitize the multi-account provider pools. Each pool is re-parsed
+ * independently: one malformed pool drops out while the well-formed ones
+ * survive, and the per-account windows go through the same per-window
+ * sanitizer as the flat list.
+ */
+export function parseAccountPools(
+  raw: unknown,
+): RuntimePlanQuotaAccountPool[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const pools: RuntimePlanQuotaAccountPool[] = [];
+  for (const candidate of raw) {
+    const result = RuntimePlanQuotaAccountPoolSchema.safeParse(candidate);
+    if (!result.success) continue;
+    const p = result.data;
+    const accounts: RuntimePlanQuotaAccount[] = [];
+    for (const rawAccount of p.accounts) {
+      const account = RuntimePlanQuotaAccountSchema.safeParse(rawAccount);
+      if (!account.success) continue;
+      const windows: RuntimePlanQuotaWindow[] = [];
+      for (const candidateWindow of account.data.windows) {
+        const w = RuntimePlanQuotaWindowSchema.safeParse(candidateWindow);
+        if (w.success) {
+          windows.push({
+            name: w.data.name,
+            used_percent: w.data.used_percent,
+            window_minutes: w.data.window_minutes,
+            resets_at: w.data.resets_at,
+            group: w.data.group,
+          });
+        }
+      }
+      accounts.push({
+        label: account.data.label,
+        status: account.data.status,
+        windows,
+        note: account.data.note ?? null,
+      });
+    }
+    pools.push({
+      id: p.id,
+      total_accounts: p.total_accounts,
+      available_accounts: p.available_accounts,
+      disabled_accounts: p.disabled_accounts,
+      status: p.status === "limited" ? "limited" : "ok",
+      resumes_at: p.resumes_at,
+      accounts,
+    });
+  }
+  return pools.length > 0 ? pools : null;
 }
 
 /**
@@ -236,10 +295,13 @@ export function evaluatePlanQuota(
 }
 
 /** A raw `plan_quota` payload's display state; null when nothing usable was
- *  reported (missing, malformed or windowless). */
+ *  reported (missing, malformed, or with neither windows nor pools). */
 export function planQuotaState(raw: unknown, nowMs: number): PlanQuotaState | null {
   const quota = parsePlanQuota(raw);
-  if (!quota || quota.windows.length === 0) return null;
+  if (!quota) return null;
+  if (quota.windows.length === 0 && (quota.account_pools?.length ?? 0) === 0) {
+    return null;
+  }
   return evaluatePlanQuota(quota, nowMs);
 }
 
@@ -411,4 +473,170 @@ export function formatCompactDuration(ms: number): string {
     return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
   }
   return `${seconds}s`;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-account provider pools (OMP gateways). A gateway snapshot's flat
+// window list is empty; all structure lives in account_pools. Pool health is
+// PARALLEL (OR) across accounts — the opposite of the single-account
+// tightest-window (AND) logic above: OMP switches to a sibling account when
+// one is limited, so one exhausted account of three is 2/3 available, not
+// exhausted. A pool is limited only when EVERY account is unavailable, and
+// then it recovers at the earliest reset among them.
+// ---------------------------------------------------------------------------
+
+/** An account is usable unless it is exhausted, disabled, or unknown. */
+export function planQuotaAccountUsable(status: PlanQuotaAccountStatus): boolean {
+  return status === "ok" || status === "warning" || status === "reserve";
+}
+
+/** One account's display state inside a pool. */
+export interface QuotaAccountState {
+  label: string;
+  status: PlanQuotaAccountStatus;
+  usable: boolean;
+  note: string | null;
+  windows: QuotaWindowState[];
+}
+
+/** One provider pool's display state, OR-ed across its accounts. */
+export interface QuotaAccountPoolState {
+  id: string;
+  accounts: QuotaAccountState[];
+  totalAccounts: number;
+  availableAccounts: number;
+  disabledAccounts: number;
+  /** False while at least one account is usable (parallel OR). */
+  exhausted: boolean;
+  /** The pool's recovery time when exhausted: the earliest upcoming reset
+   *  among its accounts (null when unknown or not exhausted). */
+  resumesAt: number | null;
+  tone: QuotaTone;
+}
+
+/** A gateway snapshot's summary: the tightest pool constraint, OR-ed inside
+ *  each pool and AND-ed across pools for the overall banner. */
+export interface PlanQuotaPoolsSummary {
+  pools: QuotaAccountPoolState[];
+  /** Every pool is down. */
+  exhausted: boolean;
+  /** Unix seconds; when exhausted, the earliest pool recovery; else the
+   *  earliest next reset among usable accounts' binding windows. */
+  resumesAt: number | null;
+  tone: QuotaTone;
+}
+
+/** Derive one account's windows and status from a sanitized snapshot. A
+ *  window whose reset has passed counts as refilled, exactly like the flat
+ *  list. An account is exhausted when its snapshot says so or any window is
+ *  used up (single-account AND, inside the account). */
+function evaluateQuotaAccount(
+  account: RuntimePlanQuotaAccount,
+  nowSec: number,
+): QuotaAccountState {
+  const windows: QuotaWindowState[] = [];
+  let anyExhausted = false;
+  for (const window of account.windows) {
+    const passed = window.resets_at != null && window.resets_at <= nowSec;
+    const remaining = passed ? 100 : windowRemainingPercent(window);
+    const exhausted = !passed && window.used_percent != null && window.used_percent >= 100;
+    if (exhausted) anyExhausted = true;
+    windows.push({
+      name: window.name,
+      group: window.group ?? null,
+      windowMinutes: window.window_minutes,
+      remainingPercent: remaining,
+      resetsAt: passed ? null : window.resets_at,
+      resetPassedAt: passed ? window.resets_at : null,
+      exhausted,
+      notApplicable: false,
+      tone: exhausted ? "destructive" : quotaTone(remaining),
+    });
+  }
+  let status = account.status;
+  if (anyExhausted && status !== "disabled") {
+    status = "exhausted";
+  } else if (status === "exhausted" && !anyExhausted) {
+    // The snapshot said exhausted, but every used-up window has since
+    // refilled: the account recovers with its windows (same refill rule
+    // as the flat list).
+    status = "ok";
+  }
+  return {
+    label: account.label,
+    status,
+    usable: planQuotaAccountUsable(status),
+    note: account.note,
+    windows,
+  };
+}
+
+/** Earliest upcoming reset among a pool's accounts' windows; null when none
+ *  is known (unknown resets never block the known-earliest answer). */
+function earliestAccountReset(accounts: QuotaAccountState[]): number | null {
+  let earliest: number | null = null;
+  for (const account of accounts) {
+    for (const window of account.windows) {
+      if (window.resetsAt != null && (earliest == null || window.resetsAt < earliest)) {
+        earliest = window.resetsAt;
+      }
+    }
+  }
+  return earliest;
+}
+
+/** OR-evaluate one provider pool. */
+function evaluateQuotaAccountPool(
+  pool: RuntimePlanQuotaAccountPool,
+  nowSec: number,
+): QuotaAccountPoolState {
+  const accounts = pool.accounts.map((account) => evaluateQuotaAccount(account, nowSec));
+  const availableAccounts = accounts.filter((account) => account.usable).length;
+  const disabledAccounts = accounts.filter((account) => account.status === "disabled").length;
+  // Trust the pool's reported counts when the account list was truncated
+  // or an account failed sanitization; the evaluated list stays the truth
+  // for what is on screen.
+  const totalAccounts = Math.max(pool.total_accounts, accounts.length);
+  const exhausted = availableAccounts === 0 && accounts.length > 0;
+  const resumesAt = exhausted ? earliestAccountReset(accounts) : null;
+  return {
+    id: pool.id,
+    accounts,
+    totalAccounts,
+    availableAccounts,
+    disabledAccounts,
+    exhausted,
+    resumesAt,
+    tone: exhausted ? "destructive" : availableAccounts < totalAccounts ? "warning" : "ok",
+  };
+}
+
+/** Evaluate a gateway snapshot's account pools and summarize. */
+export function evaluatePlanQuotaPools(
+  quota: RuntimePlanQuota,
+  nowMs: number,
+): PlanQuotaPoolsSummary | null {
+  const pools = quota.account_pools;
+  if (!pools || pools.length === 0) return null;
+  const nowSec = Math.floor(nowMs / 1000);
+  const evaluated = pools.map((pool) => evaluateQuotaAccountPool(pool, nowSec));
+  const exhausted = evaluated.length > 0 && evaluated.every((pool) => pool.exhausted);
+  // When everything is down the runtime recovers with the FIRST pool, so an
+  // unknown pool resume never hides a known one (latestReset's all-or-null
+  // is wrong here by construction).
+  const resumes = evaluated
+    .map((pool) => pool.resumesAt)
+    .filter((at): at is number => at != null);
+  const resumesAt = exhausted && resumes.length > 0 ? Math.min(...resumes) : null;
+  const tone: QuotaTone = exhausted
+    ? "destructive"
+    : evaluated.some((pool) => pool.tone === "warning")
+      ? "warning"
+      : "ok";
+  return {
+    pools: evaluated,
+    exhausted,
+    resumesAt,
+    tone,
+  };
 }
