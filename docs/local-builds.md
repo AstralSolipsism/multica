@@ -172,6 +172,17 @@ backend archive ships `maintenance` (like the source image's `/app/maintenance`
 used by [maintenance jobs](maintenance-jobs.md)) but not `go-build-info.txt`;
 both archives' member sets are pinned by `scripts/build-backend.py`.
 
+All application images (both build paths, both components) run on Debian
+`bookworm-slim` — no Alpine anywhere. This is a hard requirement, not a
+preference: the web standalone archive is produced on glibc CI hosts and
+carries glibc native modules (sharp); an Alpine (musl) runtime cannot load
+them. Verification proves it: the web branch loads `sharp` for real inside the
+image (`--network=none --read-only`, resolved through the standalone module
+paths) and fails closed on any native-module mismatch; the result is recorded
+in `images.json` as `native_modules`. Runtime-stage base pins are read from the
+source Dockerfiles at the reviewed commit, so a security bump there flows into
+archive-packaged images automatically.
+
 `dist/candidate/<tag>/local-images/linux-<arch>/images.json` records these results,
 full local IDs, versions, toolchains and build/verification times. `images.env`
 contains public build identity and `MULTICA_IMAGE_TAG` only. Empty RepoDigests

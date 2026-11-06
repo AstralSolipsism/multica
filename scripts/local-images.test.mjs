@@ -178,14 +178,14 @@ function archiveFixture(t) {
   // Source Dockerfiles at the fixture commit: runtime stages the generated
   // archive Dockerfiles must mirror (pins are READ from these at run time).
   writeFileSync(join(dir, "Dockerfile"), [
-    "FROM golang:1.27.3-alpine AS builder", "RUN apk add --no-cache git", "WORKDIR /src",
-    "FROM alpine:3.21", "RUN apk add --no-cache ca-certificates tzdata", "WORKDIR /app",
-    "COPY server .", 'ENTRYPOINT ["./entrypoint.sh"]', ""].join("\n"));
+    "FROM golang:1.27.3-bookworm AS builder", "WORKDIR /src",
+    "FROM debian:bookworm-slim AS runner",
+    "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*",
+    "WORKDIR /app", "COPY server .", 'ENTRYPOINT ["./entrypoint.sh"]', ""].join("\n"));
   writeFileSync(join(dir, "Dockerfile.web"), [
-    "# comment", "FROM node:22.23.4-alpine AS deps", "RUN pnpm install",
-    "FROM node:22.23.4-alpine AS builder", "RUN pnpm --filter @multica/web build",
-    "FROM node:22.23.4-alpine AS runner", "WORKDIR /app",
-    "RUN apk add --no-cache 'libcrypto3>=3.5.8-r0' 'libssl3>=3.5.8-r0'",
+    "# comment", "FROM node:22.23.4-bookworm-slim AS deps", "RUN pnpm install",
+    "FROM node:22.23.4-bookworm-slim AS builder", "RUN pnpm --filter @multica/web build",
+    "FROM node:22.23.4-bookworm-slim AS runner", "WORKDIR /app",
     "COPY --from=builder /app .", 'CMD ["node", "apps/web/server.js"]', ""].join("\n"));
   git("add", "."); git("commit", "-m", "archive image fixture");
   const sha = git("rev-parse", "HEAD");
@@ -297,12 +297,15 @@ function writeDockerStub(t, fixture, variant = {}) {
       assert(!fs.existsSync(path.join(context,'.git')), 'no git context in archive mode');
       assert(!args.includes('VERSION='+identity.version), 'archive packaging must not pass compiler build args');
       assert(dockerfile.includes('org.opencontainers.image.revision="'+identity.commit+'"'));
+      assert(!/apk add/.test(dockerfile), 'no apk in generated Dockerfile');
+      assert(!/FROM .*alpine/.test(dockerfile), 'no alpine base in generated Dockerfile');
       // The generated Dockerfile must contain no raw newline inside a single
       // instruction and no printf-escaped JSON (COPY supplies build-info.json).
       for(const line of dockerfile.split('\\n'))
         assert(!/^\\s*'\\s*$/.test(line), 'broken RUN continuation');
       assert(!/printf/.test(dockerfile), 'build-info.json must be COPYed, not printf-generated');
       const isBackend=fs.existsSync(path.join(context,'app','checksums.txt'));
+      if(!isBackend) assert(dockerfile.includes('useradd'), 'Debian user syntax in web image');
       if(isBackend) {
         assert(fs.existsSync(path.join(context,'app','maintenance')), 'archive image must ship maintenance');
         assert(!fs.existsSync(path.join(context,'app','go-build-info.txt')), 'backend archive has no go-build-info.txt');
@@ -334,6 +337,12 @@ function writeDockerStub(t, fixture, variant = {}) {
       else if(command==='node') {
         if(arg.startsWith('require(')||arg==='-p') console.log(imageBuildInfo);
         else if(arg.includes('.next/static')) { /* compiled version check passes */ }
+        else if(arg.includes("require.resolve('sharp'")) {
+          // Native probe: simulate the glibc runtime loading sharp. In the
+          // tamperedSharp variant the load fails (musl-style mismatch).
+          if(process.env.STUB_SHARP_FAIL==='1') { console.error('Could not load the "sharp" module using the linuxmusl-x64 runtime'); process.exit(1); }
+          console.log('');
+        }
         else console.log('');
       }
       else if(command==='sha256sum') {
@@ -474,8 +483,18 @@ test("generated archive Dockerfiles mirror the source runtime stages", () => {
   for (const floor of runtimePins(sourceWeb).floors) assert.ok(web.includes(floor), `web floor missing: ${floor}`);
   assert.match(web, /CMD \["node", "apps\/web\/server\.js"\]/);
   // A bumped source pin must change the generated Dockerfile (drift guard).
-  const bumped = webArchiveDockerfile(identity, runtimePins(sourceWeb.replace(/node:22\.23\.4-alpine AS runner/, "node:22.24.0-alpine AS runner")));
-  assert.ok(bumped.includes("node:22.24.0-alpine"), "pin drift must flow into the generated Dockerfile");
+  const bumped = webArchiveDockerfile(identity, runtimePins(sourceWeb.replace(/node:22\.23\.4-bookworm-slim AS runner/, "node:22.24.0-bookworm-slim AS runner")));
+  assert.ok(bumped.includes("node:22.24.0-bookworm-slim"), "pin drift must flow into the generated Dockerfile");
+  // No Alpine/apk residue anywhere: images are Debian bookworm only.
+  for (const dockerfile of [backend, web, readFileSync(join(root, "Dockerfile"), "utf8"), readFileSync(join(root, "Dockerfile.web"), "utf8")]) {
+    assert.doesNotMatch(dockerfile, /^FROM .*alpine/m, "alpine base must be gone");
+    assert.doesNotMatch(dockerfile, /apk add/, "apk must be gone");
+  }
+  assert.ok(web.includes("groupadd") && web.includes("useradd"), "Debian user syntax required");
+  // The backend archive Dockerfile must keep the archive's build-info.json
+  // (no host-written override) — S2 guard.
+  assert.ok(!/COPY entrypoint.sh build-info\.json/.test(backend), "backend keeps archive build-info.json");
+  assert.ok(backend.includes("COPY entrypoint.sh ./") && !backend.includes("COPY build-info.json"), "no host build-info in backend context");
 });
 
 test("R2: a binary whose hash contradicts the (matching) manifest fails", t => {
@@ -503,4 +522,23 @@ test("command lists stay in sync: local-images BACKEND_COMMANDS equals build-bac
     + " m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(','.join(m.COMMANDS))"],
     { cwd: root, encoding: "utf8" }).trim();
   assert.deepEqual(source.split(","), BACKEND_COMMANDS, "local-images.mjs and build-backend.py command sets differ");
+});
+test("#19: a web image whose sharp native module fails to load fails verification", t => {
+  const fixture = archiveFixture(t);
+  writeDockerStub(t, fixture);
+  writeFileSync(join(fixture.dir, "dist/built"), "built");
+  const result = runLocalImages(fixture, ["--arch", "amd64", "--verify"], { STUB_SHARP_FAIL: "1" });
+  assert.notEqual(result.status, 0, "broken sharp load must fail verification");
+  assert.match(result.stderr, /sharp/);
+  assert.equal(existsSync(join(fixture.dir, `dist/candidate/${identity.tag}/local-images/linux-amd64/images.json`)), false);
+});
+
+test("#19: healthy sharp load is recorded in evidence", t => {
+  const fixture = archiveFixture(t);
+  writeDockerStub(t, fixture);
+  const imagesJson = join(fixture.dir, `dist/candidate/${identity.tag}/local-images/linux-amd64/images.json`);
+  const result = runLocalImages(fixture, ["--arch", "amd64", "--from-archives", "backend,web"]);
+  assert.equal(result.status, 0, result.stderr);
+  const evidenceFile = JSON.parse(readFileSync(imagesJson, "utf8"));
+  assert.equal(evidenceFile.images.find(item => item.component === "web").evidence.native_modules, "sharp:loaded");
 });
