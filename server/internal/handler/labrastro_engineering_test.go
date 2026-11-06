@@ -385,6 +385,53 @@ func TestLabrastroEngineeringCandidateCASAtomicDecisionAndHistory(t *testing.T) 
 	}
 }
 
+func TestLabrastroEngineeringSectionReplaceMergesIntoReplacedCandidate(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	adopted := f.propose("overview", "## X Section\nX base\n\n## Y Section\nY base", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+	proposeSection := func(section, content string, replaces *string) baselineRevisionResponse {
+		f.t.Helper()
+		var out baselineRevisionResponse
+		body := map[string]any{"chapter": "overview", "section": section, "content_markdown": content, "change_summary": "Change", "base_revision_id": uuidToPtr(adopted.ID)}
+		if replaces != nil {
+			body["replaces_candidate_id"] = replaces
+		}
+		testutil.Call(f.t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", body, "task")).Want(201).JSON(&out)
+		return out
+	}
+	c1 := proposeSection("X Section", "X changed by c1", nil)
+	c2 := proposeSection("Y Section", "Y changed by c2", uuidToPtr(c1.ID))
+	stored := f.readRevision(uuidToString(c2.ID))
+	for _, want := range []string{"X changed by c1", "Y changed by c2"} {
+		if !strings.Contains(stored.ContentMarkdown, want) {
+			t.Fatalf("replacement candidate lost prior section edit %q: %s", want, stored.ContentMarkdown)
+		}
+	}
+	var diff engineering.Diff
+	if err := json.Unmarshal(stored.AnchorsDiff, &diff); err != nil {
+		t.Fatal(err)
+	}
+	byAnchor := map[string]engineering.Change{}
+	for _, c := range diff.Modified {
+		byAnchor[c.Anchor] = c
+	}
+	if len(diff.Modified) != 2 {
+		t.Fatalf("diff vs adopted must cover both sections: %+v", diff.Modified)
+	}
+	if c := byAnchor["X Section"]; c.Before != "X base" || c.After != "X changed by c1" {
+		t.Fatalf("X change not reflected vs adopted: %+v", c)
+	}
+	if c := byAnchor["Y Section"]; c.Before != "Y base" || c.After != "Y changed by c2" {
+		t.Fatalf("Y change not reflected vs adopted: %+v", c)
+	}
+	// Adoption re-checks the stored diff against adopted; it must still pass.
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", c2), "session")).Want(200)
+	if got := f.readRevision(uuidToString(c1.ID)); got.Status != "withdrawn" {
+		t.Fatalf("replaced candidate status=%s", got.Status)
+	}
+}
+
 func TestLabrastroEngineeringConcurrentProposals(t *testing.T) {
 	f := newEngineeringFixture(t)
 	f.enable()
