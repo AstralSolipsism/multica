@@ -71,6 +71,7 @@ func init() {
 	setupCmd.GroupID = groupAdditional
 	attachmentCmd.GroupID = groupAdditional
 	mediaCmd.GroupID = groupAdditional
+	jevCmd.GroupID = groupAdditional
 	configCmd.GroupID = groupAdditional
 	updateCmd.GroupID = groupAdditional
 	versionCmd.GroupID = groupAdditional
@@ -94,6 +95,7 @@ func init() {
 	rootCmd.AddCommand(setupCmd)
 	rootCmd.AddCommand(attachmentCmd)
 	rootCmd.AddCommand(mediaCmd)
+	rootCmd.AddCommand(jevCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(versionCmd)
