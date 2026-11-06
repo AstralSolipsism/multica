@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@multica/ui/styles/tokens.css";
+@import "@multica/ui/styles/base.css";
+@source "../../packages/ui";
+@source "../../packages/views";
+@source "../../packages/core";
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+}

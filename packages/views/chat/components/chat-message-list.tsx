@@ -66,6 +66,14 @@ import { useT } from "../../i18n";
 interface ChatMessageListProps {
   /** Pause bottom-stick effects while a closing floating window fades out. */
   active?: boolean;
+  /**
+   * Names the conversation, so a later mount of it in this page session
+   * reveals as soon as it lands instead of waiting out the settle window
+   * (stick-to-bottom.ts). Omit to pay the settle on every mount.
+   */
+  revealKey?: string | null;
+  /** The list became visible to the reader — on reveal, and on each reactivation after it. */
+  onRevealed?: () => void;
   messages: ChatMessage[];
   /**
    * Server-authoritative pending-task snapshot. `null` / undefined means
@@ -196,6 +204,8 @@ const LIST_COMPONENTS: Components<ChatRenderItem, ChatListContext> = {
 
 export function ChatMessageList({
   active = true,
+  revealKey = null,
+  onRevealed,
   messages,
   pendingTask,
   availability,
@@ -223,7 +233,7 @@ export function ChatMessageList({
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
   const { isFollowing, onContentHeightChanged, resumeLiveEnd, hasReachedLiveEnd } =
-    useStickToBottom(scrollContainerEl, pinToLiveEnd, active);
+    useStickToBottom(scrollContainerEl, pinToLiveEnd, active, revealKey);
   const restoreReadingAnchor = useReadingAnchor(
     scrollContainerEl,
     isFollowing,
@@ -237,6 +247,9 @@ export function ChatMessageList({
   useEffect(() => {
     if (resumeFollowNonce !== mountNonceRef.current) resumeLiveEnd();
   }, [resumeFollowNonce, resumeLiveEnd]);
+  useEffect(() => {
+    if (active && hasReachedLiveEnd) onRevealed?.();
+  }, [active, hasReachedLiveEnd, onRevealed]);
   // Soft edge fade hinting more content above/below. Kept small so it barely
   // grazes full-bleed previews (image / HTML) at the edges.
   const fadeStyle = useScrollFade(scrollRef, 16);

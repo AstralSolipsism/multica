@@ -1,6 +1,10 @@
 export * from "./model";
 export { FolderExplorerBreadcrumbs } from "./folder-explorer-breadcrumbs";
-export { FolderExplorerDepth, FolderExplorerRow } from "./folder-explorer-row";
+export {
+  FolderExplorerDepth,
+  FolderExplorerNameCell,
+} from "./folder-explorer-row";
+export { FolderExplorerHeaderActions } from "./folder-explorer-header-actions";
 export { NewFolderButton } from "./new-folder-button";
 export {
   folderExplorerStorageKey,

@@ -27,6 +27,8 @@ interface WorkspaceAgentWorkingChipProps {
    *  issues as id → identifier, memoized by the header. When set, the avatar
    *  stack registers as a `summary`-level anchor while agents are working. */
   tipAnchorScope?: TipAnchorScope;
+  /** Avatars and the number only, for a header that has run out of room. */
+  compact?: boolean;
 }
 
 /** What the projection says about activity in this surface. `unknown` is a
@@ -154,6 +156,7 @@ export function WorkspaceAgentWorkingChip({
   onToggle,
   agents,
   tipAnchorScope,
+  compact = false,
 }: WorkspaceAgentWorkingChipProps) {
   const { t } = useT("issues");
   const activity = chipActivity(agents);
@@ -190,10 +193,12 @@ export function WorkspaceAgentWorkingChip({
           tipAnchor={tipAnchor}
         />
       )}
-      <span className="tabular-nums md:hidden">
+      <span className={compact ? "tabular-nums" : "tabular-nums md:hidden @max-3xl/issue-header:inline"}>
         {activity === "unknown" ? "—" : agentIds.length}
       </span>
-      <span className="hidden tabular-nums md:inline">{label}</span>
+      {!compact && (
+        <span className="hidden tabular-nums md:inline @max-3xl/issue-header:hidden">{label}</span>
+      )}
     </Button>
   );
 

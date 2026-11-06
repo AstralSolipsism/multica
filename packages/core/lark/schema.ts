@@ -1,4 +1,5 @@
 import { z, type ZodTypeAny } from "zod";
+import { LarkInstallationSchema } from "../api/schemas";
 
 const ConversationGrantSchema = z.object({
   id: z.string().uuid(),
@@ -30,17 +31,7 @@ export function isEditableLarkConversation(grant: unknown): boolean {
 }
 
 export const LarkInstallationsSchema = z.object({
-  installations: z.array(z.object({
-    id: z.string(), workspace_id: z.string(), agent_id: z.string(), app_id: z.string(),
-    bot_open_id: z.string(), installer_user_id: z.string(), status: z.string(),
-    installed_at: z.string(), created_at: z.string(), updated_at: z.string(),
-    tenant_key: z.string().nullable().optional(),
-    /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
-     * (international). Auto-detected at install time. Optional so an older
-     * desktop build parsing a newer server — or a newer build hitting a
-     * server that predates the field — defaults to Feishu in the UI
-     * (see CLAUDE.md → API Response Compatibility). */
-    region: z.string().optional(),
+  installations: z.array(LarkInstallationSchema.extend({
     conversation: ConversationGrantReadSchema.nullable().optional(),
   })),
   /** Whether the deployment has the at-rest secret key configured. When

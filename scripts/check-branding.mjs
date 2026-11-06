@@ -46,7 +46,7 @@ export function checkSources(sourceRoot = root) {
       if (policy.sourceExceptions.some((entry) => entry.path === name)) continue;
       // Raw upstream JSON is deliberately unchanged; effective bundles are
       // checked through real i18next in the views/mobile locale tests.
-      if (/\/locales\/(?:en|zh-Hans|zh-Hant|ja|ko|fr)\//.test(name)) continue;
+      if (/\/locales\/(?:en|zh-Hans|zh-Hant|ja|ko|fr|es)\//.test(name)) continue;
       const content = readFileSync(path, "utf8");
       if (name.endsWith("/package.json")) {
         const { author: _author, contributors: _contributors, ...metadata } = JSON.parse(content);

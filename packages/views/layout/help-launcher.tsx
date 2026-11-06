@@ -2,12 +2,13 @@
 
 import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowUpRight,
   CircleHelp,
   Download,
   MessageCircle,
+  Megaphone,
   MessagesSquare as QrCode,
 } from "@multica/ui/icons";
 import {
@@ -23,8 +24,11 @@ import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { isDesktopShell } from "../platform/local-directory";
-import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { useT } from "../i18n";
+import { FeishuQrDialog } from "./feishu-group-qr-dialog";
+import { RAIL_ICON_BUTTON_CLASS } from "./rail-styles";
+
+import { useWhatsNewMenuPanel, WhatsNewMenuPanel } from "../whats-new/whats-new-menu-panel";
 
 export function HelpLauncher() {
   const { t } = useT("layout");
@@ -32,8 +36,8 @@ export function HelpLauncher() {
   const serverVersion = useConfigStore((state) => state.serverVersion);
   const [qrOpen, setQrOpen] = useState(false);
   // Web-only: offering "download the desktop app" inside the desktop app is
-  // nonsense, and this sidebar is shared — apps/desktop renders the same
-  // AppSidebar as the web dashboard, so the entry has to be gated here.
+  // nonsense, and this rail is shared — apps/desktop renders the same app
+  // shell as the web dashboard, so the entry has to be gated here.
   //
   // No `mounted` deferral (cf. browser-notification-setting.tsx): the desktop
   // renderer is a locally-bundled SPA with no SSR pass, and on web
@@ -41,20 +45,23 @@ export function HelpLauncher() {
   // markup matches either way, so the link can ship in the SSR payload instead
   // of popping in a frame late.
   const desktop = isDesktopShell();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const whatsNew = useWhatsNewMenuPanel();
   return (
     <>
       <DropdownMenu>
-        <TooltipHint label={t(($) => $.help.trigger)}>
-        <DropdownMenuTrigger
-        aria-label={t(($) => $.help.trigger)}
-        className="inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors cursor-pointer hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
-      >
-        <CircleHelp className="size-4" />
-      </DropdownMenuTrigger>
+        <TooltipHint label={t(($) => $.help.trigger)} side="right">
+          <DropdownMenuTrigger
+            ref={triggerRef}
+            aria-label={t(($) => $.help.trigger)}
+            className={RAIL_ICON_BUTTON_CLASS}
+          >
+            <CircleHelp />
+          </DropdownMenuTrigger>
         </TooltipHint>
         <DropdownMenuContent
           align="end"
-          side="top"
+          side="right"
           sideOffset={8}
           className="min-w-40 max-w-56"
         >
@@ -76,6 +83,17 @@ export function HelpLauncher() {
               <DropdownMenuSeparator />
             </>
           )}
+          {whatsNew.available && (
+            <DropdownMenuItem onClick={whatsNew.show}>
+              <Megaphone className="h-3.5 w-3.5" />
+              {t(($) => $.whats_new.trigger)}
+              {whatsNew.newestUnread && (
+                <span data-slot="whats-new-tag" className="ml-auto text-caption font-medium text-brand tabular-nums">
+                  {`v${whatsNew.newestUnread}`}
+                </span>
+              )}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onClick={() => setQrOpen(true)}>
             <QrCode className="h-3.5 w-3.5" />
             {tLark(($) => $.help.discord)}
@@ -93,7 +111,7 @@ export function HelpLauncher() {
                   a Menu.Group context and throws if it has no Group ancestor. It
                   must always be wrapped in a DropdownMenuGroup — without it the
                   Help menu crashes the whole app on open (no error boundary sits
-                  above the sidebar). */}
+                  above the rail). */}
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="font-normal break-words">
                   {t(($) => $.help.server_version, { version: serverVersion })}
@@ -106,6 +124,7 @@ export function HelpLauncher() {
       {/* Outside the dropdown: the dialog portals to document.body, and a
           trigger inside closed menu content would unmount with it. */}
       <FeishuQrDialog open={qrOpen} onOpenChange={setQrOpen} />
+      <WhatsNewMenuPanel panel={whatsNew} anchor={triggerRef} />
     </>
   );
 }

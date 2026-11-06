@@ -34,6 +34,8 @@ import {
 import { createIssueStatusListStore } from "@multica/core/issue-statuses";
 import { baselineFromQuery } from "@multica/core/issue-views/baseline";
 import { useActiveIssueViewStore } from "@multica/core/issue-views/active-view-store";
+import { UNREAD_VIEW_ID } from "@multica/core/issue-views/unread-view";
+import { setCurrentWorkspace } from "@multica/core/platform";
 import { statusTableMethodsFromLegacy } from "./status-table-test-api";
 
 // Mutable so tests can simulate a workspace switch — the workspace layout
@@ -114,17 +116,10 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
-// Captures the props the surface hands the DEFAULT IssuesHeader, so the
-// table-mode tip anchor scope wiring (OL-193) is pinned end to end.
+// Captures the surface render context so the table-mode tip anchor scope
+// wiring (OL-193) is pinned end to end.
 const issuesHeaderProps = vi.hoisted(() => ({
   current: undefined as Record<string, unknown> | undefined,
-}));
-
-vi.mock("../components/issues-header", () => ({
-  IssuesHeader: (props: Record<string, unknown>) => {
-    issuesHeaderProps.current = props;
-    return null;
-  },
 }));
 
 function makeIssue(id: string, title: string, projectId: string): Issue {
@@ -614,7 +609,7 @@ describe("IssueSurface — table pagination ownership", () => {
       "pt-sort-transition",
     );
     const listIssueTableRows = vi.fn((request: IssueTableRowsRequest) =>
-      request.query.sort.field === "created_at"
+      request.query.sort.field === "updated_at"
         ? Promise.resolve({
             query_fingerprint: "sha256:initial-sort",
             group_key: null,
@@ -803,6 +798,8 @@ describe("IssueSurface — filtered empty state", () => {
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getWorkspaceWorkingAgents: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => never()),
+      listIssueUnread: vi.fn(() => Promise.resolve([])),
+      listIssueViews: vi.fn(() => Promise.resolve([])),
     } as unknown as ApiClient);
     pruneIssueSurfaceViewStates([]);
   });
@@ -811,6 +808,7 @@ describe("IssueSurface — filtered empty state", () => {
     cleanup();
     qc.clear();
     pruneIssueSurfaceViewStates([]);
+    useActiveIssueViewStore.getState().setActive("ws-1:workspace", null);
     mockTranslate.mockImplementation(() => "translated");
     vi.restoreAllMocks();
   });
@@ -861,6 +859,61 @@ describe("IssueSurface — filtered empty state", () => {
 
     await screen.findByText("detail.empty_issues_title");
     expect(screen.queryByText("filtered_empty.title")).toBeNull();
+  });
+
+  function unreadViewSurface() {
+    useActiveIssueViewStore.getState().setActive("ws-1:workspace", UNREAD_VIEW_ID);
+    return (
+      <QueryClientProvider client={qc}>
+        <IssueSurface
+          scope={{ type: "workspace", actorKind: "all" }}
+          modes={["list"]}
+          renderHeader={() => null}
+          batchToolbar="never"
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  it("keeps the built-in Unread view's condition when its filters are cleared", async () => {
+    const store = getIssueSurfaceViewStore(`view:${UNREAD_VIEW_ID}`);
+    act(() => store.setState({ unreadFilter: true, agentRunningFilter: true }));
+
+    render(unreadViewSurface());
+
+    fireEvent.click(await screen.findByRole("button", { name: "filtered_empty.clear_button" }));
+    expect(store.getState().agentRunningFilter).toBe(false);
+    expect(store.getState().unreadFilter).toBe(true);
+    await screen.findByText("filtered_empty.unread_title");
+    expect(screen.queryByRole("button", { name: "filtered_empty.clear_button" })).toBeNull();
+  });
+
+  it("keeps the built-in Unread view's condition when a workspace switch reloads its state", async () => {
+    setCurrentWorkspace("acme", "ws-1");
+    const store = getIssueSurfaceViewStore(`view:${UNREAD_VIEW_ID}`);
+    render(unreadViewSurface());
+    await screen.findByText("filtered_empty.unread_title");
+
+    // The next workspace has no saved state for this view, so the reload
+    // resets the store to defaults, unread off.
+    await act(async () => {
+      setCurrentWorkspace("beta", "ws-1");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(store.getState().unreadFilter).toBe(true);
+    expect(screen.getByText("filtered_empty.unread_title")).toBeInTheDocument();
+    setCurrentWorkspace(null, null);
+  });
+
+  it("restores the built-in Unread view's condition from state saved without it", async () => {
+    const store = getIssueSurfaceViewStore(`view:${UNREAD_VIEW_ID}`);
+    act(() => store.setState({ unreadFilter: false }));
+
+    render(unreadViewSurface());
+
+    await screen.findByText("filtered_empty.unread_title");
+    expect(store.getState().unreadFilter).toBe(true);
   });
 });
 
@@ -1099,7 +1152,7 @@ describe("summaryScopeIssues (OL-193)", () => {
     pruneIssueSurfaceViewStates([]);
   });
 
-  it("feeds the table's loaded rows to the DEFAULT header as tipAnchorScopeIssues", async () => {
+  it("feeds the table's loaded rows through summaryScopeIssues", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const store = getIssueSurfaceViewStore("project:ysk-scope-default");
     store.getState().setViewMode("table");
@@ -1129,14 +1182,17 @@ describe("summaryScopeIssues (OL-193)", () => {
       listSquads: vi.fn(() => never()),
     } as unknown as ApiClient);
 
-    // No renderHeader prop: the surface renders its stock IssuesHeader
-    // (mocked above to capture props). Passing controller.surfaceIssues here
-    // would hand the chip an EMPTY list in table mode.
+    // Passing controller.surfaceIssues here would hand the header an EMPTY
+    // list in table mode; the render context must carry the table's rows.
     render(
       <QueryClientProvider client={qc}>
         <IssueSurface
           scope={{ type: "project", projectId: "ysk-scope-default" }}
           modes={["table"]}
+          renderHeader={(context) => {
+            issuesHeaderProps.current = context as unknown as Record<string, unknown>;
+            return null;
+          }}
           renderLoading={() => <div data-testid="surface-loading" />}
           batchToolbar="never"
         />
@@ -1145,7 +1201,7 @@ describe("summaryScopeIssues (OL-193)", () => {
 
     await waitFor(() =>
       expect(
-        (issuesHeaderProps.current?.tipAnchorScopeIssues as { id: string }[] | undefined)?.map(
+        (issuesHeaderProps.current?.summaryScopeIssues as { id: string }[] | undefined)?.map(
           (issue) => issue.id,
         ),
       ).toEqual(["t9"]),

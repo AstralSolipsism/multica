@@ -57,35 +57,35 @@ describe("agent folder presence aggregation", () => {
 
   it("shows an empty-folder dash and all four non-empty states", () => {
     const view = renderCell([]);
-    expect(screen.getByRole("cell").textContent).toBe("—");
+    expect(view.container).toHaveTextContent("—");
 
     view.rerender(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <AgentFolderStatusCell rows={[row("working", presence("online", "working", 2))]} />
       </I18nProvider>,
     );
-    expect(screen.getByRole("cell").textContent).toBe("1 running · 1 online");
+    expect(view.container).toHaveTextContent("1 running · 1 online");
 
     view.rerender(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <AgentFolderStatusCell rows={[row("queued", presence("offline", "queued", 0, 2))]} />
       </I18nProvider>,
     );
-    expect(screen.getByRole("cell").textContent).toBe("1 queued");
+    expect(view.container).toHaveTextContent("1 queued");
 
     view.rerender(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <AgentFolderStatusCell rows={[row("online", presence("online", "idle"))]} />
       </I18nProvider>,
     );
-    expect(screen.getByRole("cell").textContent).toBe("1 online");
+    expect(view.container).toHaveTextContent("1 online");
 
     view.rerender(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <AgentFolderStatusCell rows={[row("offline", presence("offline", "idle"))]} />
       </I18nProvider>,
     );
-    expect(screen.getByRole("cell").textContent).toBe("Offline");
+    expect(view.container).toHaveTextContent("Offline");
   });
 
   it("lists active member names and their running and queued task counts", async () => {
@@ -94,7 +94,7 @@ describe("agent folder presence aggregation", () => {
       row("Waiting", presence("offline", "queued", 0, 3)),
       row("Idle", presence("online", "idle")),
     ]);
-    await userEvent.hover(screen.getByRole("cell"));
+    await userEvent.hover(screen.getByText(/1 running/));
     expect(await screen.findByText("Worker")).toBeInTheDocument();
     expect(screen.getByText("2 running · 1 queued")).toBeInTheDocument();
     expect(screen.getByText("Waiting")).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 import { TestApiClient } from "./fixtures";
 
@@ -14,12 +14,11 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
   await page.context().addCookies([{ name: "multica-locale", value: "en", url: baseURL }]);
   await page.addInitScript((value) => localStorage.setItem("multica_token", value), token);
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
-  const mode = page.getByRole("button", { name: /^(Board|List|Table|Graph)$/ }).first();
-  await expect(mode).toBeVisible({ timeout: 30_000 });
-  if ((await mode.innerText()).trim() !== "Graph") {
-    await mode.click();
-    await page.getByText("Graph", { exact: true }).last().click();
-  }
+  const display = page.getByRole("button", { name: "Display", exact: true });
+  await expect(display).toBeVisible({ timeout: 30_000 });
+  await display.click();
+  await page.getByRole("group", { name: "View", exact: true }).getByRole("button", { name: "Graph", exact: true }).click();
+  await page.keyboard.press("Escape");
   // Warm the dev server's on-demand compile of the issue detail route: the
   // first soft navigation commits its URL only after the route compiles,
   // which can outlast the navigation assertion on a cold server.
@@ -57,6 +56,33 @@ async function selectThenDblclick(page: Page, target: ReturnType<Page["locator"]
     "Select a task or task line",
   );
   await target.dblclick();
+}
+
+async function selectionAction(
+  page: Page,
+  selection: Locator,
+  name: string,
+  {
+    activate = false,
+    menuRole = "menuitem",
+  }: { activate?: boolean; menuRole?: "menuitem" | "menuitemcheckbox" } = {},
+) {
+  const direct = selection.getByRole("button", { name, exact: true });
+  if (await direct.count()) {
+    await expect(direct).toBeVisible();
+    if (activate) await direct.click();
+    return direct;
+  }
+  const more = selection.getByRole("button", { name: "More", exact: true });
+  await expect(more).toBeVisible();
+  await more.click();
+  const item = page.getByRole(menuRole, { name, exact: true });
+  await expect(item).toBeVisible();
+  if (activate) {
+    await item.focus();
+    await item.press("Enter");
+  }
+  return item;
 }
 
 async function enterFocus(page: Page, taskId: string) {
@@ -127,9 +153,12 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await expect(cardA).toContainText("design and implementation");
     await expect(cardA).toContainText("1/2 completed");
     await cardA.click();
-    await page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "More", exact: true }).click();
-    await expect(page.locator("[data-dag-enter-focus]")).toHaveCount(0);
-    await page.keyboard.press("Escape");
+    const overviewMore = page.getByRole("region", { name: "Selection" }).getByRole("button", { name: "More", exact: true });
+    if (await overviewMore.count()) {
+      await overviewMore.click();
+      await expect(page.locator("[data-dag-enter-focus]")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+    }
     // The toolbar is one row and the breadcrumb roots at the overview.
     const toolbarHeight = async () =>
       (await page.locator("[data-dag-toolbar]").boundingBox())!.height;
@@ -234,7 +263,8 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     const taskC = page.locator(`.react-flow__node[data-id="${c.id}"]`);
     await taskC.click();
     const selection = page.getByRole("region", { name: "Selection" });
-    await expect(selection.getByRole("button", { name: "Open detail" })).toBeVisible();
+    await selectionAction(page, selection, "Open detail");
+    if (await page.getByRole("menu").count()) await page.keyboard.press("Escape");
     expect(await toolbarHeight()).toBe(40);
     // Painted-pixel baseline for the dimming regression gate below: d is not
     // on c's prerequisite chain, so focusing must actually repaint it dimmer.
@@ -244,13 +274,10 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     const dimmedBefore = await page.screenshot({ clip: dimmedClip });
     // Highlight prerequisites (via More if the width collapsed it): only the
     // chain keeps full strength.
-    const focusButton = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
-    if (await focusButton.count()) {
-      await focusButton.click();
-    } else {
-      await selection.getByRole("button", { name: "More" }).click();
-      await page.getByRole("menuitemcheckbox", { name: "Highlight prerequisites" }).click();
-    }
+    await selectionAction(page, selection, "Highlight prerequisites", {
+      activate: true,
+      menuRole: "menuitemcheckbox",
+    });
     await expect(page.locator("[data-dag-edge-layer] > g").first()).toHaveClass(/opacity-15/);
     // Node dimming is an even-odd path in the overlay above the z-index-2
     // cards: holes over the lit cards, none over d, and d's pixels really
@@ -285,8 +312,10 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     expect(holes.d).toBe(false);
     const dimmedAfter = await page.screenshot({ clip: dimmedClip });
     expect(dimmedBefore.equals(dimmedAfter)).toBe(false);
-    const focusAgain = selection.getByRole("button", { name: "Highlight prerequisites", exact: true });
-    if (await focusAgain.count()) await focusAgain.click();
+    await selectionAction(page, selection, "Highlight prerequisites", {
+      activate: true,
+      menuRole: "menuitemcheckbox",
+    });
     // Escape clears the selection when the canvas node holds focus.
     await taskC.focus();
     await page.keyboard.press("Escape");

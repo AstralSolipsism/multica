@@ -646,6 +646,32 @@ WHERE issue_id = $1 AND agent_id = $2
   AND comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id(sqlc.narg('thread_comment_id')::uuid)
 RETURNING *;
 
+-- name: ReassignPendingAgentTasksToRuntime :one
+-- Moves an agent's not-yet-dispatched tasks to the runtime it was just rebound
+-- to. Claims fence on agent.runtime_id = task.runtime_id (MUL-6697), so a
+-- queued or deferred row left on the old runtime is claimable by neither
+-- daemon. Deferred rows move too: promotion is per runtime and would otherwise
+-- strand them later. Dispatched, running and waiting rows are already held by
+-- the old runtime's daemon and stay. Callers hold the agent row FOR UPDATE.
+--
+-- Same fence-verdict shape as ReassignTasksToRuntime: FenceOk = false must
+-- abort the rebind rather than commit a binding with stranded rows.
+WITH fence AS MATERIALIZED (
+    SELECT lock_task_owner_rows(@agent_id, NULL, @new_runtime_id) AS ok
+),
+reassigned AS (
+    UPDATE agent_task_queue
+    SET runtime_id = @new_runtime_id
+    WHERE agent_id = @agent_id
+      AND status IN ('queued', 'deferred')
+      AND runtime_id IS DISTINCT FROM @new_runtime_id
+      AND (SELECT ok FROM fence)
+    RETURNING id
+)
+SELECT
+    (SELECT ok FROM fence) AS fence_ok,
+    (SELECT count(*) FROM reassigned) AS reassigned_tasks;
+
 -- name: CancelAgentTasksByAgent :many
 -- Bulk-cancel every active (queued/dispatched/running) task for an agent.
 -- Returns the affected rows so callers can broadcast task:cancelled events.
@@ -1811,6 +1837,10 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = @issue_id
       AND t.agent_id = @agent_id
+      -- A comment can only join a task with the same external authority.
+      AND t.conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
+      AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
+           OR t.originator_user_id = sqlc.narg('new_originator_user_id')::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id(@new_trigger_comment_id::uuid)
       AND (
           t.status = 'queued'
@@ -1828,7 +1858,10 @@ WHERE id = (
     ORDER BY t.created_at DESC
     LIMIT 1
 )
-RETURNING id, coalesced_comment_ids;
+AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
+AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
+     OR originator_user_id = sqlc.narg('new_originator_user_id')::uuid)
+RETURNING *;
 
 -- name: RegisterPlannedCommentForActiveTask :one
 -- #5914: durably register a comment that lost an enqueue race as a PLANNED
@@ -1867,6 +1900,10 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = @issue_id
       AND t.agent_id = @agent_id
+      -- A comment can only join a task with the same external authority.
+      AND t.conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
+      AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
+           OR t.originator_user_id = sqlc.narg('expected_originator_user_id')::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id(@comment_id::uuid)
       AND t.status IN ('dispatched', 'running', 'waiting_local_directory')
       AND (
@@ -1877,6 +1914,9 @@ WHERE id = (
     LIMIT 1
 )
 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
+AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
+     OR originator_user_id = sqlc.narg('expected_originator_user_id')::uuid)
 RETURNING id, coalesced_comment_ids;
 
 -- name: MergeDelegatedFailureCommentIntoPendingTask :one

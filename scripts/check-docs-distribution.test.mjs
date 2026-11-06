@@ -36,8 +36,19 @@ test("allows internal releases, local builds, and upstream source attribution", 
     "docker compose -f docker-compose.selfhost.yml ps",
     "docker compose -f docker-compose.selfhost.yml up -d",
     "brew install go",
+    'curl https://multica.outlune.com/api/me -H "Authorization: Bearer $MULTICA_TOKEN"',
+    "curl.exe -I https://api.multica.ai",
   ].join("\n");
   assert.deepEqual(distributionViolations("guide.mdx", content), []);
+});
+
+test("rejects upstream API examples, including multiline PAT requests", () => {
+  for (const endpoint of ["me", "issues", "issues?limit=1"]) {
+    const content = `curl https://api.multica.ai/api/${endpoint} \\\n  -H "Authorization: Bearer $MULTICA_TOKEN"`;
+    assert.deepEqual(distributionViolations("auth-tokens.zh-Hant.mdx", content), [
+      "auth-tokens.zh-Hant.mdx:1: upstream API endpoint",
+    ]);
+  }
 });
 
 test("checks localized pages and embedded UI copy, and exits nonzero on regressions", (t) => {
@@ -46,6 +57,7 @@ test("checks localized pages and embedded UI copy, and exits nonzero on regressi
   const files = {
     "apps/docs/content/docs/install.fr.mdx": "Installation\nhttps://multica.ai/download",
     "apps/docs/components/install.tsx": 'const url = "https://multica.ai/download";',
+    "apps/docs/content/docs/auth-tokens.zh-Hant.mdx": 'curl https://api.multica.ai/api/me \\\n  -H "Authorization: Bearer $MULTICA_TOKEN"',
     "apps/docs/lib/locale-link.test.ts": 'const url = "https://multica.ai/download";',
     "apps/docs/.source/generated.ts": 'const url = "https://multica.ai/download";',
   };
@@ -55,6 +67,7 @@ test("checks localized pages and embedded UI copy, and exits nonzero on regressi
   }
   assert.deepEqual(checkDocsDistribution(root).sort(), [
     "apps/docs/components/install.tsx:1: upstream download page",
+    "apps/docs/content/docs/auth-tokens.zh-Hant.mdx:1: upstream API endpoint",
     "apps/docs/content/docs/install.fr.mdx:2: upstream download page",
   ]);
   const script = fileURLToPath(new URL("./check-docs-distribution.mjs", import.meta.url));

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const retiredDistribution = [
+  ["upstream API endpoint", /https?:\/\/api\.multica\.ai\/api(?:[/?#\s"'`]|$)/i],
   ["upstream download page", /https?:\/\/(?:www\.)?multica\.ai\/download\b/i],
   ["upstream installer", /https?:\/\/raw\.githubusercontent\.com\/multica-ai\/multica\//i],
   ["upstream release artifacts", /https?:\/\/github\.com\/multica-ai\/multica\/releases\b/i],
