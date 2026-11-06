@@ -17,7 +17,8 @@ export type QuotaTone = "ok" | "warning" | "destructive";
 
 // Collectors poll every two minutes and can back off for up to 30 minutes.
 const COLLECTOR_QUOTA_INTERRUPTED_MS = 3600 * 1000;
-// Matches the daemon's Kimi, Antigravity and ZenMux quota collectors.
+// Matches the daemon's Kimi and Antigravity quota collectors and the
+// server-side subscription quota-source poller.
 const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux"];
 
 /**

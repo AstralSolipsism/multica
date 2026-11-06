@@ -78,12 +78,17 @@ export function QuotaSourceForm({
     setFormError(null);
     try {
       if (source) {
+        // Only send base_url when it actually changed: the server treats a
+        // changed address as a re-probe trigger, and re-sending an unchanged
+        // (or cleared-to-default) value must not probe.
+        const trimmedBase = baseUrl.trim();
+        const baseChanged = trimmedBase !== (source.base_url ?? "");
         await updateSource.mutateAsync({
           id: source.id,
           input: {
             name: trimmedName,
-            base_url: baseUrl.trim(),
             visibility,
+            ...(baseChanged ? { base_url: trimmedBase } : {}),
             ...(replaceCredential ? { credential: trimmedCredential } : {}),
           },
         });
@@ -93,7 +98,7 @@ export function QuotaSourceForm({
           kind,
           name: trimmedName,
           credential: trimmedCredential,
-          base_url: baseUrl.trim(),
+          ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
           visibility,
         });
         toast.success(t(($) => $.quota_sources.toasts.created));

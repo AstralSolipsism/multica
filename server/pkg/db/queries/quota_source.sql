@@ -96,13 +96,15 @@ SELECT count(*)::int FROM quota_source WHERE owner_id = @owner_id;
 -- in ListAgentRuntimes deliberately does NOT apply here.
 SELECT qs.*
 FROM quota_source qs
-WHERE EXISTS (
-    SELECT 1 FROM agent_runtime ar
-    WHERE ar.workspace_id = @workspace_id
-      AND ar.owner_id = qs.owner_id
-      AND (ar.owner_id = @member_id
-           OR ar.visibility = 'public'
-           OR (ar.visibility = 'private' AND @member_id = ANY(ar.shared_with)))
-      AND (qs.owner_id = @member_id OR qs.visibility = 'shared')
-)
+WHERE qs.owner_id = @member_id
+   OR (
+        qs.visibility = 'shared'
+        AND EXISTS (
+            SELECT 1 FROM agent_runtime ar
+            WHERE ar.workspace_id = @workspace_id
+              AND ar.owner_id = qs.owner_id
+              AND (ar.visibility = 'public'
+                   OR (ar.visibility = 'private' AND @member_id = ANY(ar.shared_with)))
+        )
+      )
 ORDER BY qs.created_at ASC;

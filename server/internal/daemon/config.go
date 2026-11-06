@@ -175,10 +175,6 @@ type Config struct {
 	// command_name on PATH. nil/empty means "always resolve via PATH".
 	ProfileCommandOverrides map[string]string
 
-	// ZenMux daemon-side collector fields were removed in OL-1205 scenario 3:
-	// ZenMux subscriptions are user-registered quota sources polled by the
-	// server; MULTICA_ZENMUX_* env vars are no longer read.
-	//
 	// PlanQuotaKimiInterval paces the kimi collector
 	// (MULTICA_KIMI_QUOTA_POLL_INTERVAL, default 2m).
 	PlanQuotaKimiInterval time.Duration

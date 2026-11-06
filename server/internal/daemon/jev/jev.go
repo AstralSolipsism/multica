@@ -5,9 +5,9 @@
 // breaker, local opt-out) degrades to a typed *FallbackError and never
 // blocks the caller beyond one timeout-bounded attempt per source.
 //
-// Credentials follow the MULTICA_ZENMUX_MANAGEMENT_API_KEY handling: they
-// are read from the environment only, travel exclusively in Authorization
-// headers, and never appear in logs, error strings, or reported structs.
+// Credentials are read from the environment only, travel exclusively in
+// Authorization headers, and never appear in logs, error strings, or
+// reported structs.
 package jev
 
 import (
@@ -77,8 +77,8 @@ type Source struct {
 }
 
 // SourceEnv carries the Jev credentials read by daemon config loading.
-// The key fields are secrets in the MULTICA_ZENMUX_MANAGEMENT_API_KEY
-// sense: environment-only, never logged, never serialized.
+// The key fields are secrets: environment-only, never logged, never
+// serialized.
 type SourceEnv struct {
 	OpenCodeAPIKey       string
 	DashScopeAPIKey      string

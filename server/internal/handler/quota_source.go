@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -197,7 +198,7 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported kind (want glm or zenmux)")
 		return
 	}
-	if req.Name == "" || len(req.Name) > 64 {
+	if req.Name == "" || utf8.RuneCountInString(req.Name) > 64 {
 		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
 		return
 	}
@@ -215,11 +216,7 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Synchronous probe: only a passing credential is persisted.
-	rawBase := ""
-	if req.BaseURL != nil {
-		rawBase = *req.BaseURL
-	}
-	quota, probeErr := h.probeQuotaSource(r.Context(), driver, rawBase, req.Credential)
+	quota, probeErr := h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(textFromPtr(req.BaseURL))), req.Credential)
 	if probeErr != nil {
 		writeProbeError(w, probeErr)
 		return
@@ -294,7 +291,7 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	name := row.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
-		if name == "" || len(name) > 64 {
+		if name == "" || utf8.RuneCountInString(name) > 64 {
 			writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
 			return
 		}
@@ -311,9 +308,9 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	baseURL := ptrFromText(row.BaseUrl)
-	if req.BaseURL != nil {
-		baseURL = req.BaseURL
+	baseURL := textFromPtr(req.BaseURL)
+	if req.BaseURL == nil {
+		baseURL = row.BaseUrl // not part of the patch: keep stored value
 	}
 	credential := ""
 	if req.Credential != nil {
@@ -324,12 +321,15 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Probe condition: credential or base_url changed, or the source is
-	// being re-enabled.
+	// Probe condition (final baseline): the credential changed, the base_url
+	// changed by its NORMALIZED value (empty = driver default, so clearing a
+	// custom address back to default counts, and re-sending the current
+	// value does not), or the source is being re-enabled.
 	credentialChanged := credential != ""
-	oldBase := ptrFromText(row.BaseUrl)
-	baseURLChanged := baseURL != nil && (oldBase == nil || *oldBase != *baseURL)
+	baseURLChanged := !sameText(baseURL, row.BaseUrl)
 	reEnabling := !row.Enabled && enabled
+	var probeQuota *protocol.RuntimePlanQuota
+	var probeErr error
 	if credentialChanged || baseURLChanged || reEnabling {
 		probeCred := credential
 		if probeCred == "" {
@@ -340,11 +340,8 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			}
 			probeCred = plaintext
 		}
-		rawBase := ""
-		if baseURL != nil {
-			rawBase = *baseURL
-		}
-		if _, probeErr := h.probeQuotaSource(r.Context(), driver, rawBase, probeCred); probeErr != nil {
+		probeQuota, probeErr = h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(baseURL)), probeCred)
+		if probeErr != nil {
 			writeProbeError(w, probeErr)
 			return
 		}
@@ -354,7 +351,7 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		ID:         row.ID,
 		OwnerID:    row.OwnerID,
 		Name:       textFromString(name),
-		BaseUrl:    textFromPtr(baseURL),
+		BaseUrl:    baseURL,
 		Enabled:    pgtype.Bool{Bool: enabled, Valid: true},
 		Visibility: textFromString(visibility),
 	}
@@ -371,12 +368,16 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update quota source")
 		return
 	}
-	// A passing probe re-arms polling immediately (also for the
-	// re-enable case, whose next_poll_at may be far in the future).
-	if credentialChanged || baseURLChanged || reEnabling {
-		_, _ = h.Queries.SetQuotaSourceNextPollAt(r.Context(), db.SetQuotaSourceNextPollAtParams{
-			ID: row.ID, NextPollAt: pgTimestamptz(time.Now().Add(quotaSourcePollInterval)),
-		})
+	// A passing probe already produced a fresh snapshot: store it (this
+	// also clears any stale last_error / failure counters from the previous
+	// credential and re-arms polling; the re-enable case's next_poll_at may
+	// otherwise sit far in the future).
+	if probeQuota != nil {
+		if body, err := json.Marshal(probeQuota); err == nil {
+			_, _ = h.Queries.ApplyQuotaSourcePollSuccess(r.Context(), db.ApplyQuotaSourcePollSuccessParams{
+				ID: row.ID, Snapshot: body, NextPollSecs: quotaSourcePollInterval.Seconds(),
+			})
+		}
 	}
 	updated, err := h.Queries.GetQuotaSourceForOwner(r.Context(), db.GetQuotaSourceForOwnerParams{
 		ID: row.ID, OwnerID: row.OwnerID,
@@ -608,12 +609,25 @@ func (h *Handler) ListWorkspaceQuotaSources(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"sources": cards})
 }
 
-// textFromPtr converts an optional request string to pgtype.Text.
+// textFromPtr converts an optional request string to pgtype.Text. An empty
+// or whitespace-only value means "driver default" (NULL), matching the
+// table's semantics and the probe path.
 func textFromPtr(s *string) pgtype.Text {
-	if s == nil || *s == "" {
+	if s == nil || strings.TrimSpace(*s) == "" {
 		return pgtype.Text{}
 	}
-	return pgtype.Text{String: *s, Valid: true}
+	return pgtype.Text{String: strings.TrimSpace(*s), Valid: true}
+}
+
+// ptrFromTextNormalized converts a stored optional base_url to *string with
+// empty strings collapsed to nil, so stored and incoming values compare by
+// their normalized form.
+func ptrFromTextNormalized(t pgtype.Text) *string {
+	if !t.Valid || strings.TrimSpace(t.String) == "" {
+		return nil
+	}
+	v := strings.TrimSpace(t.String)
+	return &v
 }
 
 // textFromString builds a valid pgtype.Text (never NULL).
@@ -632,6 +646,27 @@ func ptrFromText(t pgtype.Text) *string {
 
 func pgTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// derefOrEmpty maps an optional base_url to its raw string; nil = default.
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// sameText compares two optional strings by their normalized form (empty or
+// whitespace = NULL = driver default).
+func sameText(a, b pgtype.Text) bool {
+	return sameOptionalString(ptrFromTextNormalized(a), ptrFromTextNormalized(b))
+}
+
+func sameOptionalString(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // PollDueSource implements scheduler.QuotaSourcePoller: one collection round

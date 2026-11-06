@@ -220,12 +220,19 @@ func TestListWorkspaceQuotaSourcesVisibility(t *testing.T) {
 	srv := glmOKServer(t)
 	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
 
-	// Owner has a public runtime in the test workspace → shared card visible
-	// to other members; private card not.
-	rtID := dbfx.Runtime(t, "quota-vis", testutil.Cols{"daemon_id": "QuotaVis-Machine", "provider": "codex", "visibility": "public"})
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, rtID)
-	})
+	// The owner's runtimes in this workspace cover the visibility matrix:
+	// public, private-unshared, and private-shared-with-viewer.
+	mkRuntime := func(name, visibility string, sharedWith []string) string {
+		cols := testutil.Cols{"daemon_id": name, "provider": "codex", "visibility": visibility}
+		if sharedWith != nil {
+			cols["shared_with"] = sharedWith
+		}
+		id := dbfx.Runtime(t, name, cols)
+		t.Cleanup(func() {
+			testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, id)
+		})
+		return id
+	}
 
 	var sharedID, privateID string
 	for _, tc := range []struct{ name, visibility string }{{"shared card", "shared"}, {"private card", "private"}} {
@@ -284,17 +291,196 @@ func TestListWorkspaceQuotaSourcesVisibility(t *testing.T) {
 		return ids
 	}
 
-	ownerCards := cardIDs(testUserID)
-	if !ownerCards[sharedID] || !ownerCards[privateID] {
-		t.Fatalf("owner sees shared=%v private=%v", ownerCards[sharedID], ownerCards[privateID])
+	// Cell: owner without ANY runtime still sees both own cards (OL-1205
+	// review #1 — the owner branch must not sit under the runtime EXISTS).
+	noRtOwnerCards := cardIDs(testUserID)
+	if !noRtOwnerCards[sharedID] || !noRtOwnerCards[privateID] {
+		t.Fatalf("owner without runtimes: sees shared=%v private=%v, want both", noRtOwnerCards[sharedID], noRtOwnerCards[privateID])
 	}
-	// Another member: shared card yes (owner has a public runtime here),
-	// private card no.
+
+	// Cell: another member sees neither card while the owner has no runtime
+	// here — "follows machine visibility" gates the shared card too.
+	noRtMemberCards := cardIDs(otherMember)
+	if noRtMemberCards[sharedID] || noRtMemberCards[privateID] {
+		t.Fatalf("member with owner runtimes absent: shared=%v private=%v, want none", noRtMemberCards[sharedID], noRtMemberCards[privateID])
+	}
+
+	// Cell: owner's PRIVATE UNSHARED runtime does NOT unlock the shared card
+	// for the viewer (review #5② V1 mutation).
+	mkRuntime("QuotaVis-PrivateUnshared", "private", nil)
 	memberCards := cardIDs(otherMember)
+	if memberCards[sharedID] {
+		t.Fatal("shared card visible while owner has only a private unshared runtime")
+	}
+	if memberCards[privateID] {
+		t.Fatal("private card leaked to another member")
+	}
+
+	// Cell: owner's PRIVATE runtime shared WITH the viewer unlocks the
+	// shared card (strict ListVisibleAgentRuntimes semantics).
+	_ = mkRuntime("QuotaVis-PrivateShared", "private", []string{otherMember})
+	memberCards = cardIDs(otherMember)
+	if !memberCards[sharedID] {
+		t.Fatal("shared card hidden despite owner runtime shared with viewer")
+	}
+	if memberCards[privateID] {
+		t.Fatal("private card leaked to another member")
+	}
+
+	// Cell: owner's PUBLIC runtime also unlocks it (original case).
+	mkRuntime("QuotaVis-Public", "public", nil)
+	memberCards = cardIDs(otherMember)
 	if !memberCards[sharedID] {
 		t.Fatal("shared card hidden from member despite visible runtime")
 	}
 	if memberCards[privateID] {
 		t.Fatal("private card leaked to another member")
+	}
+
+	// The owner keeps seeing their own cards throughout.
+	ownerCards := cardIDs(testUserID)
+	if !ownerCards[sharedID] || !ownerCards[privateID] {
+		t.Fatalf("owner sees shared=%v private=%v", ownerCards[sharedID], ownerCards[privateID])
+	}
+}
+
+// Review #2: clearing a custom base_url back to default must stick (probe
+// hits the default endpoint and the stored NULL replaces the old value).
+func TestPatchClearBaseURLToDefault(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	h := withQuotaSourceBox(t)
+	srv := glmOKServer(t)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	body := map[string]any{"kind": "glm", "name": "clear-base", "credential": "sk-clear-key-12345", "base_url": srv.URL}
+	createResp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, body)).Want(http.StatusCreated)
+	if err := json.Unmarshal([]byte(createResp.Text()), &created); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+
+	// Clear the custom address. The probe now targets the driver default
+	// (open.bigmodel.cn — unreachable here), so the update must REFUSE
+	// rather than store an address whose probe never passed.
+	cleared := ""
+	patchResp := testutil.Call(t, h.UpdateQuotaSource, quotaSourceRequest(http.MethodPatch, "/api/me/quota-sources/"+created.ID, testUserID, map[string]any{"base_url": cleared}))
+	if patchResp.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("clearing to default without a passing probe: got %d %s, want 422", patchResp.Code, patchResp.Text())
+	}
+	// The stored address is unchanged (the failed probe persisted nothing).
+	var stored *string
+	if err := testPool.QueryRow(context.Background(), `SELECT base_url FROM quota_source WHERE id = $1`, created.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || *stored != srv.URL {
+		t.Fatalf("stored base_url after refused clear = %v, want %s", stored, srv.URL)
+	}
+}
+
+// Review #2: a source on the default address (NULL) whose visibility-only
+// edit re-sends base_url:"" must NOT re-probe — an unrelated edit cannot be
+// blocked by provider rate limiting or a stale credential.
+func TestPatchVisibilityOnlyDoesNotProbe(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	h := withQuotaSourceBox(t)
+	srv := glmOKServer(t)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	// Create via the test server, then NULL the base_url directly to model
+	// a default-address source (the create path would probe the real
+	// default endpoint, which this sandbox cannot reach).
+	var created struct {
+		ID string `json:"id"`
+	}
+	createResp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, map[string]any{
+		"kind": "glm", "name": "vis-only", "credential": "sk-visonly-12345", "base_url": srv.URL,
+	})).Want(http.StatusCreated)
+	if err := json.Unmarshal([]byte(createResp.Text()), &created); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+	if _, err := testPool.Exec(context.Background(), `UPDATE quota_source SET base_url = NULL WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The dev-origin bypass only covers the test server URL: a probe here
+	// would target open.bigmodel.cn and fail. Re-sending base_url:"" must
+	// therefore not probe at all — a 200 proves it.
+	patchResp := testutil.Call(t, h.UpdateQuotaSource, quotaSourceRequest(http.MethodPatch, "/api/me/quota-sources/"+created.ID, testUserID, map[string]any{
+		"name": "vis-only-renamed", "base_url": "", "visibility": "shared",
+	})).Want(http.StatusOK)
+	if !strings.Contains(patchResp.Text(), "vis-only-renamed") {
+		t.Fatalf("patch response: %s", patchResp.Text())
+	}
+	// Address stays NULL (no phantom re-probe, no address resurrection).
+	var stored *string
+	if err := testPool.QueryRow(context.Background(), `SELECT base_url FROM quota_source WHERE id = $1`, created.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != nil {
+		t.Fatalf("stored base_url = %v, want NULL", *stored)
+	}
+}
+
+// Review #3: replacing the credential after a failed poll stores the fresh
+// probe snapshot and clears the stale error/counters immediately.
+func TestPatchCredentialClearsStaleError(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	h := withQuotaSourceBox(t)
+	srv := glmOKServer(t)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	// Seed a source with a stale failure state.
+	if err := testPool.QueryRow(context.Background(),
+		`INSERT INTO quota_source (owner_id, kind, name, base_url, credential_ciphertext, credential_hint,
+		  last_error_code, last_error_message, consecutive_failures, next_poll_at)
+		 VALUES ($1, 'glm', 'stale-err', $2, '\x00'::bytea, '', 'invalid_credential', 'old key rejected', 3, now() + interval '25 minutes')
+		 RETURNING id::text`, testUserID, srv.URL).Scan(&created.ID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+
+	var resp struct {
+		Quota     *protocol.RuntimePlanQuota `json:"quota"`
+		LastError *QuotaSourceError          `json:"last_error"`
+	}
+	patchResp := testutil.Call(t, h.UpdateQuotaSource, quotaSourceRequest(http.MethodPatch, "/api/me/quota-sources/"+created.ID, testUserID, map[string]any{
+		"credential": "sk-new-key-6789",
+	})).Want(http.StatusOK)
+	if err := json.Unmarshal([]byte(patchResp.Text()), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.LastError != nil {
+		t.Fatalf("last_error survived credential replacement: %+v", resp.LastError)
+	}
+	if resp.Quota == nil || len(resp.Quota.Windows) == 0 {
+		t.Fatal("probe snapshot not stored on credential change")
+	}
+	var failures int
+	var snapshot []byte
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT consecutive_failures, snapshot FROM quota_source WHERE id = $1`, created.ID).Scan(&failures, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if failures != 0 || snapshot == nil {
+		t.Fatalf("consecutive_failures=%d snapshot=%v, want 0 and a snapshot", failures, snapshot)
 	}
 }

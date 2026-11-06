@@ -67,6 +67,31 @@ describe("SubscriptionQuotaCards", () => {
     expect(screen.getByText("updated 2m ago")).toBeInTheDocument();
   });
 
+  // OL-1205 review #4②: credit pools must carry their real period too —
+  // two CREDIT_LIMIT windows render distinct 5h / weekly credit labels,
+  // never two identical "credit" chips.
+  it("labels 5-hour and weekly CREDIT_LIMIT windows distinctly", () => {
+    const creditSource = source({
+      name: "GLM Credit Plan",
+      quota: {
+        provider: "glm",
+        status: "ok",
+        source: "subscription",
+        observed_at: NOW_SEC - 120,
+        windows: [
+          { name: "credits_300", group: "credits", used_percent: 20, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+          { name: "credits_10080", group: "credits", used_percent: 55, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
+        ],
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[creditSource]} now={NOW} />);
+
+    expect(screen.getByText("5-hour credits")).toBeInTheDocument();
+    expect(screen.getByText("Weekly credits")).toBeInTheDocument();
+    expect(screen.getAllByText("5-hour credits")).toHaveLength(1);
+    expect(screen.queryByText("Credit window")).not.toBeInTheDocument();
+  });
+
   it("shows each window's reset time and snapshot age in its tooltip", async () => {
     const user = userEvent.setup();
     renderWithI18n(<SubscriptionQuotaCards sources={[source()]} now={NOW} />);

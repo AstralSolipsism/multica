@@ -457,9 +457,6 @@ type Handler struct {
 	// Wired in cmd/server/router.go after New.
 	PRRefresh *ghsnapshot.Manager
 
-	// GlmQuota (server-wide GLM monitor) was retired in OL-1205 scenario 3;
-	// the /api/glm-quota route now answers a fixed {enabled:false} for
-	// installed clients.
 	cfg Config
 
 	// QuotaSourceBox encrypts user-registered subscription credentials at

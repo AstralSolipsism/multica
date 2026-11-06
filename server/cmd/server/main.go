@@ -797,8 +797,6 @@ func main() {
 	// No-op when unconfigured (no App private key).
 	h.PRRefresh.Start(sweepCtx)
 
-	// GLM Coding Plan balance poller; no-op when unconfigured (no API key).
-
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is channel-agnostic,
 	// not Lark-specific, but remains nil when lease startup validation fails

@@ -301,21 +301,23 @@ func (q *Queries) ListQuotaSourcesByOwner(ctx context.Context, ownerID pgtype.UU
 const listVisibleQuotaSourcesForWorkspace = `-- name: ListVisibleQuotaSourcesForWorkspace :many
 SELECT qs.id, qs.owner_id, qs.kind, qs.name, qs.base_url, qs.credential_ciphertext, qs.credential_hint, qs.enabled, qs.visibility, qs.snapshot, qs.last_polled_at, qs.last_error_code, qs.last_error_message, qs.consecutive_failures, qs.next_poll_at, qs.created_at, qs.updated_at
 FROM quota_source qs
-WHERE EXISTS (
-    SELECT 1 FROM agent_runtime ar
-    WHERE ar.workspace_id = $1
-      AND ar.owner_id = qs.owner_id
-      AND (ar.owner_id = $2
-           OR ar.visibility = 'public'
-           OR (ar.visibility = 'private' AND $2 = ANY(ar.shared_with)))
-      AND (qs.owner_id = $2 OR qs.visibility = 'shared')
-)
+WHERE qs.owner_id = $1
+   OR (
+        qs.visibility = 'shared'
+        AND EXISTS (
+            SELECT 1 FROM agent_runtime ar
+            WHERE ar.workspace_id = $2
+              AND ar.owner_id = qs.owner_id
+              AND (ar.visibility = 'public'
+                   OR (ar.visibility = 'private' AND $1 = ANY(ar.shared_with)))
+        )
+      )
 ORDER BY qs.created_at ASC
 `
 
 type ListVisibleQuotaSourcesForWorkspaceParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	MemberID    pgtype.UUID `json:"member_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
 // Workspace read model (OL-1205 final baseline). A source is visible to the
@@ -328,7 +330,7 @@ type ListVisibleQuotaSourcesForWorkspaceParams struct {
 // Strict ListVisibleAgentRuntimes semantics — the admin governance widening
 // in ListAgentRuntimes deliberately does NOT apply here.
 func (q *Queries) ListVisibleQuotaSourcesForWorkspace(ctx context.Context, arg ListVisibleQuotaSourcesForWorkspaceParams) ([]QuotaSource, error) {
-	rows, err := q.db.Query(ctx, listVisibleQuotaSourcesForWorkspace, arg.WorkspaceID, arg.MemberID)
+	rows, err := q.db.Query(ctx, listVisibleQuotaSourcesForWorkspace, arg.MemberID, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}

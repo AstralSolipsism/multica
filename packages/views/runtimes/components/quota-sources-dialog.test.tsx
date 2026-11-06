@@ -98,11 +98,12 @@ describe("QuotaSourcesDialog", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     const post = fetcher.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    // An empty base_url is omitted on create: the server defaults it, and
+    // re-sending "unchanged" values must never trigger a re-probe.
     expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({
       kind: "zenmux",
       name: "ZenMux Pro",
       credential: "zenmux-secret-key",
-      base_url: "",
       visibility: "shared",
     });
     expect(await screen.findByText("ZenMux Pro")).toBeInTheDocument();
