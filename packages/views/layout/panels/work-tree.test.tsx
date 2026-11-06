@@ -162,6 +162,38 @@ describe("ProjectsSection", () => {
     expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
   });
 
+  it("shows a disabled explanation instead of an empty menu while engineering loads", async () => {
+    apiMock.getProjectEngineering.mockReturnValue(new Promise(() => {}));
+    apiMock.listMembers.mockReturnValue(new Promise(() => {}));
+    renderSection();
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+
+    const item = await screen.findByRole("menuitem", { name: "Loading..." });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("hides engineering actions from a member when the project has not enabled them", async () => {
+    apiMock.getProjectEngineering.mockResolvedValue({ engineering: { enabled: false }, chapters: [] });
+    renderSection();
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+
+    const item = await screen.findByRole("menuitem", { name: "Engineering overview is not enabled" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: "Enable overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Open engineering baseline" })).not.toBeInTheDocument();
+  });
+
+  it("offers the enable entry to an administrator when engineering is disabled", async () => {
+    apiMock.getProjectEngineering.mockResolvedValue({ engineering: { enabled: false }, chapters: [] });
+    apiMock.listMembers.mockResolvedValue([{ user_id: "u1", role: "admin" }]);
+    renderSection();
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+
+    const item = await screen.findByRole("menuitem", { name: "Enable overview" });
+    fireEvent.click(item);
+    expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
+  });
+
   it("collapses from the section label", () => {
     renderSection();
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));

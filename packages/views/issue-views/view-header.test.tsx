@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { setApiInstance } from "@multica/core/api";
+import type { ApiClient } from "@multica/core/api/client";
 import type { IssueView } from "@multica/core/api/schemas";
+import type { Project } from "@multica/core/types";
 import { myIssuesViewStore } from "@multica/core/issues/stores/my-issues-view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { getIssueSurfaceViewStore } from "@multica/core/issues/stores/surface-view-store";
@@ -39,8 +43,8 @@ vi.mock("../issues/components/filter-chips-bar", () => ({
   useFilterChips: () => ({ chips: [] }),
   ChipSpan: () => null,
 }));
-vi.mock("../issues/components/issues-header", () => ({
-  IssueDisplayControls: () => null,
+vi.mock("../issues/components/issues-header", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../issues/components/issues-header")>()),
   IssueFilterMenu: ({ trigger, open }: { trigger: React.ReactNode; open?: boolean }) => (
     <>
       {trigger}
@@ -86,22 +90,65 @@ function savedView(definition: Partial<Pick<IssueView, "query" | "display">> = {
   } as unknown as IssueView;
 }
 
-function renderHeader(kind: "workspace" | "my", store: string, adapter = adapterFor("/acme/issues")) {
+function renderHeader(
+  kind: "workspace" | "my" | "project",
+  store: string,
+  adapter = adapterFor("/acme/issues"),
+  allowDag = false,
+) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const base =
+    kind === "project"
+      ? { kind, project: { id: "project-1", title: "Project Alpha" } as Project }
+      : { kind };
   return renderWithI18n(
-    <NavigationProvider value={adapter}>
-      <ViewStoreProvider store={getIssueSurfaceViewStore(store)}>
-        <IssueViewHeader controller={controller} base={{ kind }} tipAnchorScopeIssues={[]} />
-      </ViewStoreProvider>
-    </NavigationProvider>,
+    <QueryClientProvider client={queryClient}>
+      <NavigationProvider value={adapter}>
+        <ViewStoreProvider store={getIssueSurfaceViewStore(store)}>
+          <IssueViewHeader
+            controller={{ ...controller, allowDag }}
+            base={base}
+            tipAnchorScopeIssues={[]}
+          />
+        </ViewStoreProvider>
+      </NavigationProvider>
+    </QueryClientProvider>,
   );
 }
 
 beforeEach(() => {
+  setApiInstance({ listProperties: async () => ({ properties: [] }) } as unknown as ApiClient);
   copyLink.mockClear();
   rename.mockClear();
   active.view = null;
   useIssueViewRenameStore.setState({ target: null });
   myIssuesViewStore.setState({ scope: "assigned" });
+});
+
+describe("IssueViewHeader DAG display", () => {
+  it.each([
+    { kind: "workspace", surface: "issues" },
+    { kind: "project", surface: "project" },
+  ] as const)("offers Graph from Display on the $surface base", async ({ kind }) => {
+    renderHeader(kind, `header-dag-${kind}`, undefined, true);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Display" }));
+
+    expect(await screen.findByRole("button", { name: "Graph" })).toHaveAttribute(
+      "title",
+      "Dependency graph view",
+    );
+  });
+
+  it("omits Graph from Display on the my base", async () => {
+    renderHeader("my", "header-dag-my");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Display" }));
+
+    expect(screen.queryByRole("button", { name: "Graph" })).toBeNull();
+  });
 });
 
 describe("IssueViewHeader copy link", () => {

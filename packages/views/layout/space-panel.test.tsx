@@ -4,6 +4,7 @@ import { SidebarProvider, useSidebar } from "@multica/ui/components/ui/sidebar";
 import { renderWithI18n } from "../test/i18n";
 import { AppShellProvider, useAppShell } from "./app-shell-context";
 import { SpacePanel } from "./space-panel";
+import { useSpacePanelOpen } from "./space-panel-open-context";
 
 const navigation = vi.hoisted(() => ({ pathname: "/acme/issues" }));
 
@@ -14,7 +15,12 @@ vi.mock("./panels/work-panel", () => ({
   WorkPanel: () => <div data-testid="work-panel" />,
   KeptRowsRelease: () => null,
 }));
-vi.mock("./panels/team-panel", () => ({ TeamPanel: () => <div data-testid="team-panel" /> }));
+vi.mock("./panels/team-panel", () => ({
+  TeamPanel: () => {
+    const open = useSpacePanelOpen();
+    return <div data-testid="team-panel" data-open={open} />;
+  },
+}));
 vi.mock("./panels/autopilots-panel", () => ({
   AutopilotsPanel: () => <div data-testid="autopilots-panel" />,
 }));
@@ -102,6 +108,19 @@ describe("SpacePanel", () => {
 
       act(() => sidebar!.setOpen(true));
       expect(peek()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("enables queries in a peek shown while the sidebar is collapsed", () => {
+    vi.useFakeTimers();
+    try {
+      renderPanel();
+      act(() => sidebar!.setOpen(false));
+      act(() => shell!.requestPeek("team"));
+      act(() => vi.advanceTimersByTime(200));
+      expect(screen.getByTestId("team-panel")).toHaveAttribute("data-open", "true");
     } finally {
       vi.useRealTimers();
     }

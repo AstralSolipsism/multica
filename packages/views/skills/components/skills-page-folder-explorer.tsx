@@ -124,6 +124,7 @@ export interface SkillsPageFolderExplorer {
   ) => CollectionColumn<SkillExplorerListRow>[];
   rowMenu: (row: SkillExplorerListRow) => ReactNode;
   selection: (
+    rows: readonly SkillExplorerListRow[],
     selectedIds: ReadonlySet<string>,
     onChange: (next: ReadonlySet<string>) => void,
   ) => CollectionSelection<SkillExplorerListRow>;
@@ -223,6 +224,7 @@ export function useSkillsPageFolderExplorer({
   currentUserId,
   isAdmin,
   agents,
+  scopeSkillIds,
   search,
   filters,
   renderSkillName,
@@ -232,6 +234,7 @@ export function useSkillsPageFolderExplorer({
   currentUserId: string | null;
   isAdmin: boolean;
   agents: Agent[];
+  scopeSkillIds: ReadonlySet<string>;
   search: string;
   filters: SkillListFilters;
   renderSkillName: (row: SkillExplorerSkillRow) => ReactNode;
@@ -317,12 +320,14 @@ export function useSkillsPageFolderExplorer({
     [folderTree],
   );
   const entryCounts = useMemo(() => {
-    const entries: FolderExplorerEntry[] = (folderTree?.placements ?? []).map((placement) => ({
-      id: placement.skill_id,
-      folderIds: [placement.folder_id],
-    }));
+    const entries: FolderExplorerEntry[] = (folderTree?.placements ?? [])
+      .filter((placement) => scopeSkillIds.has(placement.skill_id))
+      .map((placement) => ({
+        id: placement.skill_id,
+        folderIds: [placement.folder_id],
+      }));
     return folderEntryCounts(explorerFolders, entries);
-  }, [folderTree, explorerFolders]);
+  }, [folderTree, explorerFolders, scopeSkillIds]);
   const grayByFolder = useMemo(() => {
     const map = new Map<string, GrayCandidate[]>();
     if (!treeReady || !folderTree) return map;
@@ -582,13 +587,42 @@ export function useSkillsPageFolderExplorer({
 
   const selection = useCallback(
     (
+      rows: readonly SkillExplorerListRow[],
       selectedIds: ReadonlySet<string>,
       onChange: (next: ReadonlySet<string>) => void,
-    ): CollectionSelection<SkillExplorerListRow> => ({
-      selectedIds,
-      onChange,
-      isSelectable: (row) => row.kind === "skill",
-    }),
+    ): CollectionSelection<SkillExplorerListRow> => {
+      const skillIdByRowKey = new Map(
+        rows.flatMap((row) =>
+          row.kind === "skill" ? [[row.key, row.row.skill.id] as const] : [],
+        ),
+      );
+      const selectedRowKeys = new Set(
+        rows.flatMap((row) =>
+          row.kind === "skill" && selectedIds.has(row.row.skill.id)
+            ? [row.key]
+            : [],
+        ),
+      );
+      return {
+        selectedIds: selectedRowKeys,
+        onChange: (nextRowKeys) => {
+          if (nextRowKeys.size === 0) {
+            onChange(new Set());
+            return;
+          }
+          const nextSelectedIds = new Set(selectedIds);
+          for (const [rowKey, skillId] of skillIdByRowKey) {
+            const wasSelected = selectedRowKeys.has(rowKey);
+            const isSelected = nextRowKeys.has(rowKey);
+            if (wasSelected === isSelected) continue;
+            if (isSelected) nextSelectedIds.add(skillId);
+            else nextSelectedIds.delete(skillId);
+          }
+          onChange(nextSelectedIds);
+        },
+        isSelectable: (row) => row.kind === "skill",
+      };
+    },
     [],
   );
 

@@ -734,6 +734,47 @@ describe("SkillsPage review regressions", () => {
     expect(screen.getByTestId("batch-selection").textContent).toBe("loose");
   });
 
+  it("keeps entity selection across tree and flat search views", async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Expand Design" }));
+    const treeRow = (await screen.findByText("design-skill")).closest("[role='row']") as HTMLElement;
+    await userEvent.click(within(treeRow).getByRole("checkbox", { name: "Select row" }));
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+
+    const search = screen.getByRole("textbox", { name: "Search skills" });
+    await userEvent.type(search, "design");
+    const flatRow = (await screen.findByText("design-skill")).closest("[role='row']") as HTMLElement;
+    expect(flatRow.getAttribute("data-row-id")).toBe("skill-root-design");
+    expect(within(flatRow).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+
+    await userEvent.clear(search);
+    const restoredRow = (await screen.findByText("design-skill")).closest("[role='row']") as HTMLElement;
+    expect(restoredRow.getAttribute("data-row-id")).toBe("entry-f-design-skill-design");
+    expect(within(restoredRow).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    expect(screen.getByTestId("batch-selection").textContent).toBe("design");
+    const looseRow = screen.getByText("loose-skill").closest("[role='row']") as HTMLElement;
+    expect(within(looseRow).getByRole("checkbox", { name: "Select row" })).not.toBeChecked();
+  });
+
+  it("counts only current-scope skills in folders", async () => {
+    mocks.skills = mocks.skills.map((skill) =>
+      skill.id === "engineering" ? { ...skill, created_by: "user-2" } : skill,
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /All skills/ }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: /My skills/ }));
+
+    const engineering = await screen.findByRole("button", { name: "Expand Engineering" });
+    expect(engineering.textContent).toContain("1 skill");
+    await userEvent.click(engineering);
+    expect(screen.queryByText("engineering-skill")).toBeNull();
+    const frontend = screen.getByRole("button", { name: "Expand Frontend" });
+    expect(frontend.textContent).toContain("1 skill");
+    await userEvent.click(frontend);
+    expect(await screen.findByText("placed-skill")).toBeTruthy();
+  });
+
   it("keeps folder rows first and uses composite CollectionList row ids", async () => {
     renderPage();
     const packageButton = await screen.findByRole("button", { name: "Expand Engineering" });
