@@ -232,26 +232,30 @@ function archiveFixture(t) {
 // The image-side files the docker stub reports for an archive-packaged
 // backend: a fresh checksums.txt over exactly what the generated RUN produces
 // (archive members + entrypoint.sh + image build-info.json).
-function imageChecksumList(backendFiles, entrypoint, buildInfo) {
-  // The generated RUN hashes exactly: archive members (minus checksums.txt)
-  // plus entrypoint.sh and the image build-info.json — deduplicated by name,
-  // with the image-side build-info.json winning over the archive's copy.
+function imageChecksumList(backendFiles, entrypoint) {
+  // The generated backend RUN hashes exactly: archive members (minus
+  // checksums.txt) plus entrypoint.sh; build-info.json keeps the archive's
+  // own bytes (no host-written copy anymore).
   const byName = new Map(Object.entries(backendFiles).filter(([name]) => name !== "checksums.txt"));
   byName.set("entrypoint.sh", entrypoint);
-  byName.set("build-info.json", buildInfo);
   return [...byName.entries()]
     .map(([name, body]) => `${createHash("sha256").update(body).digest("hex")}  ${name}`)
     .sort((a, b) => a.slice(66).localeCompare(b.slice(66))).join("\n") + "\n";
 }
 
 function writeDockerStub(t, fixture, variant = {}) {
-  const webBuildBody = JSON.stringify({ ...fixture.commitIdentity }) + "\n";
+
   // variant.mutateImage: replace the stub's image-side manifest/binaries with
   // a DIFFERENT self-consistent set (the A1 attack) — verification must fail.
   const { dir, commitIdentity, backendFiles, archiveChecksums } = fixture;
+  const webBuildOverride = variant.tamperedWebBuild
+    ? JSON.stringify({ ...commitIdentity, built_at: "tampered" }) + "\n" : null;
   const entrypoint = "#!/bin/sh\nexit 0\n";
   const imageBuildInfo = JSON.stringify({ version: commitIdentity.version, commit: commitIdentity.commit, date: commitIdentity.date }) + "\n";
-  let imageList = imageChecksumList(backendFiles, entrypoint, imageBuildInfo);
+  // The backend image keeps the archive's own build-info.json (full evidence),
+  // so the stub reports it for /app/build-info.json in the backend path.
+  const archiveBuildInfo = backendFiles["build-info.json"];
+  let imageList = imageChecksumList(backendFiles, entrypoint);
   let listed = archiveChecksums;
   let binaries = backendFiles;
   if (variant.selfConsistentStale) {
@@ -261,13 +265,15 @@ function writeDockerStub(t, fixture, variant = {}) {
     for (const [name, body] of Object.entries(stale)) if (name !== "checksums.txt") manifest += `${createHash("sha256").update(body).digest("hex")}  ${name}\n`;
     listed = manifest;
     binaries = stale;
-    imageList = imageChecksumList(stale, entrypoint, imageBuildInfo);
+    imageList = imageChecksumList(stale, entrypoint);
   }
   const info = { Id: "sha256:" + "c".repeat(64), Os: "linux", Architecture: "amd64", Config: { Labels: {
     "org.opencontainers.image.version": commitIdentity.version, "org.opencontainers.image.revision": commitIdentity.commit,
     "org.opencontainers.image.created": commitIdentity.date, "org.opencontainers.image.source": "https://github.com/AstralSolipsism/multica",
   } } };
   mkdirSync(join(dir, "dist/bin"), { recursive: true });
+  writeFileSync(join(dir, "dist", "stub-web-build.json"),
+    webBuildOverride ?? (JSON.stringify({ ...commitIdentity }) + "\n"));
   writeFileSync(join(dir, "dist/bin/docker"), `#!/usr/bin/env node
     const fs=require('fs'), path=require('path'), assert=require('assert/strict');
     const args=process.argv.slice(2);
@@ -277,7 +283,8 @@ function writeDockerStub(t, fixture, variant = {}) {
     const identity=${JSON.stringify(commitIdentity)};
     const commands=${JSON.stringify(ARCHIVE_TEST_COMMANDS)};
     const binaries=${JSON.stringify(binaries)};
-    const webBuild=${JSON.stringify(webBuildBody)};
+    const binaryHashOverride=${JSON.stringify(variant.tamperedBinary ? { maintenance: "f".repeat(64) } : null)};
+    const webBuild=fs.readFileSync(path.join(process.cwd(),'dist','stub-web-build.json'),'utf8');
     // webBuildBody is prepared outside to avoid template-escape drift.
     const imageBuildInfo=${JSON.stringify(imageBuildInfo)};
     const state=path.join(process.cwd(),'dist/built');
@@ -315,8 +322,9 @@ function writeDockerStub(t, fixture, variant = {}) {
       const command=args[args.indexOf('--entrypoint')+1], arg=args.at(-1);
       if(command==='cat') {
         const goBuildInfo='go1.27.3\\n';
+        const archiveBuildInfoFull=${JSON.stringify(archiveBuildInfo)};
         const catMap={'/app/checksums.txt':imageChecksums,'/app/archive-checksums.txt':archiveChecksums,
-          '/app/build-info.json':imageBuildInfo,'/app/web-build.json':webBuild,
+          '/app/build-info.json':archiveBuildInfoFull,'/app/web-build.json':webBuild,
           '/app/go-build-info.txt':goBuildInfo};
         if(!(arg in catMap)) throw Error('unexpected cat '+arg);
         console.log(catMap[arg]);
@@ -334,6 +342,7 @@ function writeDockerStub(t, fixture, variant = {}) {
         const targets=args.slice(args.indexOf('sha256sum')+1).filter(a=>a.startsWith('/app/'));
         const answer=targets.map(a=>{
           const name=a.slice(5);
+          if(binaryHashOverride && name in binaryHashOverride) return binaryHashOverride[name]+'  '+a;
           const line=[...archiveChecksums.split('\\n'),...imageChecksums.split('\\n')].find(l=>l.endsWith('  '+name));
           return line ? line.slice(0,64)+'  '+a : '';
         }).filter(Boolean);
@@ -397,7 +406,6 @@ test("--from-archives packages verified archives without recompiling; wrong arch
   const runDir = mkdtempSync(join(fixture.dir, "dist", "runcheck-"));
   execFileSync("tar", ["-xzf", join(fixture.assets, archiveName("backend", identity.version, "amd64")), "-C", runDir]);
   writeFileSync(join(runDir, "entrypoint.sh"), "#!/bin/sh\nexit 0\n");
-  writeFileSync(join(runDir, "build-info.json"), JSON.stringify({ version: identity.version, commit: fixture.sha, date: fixture.commitIdentity.date }) + "\n");
   execFileSync("sh", ["-c", `cd "${runDir}" && ${fragment}`]);
   const producedList = readFileSync(join(runDir, "checksums.txt"), "utf8");
   for (const command of ARCHIVE_TEST_COMMANDS) assert.match(producedList, new RegExp(`  ${command}\\n`), `RUN list missing ${command}`);
@@ -468,4 +476,31 @@ test("generated archive Dockerfiles mirror the source runtime stages", () => {
   // A bumped source pin must change the generated Dockerfile (drift guard).
   const bumped = webArchiveDockerfile(identity, runtimePins(sourceWeb.replace(/node:22\.23\.4-alpine AS runner/, "node:22.24.0-alpine AS runner")));
   assert.ok(bumped.includes("node:22.24.0-alpine"), "pin drift must flow into the generated Dockerfile");
+});
+
+test("R2: a binary whose hash contradicts the (matching) manifest fails", t => {
+  const fixture = archiveFixture(t);
+  writeDockerStub(t, fixture, { tamperedBinary: true });
+  writeFileSync(join(fixture.dir, "dist/built"), "built");
+  const result = runLocalImages(fixture, ["--arch", "amd64", "--verify"]);
+  assert.notEqual(result.status, 0, "tampered binary must fail");
+  assert.match(result.stderr, /maintenance bytes differ from the verified archive/);
+});
+
+test("R3: image web-build.json differing from the archive copy fails", t => {
+  const fixture = archiveFixture(t);
+  writeDockerStub(t, fixture, { tamperedWebBuild: true });
+  writeFileSync(join(fixture.dir, "dist/built"), "built");
+  const result = runLocalImages(fixture, ["--arch", "amd64", "--verify"]);
+  assert.notEqual(result.status, 0, "tampered web-build.json must fail");
+  assert.match(result.stderr, /web-build\.json differs from the verified candidate archive/);
+});
+
+test("command lists stay in sync: local-images BACKEND_COMMANDS equals build-backend COMMANDS", () => {
+  // build-backend.py is the single source of truth for archive members.
+  const source = execFileSync("python3", ["-c",
+    "import importlib.util; s=importlib.util.spec_from_file_location('b','scripts/build-backend.py');"
+    + " m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(','.join(m.COMMANDS))"],
+    { cwd: root, encoding: "utf8" }).trim();
+  assert.deepEqual(source.split(","), BACKEND_COMMANDS, "local-images.mjs and build-backend.py command sets differ");
 });

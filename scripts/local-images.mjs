@@ -11,11 +11,11 @@
 //    Next.js (build_method "local_from_archives"). The web archive is
 //    linux/amd64 only; other architectures build web from source.
 //
-// Contract note: the backend archive does NOT ship `maintenance` or
-// `go-build-info.txt` (see scripts/build-backend.py COMMANDS and its exact
-// member-set check). The archive-packaged backend image therefore lacks
-// /app/maintenance; scripts/build-backend.py's command set is the single
-// source of truth for what an archive image contains.
+// Contract note: the backend archive ships exactly build-backend.py's COMMANDS
+// (including `maintenance`, which has no --version output and is exempt from
+// version-execution checks there and here) plus migrations, notices and
+// evidence files — but NOT `go-build-info.txt`. scripts/build-backend.py's
+// command set is the single source of truth for what an archive image contains.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
@@ -93,10 +93,10 @@ WORKDIR /app
 ${identityLabels(identity)}
 
 COPY app/ ./
-COPY entrypoint.sh build-info.json ./
+COPY entrypoint.sh ./
 # Keep the archive's own checksum list as the byte-level anchor, then cover
-# every image file (including entrypoint.sh and the image build-info) in the
-# fresh list.
+# every image file (including entrypoint.sh) in the fresh list. The archive's
+# own build-info.json stays as the in-image evidence.
 RUN sed -i 's/\\r$//' entrypoint.sh && chmod +x entrypoint.sh && \\
     mv checksums.txt archive-checksums.txt && \\
     sha256sum ${[...BACKEND_COMMANDS, "LICENSE", "NOTICE", "entrypoint.sh", "build-info.json", "expected-migrations.txt"].join(" ")} \\
@@ -180,9 +180,12 @@ function buildFromArchive(component, identity, arch, descriptor, scratch, noCach
     // the migration/license verification compares against.
     writeFileSync(join(context, "entrypoint.sh"), execFileSync("git", ["show", `${identity.commit}:docker/entrypoint.sh`]));
   }
-  // Image-side build-info.json: exact bytes on the host, no shell escaping.
-  writeFileSync(join(context, "build-info.json"), `${JSON.stringify({
-    version: identity.version, commit: identity.commit, date: identity.date })}\n`);
+  // Image-side build-info.json (web only): exact bytes on the host, no shell
+  // escaping. The backend keeps the archive's own build-info.json untouched.
+  if (component === "web") {
+    writeFileSync(join(context, "build-info.json"), `${JSON.stringify({
+      version: identity.version, commit: identity.commit, date: identity.date })}\n`);
+  }
   run(["build", "--platform", `linux/${arch}`, ...(noCache ? ["--no-cache"] : []),
     "--file", join(context, "Dockerfile"), "--tag", `labrastro-${component}:${identity.tag}`, context], { stdio: "inherit" });
 }

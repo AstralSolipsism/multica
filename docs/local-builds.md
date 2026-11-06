@@ -90,7 +90,8 @@ labrastro-backend-<version>-linux-arm64.tar.gz
 backend-build.json
 ```
 
-Every archive contains `server`, `multica`, `migrate`,
+Every archive contains `server`, `multica`, `migrate`, `maintenance`
+(no `--version` output; metadata-checked but exempt from version execution),
 `backfill_task_usage_hourly`, `backfill_codex_usage_cache`, the complete tracked
 `migrations/` directory, LICENSE, NOTICE, `build-info.json`, `checksums.txt` and
 `expected-migrations.txt` (all complete up filenames, sorted; duplicate numeric
