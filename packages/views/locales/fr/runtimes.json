@@ -72,6 +72,98 @@
       "offline": "Hors ligne"
     }
   },
+  "quota_sources": {
+    "action": "Quotas d'abonnement",
+    "kinds": {
+      "glm": "Zhipu GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "Abonnement"
+    },
+    "cards": {
+      "region": "Quotas d'abonnement",
+      "tokens_period": "Jetons {{period}}",
+      "credits_period": "Crédits {{period}}",
+      "tools_period": "Crédits d'outils {{period}}",
+      "subscription_period": "Abonnement {{period}}",
+      "subscription_window": "Solde de l'abonnement",
+      "generic_window": "Fenêtre de quota",
+      "waiting": "En attente de la première collecte"
+    },
+    "visibility": {
+      "private": "Privé",
+      "shared": "Partagé",
+      "private_hint": "Vous seul pouvez voir cette carte d'abonnement.",
+      "shared_hint": "Visible par les membres uniquement dans les espaces où l'une de vos machines partagées est visible."
+    },
+    "dialog": {
+      "title": "Quotas d'abonnement",
+      "description": "Gérez vos identifiants et cartes d'abonnement GLM et ZenMux.",
+      "loading": "Chargement des abonnements",
+      "load_failed": "Impossible de charger les quotas d'abonnement.",
+      "retry": "Réessayer",
+      "empty_title": "Aucune source de quota d'abonnement",
+      "add": "Ajouter un abonnement",
+      "auto_refresh": "Le serveur vérifie les abonnements actifs toutes les 5 minutes",
+      "toggle": "Activer ou désactiver {{name}}",
+      "refresh": "Actualiser {{name}}",
+      "refresh_now": "Actualiser maintenant",
+      "refresh_in": "Actualisation possible dans {{seconds}} s",
+      "edit": "Modifier {{name}}",
+      "delete": "Supprimer {{name}}"
+    },
+    "status": {
+      "ok": "Normal",
+      "probing": "Vérification",
+      "disabled": "Désactivé"
+    },
+    "form": {
+      "back": "Retour aux abonnements",
+      "add_title": "Ajouter une source de quota",
+      "edit_title": "Modifier la source de quota",
+      "description": "Un nouvel identifiant ou endpoint est validé auprès du fournisseur avant son enregistrement.",
+      "kind_section": "1. Canal",
+      "credential_section": "2. Identifiant",
+      "name": "Nom",
+      "name_placeholder": "Exemple : compte GLM principal",
+      "api_key": "Clé API",
+      "management_key": "Clé API de gestion",
+      "saved_credential": "Identifiant enregistré (masqué)",
+      "replace_key": "Remplacer la clé",
+      "credential_placeholder": "Collez la clé API",
+      "credential_hint": "Chiffré pour la collecte côté serveur ; seuls les quatre derniers caractères sont affichés après l'enregistrement.",
+      "base_url": "Endpoint (facultatif)",
+      "visibility_section": "3. Visibilité",
+      "name_required": "Saisissez un nom.",
+      "credential_required": "Saisissez une clé API.",
+      "cancel": "Annuler",
+      "save": "Enregistrer et vérifier",
+      "saving": "Vérification et enregistrement..."
+    },
+    "errors": {
+      "invalid_credential": "Le fournisseur a rejeté cet identifiant. Vérifiez ou remplacez la clé API.",
+      "rate_limited": "Le fournisseur limite les requêtes. Réessayez plus tard.",
+      "network_error": "Le fournisseur est injoignable. Vérifiez l'endpoint et le réseau.",
+      "invalid_base_url": "Utilisez un endpoint HTTPS public pris en charge par ce canal.",
+      "unexpected_response": "Le fournisseur a renvoyé une réponse de quota illisible.",
+      "provider_error": "Le fournisseur n'a pas pu collecter les quotas.",
+      "generic": "Impossible de mettre à jour l'abonnement. Réessayez.",
+      "encryption_unconfigured": "Les identifiants d'abonnement sont indisponibles tant que l'administrateur n'a pas configuré MULTICA_QUOTA_SOURCE_SECRET_KEY.",
+      "refresh_cooldown": "Actualisation récente. Attendez la fin du délai de 30 secondes."
+    },
+    "delete": {
+      "title": "Supprimer « {{name}} » ?",
+      "description": "Sa carte disparaîtra et l'identifiant chiffré sera détruit. Cette action est irréversible.",
+      "cancel": "Annuler",
+      "confirm": "Supprimer l'abonnement",
+      "deleting": "Suppression..."
+    },
+    "toasts": {
+      "created": "Abonnement ajouté",
+      "updated": "Abonnement mis à jour",
+      "refreshed": "Abonnement actualisé",
+      "deleted": "Abonnement supprimé"
+    }
+  },
   "mika_setup": {
     "title": "Votre runtime est prêt. Commencez avec Mika.",
     "description": "Laissez Mika organiser les tâches et coordonner les agents.",

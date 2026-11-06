@@ -10,8 +10,8 @@ import (
 )
 
 // Plan-quota collectors: daemon-integrated pollers that turn programmatic
-// provider APIs (Kimi Code's local Server API, Antigravity's remote quota API,
-// ZenMux's Management API) into protocol.RuntimePlanQuota snapshots. Snapshots flow
+// provider APIs (Kimi Code's local Server API, Antigravity's remote quota API)
+// into protocol.RuntimePlanQuota snapshots. Snapshots flow
 // through the existing planQuotaCache -> heartbeat plan_quota channel; no
 // new wire surface is added. Credentials are read from daemon-local
 // configuration and sent only to their provider endpoint, never to the
@@ -25,9 +25,8 @@ import (
 
 const (
 	// defaultPlanQuotaPollInterval is how often each collector re-observes
-	// its source. ZenMux rate-limits the Management API per endpoint, so
-	// this stays in the 1-3 minute band the platform documents; the same
-	// cadence keeps Kimi's loopback probe from hammering the account
+	// its source, staying in the 1-3 minute band the platforms document;
+	// the cadence keeps Kimi's loopback probe from hammering the account
 	// service it proxies.
 	defaultPlanQuotaPollInterval = 2 * time.Minute
 	// planQuotaRateLimitMaxBackoff caps the exponential backoff a collector
@@ -43,8 +42,7 @@ const (
 type planQuotaCollectFunc func(ctx context.Context) (*protocol.RuntimePlanQuota, error)
 
 // planQuotaTargetFunc resolves the runtime ids a snapshot applies to at each
-// tick. Kimi targets every local kimi runtime; ZenMux targets only the
-// hermes runtimes the operator explicitly linked to the configured account.
+// tick. Kimi targets every local kimi runtime.
 type planQuotaTargetFunc func() []string
 
 // rateLimitError marks "the source asked us to back off" (HTTP 422/429) so

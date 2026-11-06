@@ -457,10 +457,13 @@ type Handler struct {
 	// Wired in cmd/server/router.go after New.
 	PRRefresh *ghsnapshot.Manager
 
-	// GlmQuota polls the Zhipu/GLM Coding Plan balance (account-level, shared
-	// by every GLM-backed runtime). Nil when GLM_QUOTA_API_KEY is unset.
-	GlmQuota *GlmQuotaMonitor
-	cfg      Config
+	cfg Config
+
+	// QuotaSourceBox encrypts user-registered subscription credentials at
+	// rest (OL-1205 scenario 3). Nil when MULTICA_QUOTA_SOURCE_SECRET_KEY is
+	// unset: write endpoints answer 503 and polling skips, existing rows
+	// stay readable (snapshot and status only, never the credential).
+	QuotaSourceBox *secretbox.Box
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -588,7 +591,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
-	h.GlmQuota = NewGlmQuotaMonitorFromEnv()
 	taskSvc.PRSnapshotsEnabled = h.PRRefresh.Enabled()
 
 	return h

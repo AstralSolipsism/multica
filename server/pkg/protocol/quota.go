@@ -26,6 +26,9 @@ const (
 const (
 	PlanQuotaSourceDaemon   = "daemon"
 	PlanQuotaSourceExternal = "external"
+	// PlanQuotaSourceSubscription marks snapshots written by the server-side
+	// subscription quota-source poller (OL-1205 scenario 3).
+	PlanQuotaSourceSubscription = "subscription"
 )
 
 // Validation bounds for RuntimePlanQuota. Server-side validation rejects

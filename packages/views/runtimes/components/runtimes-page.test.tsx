@@ -9,7 +9,11 @@ import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import { qoderOptions, type QoderConnection } from "@multica/core/runtimes/qoder";
 import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
-import { runtimeListOptions, glmQuotaOptions } from "@multica/core/runtimes/queries";
+import {
+  quotaSourceListOptions,
+  runtimeListOptions,
+  workspaceQuotaSourceListOptions,
+} from "@multica/core/runtimes/queries";
 import type { AgentRuntime } from "@multica/core/types";
 import {
   agentListOptions,
@@ -114,7 +118,8 @@ function renderPage({
   qc.setQueryData(agentTaskSnapshotOptions(WS).queryKey, []);
   qc.setQueryData(chatSessionsOptions(WS).queryKey, []);
   qc.setQueryData(qoderOptions(WS).queryKey, connection);
-  qc.setQueryData(glmQuotaOptions().queryKey, { enabled: false });
+  qc.setQueryData(quotaSourceListOptions().queryKey, { encryption_configured: true, sources: [] });
+  qc.setQueryData(workspaceQuotaSourceListOptions(WS).queryKey, { sources: [] });
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="en" resources={TEST_RESOURCES}>

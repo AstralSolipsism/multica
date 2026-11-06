@@ -140,6 +140,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"project_baseline_revision":          workspaceDelete,
 	"project_resource":                   workspaceDelete,
 	"quick_action":                       workspaceDelete,
+	"quota_source":                       workspaceDeleteKeep, // user-scoped subscription credentials, no workspace_id
 	"runtime_profile":                    workspaceDelete,
 	"schema_migrations":                  workspaceDeleteKeep,
 	"search_index_change":                workspaceDelete,

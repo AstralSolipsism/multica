@@ -72,6 +72,98 @@
       "offline": "オフライン"
     }
   },
+  "quota_sources": {
+    "action": "サブスクリプションクォータ",
+    "kinds": {
+      "glm": "Zhipu GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "サブスクリプション"
+    },
+    "cards": {
+      "region": "サブスクリプションクォータ",
+      "tokens_period": "{{period}}トークン",
+      "credits_period": "{{period}}クレジット",
+      "tools_period": "{{period}}ツールクレジット",
+      "subscription_period": "{{period}}サブスクリプション",
+      "subscription_window": "サブスクリプション残量",
+      "generic_window": "クォータ期間",
+      "waiting": "初回収集を待っています"
+    },
+    "visibility": {
+      "private": "自分のみ",
+      "shared": "共有マシンに連動",
+      "private_hint": "このサブスクリプションカードは自分だけに表示されます。",
+      "shared_hint": "自分の共有マシンが表示されるワークスペースでのみメンバーに表示されます。"
+    },
+    "dialog": {
+      "title": "サブスクリプションクォータ",
+      "description": "GLM と ZenMux のサブスクリプション認証情報とカードを管理します。",
+      "loading": "サブスクリプションを読み込み中",
+      "load_failed": "サブスクリプションクォータを読み込めませんでした。",
+      "retry": "再試行",
+      "empty_title": "サブスクリプションクォータソースはまだありません",
+      "add": "サブスクリプションを追加",
+      "auto_refresh": "有効なサブスクリプションはサーバーが 5 分ごとに確認します",
+      "toggle": "{{name}} を切り替え",
+      "refresh": "{{name}} を更新",
+      "refresh_now": "今すぐ更新",
+      "refresh_in": "あと {{seconds}} 秒で更新できます",
+      "edit": "{{name}} を編集",
+      "delete": "{{name}} を削除"
+    },
+    "status": {
+      "ok": "正常",
+      "probing": "確認中",
+      "disabled": "無効"
+    },
+    "form": {
+      "back": "サブスクリプション一覧に戻る",
+      "add_title": "サブスクリプションクォータソースを追加",
+      "edit_title": "サブスクリプションクォータソースを編集",
+      "description": "新しい認証情報やエンドポイントは、保存前にプロバイダーで検証されます。",
+      "kind_section": "1. チャネル",
+      "credential_section": "2. 認証情報",
+      "name": "名前",
+      "name_placeholder": "例：メイン GLM アカウント",
+      "api_key": "API キー",
+      "management_key": "Management API キー",
+      "saved_credential": "保存済みの認証情報（マスク）",
+      "replace_key": "キーを変更",
+      "credential_placeholder": "API キーを貼り付け",
+      "credential_hint": "サーバー側の収集用に暗号化され、保存後は末尾 4 文字のみ表示されます。",
+      "base_url": "エンドポイント（任意）",
+      "visibility_section": "3. 公開範囲",
+      "name_required": "名前を入力してください。",
+      "credential_required": "API キーを入力してください。",
+      "cancel": "キャンセル",
+      "save": "保存して確認",
+      "saving": "確認して保存中..."
+    },
+    "errors": {
+      "invalid_credential": "プロバイダーが認証情報を拒否しました。API キーを確認または変更してください。",
+      "rate_limited": "プロバイダーがリクエストを制限しています。後で再試行してください。",
+      "network_error": "プロバイダーに接続できません。エンドポイントとネットワークを確認してください。",
+      "invalid_base_url": "このチャネルがサポートする公開 HTTPS エンドポイントを使用してください。",
+      "unexpected_response": "プロバイダーから読み取れないクォータ応答が返されました。",
+      "provider_error": "プロバイダーのクォータを収集できませんでした。",
+      "generic": "サブスクリプションを更新できません。再試行してください。",
+      "encryption_unconfigured": "サーバー管理者が MULTICA_QUOTA_SOURCE_SECRET_KEY を設定するまで、サブスクリプション認証情報は使用できません。",
+      "refresh_cooldown": "直前に更新しました。30 秒のクールダウン後に再試行してください。"
+    },
+    "delete": {
+      "title": "「{{name}}」を削除しますか？",
+      "description": "カードは非表示になり、暗号化された認証情報は破棄されます。この操作は元に戻せません。",
+      "cancel": "キャンセル",
+      "confirm": "サブスクリプションを削除",
+      "deleting": "削除中..."
+    },
+    "toasts": {
+      "created": "サブスクリプションを追加しました",
+      "updated": "サブスクリプションを更新しました",
+      "refreshed": "サブスクリプションを更新しました",
+      "deleted": "サブスクリプションを削除しました"
+    }
+  },
   "mika_setup": {
     "title": "ランタイムの準備ができました。Mika と始めましょう。",
     "description": "Mika にタスクの整理とエージェントの調整を任せましょう。",

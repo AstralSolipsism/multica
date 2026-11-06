@@ -14,6 +14,9 @@ func init() {
 		"9043_labrastro_engineering_revision_identity_index": "idx_project_baseline_revision_id",
 		"9044_labrastro_engineering_revision_number_index":   "idx_project_baseline_revision_number",
 		"9045_labrastro_engineering_candidate_index":         "idx_project_baseline_candidate",
+		"9050_labrastro_quota_source_id_index":               "uq_quota_source_id",
+		"9051_labrastro_quota_source_owner_index":            "idx_quota_source_owner",
+		"9052_labrastro_quota_source_due_index":              "idx_quota_source_due",
 
 		"9038_labrastro_media_job_running_index":              "idx_labrastro_media_job_running",
 		"9036_labrastro_media_job_identity_index":             "idx_labrastro_media_job_id",
