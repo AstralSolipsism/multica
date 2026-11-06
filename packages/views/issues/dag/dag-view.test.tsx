@@ -532,6 +532,7 @@ describe("DagView error and refresh handling", () => {
       negatedFilters: [],
       advancedFilter: null,
       agentRunningFilter: false,
+      unreadFilter: false,
       propertyFilters: {},
     };
     const baseline: IssueViewBaseline = {
@@ -548,6 +549,7 @@ describe("DagView error and refresh handling", () => {
       dueDate: new Set(),
       negated: new Set(),
       agentRunning: false,
+      unread: false,
       property: new Map(),
       raw,
     };

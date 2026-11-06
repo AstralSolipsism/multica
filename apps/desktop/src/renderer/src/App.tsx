@@ -58,6 +58,7 @@ const HTML_LANG: Record<SupportedLocale, string> = {
   ko: "ko-KR",
   ja: "ja-JP",
   fr: "fr-FR",
+  es: "es",
 };
 
 

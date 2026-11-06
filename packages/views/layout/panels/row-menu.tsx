@@ -20,12 +20,14 @@ export function RowMenu({
   label,
   open,
   onOpenChange,
+  className,
   children,
 }: {
   label: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
+  className?: string;
 }) {
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
@@ -35,7 +37,7 @@ export function RowMenu({
             type="button"
             aria-label={label}
             onPointerDown={(event) => event.stopPropagation()}
-            className={ROW_MENU_CLASS}
+            className={cn(ROW_MENU_CLASS, className)}
           />
         }
       >

@@ -5,16 +5,52 @@ with fully synthetic HTTP and WebSocket — no API server, database, daemon,
 agent or account involved. Nothing disables animations or trims the DOM: the
 cost being measured lives in that machinery.
 
-1. **Comment typing under live agent runs** (`typing-under-live-runs.spec.ts`)
-   — exists because of MUL-7227, where a summary animation replaced a DOM
-   node per streamed message and typing a comment slowed to a crawl.
-   Component tests could not see it — they run in jsdom, which has no style
-   recalculation, no layout and no main-thread contention.
-2. **DAG view** (`dag-view.spec.ts`, OL-278) — measures the issues page's
-   dependency-graph view against synthetic graph datasets (OL-183's shapes):
-   fetch, parse+validate, layout, first-interactive, pan/zoom frame rate,
-   card-click response, entering a task line and focus mode. The overview and line levels use:
-   overview cards, then one line's task cards after a double-click.
+## Chat session lists
+
+`chat-session-lists.spec.ts` exercises the real Chat history, archive and floating
+history dropdown against synthetic HTTP/WebSocket boundaries. It checks that
+2,000 sessions mount fewer than 40 rows, can scroll to and select the last row,
+and also covers compact layout and empty/single-session dropdowns. Each measured
+surface emits a JSON record and a test attachment with mounted rows and time to
+readiness; timings are illustrative samples, not performance thresholds.
+
+Run against a local production Web build (no API server or account needed):
+
+```bash
+PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm exec playwright test --config=playwright.perf.config.ts chat-session-lists.spec.ts
+# Measure the original full-list implementation with the same fixture:
+CHAT_LIST_BASELINE=1 PLAYWRIGHT_BASE_URL=http://localhost:3001 pnpm exec playwright test --config=playwright.perf.config.ts chat-session-lists.spec.ts
+```
+
+`scripts/perf-compare.mjs` remains scoped to the comment-typing scenario below;
+its report format and comparisons are unchanged. Session data is still fetched
+in full: these checks measure rendering, not API pagination or network savings.
+
+## Agent recent work
+
+`agent-recent-work.spec.ts` opens the real agent detail page, reveals 1,000
+synthetic terminal runs using the existing Show more action and 200-run API
+pages, then verifies a bounded mounted window, the last run's transcript,
+Escape dismissal, and dialog survival when its opener is recycled. It covers
+wide and compact layouts with the page's existing scroll owner. HTTP and
+WebSocket traffic are intercepted; unexpected requests and page errors fail
+the scenario. No server, daemon or real agent runs are involved.
+
+Build with a same-origin API URL so all requests reach the synthetic boundary:
+
+```bash
+NEXT_PUBLIC_API_URL='' pnpm --filter @multica/web build
+NEXT_PUBLIC_API_URL='' pnpm --filter @multica/web exec next start --port 3000
+PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm exec playwright test --config=playwright.perf.config.ts agent-recent-work.spec.ts
+```
+
+For a comparison, run the same test against an unmodified main production
+build with `AGENT_WORK_BASELINE=1`. Both sides keep API pagination; the baseline
+asserts that all 1,000 revealed rows stay mounted while the new renderer keeps
+fewer than 50. JSON attachments report the observed row counts and cursors;
+these are rendering checks, not backend or network-throughput benchmarks.
+
+## What it runs against
 
 It covers the renderer shared by Web and Desktop. Electron's own
 main-process behaviour is not exercised here.
@@ -60,86 +96,32 @@ success, on failure and on cancellation.
 The ordinary e2e suite ignores this directory; it needs a production build and
 a machine that is not busy doing anything else.
 
-## DAG datasets
+The image-heavy thread scenario (MUL-8182) types a comment while a long thread
+of large screenshots loads in the viewport. Image responses are held until the
+first keystroke, so fetching, decoding and laying out the images all land in
+the measured window, which runs with the CPU throttled 4× — a fast workstation
+absorbs this page without dropping a frame. It reports keydown-to-next-frame
+p95/max, keystrokes over 16.7 ms, long tasks, layout shift, mounted images,
+and fetched bytes. This frame measurement is not INP. It shares the report path with the live-runs scenario, so it only
+runs when selected:
 
-`packages/core/issues/testing/issue-graph-fixture.ts` generates the graphs
-deterministically (fixed seeds; byte-identical output per dataset), and
-`packages/core/issues/testing/issue-graph-fixture.test.ts` pins the shape:
-passes `IssueGraphSchema`, exact node counts, depth ≤ 4, ~20% cross-line
-dependencies, OL-183's unfinished budget for `accept-5000` (≤ 800) and
-OL-184's stress shape (~2,400 unfinished).
+```bash
+PERF_SCENARIO=image-thread pnpm exec playwright test --config=playwright.perf.config.ts image-heavy-thread.spec.ts
+node scripts/perf-compare.mjs --base origin/main --head HEAD --out perf-report --scenario image-thread
+```
 
-| Dataset | Nodes | Shape |
-| --- | --- | --- |
-| `accept-5000` | 5,000 | OL-183 acceptance: ≤ 800 unfinished, over half the lines fully done (hidden by default) |
-| `stress-5000` | 5,000 | OL-184 stress: ~2,400 unfinished |
-| `1000` / `2500` / `10000` | 1,000 / 2,500 / 10,000 | stress shape, scale curve |
-| `big-line` | 1,000 | one single line of 1,000 tasks |
-| `empty` | 0 | harness self-check: the scenario must report `invalid`, never numbers |
+For a review comparison, set `PERF_SCREENSHOT_PATH` to a real 2880×1800 PNG
+(kept locally, outside Git; `PERF_SCREENSHOT_ALT_PATH` optionally alternates a
+second screenshot), `PERF_IMAGE_MODE=known|missing|none`, and
+`PERF_IMAGE_POSITION=start|loaded`. All modes keep the same 37 comments.
+The `loaded` position scrolls through every image before typing at the thread
+bottom. The `missing` mode omits dimensions to represent existing attachments;
+its 16:10 placeholder can shift when the true aspect ratio becomes known.
+`none` is the no-image control. Defaults use generated pixels for CI.
 
-Every dataset: six projects (tooling → art/server/audio → client → level),
-lines of 30–40 tasks with 2–3 sub-line layers, 1–2 in-line prerequisites per
-task, cross-line prerequisites strictly down the production flow
-(tooling lines get none), no ancestor↔descendant edges (the backend refuses
-them), dependency summaries computed the backend way (ancestral closure,
-`done`-only satisfaction), nodes/edges/projects sorted by id like the real
-endpoint, cancelled-but-still-blocking cases, run summaries on in-progress
-tasks, and fully-done lines the default view hides.
-
-## What the DAG scenario measures
-
-The page under test is `/{workspace}/issues` with the DAG view preselected
-(through the persisted surface-view preference). All requests are answered
-from a fixed route table; anything unknown invalidates the sample.
-
-| Report field | Definition |
-| --- | --- |
-| `fetch_ms` | Graph request sent → response ended, from the page's own resource timing (one request). Local synthetic transport — real-network numbers are OL-275's. |
-| `parse_ms` / `parse_and_validate_ms` | `JSON.parse` alone, and `JSON.parse` + `IssueGraphSchema.parse`, on the exact graph bytes. Measured in the Playwright process against the same schema module the app bundles — the app's in-flight validation is not separately observable. |
-| `layout_ms` | Scene-layout worker `postMessage` → result committed (the frame the pending skeleton disappeared after the worker's response), per requestId — instrumentation wraps `Worker` before the app boots and records each request's response and error in the constructor; the scene runner keeps one worker per scene kind (`overview`/`line`/`focus`), and LRU hits never touch a worker. Max over committed requests; `layout_respond_ms` is the same for the worker response alone. |
-| `first_interactive_ms` | Navigation start → canvas has rendered cards AND the layout-pending skeleton is gone AND the toolbar is visible, each timestamped in-page (16 ms setTimeout polling + performance.now), not by Playwright's own polling. |
-| `data_to_interactive_ms` | `first_interactive_ms` minus the graph response's resource-timing end — the OL-281 "from data received to operable" read, with the network span excluded. |
-| `pan` / `zoom` | Scripted drag / Ctrl+wheel gestures, ~4 s each. Pan starts from a verified bare-pane point (cards are `nopan`) and is discarded as `invalid` if the viewport transform never changed; rAF frame intervals → p50/p95/max ms, long-frame count, avg FPS. Stalled frames are counted, not trimmed. |
-| `pan_selected` / `zoom_selected` | The same gestures measured while a selected card's full upstream + downstream closure is lit (OL-997: dim mask plus a state-colored flow on every lit route). |
-| `click` | In-page: real pointer events on a visible card's body (overview card, or task card when the dataset auto-entered its single line), timed from pointerdown to the frame after the toolbar's selection label appears; every sample starts from a cleared selection. ≥ 3 samples → p50/p95 ms, else `timeout`/`invalid`. |
-| `enter_line_ms` | In-page double-click on the first visible overview line card → the frame after the line level renders its first task card (`[data-dag-task]`); afterwards the view returns to the overview. `invalid` when no line card is visible (e.g. `big-line` auto-enters its single line). OL-183 budget: ≤ 300 ms. |
-| `focus.typical` / `focus.largest` | Focus mode button click → animation frame after the focused task renders in the focus scene, including model construction, layout and React Flow commit. Typical chooses a visible leaf seed whose bidirectional raw closure is closest to 25 tasks (≤ 300 ms budget). Largest chooses the largest closure over the entire dataset and enables Show completed first. Each records seed, raw closure size, elapsed ms, largest rAF interval during entry, mounted task count (virtualized) and fallback use. Largest additionally records a 1.5-second pan after entry to check interaction responsiveness. Worker prewarming comes from normal navigation, not timed-closure cache priming. `PERF_SCREENSHOT_DIR` optionally captures the first-open overview, the first-open line (when `PERF_ENTER_LINE` entered one) and both focus scenes. |
-
-Outcomes that are not durations are reported as strings: `timeout` when a
-budget expired, `invalid` when nothing rendered or the sample was
-contaminated (unmocked requests, page errors). A report never shows a fast
-number for an empty page.
-
-Outcomes are classified from what the page shows, never from Node-side
-knowledge of the fixture:
-- **layout error** — a layout request whose worker response carried `error`;
-  the view replaces everything with an alert → `invalid` ("layout error: …");
-- **no content** — the graph response arrived, a full grace period (8 s)
-  passed with no layout request, no pending/loading state, no skeleton and no
-  canvas → `invalid`, concluded early instead of burning the budget. This is
-  how the `empty` dataset ends in seconds;
-- **budget expiry** — a layout request was posted and never committed (or
-  cards appeared but a later first-interactive stage never completed) →
-  `timeout`, with `timed_out_at: ["first_interactive"]`. Large datasets on
-  the current view are expected here;
-- unmocked API requests, external requests and page errors also make the
-  sample `invalid`; a failed selection-clear invalidates that click sample.
-
-The report records machine info (browser, Node, platform, CPU count, CPU
-model, memory) and `throttle_cpu`; `fixture_stats` carries the dataset's
-shape statistics and `fixture_digest` identifies the exact bytes.
-
-**CPU-throttle caveat**: `PERF_THROTTLE_CPU` uses CDP
-`Emulation.setCPUThrottlingRate` on the page session. Whether it extends to
-the ELK layout worker has not been verified — treat throttled `layout_ms` as
-page-side only until that is checked on your setup.
-
-Adding steps: put the step in `e2e/perf/dag-view.spec.ts` between the section
-markers, emit one more report field, and document it in the table above. Keep
-the invariant — every field is a number or `timeout`/`invalid`, never a
-silent zero.
-
-## Floating chat lifetime
+Use `PERF_REPEATS=3` with `perf-compare.mjs` to retain every sample in
+`base.json` / `head.json` and report the median of each numeric metric.
+Use a separate output directory per mode/position.
 
 The floating-chat lifetime regression runs against the same production build:
 

@@ -1,4 +1,8 @@
-# v0.8.0 Stage 2 — OL-1250
+# v0.8.0 / v0.8.1 分阶段同步记录
+
+最新状态见本文末尾 Stage 4（OL-1255）；下列 Stage 2 记录保留当时交接状态。
+
+## Stage 2 — OL-1250
 
 本记录交付共享分支 `sync/v0.8.0-ol-1234` 的后端、数据库、桌面与构建基座。按 OL-1250 的 Stage 1 交接评论，55 个前端冲突路径在 M 中暂取上游/删除；该分支尚不能作为前端完整升级结果发布。Stage 3 在同一分支继续融合，不创建主线 PR。
 
@@ -107,3 +111,90 @@ gofmt 豁免源更新为完整 v0.8.0 tag SHA；11 个历史文件的 blob 均�
 三方对照：M^1 = Fork 基线；共同祖先 `f05a525ac8e82f5e9169ad078e44f166fad6d5c8`；M^2 = tag。核心 API、runtime/lark 类型、DAG keys/view store/视图序列化及 shared views 的 Fork 功能仍由 Stage 3 恢复。不要只以占位文件能解析作为完成标准。
 
 已执行的 core 全套：217 文件通过、44 失败；3,030 测试通过、453 失败、50 个未捕获错误。示例为 `issueKeys.graphAll`、依赖接口、Fork runtime/lark 类型因占位文件缺失。Desktop renderer/mobile 类型检查亦受这些共享接口缺失阻断；已检查日志，无本次桌面主进程、图标/字标文件新增类型错误。完整前端构建、Web/桌面 E2E、原生桌面打包安装及移动模拟器验证留给后续阶段，不能宣称本分支已通过整体发布门禁。
+
+
+## Stage 4 — OL-1255：v0.8.1 增量融合
+
+本阶段以 Stage 3 已交付的 `2623fc06e11e08356ad399af8856164f4d2035c6` 为第一父，正式 tag `v0.8.1` / `b1ea927def6490c43bedff537b6f4ed9a47fa828` 为第二父执行 `--no-ff` 合并，未 rebase，也未重复 cherry-pick #9914 / #9906。交付仍推往 `AstralSolipsism/multica` 的 `sync/v0.8.0-ol-1234`，不创建独立 PR；Stage 5 承接保留 E2E、跨家族双审和发布门禁。
+
+### 迁移身份与命名纠正
+
+OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_init` 到 `9054_…` 使用完整文件 stem 作为 ledger 身份；`server/internal/migrations/migrations.go` 按文件名排序，sqlc 同样依赖迁移顺序。给 611–616 添加该前缀会排到 `001_init` 之前，导致新装库先 ALTER 尚不存在的表。因此保留实际 `NNN_name` 命名，只存在下表这六组，不制造第二套身份，也不重命名已发布的 467/9009/9028/9054。此处纠正的是任务说明对仓库现状的描述。
+
+所有新迁移的 up/down 均逐字节等于 v0.8.1，613 的索引清理 hook 保留。连续两次 `make sqlc` 的完整生成结果一致，技能包 placement/folder SQL 与版本表、workspace 删除顺序共存。
+
+| 迁移（各含 up/down） | 用途 | up Git blob |
+| --- | --- | --- |
+| `611_user_whats_new_seen_version` | What's New 已读版本 | `bb827ae5678655f05bb9b9f2f954d7390174058f` |
+| `612_skill_version` | 技能版本历史 | `54f481b105a3465fd2f1a8349aee7d5a9cbc3b01` |
+| `613_skill_version_index` | 技能版本索引 | `6706dda2d91e41dad8e7946eda184ce4cca8c1a5` |
+| `614_project_creator` | 项目创建者身份 | `3a6eaa030850f477538667d0aac0365d829bf7ee` |
+| `615_attachment_image_dimensions` | 附件图片尺寸 | `9966ea42dbc98678986de6cfb7e2e694262d65f4` |
+| `616_member_pinned` | 用户工作区置顶 | `8615b71e77fa56baab1016a4406a90641a95548a` |
+
+全量比较双方共有的迁移文件后，唯一沿用的上游覆写仍是 `467_autopilot_trigger_creator_from_autopilot`：up 的 Fork/upstream blob 为 `9d9719921186f406855115c4a5a7e73b9c377896` / `40a3888825985738469996a1596110ae62038ac6`，down 为 `ee35bfe58e35fccdeee0e32d4ae077fac5136c15` / `1c32fd2368ae0ae78e2bf5dc8886b780cbed69eb`。继续不从 autopilot 创建者推断旧 trigger 主体；down 只恢复注释。已执行的安装不重跑，无证据的触发器仍拒绝派发，延续 OL-110 T14。9009 / 9028 原样保留 `capture_issue_wakeup` 溯源；9054 up blob `8d36d6c02f7d18f0b31b141600d26fe23571c85a` 原样保留 Default 历史状态修复。新增迁移未重定义 capture 函数，无需追加补偿迁移。
+
+私有 PostgreSQL 15 UTF-8 库验证：新装从空库执行全部 736 条；升级先执行第一父的 730 条，再补跑 611–616（其余跳过）。两条路径的列类型/默认值、表、约束、索引有效性、函数、触发器、枚举、视图、策略和序列共 3,076 项规范化记录完全相同，忽略物理列序；ledger 736 条相同，无 INVALID 索引，重复 up 全部 skip。可选扩展遵循 runner 原有缺省处理。
+
+- schema SHA-256：`de69c3256637eeb1400579ef70eb42be19c6cbd867d5e8eddff45e6356f6ce5e`
+- ledger SHA-256：`7740aa78d64157e1671877a3315a134abeb4ae15537dbf1b07934b0d3f8ef270`
+- 比对 SQL：`upstream-sync-20261106-stage4-schema.sql`；对两库分别执行 `psql -XAtq -f`，排序 ledger 后比较字节。
+
+### 外部会话边界
+
+实际路由清单位于 `server/cmd/server/testdata/labrastro-external-routes.tsv`，本阶段为 **60 allow / 457 deny / 76 separate-auth**。外部白名单及请求字段清单未扩大；10 条新增路由如下。
+
+| 方法 / 路由 | 策略 |
+| --- | --- |
+| `POST /api/inbox/issues/{issueId}/read` | deny |
+| `GET /api/issue-views/{id}/issues` | deny |
+| `GET /api/issues/subscribed` | deny |
+| `POST /api/me/whats-new/seen` | deny |
+| `GET /api/plugin-bridge/v1/tasks/{task_id}/messages` | deny |
+| `GET /api/skills/{id}/versions` | deny |
+| `GET /api/skills/{id}/versions/{version}` | deny |
+| `POST /api/skills/{id}/versions/{version}/restore` | deny |
+| `PUT /api/workspaces/{id}/pin` | deny |
+| `GET /v1/tasks/{task_id}/messages` | separate-auth（plugin） |
+
+以下对照第一父与结果树，逐项覆盖全部 23 条非 GET 白名单路由。“不变”同时指请求字段、默认值、校验、接受的 actor/workspace 及写入副作用。共同权限证据为真实 router/request inventory、middleware、handler 和 service 的外部会话回归；没有以运行时 owner 取代冻结 grantor。
+
+| 方法 / 路由 | Handler / 依赖与请求语义 | 副作用 / 权限审阅 |
+| --- | --- | --- |
+| `DELETE /api/attachments/{id}` | `DeleteAttachment` 不变 | 附件归属与工作区检查不变 |
+| `DELETE /api/comments/{commentId}` | `DeleteComment` 不变 | 删除/墓碑及评论主体不变 |
+| `PUT /api/comments/{commentId}` | `UpdateComment` 不变 | 编辑与提及的授权校验不变 |
+| `DELETE /api/comments/{commentId}/keep-replies` | `DeleteComment` 不变 | 保留回复语义不变 |
+| `DELETE /api/comments/{commentId}/reactions` | `RemoveReaction` 不变 | 当前主体 reaction 删除不变 |
+| `POST /api/comments/{commentId}/reactions` | `AddReaction` 不变 | 当前主体 reaction 写入不变 |
+| `DELETE /api/comments/{commentId}/resolve` | `UnresolveComment` 不变 | 解除解决状态不变 |
+| `POST /api/comments/{commentId}/resolve` | `ResolveComment` 不变 | 解决状态写入不变 |
+| `POST /api/issues` | `CreateIssue` 请求不变；workflow step guard 抽为共用函数 | 创建/委派仍按冻结主体、调用权限和会话祖先 |
+| `POST /api/issues/query` | `QueryIssues`→`ListIssues` 不变；仍为 1 MiB 字符串映射 | 只读；新增 unread/subscribed 属 table query，不扩此请求 |
+| `POST /api/issues/with-dependencies` | `CreateIssueWithDependencies` 请求、依赖事务不变 | 工作流/依赖/子单派发边界保留 |
+| `PUT /api/issues/{id}` | `UpdateIssue` 请求不变；`workflowStepMoved` 保持原拒绝条件 | 陈旧 workflow task 不能改变已离开的步骤；claim 文案同步 |
+| `POST /api/issues/{id}/comments` | `CreateComment` 不变 | pending 合并仍匹配会话根与冻结 grantor；提及与延迟派发不变 |
+| `POST /api/issues/{id}/labels` | `AttachLabel` 不变 | 同工作区标签关联不变 |
+| `DELETE /api/issues/{id}/labels/{labelId}` | `DetachLabel` 不变 | 标签解除不变 |
+| `DELETE /api/issues/{id}/metadata/{key}` | `DeleteIssueMetadataKey` 不变 | 元数据删除不变 |
+| `PUT /api/issues/{id}/metadata/{key}` | `SetIssueMetadataKey` 不变 | 元数据写入不变 |
+| `DELETE /api/issues/{id}/properties/{propertyId}` | `DeleteIssueProperty` 不变 | 属性删除不变 |
+| `PUT /api/issues/{id}/properties/{propertyId}` | `SetIssueProperty` 不变 | 属性校验和写入不变 |
+| `DELETE /api/issues/{id}/reactions` | `RemoveIssueReaction` 不变 | 当前主体 reaction 删除不变 |
+| `POST /api/issues/{id}/reactions` | `AddIssueReaction` 不变 | 当前主体 reaction 写入不变 |
+| `PATCH /api/issues/{id}/with-dependencies` | `UpdateIssueWithDependencies` 请求、依赖事务不变；共用 step guard | 依赖与工作流权限不变 |
+| `POST /api/upload-file` | `UploadFile` 复用 `parseUploadForm`；100 MiB、media 较小上限和 1 MiB 落盘保留；响应新增可选 width/height | 流式存储与归属授权保留；尺寸只读取头部并 rewind，新增大文件读取量回归 |
+
+冻结 grantor、持久化会话根、后代、重试、唤醒、撤权及工作区/ownership/invocation 校验相关 Fork 文件和 SQL 保留。Issue/Project 的 DELETE 仍不对外部会话开放；上游新建的删除权限 helper 在取消任务/清理前检查整个集合，成员只可删除自己或自己当前拥有的 agent 创建的对象，owner/admin 可管理，agent 不继承 token 用户权限；未知历史项目创建者不获得推断权限。
+
+### 定制交集与高价值功能
+
+- Skills：保留文件夹树、二级技能包、ZIP 导入导出和详情侧栏，接入上游版本列表/详情/回滚及标签布局。搜索复用持久化 view store，搜索跨文件夹并保留路径提示。版本快照和 package placement 共用同一事务；覆盖导入不能提前 commit。新增回归验证 placement 失败时内容/版本都回滚，以及恢复 v1 内容后 placement 原样保留并新增 restore 版本。预览指纹只纳入成员身份/权限字段，新增的工作区 pinned_at 不再使预览失效；旧 scanner 的两套字节快照不变，权限和 membership 更换仍使指纹变化。
+- Help：保留飞书 QR 和 Web 内网 `DOWNLOAD_PAGE_URL`，What's New 统一进入菜单，AppRail 不恢复独立卡片。面板保留版本亮点，移除外网 changelog/release 出口；Help 测试继续禁止 multica.ai/discord.gg。运行时空态下载也接入内部地址，云推广仍受已有关闭开关约束。
+- 品牌：桌面、Web、Docs、移动图标及字标按第一父字节保留，移动图标仍为 1024×1024 RGB 无 alpha。上游生成器改为拒绝覆写独立 Fork 资产；`scripts/brand/labrastro-assets.json` 与 sync 校验冻结身份，CI 路径包含 manifest。G2 新图形组件兼容上游 API 并使用爪印。补齐西语覆盖与新增繁中文档内网分发入口，未扩大品牌豁免。
+- 保留持久化 idle/tool watchdog 配置、agent thinking level、子单选择性复制父字段、工作区置顶、100 MiB 上传、聊天/运行记录虚拟滚动。修复无评论运行链接在折叠/已解决线程中的展开落点，保留 Fork 到达高亮、DAG、配额和项目工程开关。Qoder 采用上游新增的聊天附件挂载/续聊及 squad leader 支持；quick-create 附件限制仍保留。
+- gofmt 清单仍为 11 个字节等同上游的原文件，来源改为完整 v0.8.1 SHA；Fork 修改全部格式化，不添加内容豁免。
+
+### Stage 4 验证结果
+
+待本次运行收齐测试结果后补齐。

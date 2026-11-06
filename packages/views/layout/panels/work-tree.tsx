@@ -12,6 +12,7 @@ import { IconButton } from "@multica/ui/components/common/icon-button";
 import { DropdownMenuItem } from "@multica/ui/components/ui/dropdown-menu";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { issueKeys, sidebarIssuesOptions } from "@multica/core/issues/queries";
+import { filterDependencyState, statusCatalogSource } from "@multica/core/issues/surface/filter-dependency";
 import {
   SIDEBAR_FIRST_PAGE,
   projectSidebarRequest,
@@ -244,9 +245,10 @@ function ProjectTreeItem({
   const [menuOpen, setMenuOpen] = useState(false);
   const open = useSpacePanelOpen();
   const statusCatalog = useIssueStatuses(wsId, open);
-  const params = statusCatalog.isLoaded
-    ? projectSidebarRequest(project.id, issueSettings, statusCatalog.statuses, userId)
-    : undefined;
+  const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
+  const params = catalogDependency.unresolved
+    ? undefined
+    : projectSidebarRequest(project.id, issueSettings, statusCatalog.statuses, userId);
   const prefetch = usePrefetch(wsId, source, params);
   const { data: engineeringOverview } = useQuery({
     ...projectEngineeringOptions(wsId, project.id),
@@ -343,6 +345,8 @@ function ProjectTreeItem({
           wsId={wsId}
           source={source}
           params={params}
+          paramsError={catalogDependency.error}
+          onRetry={catalogDependency.retry}
           activeIssueId={activeIssueId}
           onCollapse={() => {
             setExpanded(false);

@@ -34,6 +34,7 @@ func labrastroPackageDBFixture(t *testing.T) *testutil.Fixture {
 		testPool.Exec(ctx, "DELETE FROM skill_file WHERE skill_id IN (SELECT id FROM skill WHERE workspace_id=$1)", ws)
 		testPool.Exec(ctx, "DELETE FROM agent_skill WHERE skill_id IN (SELECT id FROM skill WHERE workspace_id=$1)", ws)
 		testPool.Exec(ctx, "DELETE FROM skill_to_label WHERE skill_id IN (SELECT id FROM skill WHERE workspace_id=$1)", ws)
+		testPool.Exec(ctx, "DELETE FROM skill_version WHERE workspace_id=$1", ws)
 		testPool.Exec(ctx, "DELETE FROM skill WHERE workspace_id=$1", ws)
 	})
 	return fx
@@ -184,6 +185,9 @@ func TestLabrastroPackagePermissionChangeAndAtomicPartialFailure(t *testing.T) {
 	fx.QueryRow(t, "SELECT content FROM skill WHERE id=$1", sid).Scan(&content)
 	if content != "original" || fx.Count(t, "SELECT count(*) FROM skill_file WHERE skill_id=$1 AND path='original.md'", sid) != 1 || fx.Count(t, "SELECT count(*) FROM labrastro_skill_placement WHERE skill_id=$1", sid) != 0 {
 		t.Fatal("failed placement left half an overwrite")
+	}
+	if fx.Count(t, "SELECT count(*) FROM skill_version WHERE skill_id=$1", sid) != 0 {
+		t.Fatal("failed placement committed version history outside its transaction")
 	}
 	if fx.Count(t, "SELECT count(*) FROM skill WHERE workspace_id=$1 AND name='beta'", fx.WorkspaceID) != 1 {
 		t.Fatal("successful item was rolled back with failed item")
@@ -567,5 +571,45 @@ func TestLabrastroAlreadyPackagedDefaultUnselected(t *testing.T) {
 	report = labrastroApply(t, fx, testUserID, subURL, preview.PreviewID, map[string]any{"all": true, "on_conflict": "rename"})
 	if !report.Failed || report.Results[0].Code != "already_packaged" || report.Results[0].SkillID != original.Results[0].SkillID {
 		t.Fatalf("same-source transfer was allowed: %+v", report)
+	}
+}
+
+func TestLabrastroPackageVersionRestorePreservesPlacement(t *testing.T) {
+	fx := labrastroPackageDBFixture(t)
+	source := labrastroTestFixture(map[string]string{"skills/alpha/SKILL.md": "---\nname: alpha\n---\nfirst", "skills/alpha/notes.md": "first notes"})
+	source.install(t)
+	preview := labrastroPreview(t, fx, testUserID, source.url())
+	report := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+	if report.Failed || len(report.Results) != 1 {
+		t.Fatalf("import: %+v", report)
+	}
+	sid := report.Results[0].SkillID
+	var versions []SkillVersionSummaryResponse
+	labrastroCall(t, fx, testUserID, testHandler.ListSkillVersions, "GET", nil, "id", sid).Want(200).JSON(&versions)
+	if len(versions) != 1 || versions[0].Source != skillVersionSourceImport {
+		t.Fatalf("import versions: %+v", versions)
+	}
+	source.Files["skills/alpha/SKILL.md"] = "---\nname: alpha\n---\nsecond"
+	source.Files["skills/alpha/notes.md"] = "second notes"
+	source.rebuild()
+	preview = labrastroPreview(t, fx, testUserID, source.url())
+	updated := labrastroApply(t, fx, testUserID, source.url(), preview.PreviewID, nil)
+	if updated.Failed {
+		t.Fatalf("update: %+v", updated)
+	}
+	var before, after string
+	fx.QueryRow(t, "SELECT row_to_json(p)::text FROM labrastro_skill_placement p WHERE skill_id=$1", sid).Scan(&before)
+	var restored SkillWithFilesResponse
+	labrastroCall(t, fx, testUserID, testHandler.RestoreSkillVersion, "POST", nil, "id", sid, "version", "1").Want(200).JSON(&restored)
+	if !strings.Contains(restored.Content, "first") || len(restored.Files) != 1 || restored.Files[0].Content != "first notes" {
+		t.Fatalf("restored: %+v", restored)
+	}
+	fx.QueryRow(t, "SELECT row_to_json(p)::text FROM labrastro_skill_placement p WHERE skill_id=$1", sid).Scan(&after)
+	if before != after {
+		t.Fatalf("restore changed package/folder placement: %s -> %s", before, after)
+	}
+	labrastroCall(t, fx, testUserID, testHandler.ListSkillVersions, "GET", nil, "id", sid).Want(200).JSON(&versions)
+	if len(versions) != 3 || versions[0].Source != skillVersionSourceRestore || versions[0].RestoredFromVersion == nil || *versions[0].RestoredFromVersion != 1 {
+		t.Fatalf("restore history: %+v", versions)
 	}
 }

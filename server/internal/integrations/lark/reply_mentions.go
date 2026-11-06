@@ -65,7 +65,7 @@ func requestedReplyMentions(m LarkMessage, botOpenID string) []string {
 				return nil
 			}
 		}
-		text = flattenPostParagraph(post.Content[0])
+		text = flattenPostParagraphWithMedia(post.Content[0], nil)
 	default:
 		return nil
 	}

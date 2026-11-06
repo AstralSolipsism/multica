@@ -48,6 +48,8 @@ interface TranscriptButtonProps {
    * somewhere else never sees the click that would tell it.
    */
   finalFocus?: boolean;
+  /** Host a terminal transcript outside a row that may be virtualized away. */
+  onOpenTranscript?: (items: TimelineItem[], fromKeyboard: boolean) => void;
   /**
    * Optional content rendered above the transcript event list. Used to
    * surface autopilot webhook payloads inline with the run history.
@@ -80,6 +82,7 @@ export function TranscriptButton({
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   finalFocus,
+  onOpenTranscript,
   headerSlot,
 }: TranscriptButtonProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -133,25 +136,30 @@ export function TranscriptButton({
         setOpen(true, keyboard);
         return;
       }
+      const openTerminal = (timeline: TimelineItem[]) => {
+        if (onOpenTranscript) onOpenTranscript(timeline, keyboard);
+        else setOpen(true, keyboard);
+      };
       if (providedItems !== undefined || loaded !== null) {
-        setOpen(true, keyboard);
+        openTerminal(providedItems ?? loaded?.items ?? []);
         return;
       }
       setLoading(true);
       api
         .listTaskMessages(task.id)
         .then((msgs) => {
-          setLoaded({ items: buildTimeline(msgs), messages: msgs });
-          setOpen(true, keyboard);
+          const timeline = buildTimeline(msgs);
+          setLoaded({ items: timeline, messages: msgs });
+          openTerminal(timeline);
         })
         .catch((err) => {
           console.error(err);
           setLoaded({ items: [], messages: [] });
-          setOpen(true, keyboard);
+          openTerminal([]);
         })
         .finally(() => setLoading(false));
     },
-    [liveCacheMode, providedItems, loaded, setOpen, task.id],
+    [liveCacheMode, providedItems, loaded, setOpen, task.id, onOpenTranscript],
   );
 
   useEffect(() => {

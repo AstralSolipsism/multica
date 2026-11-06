@@ -8,7 +8,6 @@ import {
   HardDrive,
   Lock,
   Pencil,
-  Plus,
 } from "@multica/ui/icons";
 import { SkillIcon } from "../lib/skill-icon";
 import type {
@@ -54,8 +53,13 @@ import {
   type CollectionSort,
 } from "../../layout/collection-list";
 import { canEditSkill } from "../hooks/use-can-edit-skill";
+import { SkillsIntro } from "./skills-intro";
 import { originSourceUrl, readOrigin } from "../lib/origin";
-import { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
+import {
+  matchesSkillSearch,
+  rowMatchesFilters,
+  type SkillRow,
+} from "./skill-list-filter";
 import {
   CreateSkillDialog,
   type CreateSkillMethod,
@@ -80,7 +84,6 @@ import {
   SkillBatchToolbar,
 } from "./skill-list-actions";
 import { useT, useTimeAgo } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { FolderExplorerDepth } from "../../common/folder-explorer";
 
 // Sort/filter/column types and defaults live in the core view store
@@ -89,18 +92,7 @@ import { FolderExplorerDepth } from "../../common/folder-explorer";
 export type SortField = SkillSortField;
 export { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
 
-export function matchesSkillSearch(row: SkillRow, search: string): boolean {
-  const query = search.trim().toLowerCase();
-  if (!query) return true;
-  const { name, description } = row.skill;
-  return (
-    name.toLowerCase().includes(query) ||
-    matchesPinyin(name, query) ||
-    (!!description &&
-      (description.toLowerCase().includes(query) ||
-        matchesPinyin(description, query)))
-  );
-}
+export { matchesSkillSearch } from "./skill-list-filter";
 
 type SkillScope = "all" | "mine";
 
@@ -273,31 +265,6 @@ function CreatorCell({ creator }: { creator: MemberWithUser | null }) {
   );
 }
 
-// Empty state
-
-function EmptyState({ onCreate }: { onCreate: (method: CreateSkillMethod) => void }) {
-  const { t } = useT("skills");
-  return (
-    <CollectionPageState
-      icon={SkillIcon}
-      title={t(($) => $.page.empty.title)}
-      description={t(($) => $.page.empty.description)}
-      actions={
-        <>
-          <Button type="button" size="sm" onClick={() => onCreate("manual")}>
-            <Plus aria-hidden="true" />
-            {t(($) => $.page.new_skill)}
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onCreate("runtime")}>
-            <HardDrive aria-hidden="true" />
-            {t(($) => $.create.method.runtime.title)}
-          </Button>
-        </>
-      }
-    />
-  );
-}
-
 // Page
 
 export default function SkillsPage() {
@@ -330,7 +297,6 @@ export default function SkillsPage() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [search, setSearch] = useState("");
   const [scope, setScope] = useState<SkillScope>("all");
 
   // Persisted view preferences (per workspace, per user/device). Header sort
@@ -346,6 +312,8 @@ export default function SkillsPage() {
   const toggleColumn = useSkillsViewStore((s) => s.toggleColumn);
   const toggleFilter = useSkillsViewStore((s) => s.toggleFilter);
   const clearFilters = useSkillsViewStore((s) => s.clearFilters);
+  const search = useSkillsViewStore((s) => s.search);
+  const setSearch = useSkillsViewStore((s) => s.setSearch);
 
   const assignments = useMemo(() => selectSkillAssignments(agents), [agents]);
 
@@ -651,9 +619,7 @@ export default function SkillsPage() {
       {skillFolders.notice}
 
       {showEmpty ? (
-        <div className="flex flex-1 items-center justify-center">
-          <EmptyState onCreate={setCreateMethod} />
-        </div>
+        <SkillsIntro onCreate={setCreateMethod} />
       ) : (
         <CollectionList
           label={scopeLabels[scope]}

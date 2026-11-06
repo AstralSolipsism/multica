@@ -32,7 +32,7 @@ func TestAgentAdaptValidation(t *testing.T) {
 	for _, provider := range []string{"codex", "omp", "deveco"} {
 		cases = append(cases, validationCase{name: provider + "/blank model", provider: provider, model: " \t", rejection: thinkingNeedsExplicitModelRejection(provider)})
 	}
-	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "dsh", "grok", "codebuddy"} {
+	for _, provider := range []string{"claude", "codex", "pi", "omp", "opencode", "deveco", "kimi", "kiro", "dsh", "grok", "codebuddy"} {
 		for _, model := range []string{"", "test/model"} {
 			rejection := ""
 			if model == "" && (provider == "codex" || provider == "omp" || provider == "deveco") {
@@ -41,7 +41,7 @@ func TestAgentAdaptValidation(t *testing.T) {
 			cases = append(cases, validationCase{name: provider + "/" + model, provider: provider, model: model, rejection: rejection})
 		}
 	}
-	for _, provider := range []string{"antigravity", "cursor", "copilot", "qwen", "qwenpaw", "qoder", "qoderclicn", "traecli", "kiro", "openclaw", "mcode", "codearts", "zeroclaw", "unknown"} {
+	for _, provider := range []string{"antigravity", "cursor", "copilot", "qwen", "qwenpaw", "qoder", "qoderclicn", "traecli", "openclaw", "mcode", "codearts", "zeroclaw", "unknown"} {
 		for _, model := range []string{"", "test/model"} {
 			cases = append(cases, validationCase{name: provider + "/" + model, provider: provider, model: model, rejection: thinkingCapabilityRejection(provider)})
 		}

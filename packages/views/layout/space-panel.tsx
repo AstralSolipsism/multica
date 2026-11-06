@@ -9,7 +9,7 @@ import { PanelResizeHandle } from "./panel-resize-handle";
 import { SpacePanelOpenProvider } from "./space-panel-open-context";
 import { AutopilotsPanel } from "./panels/autopilots-panel";
 import { ChatPeek, InboxPeek } from "./panels/list-space-peeks";
-import { NAV_COLUMN_MOTION_CLASS, NAV_PEEK_CLASS } from "./rail-styles";
+import { LIST_COLUMN_WIDTH_CLASS, NAV_COLUMN_MOTION_CLASS, NAV_PEEK_CLASS } from "./rail-styles";
 import { TeamPanel } from "./panels/team-panel";
 import { KeptRowsRelease, WorkPanel } from "./panels/work-panel";
 
@@ -20,11 +20,14 @@ const PANELS: Partial<Record<AppSpaceId, () => React.ReactNode>> = {
 };
 
 // Inbox and Chat keep their lists in their pages, so from another space they
-// preview through a standalone copy of the list.
-const PEEKS: Partial<Record<AppSpaceId, () => React.ReactNode>> = {
-  ...PANELS,
+// preview through a standalone copy of the list, at the list width.
+const LIST_PEEKS: Partial<Record<AppSpaceId, () => React.ReactNode>> = {
   inbox: InboxPeek,
   chat: ChatPeek,
+};
+const PEEKS: Partial<Record<AppSpaceId, () => React.ReactNode>> = {
+  ...PANELS,
+  ...LIST_PEEKS,
 };
 
 /** The current space's panel content, or null for spaces without one. */
@@ -36,8 +39,8 @@ export function SpacePanelContent({ space }: { space: AppSpaceId | null }) {
 /**
  * The space panel inside the content card: a column on the card's leading
  * edge, separated from the page by one hairline. Spaces without a shell
- * panel (Inbox, Chat, Settings) render their own `ListColumn` at the same
- * width instead, so nothing mounts for them. While collapsed, hovering a rail space previews
+ * panel (Inbox, Chat, Settings) render their own `ListColumn` instead, so
+ * nothing mounts for them. While collapsed, hovering a rail space previews
  * its panel over the page.
  */
 export function SpacePanel() {
@@ -84,7 +87,11 @@ export function SpacePanel() {
           data-slot="space-panel-peek"
           onPointerEnter={shell.holdPeek}
           onPointerLeave={shell.releasePeek}
-          className={cn(NAV_PEEK_CLASS, "max-md:hidden")}
+          className={cn(
+            NAV_PEEK_CLASS,
+            "max-md:hidden",
+            peekSpace && LIST_PEEKS[peekSpace] && LIST_COLUMN_WIDTH_CLASS,
+          )}
         >
           <Peek />
         </aside>

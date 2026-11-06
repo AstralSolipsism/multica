@@ -14,6 +14,12 @@ vi.mock("../platform/local-directory", () => ({
   isDesktopShell: vi.fn(() => false),
 }));
 
+// The What's new entry is covered with the real menu in whats-new-menu-panel.test.tsx.
+vi.mock("../whats-new/whats-new-menu-panel", () => ({
+  useWhatsNewMenuPanel: () => ({ available: false }),
+  WhatsNewMenuPanel: () => null,
+}));
+
 // react-i18next isn't initialised in the views test env, so resolve the
 // selector against the assembled namespace to assert on actual copy.
 vi.mock("../i18n", () => ({

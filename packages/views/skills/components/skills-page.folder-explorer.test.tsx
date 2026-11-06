@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   members: [] as { user_id: string; role: string }[],
   virtualizerCount: 0,
   virtualizerKeys: [] as (string | number)[],
+  resetSearch: () => {},
   viewState: {
     sortField: "name",
     sortDirection: "asc" as string,
@@ -134,11 +135,21 @@ vi.mock("@multica/core/runtimes", () => ({
 vi.mock("@multica/core/workspace/avatar-url", () => ({
   resolvePublicFileUrl: (url: string | null) => url,
 }));
-vi.mock("@multica/core/skills/stores", () => ({
-  useSkillsViewStore: (selector: (state: unknown) => unknown) =>
-    selector(mocks.viewState),
-  DEFAULT_HIDDEN_COLUMNS: [],
-}));
+vi.mock("@multica/core/skills/stores", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/skills/stores")>();
+  mocks.resetSearch = () => actual.useSkillsViewStore.setState({ search: "" });
+  return {
+    useSkillsViewStore: (selector: (state: unknown) => unknown) => {
+      const search = actual.useSkillsViewStore((state) => state.search);
+      return selector({
+        ...mocks.viewState,
+        search,
+        setSearch: actual.useSkillsViewStore.getState().setSearch,
+      });
+    },
+    DEFAULT_HIDDEN_COLUMNS: [],
+  };
+});
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({
   ActorAvatar: () => null,
 }));
@@ -348,6 +359,7 @@ function renderPage(initialPath = "/acme/skills", locale?: SupportedLocale) {
 }
 
 beforeEach(() => {
+  mocks.resetSearch();
   vi.clearAllMocks();
   window.localStorage.clear();
   mocks.skills = [
@@ -652,7 +664,7 @@ describe("SkillsPage review regressions", () => {
     mocks.skills = [];
     mocks.folderTree = { folders: [], placements: [], packages: [] };
     renderPage();
-    expect(await screen.findByText("No skills yet")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Turn how your team works into skills" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "New skill" }).length).toBeGreaterThan(0);
     expect(screen.queryByText("No skills or folders yet.")).toBeNull();
   });

@@ -58,6 +58,27 @@ function withLabels(filters: SkillListFilters, ...ids: string[]): SkillListFilte
   return { ...filters, labels: ids };
 }
 
+describe("matchesSkillSearch", () => {
+  const reviewer = makeRow({ name: "PR Reviewer", description: "Reviews pull requests" });
+  const chinese = makeRow({ name: "审核助手", description: "代码审查" });
+
+  it.each([
+    [reviewer, "", true],
+    [reviewer, "   ", true],
+    [reviewer, "  REVIEWER ", true],
+    [reviewer, "pull requests", true],
+    [reviewer, "deploy", false],
+    [makeRow(), "pull", false],
+    [chinese, "审核", true],
+    [chinese, "shenhe", true],
+    [chinese, "shzs", true],
+    [chinese, "daima", true],
+    [chinese, "fabu", false],
+  ])("case %#", (row, query, expected) => {
+    expect(matchesSkillSearch(row, query)).toBe(expected);
+  });
+});
+
 describe("rowMatchesFilters — labels dimension", () => {
   const noFilters = EMPTY_FILTERS;
 

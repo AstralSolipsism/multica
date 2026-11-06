@@ -43,6 +43,7 @@
     "input-otp": "^1.4.2",
     "katex": "catalog:",
     "linkify-it": "^5.0.0",
+    "mdast-util-from-markdown": "^2.0.3",
     "next-themes": "^0.4.6",
     "react-day-picker": "^9.14.0",
     "react-markdown": "^10.1.0",
@@ -68,6 +69,7 @@
   "devDependencies": {
     "@multica/eslint-config": "workspace:*",
     "@multica/tsconfig": "workspace:*",
+    "@multica/vitest-setup": "workspace:*",
     "@testing-library/jest-dom": "catalog:",
     "@testing-library/react": "catalog:",
     "@types/linkify-it": "^5.0.0",

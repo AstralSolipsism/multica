@@ -2,12 +2,13 @@
 
 import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowUpRight,
   CircleHelp,
   Download,
   MessageCircle,
+  Megaphone,
   MessagesSquare as QrCode,
 } from "@multica/ui/icons";
 import {
@@ -27,6 +28,8 @@ import { useT } from "../i18n";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
 import { RAIL_ICON_BUTTON_CLASS } from "./rail-styles";
 
+import { useWhatsNewMenuPanel, WhatsNewMenuPanel } from "../whats-new/whats-new-menu-panel";
+
 export function HelpLauncher() {
   const { t } = useT("layout");
   const { t: tLark } = useT("lark");
@@ -42,11 +45,14 @@ export function HelpLauncher() {
   // markup matches either way, so the link can ship in the SSR payload instead
   // of popping in a frame late.
   const desktop = isDesktopShell();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const whatsNew = useWhatsNewMenuPanel();
   return (
     <>
       <DropdownMenu>
         <TooltipHint label={t(($) => $.help.trigger)} side="right">
           <DropdownMenuTrigger
+            ref={triggerRef}
             aria-label={t(($) => $.help.trigger)}
             className={RAIL_ICON_BUTTON_CLASS}
           >
@@ -76,6 +82,17 @@ export function HelpLauncher() {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
+          )}
+          {whatsNew.available && (
+            <DropdownMenuItem onClick={whatsNew.show}>
+              <Megaphone className="h-3.5 w-3.5" />
+              {t(($) => $.whats_new.trigger)}
+              {whatsNew.newestUnread && (
+                <span data-slot="whats-new-tag" className="ml-auto text-caption font-medium text-brand tabular-nums">
+                  {`v${whatsNew.newestUnread}`}
+                </span>
+              )}
+            </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => setQrOpen(true)}>
             <QrCode className="h-3.5 w-3.5" />
@@ -107,6 +124,7 @@ export function HelpLauncher() {
       {/* Outside the dropdown: the dialog portals to document.body, and a
           trigger inside closed menu content would unmount with it. */}
       <FeishuQrDialog open={qrOpen} onOpenChange={setQrOpen} />
+      <WhatsNewMenuPanel panel={whatsNew} anchor={triggerRef} />
     </>
   );
 }

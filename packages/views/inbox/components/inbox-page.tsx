@@ -366,16 +366,22 @@ function InboxPageContent() {
   // re-opening the row later marks it read again like any other open.
   const manualUnreadIdRef = useRef<string | null>(null);
 
-  // Auto-mark-read whenever a selected item is unread — covers both click-
-  // to-select and URL-param-select (e.g. OS notification click on desktop).
-  // The mutation flips `read: true` optimistically, so this effect settles
-  // in one pass and can't loop. Kept in a `useEffect` rather than inlined
-  // in handleSelect so URL-driven selection triggers it too.
+  // Read once on opening, even if the visible row is already read: older
+  // unread notifications can still be hidden under it. Also read new unread
+  // arrivals while the row stays open. Track the opening separately from the
+  // optimistic cache patch so a read row cannot cause a request loop.
+  const openedItemIdRef = useRef<string | null>(null);
   const markReadMutate = markReadMutation.mutate;
   const selectedId = selected?.id;
   const selectedRead = selected?.read;
   useEffect(() => {
-    if (!selectedId || selectedRead) return;
+    if (!selectedId) {
+      openedItemIdRef.current = null;
+      return;
+    }
+    const justOpened = openedItemIdRef.current !== selectedId;
+    openedItemIdRef.current = selectedId;
+    if (!justOpened && selectedRead) return;
     if (manualUnreadIdRef.current === selectedId) return;
     if (filters.unreadOnly) {
       pinnedUnreadKeyRef.current = selectedKey;
@@ -850,6 +856,9 @@ function InboxPageContent() {
           layoutId="multica_inbox_issue_detail_layout"
           highlightCommentId={detailItem.details?.comment_id ?? undefined}
           highlightRequestToken={highlightRequestToken}
+          // The inbox reads the row it selected itself (see the auto-read
+          // effect above), and must keep a row marked unread while it is open.
+          readsInbox={false}
           // The split layout already has a nav trigger in the list header.
           // Explicit false suppresses the detail header's fallback trigger,
           // which is the way back once the list column is collapsed.
@@ -1044,7 +1053,7 @@ function InboxPageContent() {
   if (viewLoading) {
     return (
       <div className="flex min-h-0 flex-1">
-        <ListColumn collapsed={listCollapsed}>
+        <ListColumn collapsed={listCollapsed} width="list">
           <div className="flex h-12 shrink-0 items-center pl-5 pr-2">
             <Skeleton className="h-5 w-16" />
           </div>
@@ -1070,7 +1079,7 @@ function InboxPageContent() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      <ListColumn collapsed={listCollapsed}>{listPanel}</ListColumn>
+      <ListColumn collapsed={listCollapsed} width="list">{listPanel}</ListColumn>
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
         {detailContent ?? (
           <>
@@ -1083,8 +1092,8 @@ function InboxPageContent() {
             {inboxZeroCount === 0 ? (
               <MulticaBleedMark
                 key={inboxZeroRises ? "rise" : "rest"}
-                riseDelay={inboxZeroRises ? 0.2 : undefined}
-                className="pointer-events-none absolute -right-[8%] -bottom-[32%] w-[min(560px,58%)] text-muted"
+                enterDelay={inboxZeroRises ? 0.2 : undefined}
+                className="pointer-events-none absolute -right-[14%] -bottom-[26%] w-[min(560px,58%)] text-muted"
               />
             ) : (
               <Inbox className="mb-3 h-10 w-10 text-faint-foreground" />

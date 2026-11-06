@@ -1083,7 +1083,7 @@ describe("AgentsPage folder regressions", () => {
     mocks.agents = [];
     mocks.folderTree = { folders: [], placements: [], squads: [] };
     renderPage();
-    expect(await screen.findByText("No agents yet")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Hire your first AI teammate" })).toBeTruthy();
   });
 
   it("limits selection and select-all to visible agent rows", async () => {

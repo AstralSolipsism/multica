@@ -181,6 +181,8 @@ export interface FilterSnapshot {
   advancedFilter: AdvancedFilterGroup | null;
   /** Only issues an agent is running on right now. */
   agentRunningFilter: boolean;
+  /** Only issues with an agent result the viewer has not seen yet. */
+  unreadFilter: boolean;
 }
 
 /** Filter-bar chip dimensions. Date is excluded: `dateFilter` lives outside
@@ -321,7 +323,7 @@ export function normalizeSortForGrouping(
   sortDirection: SortDirection,
 ): Pick<IssueViewState, "sortBy" | "sortDirection"> {
   return grouping !== "status" && sortBy === "position"
-    ? { sortBy: "created_at", sortDirection: "desc" }
+    ? { sortBy: "updated_at", sortDirection: "desc" }
     : { sortBy, sortDirection };
 }
 
@@ -372,6 +374,9 @@ export interface IssueViewState {
   // agent task in `running` status. Saved into views and persisted like the
   // other filters.
   agentRunningFilter: boolean;
+  // When true, the list only shows the viewer's unread issues (the sidebar's
+  // unread dot). Saved into views; resolved per viewer.
+  unreadFilter: boolean;
   sortBy: SortField;
   sortDirection: SortDirection;
   /** Last explicit direction per field, so switching fields is reversible. */
@@ -488,6 +493,7 @@ export interface IssueViewState {
    *  something simple mode cannot say (`simpleFromAdvancedFilter`). */
   exitAdvancedFilter: () => void;
   toggleAgentRunningFilter: () => void;
+  toggleUnreadFilter: () => void;
   hideStatus: (status: IssueStatus) => void;
   showStatus: (status: IssueStatus) => void;
   clearFilters: () => void;
@@ -538,9 +544,10 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   advancedFilter: null,
   dateFilter: null,
   agentRunningFilter: false,
-  sortBy: "created_at",
+  unreadFilter: false,
+  sortBy: "updated_at",
   sortDirection: "desc",
-  sortDirections: { created_at: "desc" },
+  sortDirections: { updated_at: "desc" },
   cardProperties: { ...DEFAULT_CARD_PROPERTIES },
   cardPropertyIds: [],
   showSubIssues: true,
@@ -778,6 +785,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
     }),
   toggleAgentRunningFilter: () =>
     set((state) => ({ agentRunningFilter: !state.agentRunningFilter })),
+  toggleUnreadFilter: () =>
+    set((state) => ({ unreadFilter: !state.unreadFilter })),
   hideStatus: (status) =>
     set((state) =>
       state.hiddenStatuses.includes(status)
@@ -806,6 +815,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       advancedFilter: null,
       dateFilter: null,
       agentRunningFilter: false,
+      unreadFilter: false,
     }),
   resetFiltersTo: (snapshot) => set({ ...snapshot }),
   clearFilterDimension: (dimension) =>
@@ -967,6 +977,7 @@ export const viewStorePersistOptions = (name: string) => ({
     propertyFilters: state.propertyFilters,
     advancedFilter: state.advancedFilter,
     agentRunningFilter: state.agentRunningFilter,
+    unreadFilter: state.unreadFilter,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,
     sortDirections: state.sortDirections,
@@ -1129,6 +1140,9 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
     agentRunningFilter: p.agentRunningFilter === undefined
       ? current.agentRunningFilter
       : p.agentRunningFilter === true,
+    unreadFilter: p.unreadFilter === undefined
+      ? current.unreadFilter
+      : p.unreadFilter === true,
     negatedFilters: Array.isArray(p.negatedFilters)
       ? [...new Set(p.negatedFilters.filter((dimension): dimension is NegatableFilterDimension =>
           (NEGATABLE_FILTER_DIMENSIONS as readonly unknown[]).includes(dimension),

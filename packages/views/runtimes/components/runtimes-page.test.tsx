@@ -116,11 +116,13 @@ function renderPage({
   runtimes = [makeRuntime()],
   connection = qoder(),
   desktop = false,
+  cloudRuntimeEnabled = false,
 }: {
   /** `null` leaves the runtime list unseeded, so the page renders loading. */
   runtimes?: AgentRuntime[] | null;
   connection?: QoderConnection;
   desktop?: boolean;
+  cloudRuntimeEnabled?: boolean;
 } = {}) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -138,6 +140,7 @@ function renderPage({
     <QueryClientProvider client={qc}>
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <RuntimesPage
+          cloudRuntimeEnabled={cloudRuntimeEnabled}
           {...(desktop
             ? {
                 localDaemonId: "daemon-1",
@@ -232,15 +235,46 @@ describe("RuntimesPage", () => {
     expect(screen.getByRole("menuitemradio", { name: /Offline/ })).toHaveTextContent("1");
   });
 
-  it("offers the desktop download on web when no machine is connected", () => {
+  it("introduces runtimes on web when no machine is connected", async () => {
+    const user = userEvent.setup();
     renderPage({ runtimes: [] });
 
-    expect(screen.getByText("Run on this computer")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Download desktop/ })).toHaveAttribute(
+    const intro = screen.getByRole("region", {
+      name: "Give your agents a computer to work on",
+    });
+    expect(within(intro).getByRole("link", { name: /Download desktop/ })).toHaveAttribute(
       "href",
       DOWNLOAD_PAGE_URL,
     );
-    expect(screen.getByText("Add another machine or server")).toBeInTheDocument();
+    expect(screen.queryByText("Machines")).not.toBeInTheDocument();
+    expect(within(intro).getAllByRole("button", { name: /^Go to slide/ })).toHaveLength(2);
+
+    await user.click(within(intro).getByRole("button", { name: "Add runtime" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByText("Other machine or server")).toBeInTheDocument();
+    expect(within(menu).getByText("Qoder Cloud Agents")).toBeInTheDocument();
+  });
+
+  it("keeps cloud promotion hidden even when cloud runtimes are enabled", () => {
+    renderPage({ runtimes: [], cloudRuntimeEnabled: true });
+
+    const intro = screen.getByRole("region", {
+      name: "Give your agents a computer to work on",
+    });
+    expect(within(intro).getAllByRole("button", { name: /^Go to slide/ })).toHaveLength(2);
+    expect(within(intro).queryByText("Or use a cloud node")).not.toBeInTheDocument();
+  });
+
+  it("keeps the list when only a cloud service is connected", () => {
+    renderPage({
+      runtimes: [],
+      connection: qoder({ configured: true, enabled: true, status: "online" }),
+    });
+
+    expect(screen.getByText("Machines")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Give your agents a computer to work on" }),
+    ).not.toBeInTheDocument();
   });
 
   it("retains host usage and plan quota in the machine table beside Qoder", () => {

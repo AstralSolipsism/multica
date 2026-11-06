@@ -1,0 +1,113 @@
+---
+title: 快速上手
+description: 連接一臺電腦，創建你的第一個智能體，並讓它完成第一個任務。
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Step, Steps } from "fumadocs-ui/components/steps";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+<Callout type="info">
+智能體執行前，運行它的電腦上需要有至少一款已安裝並登錄的[支持的 AI 編程工具](/providers)，例如 Claude Code、Codex 或 Cursor。Multica 不自帶這些工具。
+</Callout>
+
+<Steps>
+<Step>
+
+## 登錄，進入工作區 [#1-登錄進入工作區]
+
+用 Web（[multica.outlune.com](https://multica.outlune.com)）或 [Multica Desktop](https://multica.outlune.com/downloads/desktop/) 登錄，支持郵箱驗證碼和 Google。用 Desktop 登錄的話，下一步可以自動連接這臺電腦；用 Web 則要在下一步通過命令行連接。
+
+</Step>
+<Step>
+
+## 連接一臺電腦 [#2-連接一臺電腦]
+
+智能體在你連接的電腦上執行工作。打開側邊欄 **AI 團隊** 下的 **運行時**：
+
+- **用 Desktop**：Desktop 會自動把這臺電腦註冊爲運行時，並檢測已安裝的 AI 編程工具。剛安裝的工具，點"刷新"重新檢測。
+- **用 Web，或需要添加另一臺電腦**：點右上角的 **添加**，選擇 **其他機器或服務器**，在目標電腦的終端裏運行彈窗給出的兩條命令：
+
+<Tabs groupId="os" persist items={["macOS / Linux", "Windows"]}>
+<Tab value="macOS / Linux">
+
+```bash
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
+multica setup
+```
+
+</Tab>
+<Tab value="Windows">
+
+從內部發布源 `https://multica.outlune.com/downloads/cli/v<version>/` 下載 `multica-cli-<version>-windows-<arch>.zip`，版本號見 `https://multica.outlune.com/downloads/latest.json`。解壓出 `multica.exe` 並放入 `PATH`。
+
+```powershell
+multica setup
+```
+
+</Tab>
+</Tabs>
+
+`multica setup` 會打開瀏覽器完成登錄，然後讓守護進程在後臺運行。守護進程上線後，彈窗通常在一分鐘內檢測到這臺電腦。
+
+**成功標誌**：運行時列表裏出現一臺在線的電腦。
+
+![Add a computer 彈窗：兩條命令與等待檢測提示](/images/docs/quickstart-add-computer.webp)
+
+<Callout type="info">
+自託管實例的連接命令略有不同，見[自託管快速上手](/self-host-quickstart)。
+</Callout>
+
+</Step>
+<Step>
+
+## 創建一個智能體 [#3-創建一個智能體]
+
+打開側邊欄 **AI 團隊** 下的 **智能體**，點 **新建智能體**。先選擇剛連接的電腦上的一款 AI 編程工具，再填名稱，點 **創建智能體**。必填的只有運行時和名稱。
+
+不想從頭寫配置，可以在配置頁點 **讓 AI 幫我寫**，由 Agent Builder 提問並補全；這需要所選運行時在線。其餘配置可以之後完善，詳見[創建和配置智能體](/agents-create)。
+
+**成功標誌**：智能體列表中出現你的智能體，並顯示爲在線。
+
+</Step>
+<Step>
+
+## 把第一個任務交給它 [#4-把第一個任務交給它]
+
+點側邊欄頂部的 **新建任務**（或按快捷鍵 `C`）。在默認的智能體模式下：
+
+1. 在 **創建者** 中選擇剛創建的智能體；
+2. 用一兩句話描述要做的事，例如"介紹一下這個工作區可以怎麼用"；
+3. 提交。Multica 會創建任務、把智能體設爲負責人並立即開始執行。
+
+![新建任務彈窗的智能體模式：Created by 已選中 Multica Assistant](/images/docs/quickstart-new-issue.webp)
+
+</Step>
+<Step>
+
+## 查看進度和結果 [#5-查看進度和結果]
+
+提交後打開這條任務：執行日誌顯示運行狀態，智能體的進展和回覆出現在時間線中。
+
+**成功標誌**：執行日誌狀態變爲"已完成"，時間線中出現智能體的回覆。需要查看完整過程時，點"查看記錄"。
+
+![任務中智能體的回覆與已完成的執行日誌](/images/docs/quickstart-run-result.webp)
+
+</Step>
+</Steps>
+
+## 常見問題
+
+| 現象 | 先檢查什麼 |
+|---|---|
+| 沒有找到運行時 | 確認 AI 編程工具已經安裝並能在終端中運行。Desktop 點"刷新"；CLI 方式重新運行 `multica setup`。 |
+| 運行時顯示離線 | Desktop 保持打開；CLI 方式運行 `multica daemon status`，未啓動時運行 `multica daemon start`。 |
+| 任務一直排隊 | 確認智能體使用的運行時在線。運行時達到併發上限時，新運行會繼續排隊。 |
+
+更多情況見[故障排查](/troubleshooting)。
+
+## 接下來
+
+- [核心概念](/concepts) — 三分鐘認識 Multica 的全部核心對象。
+- [Multica 的工作方式](/how-multica-works) — 理解任務、智能體、運行時和每次執行之間的關係。
+- [讓智能體開始工作](/triggering-agents) — 除了分配，還可以用 @提及、對話和自動化讓智能體開始工作。
