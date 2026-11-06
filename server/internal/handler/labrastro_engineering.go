@@ -601,8 +601,19 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 		writeEngineeringError(w, err)
 		return
 	}
+	// A section revision replacing an open candidate merges into that candidate's
+	// content so its edits to other sections survive; the stored diff stays against adopted.
+	mergeBase := old.ContentMarkdown
+	if req.Section != nil && replaces.Valid {
+		replaced, err := s.revision(r.Context(), replaces)
+		if err != nil {
+			writeEngineeringError(w, err)
+			return
+		}
+		mergeBase = replaced.ContentMarkdown
+	}
 	if req.Section != nil {
-		req.Content, err = engineering.MergeSection(req.Chapter, old.ContentMarkdown, *req.Section, req.Content, req.DeleteSection)
+		req.Content, err = engineering.MergeSection(req.Chapter, mergeBase, *req.Section, req.Content, req.DeleteSection)
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
