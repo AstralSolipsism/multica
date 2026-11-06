@@ -1,6 +1,6 @@
 # v0.8.0 / v0.8.1 分阶段同步记录
 
-最新状态见本文末尾 Stage 4（OL-1255）；下列 Stage 2 记录保留当时交接状态。
+最新状态见本文末尾 Stage 5（OL-1252，收口）；下列 Stage 2 记录保留当时交接状态。
 
 ## Stage 2 — OL-1250
 
@@ -226,3 +226,57 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 - 文档：繁中 PAT 示例的 `/api/me`、`/api/issues` 改为 `https://multica.outlune.com`；文档分发守卫新增上游 API endpoint 检查，覆盖多行 Bearer 示例和本地化页面。上传台账更正为默认 100 MiB、media 1 GiB，1 MiB 是 multipart 落盘阈值。
 
 本轮增量验证：`go test -p 2 ./internal/daemon/... ./internal/imagemetadata ./internal/branding` 的 12 个包通过（Git 2.47.3）；图片元数据包 `-race` 通过；私有 UTF-8 PostgreSQL 上 `go test ./internal/handler -run 'TestUploadFile|TestParseUploadForm' -count=1 -v` 通过，新增 2 MiB JPEG 用例同时验证尺寸、流式调用及存储字节与原文件完全相同。`pnpm test:brand` 的 12 项脚本测试和 17 项品牌测试、gofmt 守卫及自测、`git diff --check` 均通过。本轮未重跑前后端全量；上述首轮全量结果和 4 项宿主限制仍单独保留，Stage 5 的 E2E、原生打包与双审安排不变。
+
+## Stage 5 — OL-1252：全量门禁、保留 E2E、记录归档与 PR 收口
+
+本阶段不引入产品改动：`server/migrations` 自 Stage 4 末次验证（`8183cb4e4`）以来零差异，Stage 4 的 736 条迁移台账与 3,076 项 Schema 一致性证明继续有效，并在本阶段环境原样复验。HEAD 起点 `d07ccad86e5fed9df69a581031391103c55a5055`，含 Stage 3 终版修复 `b19c59f10436c3ead3a7f7acd7080f5546770fb3`（前端审阅修复）与 DAG 选择操作响应性修复；两处两父合并（M1 `537956e4c`、M2 `ed6c70ab5`）与 #9914/#9906 cherry-pick 均未被改写。
+
+### Stage 3 终版补充
+
+Stage 3 交接时前端 core 套件为 217 文件通过、44 失败（占位文件缺失所致）。`2623fc06e` 恢复共享接口后，`b19c59f10` 修复审阅发现（视图序列化、DAG keys、runtime/lark 类型），`d07ccad86` 修复 DAG 选择操作响应性，全部保留 E2E 相关 spec 转绿。最终 core 全套 278 文件 / 3,677 测试通过（见 Stage 4 验证表明细），Stage 2 记录的 44 项失败全部消除。
+
+### 全量门禁复核
+
+环境：`GOTOOLCHAIN=go1.27.3`（编译输出与 Stage 4 一致）、Node 24.21.0、pnpm 10.28.2、宿主 Git 2.39.5 + 任务内编译 Git 2.47.3（execenv 复验用）、任务私有 PostgreSQL 15.19（trust 认证、UTF-8）。Docker 不可用，全部数据库由独立临时实例提供。
+
+| 检查 | 结果 |
+| --- | --- |
+| `bash scripts/check-gofmt.test.sh` | 通过 |
+| `GOTOOLCHAIN=go1.27.3 bash scripts/check-gofmt.sh` | 通过；11 项豁免与 v0.8.1 字节比对不变 |
+| `GOTOOLCHAIN=go1.27.3 go -C server test ./internal/branding/...` | 通过 |
+| `GOTOOLCHAIN=go1.27.3 go -C server test ./internal/migrations -run '^TestLabrastroWakeupCaptureMigrationInventory$' -count=1` | 通过 |
+| 连续两次 `make sqlc` | 零差异 |
+| `node scripts/check-docs-distribution.mjs` | 通过 |
+| `pnpm typecheck` | 9 任务通过 |
+| `pnpm lint` | 6 任务通过，0 error |
+| 根 `VITEST_MAX_WORKERS=4 pnpm test --env-mode=loose --concurrency=1` | 7 任务通过：core 278/3,677、UI 12/454、Docs 6/30、views 694/9,451、Desktop 85/1,001、Web 43/375，另 ESLint 4 项与桌面脚本测试 |
+| `pnpm test:brand` | 12 项脚本测试 + 17 项语言品牌测试通过 |
+| `GOTOOLCHAIN=go1.27.3 go -C server test -p 1 -timeout 25m ./...`（私有 PG，`DATABASE_URL` 直连） | 87 包通过；仅下述宿主限制组失败 |
+| `pkg/agent` 仅排除 4 项 pidfd 测试后 `-p 1 -parallel 2 -count=3` | 三轮全部通过（~56s/轮） |
+| `internal/daemon/execenv`（PATH 前置任务内 Git 2.47.3） | 通过（12.9s） |
+
+宿主限制与 Stage 2/4 记录一致，未修改任何测试或生产保护来绕过：
+
+- Linux `5.15.0-157-generic` 无 pidfd 进程组信号能力（`flags=4` 返回 `EINVAL`），`TestCaptureCursorBackgroundLateDescendant`、`TestCaptureCursorBackgroundProcessReapsLeaderExitedGroup`、`TestCaptureCursorBackgroundSurvivesRootExitDuringCapture`、`TestCursorBackgroundLifecycle` 4 项在本宿主必然失败，需具备该能力的宿主复核。
+- 宿主 Git 2.39.5 缺少 `merge-tree --merge-base`，`TestPrepareLocalWorktree*` 7 项失败；PATH 前置任务内编译的 Git 2.47.3 后该包全绿。
+- 首轮全量中 `TestCodexExecuteLegacyFirstTurnMessageSatisfiesProgress`、`TestCodexExecuteSemanticInactivityAllowsContinuousMessages` 因同机并行负载超时（80ms 语义不活跃预算）；单独复跑 3/3 通过，全量复跑中未再出现。
+
+### 迁移台账与 Schema 一致性复验
+
+复用 Stage 4 比对 SQL（`upstream-sync-20261106-stage4-schema.sql`）：
+
+- 新装（空库 → 全部 736 条）与升级（第一父 `2623fc06e` 的 730 条 → 补跑 611–616 共 6 条）两条路径各产出 3,076 项规范化记录，逐字节一致。
+- 结构 SHA-256 `de69c3256637eeb1400579ef70eb42be19c6cbd867d5e8eddff45e6356f6ce5e`，与 Stage 4 记录一致（迁移零变更的直接验证）。
+- ledger 内容指纹（`md5(string_agg(version, ',' ORDER BY version))`）两库同为 `631c68867cc1b8d86f89b521c1c5902b`；两库 `pg_index` 中 INVALID 索引均为 0。
+- Fork 保留迁移 `467_task_dependency_admission`、`467_labrastro_message_sources`、`9009_labrastro_wakeup_conversation_provenance`、`9028_labrastro_wakeup_skip_handed_to_agent`、`9054_labrastro_default_workflow_keep_in_use_statuses` 在两库 ledger 中均存在且只执行一次；上游 611–616 六组保持 `NNN_name` 命名。
+- 外部路由清单 `server/cmd/server/testdata/labrastro-external-routes.tsv` 为 593 行 60 allow / 457 deny / 76 separate-auth，与 Stage 4 审计表一致。
+
+### 隔离保留 E2E 实测
+
+按 `docs/engineering/ci-gates.md` 以任务私有 PostgreSQL 15.19（端口 15432、`labrastro_e2e` 库）替代 CI 的 PostgreSQL 17 service，一次性脚本 `GOTOOLCHAIN=go1.27.3 bash scripts/test-retained-e2e.sh` 完整执行：真实 Go server 构建 + 全量迁移 + 生产 Web 构建 + Playwright 单 worker 无重试。**24/24 通过**（onboarding-smoke 11、issue-dependencies 5、dag-task-lines 2、comments 4、含退役路由 404 与内网下载页断言），HTML 报告留存于 `test-results/retained-e2e/report/`。首轮因 Playwright 缺少本仓库锁定的 chromium_headless_shell-1208 报 executable 缺失，`pnpm exec playwright install chromium` 后复跑全绿，属本机缓存问题非产品问题。
+
+关键界面证据（一次性截图脚本 `e2e/shots/stage5-shots.spec.ts` + `playwright.stage5-shots.config.ts`，同一后端/Web 实例，6/6 通过）：`1.0` 双层侧栏 Issues 页、DAG 任务线总览（真实 blocked-by 边）、智能体文件夹树 + thinking level 属性栏（Atlas · high）、技能文件夹树（Engineering 嵌套）、技能 v0.8.1 版本历史（v1 · Current · Created · Stage5 Shots）、Runtime 配额与并发上限页。截图随 PR 提交附件。
+
+### PR 收口
+
+正式非草稿 PR 向 `AstralSolipsism/multica` 的 `main` 发起（显式 `--repo AstralSolipsism/multica --base main --head sync/v0.8.0-ol-1234`），标题 `OL-1234: sync upstream v0.8.0 and v0.8.1 (OL-1252)`，最终 Head SHA 与 CI 聚合结果见 PR 正文与 OL-1252 评论；跨家族双审由审阅专家按顺序执行（首审 Claude、二审 GLM，涉及数据库迁移与安全边界须两轮通过后才合并，合并操作留给审阅方）。
