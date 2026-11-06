@@ -163,7 +163,9 @@ another title or anchor contains the query. Replacements include descendants and
 must preserve the existing heading depth. Ambiguous matches fail; use the unique
 anchor from the index. Deletion requires no content file and fails if the section
 does not exist.
-The server merges against the specified adopted version, checks the resulting
+The server merges into the specified adopted version, or—when `--replaces` is
+given—into the replaced candidate's content so its other section edits are kept;
+the Diff is always computed against the adopted version. It checks the resulting
 64 KiB chapter limit, and produces the same reviewable candidate and Diff as a
 whole-chapter proposal. `--replaces` remains required for an existing candidate.
 
