@@ -453,3 +453,15 @@ It runs entirely through your authenticated CLI and grants no access of its own 
 - [Authentication and tokens](/auth-tokens) — creating, renewing, and revoking PATs.
 - [Troubleshooting](/troubleshooting) — diagnosing command errors and runs that never start.
 - [Create and configure an agent](/agents-create) — the full semantics of every `agent create` field.
+
+## Managed evaluation inside a task
+
+An active agent task can ask the platform's decision service to score business input:
+
+```bash
+multica jev evaluate --input-file evaluation.json --output json
+```
+
+Use `--input-file -` for stdin. The JSON contains `state` (an object or string) and `questions`, a map of named questions with `type: "score"`, `instructions` and an ordered array of `criteria`. Scores run from zero to the last criterion's index. The daemon manages sources, models and credentials; the caller supplies no infrastructure configuration. The CLI and daemon must both support this command.
+
+Successful JSON includes `ok: true`, `answers`, `latency_ms` and `daemon_version`. Unavailable evaluations exit nonzero and are not passing scores. All supplied text goes to the daemon's configured decision providers.
