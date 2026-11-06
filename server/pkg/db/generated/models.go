@@ -1644,6 +1644,8 @@ type ProjectBaselineDoc struct {
 	CandidateRevisionID pgtype.UUID        `json:"candidate_revision_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	Title               string             `json:"title"`
+	Position            int32              `json:"position"`
 }
 
 type ProjectBaselineRevision struct {

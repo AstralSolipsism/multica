@@ -56,8 +56,8 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 		lines = append(lines, "推进方针："+mode)
 	}
 	var adopted, candidates []string
-	for _, chapter := range engineering.Chapters {
-		doc := baselineDoc(docs, chapter)
+	for _, doc := range orderedBaselineDocs(docs) {
+		chapter := doc.Chapter
 		if doc.CandidateRevisionID.Valid {
 			candidates = append(candidates, chapter)
 		}
@@ -78,11 +78,15 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 				titles = append(titles, section.Title)
 			}
 		}
-		outline := engineeringContextText(strings.Join(titles, "；"), 240)
+		outline := engineeringContextText(strings.Join(titles, "；"), 180)
 		if outline == "" {
 			outline = "无小节标题"
 		}
-		adopted = append(adopted, fmt.Sprintf("- %s v%d：%s", chapter, revision.RevisionNumber, outline))
+		label := chapter
+		if doc.Title != "" {
+			label += "（" + engineeringContextText(doc.Title, 60) + "）"
+		}
+		adopted = append(adopted, fmt.Sprintf("- %s v%d：%s", label, revision.RevisionNumber, outline))
 	}
 	if len(adopted) == 0 {
 		lines = append(lines, "当前尚未建立生效基线")
@@ -94,7 +98,8 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 		lines = append(lines, "待审候选（candidate，尚未生效）："+strings.Join(candidates, "、"))
 	}
 	lines = append(lines,
-		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。在规划、拆单、编码或审阅前，请运行 `multica project baseline get %s` 查阅完整项目基线与契约。", uuidToString(projectID), uuidToString(projectID)),
+		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。完整基线与契约：`multica project baseline get %s`。", uuidToString(projectID), uuidToString(projectID)),
+		fmt.Sprintf("规划、拆单、编码或审阅前，先用 `multica project baseline get %s --index` 浏览目录，再用 `multica project baseline get %s --section \"<小节名>\"` 按需查阅小节与关联概念。", uuidToString(projectID), uuidToString(projectID)),
 		"如已绑定 strixnova-* 系列工程 skill，请按对应 skill 规程调用相关能力。")
 	summary := strings.Join(lines, "\n")
 	if baseDescription == "" {
@@ -114,6 +119,7 @@ func engineeringContextText(value string, limit int) string {
 
 func (h *Handler) RegisterLabrastroEngineeringRoutes(r chi.Router) {
 	r.Get("/api/projects/{id}/engineering", h.LabrastroGetEngineering)
+	r.Get("/api/projects/{id}/baseline", h.LabrastroReadBaseline)
 	r.With(RequireHumanActor).Patch("/api/projects/{id}/engineering", h.LabrastroPatchEngineering)
 	r.Post("/api/projects/{id}/baseline/candidates", h.LabrastroProposeBaseline)
 	r.Post("/api/projects/{id}/baseline/decisions", h.LabrastroDecideBaseline)
@@ -137,6 +143,9 @@ func writeEngineeringError(w http.ResponseWriter, err error) {
 		writeErrorCode(w, e.status, e.code, e.message)
 	case errors.As(err, &invalid):
 		status := 422
+		if invalid.Code == "baseline_section_not_found" {
+			status = 404
+		}
 		if invalid.Code == "invalid_request" {
 			status = 400
 		}
@@ -314,6 +323,8 @@ func baselineRevision(r db.ProjectBaselineRevision) *baselineRevisionResponse {
 
 type baselineChapterResponse struct {
 	Chapter   string                    `json:"chapter"`
+	Title     string                    `json:"title"`
+	Position  int32                     `json:"position"`
 	Adopted   *baselineRevisionResponse `json:"adopted"`
 	Candidate *baselineRevisionResponse `json:"candidate"`
 }
@@ -324,8 +335,8 @@ func (s *engineeringState) chapters(ctx context.Context) ([]baselineChapterRespo
 		return nil, err
 	}
 	chapters := make([]baselineChapterResponse, 0, 4)
-	for _, chapter := range engineering.Chapters {
-		d := baselineDoc(docs, chapter)
+	for _, d := range orderedBaselineDocs(docs) {
+		chapter := d.Chapter
 		adopted, err := s.revision(ctx, d.AdoptedRevisionID)
 		if err != nil {
 			return nil, err
@@ -334,7 +345,7 @@ func (s *engineeringState) chapters(ctx context.Context) ([]baselineChapterRespo
 		if err != nil {
 			return nil, err
 		}
-		chapters = append(chapters, baselineChapterResponse{chapter, baselineRevision(adopted), baselineRevision(candidate)})
+		chapters = append(chapters, baselineChapterResponse{chapter, d.Title, d.Position, baselineRevision(adopted), baselineRevision(candidate)})
 	}
 	return chapters, nil
 }
@@ -498,12 +509,15 @@ func (h *Handler) baselineChanged(s *engineeringState, a baselineActor, chapter 
 }
 
 type proposeBaselineRequest struct {
-	Chapter  string  `json:"chapter"`
-	Content  string  `json:"content_markdown"`
-	Summary  string  `json:"change_summary"`
-	Base     *string `json:"base_revision_id"`
-	Replaces *string `json:"replaces_candidate_id"`
-	Source   *string `json:"source_issue_id"`
+	ChapterTitle  *string `json:"chapter_title"`
+	Section       *string `json:"section"`
+	DeleteSection bool    `json:"delete_section"`
+	Chapter       string  `json:"chapter"`
+	Content       string  `json:"content_markdown"`
+	Summary       string  `json:"change_summary"`
+	Base          *string `json:"base_revision_id"`
+	Replaces      *string `json:"replaces_candidate_id"`
+	Source        *string `json:"source_issue_id"`
 }
 
 func optionalBaselineUUID(w http.ResponseWriter, s *string, field string) (pgtype.UUID, bool) {
@@ -524,6 +538,12 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 	}
 	if _, err := engineering.Parse(req.Chapter, req.Content); err != nil {
 		writeEngineeringError(w, err)
+		return
+	}
+	if req.DeleteSection && (req.Section == nil || req.Content != "") ||
+		req.Section != nil && (strings.TrimSpace(*req.Section) == "" || strings.ContainsAny(*req.Section, "\r\n\x00")) ||
+		req.ChapterTitle != nil && (utf8.RuneCountInString(*req.ChapterTitle) > 200 || strings.ContainsAny(*req.ChapterTitle, "\r\n\x00")) {
+		writeErrorCode(w, 400, "invalid_request", "invalid section or chapter title")
 		return
 	}
 	if utf8.RuneCountInString(req.Summary) > 500 {
@@ -581,6 +601,24 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 		writeEngineeringError(w, err)
 		return
 	}
+	// A section revision replacing an open candidate merges into that candidate's
+	// content so its edits to other sections survive; the stored diff stays against adopted.
+	mergeBase := old.ContentMarkdown
+	if req.Section != nil && replaces.Valid {
+		replaced, err := s.revision(r.Context(), replaces)
+		if err != nil {
+			writeEngineeringError(w, err)
+			return
+		}
+		mergeBase = replaced.ContentMarkdown
+	}
+	if req.Section != nil {
+		req.Content, err = engineering.MergeSection(req.Chapter, mergeBase, *req.Section, req.Content, req.DeleteSection)
+		if err != nil {
+			writeEngineeringError(w, err)
+			return
+		}
+	}
 	diff, err := engineering.Compute(req.Chapter, old.ContentMarkdown, req.Content, old.RevisionNumber)
 	if err != nil {
 		writeEngineeringError(w, err)
@@ -598,6 +636,12 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 	if err = s.updateDoc(r.Context(), req.Chapter, base, candidate.ID); err != nil {
 		writeEngineeringError(w, err)
 		return
+	}
+	if req.ChapterTitle != nil {
+		if err = s.q.LabrastroSetBaselineTitle(r.Context(), db.LabrastroSetBaselineTitleParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: req.Chapter, Title: strings.TrimSpace(*req.ChapterTitle)}); err != nil {
+			writeEngineeringError(w, err)
+			return
+		}
 	}
 	if err = s.tx.Commit(r.Context()); err != nil {
 		writeEngineeringError(w, err)
@@ -629,8 +673,8 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 	if !decodeEngineering(w, r, &req) {
 		return
 	}
-	if req.Action != "adopt" && req.Action != "reject" || len(req.Revisions) < 1 || len(req.Revisions) > 4 {
-		writeErrorCode(w, 400, "invalid_request", "specify adopt or reject and one to four revisions")
+	if req.Action != "adopt" && req.Action != "reject" || len(req.Revisions) < 1 || len(req.Revisions) > 100 {
+		writeErrorCode(w, 400, "invalid_request", "specify adopt or reject and one to 100 revisions")
 		return
 	}
 	ids, expected := make([]pgtype.UUID, len(req.Revisions)), make([]pgtype.UUID, len(req.Revisions))

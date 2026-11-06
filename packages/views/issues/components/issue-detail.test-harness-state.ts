@@ -8,6 +8,7 @@
  */
 import { vi, type Mock } from "vitest";
 import type { Issue, TimelineEntry } from "@multica/core/types";
+import type { CurrentIssueRenderContextValue } from "../current-issue-render-context";
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
@@ -22,6 +23,7 @@ export const contentEditorMounts = { count: 0 };
 // Every ReadonlyContent render, by content. A comment card renders its body
 // through it, so this counts card renders without reaching into the card.
 export const readonlyContentRenders: string[] = [];
+export const renderedIssueContext: { current: CurrentIssueRenderContextValue | null } = { current: null };
 export const descriptionSelectionAction: {
   current: { label: string; onSelect: () => void } | undefined;
 } = { current: undefined };

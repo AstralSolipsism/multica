@@ -79,3 +79,7 @@ DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND 
 WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
 docs AS (DELETE FROM project_baseline_doc WHERE project_baseline_doc.workspace_id = $1)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1;
+
+-- name: LabrastroSetBaselineTitle :exec
+UPDATE project_baseline_doc SET title = $4, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3;

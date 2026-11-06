@@ -1,24 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, History as FileClock, LoaderCircle, Search, X, XCircle } from "@multica/ui/icons";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, History as FileClock, LoaderCircle, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode, OpenIssue } from "@multica/core/api";
+import { matchLocale } from "@multica/core/i18n";
 import { paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
 import { AppLink, useNavigation } from "../../navigation";
 import { useStatusLabel } from "../../issues/utils/status-label";
-import { useFormatRelativeDate } from "./labels";
+import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
+  baselineModuleSlug,
+  canEditBaselineSection,
+  isBaselineModuleSlug,
   latestBaselineSectionRevision,
   mergeBaselineSections,
+  orderedBaselineChapters,
+  parseBaselineChapter,
   plainBaselineText,
   scanBaselineReferences,
   type BaselineDisplayChapter,
@@ -32,10 +40,26 @@ import {
   type BaselineLens,
   type BaselineSectionRelations,
 } from "./engineering-baseline-markdown";
-import { ENGINEERING_CHAPTERS, type EngineeringRoadmap } from "./engineering-utils";
+import type { EngineeringRoadmap } from "./engineering-utils";
 
 type DecisionAction = "adopt" | "reject";
 type ReviewMode = "base" | "compare";
+type BaselineSaveError = "save" | "decision";
+
+const BASELINE_MODULE_PREFIX = "module:";
+
+export interface BaselineSaveDraft {
+  chapter: BaselineChapter;
+  contentMarkdown: string;
+  changeSummary: string;
+  section?: string;
+  chapterTitle?: string;
+}
+
+export interface BaselineSaveResult {
+  revision: BaselineRevision | null;
+  error?: BaselineSaveError;
+}
 
 interface EngineeringBaselineProps {
   workspaceSlug: string;
@@ -54,6 +78,8 @@ interface EngineeringBaselineProps {
   decisionError: boolean;
   decisionResult: BaselineDecision | null;
   onDecision: (action: DecisionAction, revision: BaselineRevision) => void;
+  savePending: boolean;
+  onSave: (draft: BaselineSaveDraft, adopt: boolean) => Promise<BaselineSaveResult>;
   history: BaselineHistory | null | undefined;
   historyLoading: boolean;
   historyError: boolean;
@@ -61,6 +87,7 @@ interface EngineeringBaselineProps {
   chapterRevisions: Partial<Record<BaselineChapter, readonly BaselineRevision[]>>;
   roadmap: EngineeringRoadmap;
   reviewRequested: boolean;
+  lens: BaselineLens;
   onOpenStage: (stage: number) => void;
 }
 
@@ -88,6 +115,150 @@ function Highlight({ text, query }: { text: string; query: string }) {
   const index = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
   if (index < 0) return <>{text}</>;
   return <>{text.slice(0, index)}<mark className="rounded-sm bg-accent px-0.5 text-accent-foreground">{text.slice(index, index + query.length)}</mark>{text.slice(index + query.length)}</>;
+}
+
+function BaselineEditorForm({ idPrefix, content, summary, pending, canDecide, error, section, onContentChange, onSummaryChange, onCancel, onSave }: {
+  idPrefix: string;
+  content: string;
+  summary: string;
+  pending: boolean;
+  canDecide: boolean;
+  error: BaselineSaveError | null;
+  section?: boolean;
+  onContentChange: (value: string) => void;
+  onSummaryChange: (value: string) => void;
+  onCancel: () => void;
+  onSave: (adopt: boolean) => Promise<void>;
+}) {
+  const { t } = useT("engineering");
+  const incomplete = !content.trim() || !summary.trim();
+  return (
+    <form className="mt-4 space-y-4 rounded-md border p-4" data-baseline-editor data-baseline-section-editor={section ? "" : undefined} onSubmit={(event) => { event.preventDefault(); void onSave(false); }}>
+      {error ? <Alert variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => error === "decision" ? $.errors.decisionTitle : $.errors.baselineSaveTitle)}</AlertTitle><AlertDescription>{t(($) => error === "decision" ? $.errors.decision : $.errors.baselineSave)}</AlertDescription></Alert> : null}
+      <div className="space-y-2">
+        <label className="text-caption font-medium" htmlFor={`${idPrefix}-markdown`}>{t(($) => $.baseline.editorMarkdown)}</label>
+        <Textarea id={`${idPrefix}-markdown`} value={content} onChange={(event) => onContentChange(event.target.value)} disabled={pending} required className="min-h-64 font-mono text-caption" />
+      </div>
+      <div className="space-y-2">
+        <label className="text-caption font-medium" htmlFor={`${idPrefix}-summary`}>{t(($) => $.baseline.editorSummary)}</label>
+        <Input id={`${idPrefix}-summary`} value={summary} onChange={(event) => onSummaryChange(event.target.value)} placeholder={t(($) => $.baseline.editorSummaryPlaceholder)} disabled={pending} required />
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>{t(($) => $.actions.cancel)}</Button>
+        {canDecide ? (
+          <>
+            <Button type="button" variant="outline" disabled={pending || incomplete} onClick={() => void onSave(false)}>{t(($) => $.actions.submitForReview)}</Button>
+            <Button type="button" disabled={pending || incomplete} aria-busy={pending} onClick={() => void onSave(true)}>
+              {pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}
+            </Button>
+          </>
+        ) : (
+          <Button type="submit" disabled={pending || incomplete} aria-busy={pending}>
+            {pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.submitRevisionCandidate)}
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, onSave }: {
+  chapter: BaselineChapter | null;
+  chapters: readonly ChapterState[];
+  canDecide: boolean;
+  pending: boolean;
+  onClose: () => void;
+  onSave: (draft: BaselineSaveDraft, adopt: boolean) => Promise<BaselineSaveResult>;
+}) {
+  const { t, i18n } = useT("engineering");
+  const locale = matchLocale([i18n.resolvedLanguage ?? i18n.language]);
+  const isNew = chapter === null;
+  const state = chapters.find((item) => item.chapter === chapter);
+  const [title, setTitle] = useState(state?.title || chapter?.slice(7) || "");
+  const [slug, setSlug] = useState(chapter?.slice(7) ?? "");
+  const [slugCustomized, setSlugCustomized] = useState(!isNew);
+  const [content, setContent] = useState(state?.candidate?.contentMarkdown ?? state?.adopted?.contentMarkdown ?? "");
+  const [summary, setSummary] = useState("");
+  const [error, setError] = useState<BaselineSaveError | null>(null);
+  const normalizedSlug = slug.trim();
+  const invalidSlug = isNew && !isBaselineModuleSlug(normalizedSlug);
+  const duplicateSlug = isNew && chapters.some((item) => item.chapter === `module:${normalizedSlug}`);
+  const incomplete = !title.trim() || !summary.trim() || invalidSlug || duplicateSlug || (isNew && !content.trim());
+  const save = async (adopt: boolean) => {
+    if (incomplete || pending || (adopt && state?.candidate)) return;
+    setError(null);
+    try {
+      const result = await onSave({
+        chapter: chapter ?? `module:${normalizedSlug}`,
+        chapterTitle: title.trim(),
+        contentMarkdown: content,
+        changeSummary: summary.trim(),
+      }, adopt);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (!result.revision) {
+        setError("save");
+        return;
+      }
+      onClose();
+    } catch {
+      setError("save");
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
+      <DialogContent className="sm:max-w-2xl">
+        <form onSubmit={(event) => { event.preventDefault(); void save(false); }}>
+          <DialogHeader>
+            <DialogTitle>{t(($) => isNew ? $.baseline.createModule : $.baseline.renameModule)}</DialogTitle>
+            <DialogDescription>{t(($) => isNew ? $.baseline.createModuleDescription : $.baseline.renameModuleDescription)}</DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            {error ? <Alert variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => error === "decision" ? $.errors.decisionTitle : $.errors.baselineSaveTitle)}</AlertTitle><AlertDescription>{t(($) => error === "decision" ? $.errors.decision : $.errors.baselineSave)}</AlertDescription></Alert> : null}
+            <div className="space-y-2">
+              <label className="text-caption font-medium" htmlFor="baseline-module-title">{t(($) => $.baseline.moduleName)}</label>
+              <Input id="baseline-module-title" value={title} autoFocus disabled={pending} required onChange={(event) => {
+                const value = event.target.value;
+                setTitle(value);
+                if (!slugCustomized) setSlug(baselineModuleSlug(value, locale));
+              }} />
+            </div>
+            {isNew ? (
+              <div className="space-y-2">
+                <label className="text-caption font-medium" htmlFor="baseline-module-slug">{t(($) => $.baseline.moduleSlug)}</label>
+                <div className="flex items-center rounded-md border focus-within:ring-2 focus-within:ring-ring">
+                  <span className="pl-3 font-mono text-caption text-muted-foreground">{BASELINE_MODULE_PREFIX}</span>
+                  <Input id="baseline-module-slug" value={slug} disabled={pending} required aria-invalid={!!normalizedSlug && (invalidSlug || duplicateSlug)} aria-describedby={normalizedSlug && (invalidSlug || duplicateSlug) ? "baseline-module-slug-error" : undefined} placeholder={t(($) => $.baseline.moduleSlugPlaceholder)} className="border-0 focus-visible:ring-0" onChange={(event) => { setSlugCustomized(true); setSlug(event.target.value); }} />
+                </div>
+                {normalizedSlug && (invalidSlug || duplicateSlug) ? <p id="baseline-module-slug-error" className="text-caption text-destructive">{t(($) => duplicateSlug ? $.errors.moduleSlugDuplicate : $.errors.moduleSlug)}</p> : null}
+              </div>
+            ) : null}
+            {isNew ? (
+              <div className="space-y-2">
+                <label className="text-caption font-medium" htmlFor="baseline-module-content">{t(($) => $.baseline.editorMarkdown)}</label>
+                <Textarea id="baseline-module-content" value={content} disabled={pending} required className="min-h-48 font-mono text-caption" onChange={(event) => setContent(event.target.value)} />
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <label className="text-caption font-medium" htmlFor="baseline-module-summary">{t(($) => $.baseline.editorSummary)}</label>
+              <Input id="baseline-module-summary" value={summary} disabled={pending} required placeholder={t(($) => $.baseline.editorSummaryPlaceholder)} onChange={(event) => setSummary(event.target.value)} />
+            </div>
+          </div>
+          <DialogFooter className="mt-5">
+            <Button type="button" variant="outline" disabled={pending} onClick={onClose}>{t(($) => $.actions.cancel)}</Button>
+            {canDecide ? (
+              <>
+                <Button type="button" variant="outline" disabled={pending || incomplete} onClick={() => void save(false)}>{t(($) => $.actions.submitForReview)}</Button>
+                {state?.candidate ? null : <Button type="button" disabled={pending || incomplete} aria-busy={pending} onClick={() => void save(true)}>{pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.saveAndAdopt)}</Button>}
+              </>
+            ) : <Button type="submit" disabled={pending || incomplete} aria-busy={pending}>{pending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.submitRevisionCandidate)}</Button>}
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function OpenIssueGroup({ title, issues, workspaceId }: { title: string; issues: readonly OpenIssue[]; workspaceId: string }) {
@@ -170,19 +341,22 @@ function SectionRelations({ section, relations, lens, onConcept }: {
 }
 
 export function EngineeringBaseline(props: EngineeringBaselineProps) {
+  const chapterLabel = useEngineeringChapterLabel(props.chapters);
   const { t } = useT("engineering");
   const navigation = useNavigation();
   const { getActorName } = useActorName();
   const formatRelativeDate = useFormatRelativeDate();
   const articleRef = useRef<HTMLDivElement>(null);
-  const lensKey = `multica.engineering-baseline.lens.${props.projectId}`;
   const readKey = `multica.engineering-baseline.read.${props.projectId}`;
-  const [lensPreference, setLensPreference] = useState<BaselineLens | null>(() => {
-    const value = readStorage(lensKey);
-    return value === "manage" || value === "understand" ? value : null;
-  });
-  const lens = lensPreference ?? (props.reviewRequested ? "manage" : "understand");
+  const lens = props.lens;
   const [mode, setMode] = useState<ReviewMode>(props.reviewRequested ? "compare" : "base");
+  const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
+  const [editingSection, setEditingSection] = useState<{ chapter: BaselineChapter; key: string; query: string } | null>(null);
+  const [moduleEditor, setModuleEditor] = useState<{ chapter: BaselineChapter | null } | null>(null);
+  const moduleTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [draftContent, setDraftContent] = useState("");
+  const [changeSummary, setChangeSummary] = useState("");
+  const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
   const [query, setQuery] = useState("");
   const [readIds, setReadIds] = useState<readonly string[]>(() => {
     try {
@@ -200,19 +374,95 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     else if (!revision) setMode("base");
   }, [props.reviewRequested, revision]);
   useEffect(() => setBack(null), [lens]);
+  useEffect(() => setSaveError(null), [props.selectedChapter]);
+
+  const openModuleEditor = (chapter: BaselineChapter | null, trigger: HTMLButtonElement) => {
+    moduleTriggerRef.current = trigger;
+    setModuleEditor({ chapter });
+  };
+  const closeModuleEditor = () => {
+    setModuleEditor(null);
+    const trigger = moduleTriggerRef.current;
+    if (trigger) window.requestAnimationFrame(() => trigger.focus());
+  };
+  const openChapterEditor = (chapter: BaselineChapter) => {
+    const state = props.chapters.find((item) => item.chapter === chapter);
+    props.onChapterChange(chapter);
+    setDraftContent(state?.candidate?.contentMarkdown ?? state?.adopted?.contentMarkdown ?? "");
+    setChangeSummary("");
+    setSaveError(null);
+    setEditingSection(null);
+    setEditingChapter(chapter);
+  };
+  const openSectionEditor = (section: BaselineSection) => {
+    setDraftContent(section.markdown);
+    setChangeSummary("");
+    setSaveError(null);
+    setEditingChapter(null);
+    setEditingSection({ chapter: section.chapter, key: section.key, query: section.anchor });
+  };
+  const saveDraft = async (adopt: boolean) => {
+    const chapter = editingChapter ?? editingSection?.chapter;
+    if (!chapter || props.savePending || !draftContent.trim() || !changeSummary.trim()) return;
+    setSaveError(null);
+    try {
+      const result = await props.onSave({
+        chapter,
+        contentMarkdown: draftContent,
+        changeSummary: changeSummary.trim(),
+        ...(editingSection ? { section: editingSection.query } : {}),
+      }, adopt);
+      if (result.error) {
+        setSaveError(result.error);
+        return;
+      }
+      if (!result.revision) {
+        setSaveError("save");
+        return;
+      }
+      setMode("compare");
+      setEditingChapter(null);
+      setEditingSection(null);
+      setChangeSummary("");
+    } catch {
+      setSaveError("save");
+    }
+  };
+  const saveModule = async (draft: BaselineSaveDraft, adopt: boolean) => {
+    const result = await props.onSave(draft, adopt);
+    if (result.revision && !result.error) setMode("compare");
+    return result;
+  };
 
   const nodes = useMemo(() => [
     ...props.roadmap.stages.flatMap((stage) => stage.tasks),
     ...props.roadmap.outside,
   ], [props.roadmap]);
-  const displayChapters = useMemo<BaselineDisplayChapter[]>(() => ENGINEERING_CHAPTERS.map((chapter) => {
-    const adopted = props.chapters.find((item) => item.chapter === chapter)?.adopted?.contentMarkdown ?? "";
-    const chapterRevision = revision?.chapter === chapter ? revision : null;
-    return {
-      chapter,
-      sections: mergeBaselineSections(chapter, adopted, chapterRevision, mode === "compare" && !!chapterRevision),
-    };
-  }), [props.chapters, revision, mode]);
+  const displayChapters = useMemo<BaselineDisplayChapter[]>(() => {
+    const chapters = orderedBaselineChapters(props.chapters);
+    if (revision && !chapters.includes(revision.chapter)) chapters.push(revision.chapter);
+    return chapters.map((chapter) => {
+      const adopted = props.chapters.find((item) => item.chapter === chapter)?.adopted?.contentMarkdown ?? "";
+      const chapterRevision = revision?.chapter === chapter ? revision : null;
+      return {
+        chapter,
+        sections: mergeBaselineSections(chapter, adopted, chapterRevision, mode === "compare" && !!chapterRevision),
+      };
+    });
+  }, [props.chapters, revision, mode]);
+  const sectionEditTargets = useMemo(() => {
+    const targets = new Map<string, BaselineSection>();
+    for (const state of props.chapters) {
+      if (!state.adopted || state.candidate) continue;
+      const chapterRevision = revision?.chapter === state.chapter ? revision : null;
+      if (chapterRevision && chapterRevision.id !== state.adopted.id) continue;
+      const sections = parseBaselineChapter(state.chapter, state.adopted.contentMarkdown).sections;
+      for (const section of sections) {
+        if (canEditBaselineSection(section, sections)) targets.set(section.key, section);
+      }
+    }
+    return targets;
+  }, [props.chapters, revision]);
   const activeSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "removed"), [displayChapters]);
   const changedSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "same"), [displayChapters]);
   const referencesBySection = useMemo(() => new Map(activeSections.map((section) => [
@@ -315,11 +565,30 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const sourceIssue = revision?.sourceIssueId ? nodes.find((node) => node.id === revision.sourceIssueId) : undefined;
   const adoptedRevision = revision ? props.chapters.find((chapter) => chapter.chapter === revision.chapter)?.adopted : null;
   const changeCount = revision ? revision.anchorsDiff.added.length + revision.anchorsDiff.modified.length + revision.anchorsDiff.removed.length : 0;
+  const globalChapters = displayChapters.filter((chapter) => !chapter.chapter.startsWith("module:"));
+  const moduleChapters = displayChapters.filter((chapter) => chapter.chapter.startsWith("module:"));
+  const selectedChapterHasCandidate = props.chapters.some((chapter) => chapter.chapter === props.selectedChapter && chapter.candidate);
+  const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
+    <div key={chapter.chapter} className="mb-3">
+      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
+        props.onChapterChange(chapter.chapter);
+        document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      }}>{chapterLabel(chapter.chapter)}</button>
+      {chapter.sections.map((section) => (
+        <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
+          <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
+          {section.change !== "same" ? <span className="size-1.5 rounded-full bg-destructive" aria-label={t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)} /> : null}
+          {readIds.includes(section.key) && lens === "understand" ? <CheckCircle2 className="size-3 text-success" aria-label={t(($) => $.wiki.read)} /> : null}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <BaselineWikiProvider value={{
       lens,
       workspaceId: props.workspaceId,
+      chapters: props.chapters,
       sections: activeSections,
       nodes,
       stages: props.roadmap.stages,
@@ -328,27 +597,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       onNavigate,
     }}>
       <div className="mt-5" data-engineering-region="baseline">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
-            <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
-            <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
-          </div>
-          <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.lensLabel)}>
-            {(["understand", "manage"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={lens === value}
-                className={cn("rounded-sm px-3 py-1.5 text-caption", lens === value ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
-                onClick={() => {
-                  setLensPreference(value);
-                  writeStorage(lensKey, value);
-                }}
-              >{t(($) => $.wiki.lens[value])}</button>
-            ))}
-          </div>
+        <header>
+          <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
+          <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
+          <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
         </header>
 
         {props.candidateLoading ? <Skeleton className="mt-5 h-24 w-full" /> : null}
@@ -405,7 +657,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   <button key={section.key} type="button" className="block w-full border-b py-2 text-left" onClick={() => onConcept(section, false)}>
                     <span className="block text-caption font-medium"><Highlight text={section.title || t(($) => $.wiki.untitled)} query={query.trim()} /></span>
                     <span className="line-clamp-2 text-micro text-muted-foreground"><Highlight text={snippet} query={query.trim()} /></span>
-                    <span className="block text-micro text-muted-foreground">{t(($) => $.chapters[section.chapter])}</span>
+                    <span className="block text-micro text-muted-foreground">{chapterLabel(section.chapter)}</span>
                   </button>
                 )) : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.searchEmpty, { query: query.trim() })}</p>}
               </div>
@@ -419,18 +671,17 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   </div>
                 ) : null}
                 <nav>
-                  {displayChapters.map((chapter) => (
-                    <div key={chapter.chapter} className="mb-3">
-                      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.chapters[chapter.chapter])}</button>
-                      {chapter.sections.map((section) => (
-                        <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
-                          <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
-                          {section.change !== "same" ? <span className="size-1.5 rounded-full bg-destructive" aria-label={t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)} /> : null}
-                          {readIds.includes(section.key) && lens === "understand" ? <CheckCircle2 className="size-3 text-success" aria-label={t(($) => $.wiki.read)} /> : null}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
+                  <section aria-label={t(($) => $.wiki.globalChapters)}>
+                    <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.globalChapters)}</h3>
+                    {globalChapters.map(renderChapterNavigation)}
+                  </section>
+                  <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
+                    <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
+                    {moduleChapters.map(renderChapterNavigation)}
+                    <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
+                      <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
+                    </Button>
+                  </section>
                   <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById("baseline-history")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.history.title)}</button>
                 </nav>
               </div>
@@ -440,7 +691,36 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
           <div ref={articleRef} className="min-w-0 max-w-3xl">
             {displayChapters.map((chapter, chapterIndex) => (
               <section key={chapter.chapter} id={`baseline-chapter-${chapter.chapter}`} className="mb-10 scroll-mt-28" data-baseline-chapter={chapter.chapter}>
-                <h2 className="border-b pb-2 text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{t(($) => $.chapters[chapter.chapter])}</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2">
+                  <h2 className="text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{chapterLabel(chapter.chapter)}</h2>
+                  {props.selectedChapter === chapter.chapter && !editingChapter && !editingSection ? (
+                    <div className="flex flex-wrap gap-2">
+                      {chapter.chapter.startsWith("module:") ? (
+                        <Button type="button" variant="ghost" size="sm" disabled={props.savePending} onClick={(event) => openModuleEditor(chapter.chapter, event.currentTarget)}>
+                          <Pencil aria-hidden="true" />{t(($) => $.actions.editModuleTitle)}
+                        </Button>
+                      ) : null}
+                      <Button type="button" variant="outline" size="sm" disabled={props.savePending} onClick={() => openChapterEditor(chapter.chapter)}>
+                        {t(($) => props.chapters.some((item) => item.chapter === chapter.chapter && (item.adopted || item.candidate)) ? $.actions.editChapter : $.actions.initializeChapter)}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                {props.selectedChapter === chapter.chapter && selectedChapterHasCandidate && !editingChapter ? <p className="mt-2 text-caption text-muted-foreground" data-section-edit-hint>{t(($) => $.baseline.pendingCandidateSectionEdit)}</p> : null}
+                {editingChapter === chapter.chapter ? (
+                  <BaselineEditorForm
+                    idPrefix={`baseline-chapter-${chapter.chapter}`}
+                    content={draftContent}
+                    summary={changeSummary}
+                    pending={props.savePending}
+                    canDecide={props.canDecide}
+                    error={saveError}
+                    onContentChange={setDraftContent}
+                    onSummaryChange={setChangeSummary}
+                    onCancel={() => { setEditingChapter(null); setSaveError(null); }}
+                    onSave={saveDraft}
+                  />
+                ) : null}
                 {chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
                   <article
                     key={section.key}
@@ -451,34 +731,58 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     data-diff-kind={section.change !== "same" ? section.change : undefined}
                     className={cn("mt-5 scroll-mt-32 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
                   >
-                    <h3 className="flex flex-wrap items-baseline gap-2 text-title-sm font-medium">
+                    <h3 className="flex flex-wrap items-center gap-2 text-title-sm font-medium">
                       <span className="font-mono text-caption font-normal text-muted-foreground">{section.change === "removed" ? "—" : `${chapterIndex + 1}.${sectionIndex + 1}`}</span>
                       <span className={section.change === "removed" ? "line-through opacity-70" : undefined}>{section.title || t(($) => $.wiki.untitled)}</span>
                       {section.change !== "same" ? <Badge variant={section.change === "removed" ? "destructive" : "secondary"}>{t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)}</Badge> : null}
+                      {props.selectedChapter === chapter.chapter && sectionEditTargets.has(section.key) && section.change !== "removed" && !editingChapter && !editingSection ? (
+                        <Button type="button" variant="ghost" size="xs" disabled={props.savePending} onClick={() => {
+                          const target = sectionEditTargets.get(section.key);
+                          if (target) openSectionEditor(target);
+                        }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
+                      ) : null}
                     </h3>
-                    {section.change === "modified" && section.beforeBody ? (
-                      <div className="mt-3 space-y-3">
-                        <div className="rounded-md bg-destructive/5 px-3 py-1 text-muted-foreground line-through decoration-destructive/60" data-diff-before>
-                          <BaselineMarkdown content={section.beforeBody} currentSection={section} />
-                        </div>
-                        <div className="rounded-md bg-success/5 px-3 py-1" data-diff-after>
-                          <BaselineMarkdown content={section.body} currentSection={section} />
-                        </div>
-                      </div>
+                    {editingSection?.key === section.key ? (
+                      <BaselineEditorForm
+                        idPrefix={`baseline-section-${encodeURIComponent(section.key)}`}
+                        content={draftContent}
+                        summary={changeSummary}
+                        pending={props.savePending}
+                        canDecide={props.canDecide}
+                        error={saveError}
+                        section
+                        onContentChange={setDraftContent}
+                        onSummaryChange={setChangeSummary}
+                        onCancel={() => { setEditingSection(null); setSaveError(null); }}
+                        onSave={saveDraft}
+                      />
                     ) : (
-                      <div className={cn(section.change === "removed" && "line-through opacity-70")}>
-                        <BaselineMarkdown content={section.body} currentSection={section} />
-                      </div>
+                      <>
+                        {section.change === "modified" && section.beforeBody ? (
+                          <div className="mt-3 space-y-3">
+                            <div className="rounded-md bg-destructive/5 px-3 py-1 text-muted-foreground line-through decoration-destructive/60" data-diff-before>
+                              <BaselineMarkdown content={section.beforeBody} currentSection={section} />
+                            </div>
+                            <div className="rounded-md bg-success/5 px-3 py-1" data-diff-after>
+                              <BaselineMarkdown content={section.body} currentSection={section} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={cn(section.change === "removed" && "line-through opacity-70")}>
+                            <BaselineMarkdown content={section.body} currentSection={section} />
+                          </div>
+                        )}
+                        {section.change === "removed" ? <p className="text-caption text-muted-foreground">{t(($) => $.baseline.removedSection)}</p> : null}
+                        {lens === "understand" && (section.why || section.example) && section.change !== "removed" ? (
+                          <details className="mt-2" data-section-why>
+                            <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">{t(($) => $.wiki.whyLabel)}</summary>
+                            {section.why ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground">{plainBaselineText(section.why)}</p> : null}
+                            {section.example ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground"><span className="mr-2 font-medium text-foreground">{t(($) => $.wiki.exampleShort)}</span>{plainBaselineText(section.example)}</p> : null}
+                          </details>
+                        ) : null}
+                        <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
+                      </>
                     )}
-                    {section.change === "removed" ? <p className="text-caption text-muted-foreground">{t(($) => $.baseline.removedSection)}</p> : null}
-                    {lens === "understand" && (section.why || section.example) && section.change !== "removed" ? (
-                      <details className="mt-2" data-section-why>
-                        <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">{t(($) => $.wiki.whyLabel)}</summary>
-                        {section.why ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground">{plainBaselineText(section.why)}</p> : null}
-                        {section.example ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground"><span className="mr-2 font-medium text-foreground">{t(($) => $.wiki.exampleShort)}</span>{plainBaselineText(section.example)}</p> : null}
-                      </details>
-                    ) : null}
-                    <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
                   </article>
                 )) : <p className="mt-4 text-body text-muted-foreground">{t(($) => $.wiki.emptyChapter)}</p>}
               </section>
@@ -488,13 +792,25 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="flex items-center gap-2 text-title-sm font-medium"><FileClock className="size-4" aria-hidden="true" />{t(($) => $.history.title)}</h2>
                 <div className="flex flex-wrap gap-1" role="tablist" aria-label={t(($) => $.baseline.chaptersLabel)}>
-                  {ENGINEERING_CHAPTERS.map((chapter) => <Button key={chapter} type="button" role="tab" aria-selected={props.selectedChapter === chapter} size="sm" variant={props.selectedChapter === chapter ? "brand" : "ghost"} onClick={() => props.onChapterChange(chapter)}>{t(($) => $.chapters[chapter])}</Button>)}
+                  {displayChapters.map(({ chapter }) => <Button key={chapter} type="button" role="tab" aria-selected={props.selectedChapter === chapter} size="sm" variant={props.selectedChapter === chapter ? "brand" : "ghost"} onClick={() => props.onChapterChange(chapter)}>{chapterLabel(chapter)}</Button>)}
                 </div>
               </div>
               <div className="mt-3"><BaselineHistoryList history={props.history} loading={props.historyLoading} error={props.historyError} onMore={props.onHistoryMore} /></div>
             </section>
           </div>
         </div>
+
+        {moduleEditor ? (
+          <BaselineModuleDialog
+            key={moduleEditor.chapter ?? "new"}
+            chapter={moduleEditor.chapter}
+            chapters={props.chapters}
+            canDecide={props.canDecide}
+            pending={props.savePending}
+            onClose={closeModuleEditor}
+            onSave={saveModule}
+          />
+        ) : null}
 
         {back ? (
           <div className="fixed bottom-5 left-5 z-30 flex items-center rounded-md bg-foreground text-background shadow-lg" data-back-to-section>

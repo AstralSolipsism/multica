@@ -1,8 +1,9 @@
 # Project baseline CLI
 
 `multica project baseline` implements Strixnova contract v3.3 section 7 using
-the engineering API. The four chapter keys are `overview`, `domain_rules`,
-`architecture`, and `exclusions_and_risks`.
+the engineering API. The four built-in chapter keys are `overview`, `domain_rules`,
+`architecture`, and `exclusions_and_risks`. Dynamic chapters use `module:<slug>`
+(lowercase letters/digits, then letters/digits/underscore/hyphen; 1–63 characters).
 
 ```sh
 multica project baseline get <project-id>
@@ -43,7 +44,7 @@ another Diff or infer semantic warnings from words such as MUST/SHOULD. New diff
 Candidate Diff JSON is `{diffs: [...]}`; historical Diff and proposal JSON are
 the corresponding server objects.
 
-`adopt` requires one to four explicit `--revision chapter:number` values, with
+`adopt` requires one to 100 explicit `--revision chapter:number` values, with
 each chapter selected once. The CLI resolves those exact historical versions
 and sends their stored `base_revision_id` as `expected_adopted_revision_id` in
 one decision request. It never replaces the selected version with the current
@@ -133,3 +134,42 @@ A task's `set` receives 403 and prints
 “工程配置只能由人类决定人修改，请在工程总览设置中修改”, then exits 1.
 The same 0/1/2 exit convention as baseline commands applies. Requests are not
 retried and credentials are never changed.
+
+## Read and revise a section
+
+```sh
+multica project baseline get <project-id> --index --output json
+multica project baseline get <project-id> --section "Pay" --chapter module:billing
+multica project baseline propose <project-id> --chapter module:billing \
+  --chapter-title "Billing" --section "Pay" --content-file ./pay.md \
+  --summary "Clarify payment rules" --base-current
+multica project baseline propose <project-id> --chapter module:billing \
+  --delete-section "Pay" --summary "Retire old payment rule" --base-current
+multica project baseline adopt <project-id> --revision module:billing:2
+```
+
+`--index` returns metadata and an ordered H1–H3 outline; `--section` returns full
+matching subtrees plus a one-hop `referenced_sections` list of definitions and
+rationale. Text output places references under `### 关联概念摘要`. These modes
+make a compact server request and do not download all chapter bodies. For reads,
+exact titles/anchors win over case-insensitive substring matches. `--chapter` limits
+matches but references may come from other chapters. `--candidate` reads current
+candidates. `--index`, `--section`, and `--revision` are mutually exclusive.
+
+Local proposals and deletions require an exact, case-sensitive title or anchor;
+they never fall back to substring matching. For a local proposal, a missing heading
+is restored automatically; a section without an exact match is appended, even if
+another title or anchor contains the query. Replacements include descendants and
+must preserve the existing heading depth. Ambiguous matches fail; use the unique
+anchor from the index. Deletion requires no content file and fails if the section
+does not exist.
+The server merges into the specified adopted version, or—when `--replaces` is
+given—into the replaced candidate's content so its other section edits are kept;
+the Diff is always computed against the adopted version. It checks the resulting
+64 KiB chapter limit, and produces the same reviewable candidate and Diff as a
+whole-chapter proposal. `--replaces` remains required for an existing candidate.
+
+`--chapter-title` updates the document display title when the proposal succeeds.
+JSON full-state reads and export include dynamic chapters. Directory exports keep
+the four built-in filenames and add numbered `module-<slug>.md` files; historical
+references and decisions parse `module:<slug>:<number>` at the last colon.

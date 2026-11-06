@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { createRef, forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -7,7 +7,7 @@ import type { Attachment } from "@multica/core/types";
 import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../test/i18n";
-import { CommentInput } from "./comment-input";
+import { CommentInput, type CommentInputRef } from "./comment-input";
 import { ReplyInput } from "./reply-input";
 
 /** Shape of ContentEditor's `quickActionMenu` prop, as the composers pass it. */
@@ -142,6 +142,7 @@ vi.mock("../../editor", async () => ({
     editorUploadSignal.notify = onUploadingChange;
     const initialValue = value ?? defaultValue ?? "";
     const valueRef = useRef(initialValue);
+    const dirtyRef = useRef(false);
     const [editorValue, setEditorValue] = useState(initialValue);
     // Mirrors the real editor's `uploading` node attrs: the placeholder exists
     // from before the await until the upload settles, `hasActiveUploads` reads
@@ -160,14 +161,20 @@ vi.mock("../../editor", async () => ({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     useEffect(() => {
-      if (value === undefined || value === valueRef.current) return;
+      if (value === undefined || value === valueRef.current || dirtyRef.current) return;
       valueRef.current = value;
       setEditorValue(value);
     }, [value]);
 
     useImperativeHandle(ref, () => ({
       getMarkdown: () => valueRef.current,
+      adoptContent: (markdown: string) => {
+        dirtyRef.current = false;
+        valueRef.current = markdown;
+        setEditorValue(markdown);
+      },
       clearContent: () => {
+        dirtyRef.current = false;
         valueRef.current = "";
         setEditorValue("");
       },
@@ -213,6 +220,7 @@ vi.mock("../../editor", async () => ({
         value={editorValue}
         placeholder={placeholder}
         onChange={(event) => {
+          dirtyRef.current = true;
           valueRef.current = event.target.value;
           setEditorValue(event.target.value);
           onUpdate?.(event.target.value);
@@ -239,8 +247,9 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 function renderCommentInput(onSubmit = vi.fn().mockResolvedValue(true)) {
-  const view = renderWithProviders(<CommentInput issueId="issue-1" onSubmit={onSubmit} />);
-  return { ...view, onSubmit };
+  const ref = createRef<CommentInputRef>();
+  const view = renderWithProviders(<CommentInput ref={ref} issueId="issue-1" onSubmit={onSubmit} />);
+  return { ...view, onSubmit, ref };
 }
 
 function renderReplyInput({
@@ -410,6 +419,37 @@ async function chooseRecipientAction(chip: string, action: RegExp) {
 }
 
 describe("comment composers", () => {
+  it("activates and focuses the lazy editor when a panel fills its draft", async () => {
+    renderCommentInput();
+    expect(screen.getByTestId("comment-composer-shell")).toBeVisible();
+    act(() => useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer"));
+    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
+    expect(focusCalls.focused).toBeGreaterThan(0);
+  });
+
+  it("adopts a panel answer over an edited draft and submits the displayed text", async () => {
+    const { container, onSubmit, ref } = renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "old draft" } });
+    act(() => {
+      ref.current!.adoptContent("panel answer");
+      useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer");
+    });
+    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("panel answer", undefined, undefined, undefined));
+  });
+
+  it("keeps dirty editor text when a completed upload appends to the persisted draft", async () => {
+    const { container, onSubmit } = renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "latest typing" } });
+    act(() => useCommentDraftStore.getState().appendToDraftContent("new:issue-1", "![upload](https://cdn.example/finished.png)"));
+    expect(screen.getByTestId("editor")).toHaveValue("latest typing");
+    fireEvent.click(getSubmitButton(container));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("latest typing", undefined, undefined, undefined));
+  });
+
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 

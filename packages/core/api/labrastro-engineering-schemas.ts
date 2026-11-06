@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const id = z.string().uuid();
 const actor = z.enum(["member", "agent", "unknown"]).catch("unknown");
-export const BaselineChapterSchema = z.enum(["overview", "domain_rules", "architecture", "exclusions_and_risks"]);
+export const BaselineChapterSchema = z.union([z.enum(["overview", "domain_rules", "architecture", "exclusions_and_risks"]), z.string().regex(/^module:[a-z0-9][a-z0-9_-]{0,62}$/).transform((v) => v as `module:${string}`)]);
 export type BaselineChapter = z.infer<typeof BaselineChapterSchema>;
 const ChangeSchema = z.object({
   anchor: z.string(), title: z.string(), before: z.string().default(""), after: z.string().default(""),
@@ -50,7 +50,7 @@ export const BaselineRevisionSchema = z.object({
   // Normalize the pre-9046 API value at the boundary for older servers.
   decisionCredential: v.decision_credential === "task" ? "agent_task" : v.decision_credential,
 }));
-const ChapterStateSchema = z.object({ chapter: BaselineChapterSchema, adopted: BaselineRevisionSchema.nullable(), candidate: BaselineRevisionSchema.nullable() });
+const ChapterStateSchema = z.object({ chapter: BaselineChapterSchema, title: z.string().default(""), position: z.number().int().default(0), adopted: BaselineRevisionSchema.nullable(), candidate: BaselineRevisionSchema.nullable() });
 export const EngineeringOverviewSchema = z.object({ engineering: EngineeringConfigSchema, chapters: z.array(ChapterStateSchema) });
 export const EngineeringUpdatedSchema = z.object({ engineering: EngineeringConfigSchema });
 const OpenIssueSchema = z.object({
@@ -70,3 +70,15 @@ export type BaselineRevision = z.infer<typeof BaselineRevisionSchema>;
 export type BaselineDiff = z.infer<typeof BaselineDiffSchema>;
 export type BaselineDecision = z.infer<typeof BaselineDecisionSchema>;
 export type BaselineHistory = z.infer<typeof BaselineHistorySchema>;
+
+const BaselineHeadingSchema = z.object({ anchor: z.string().min(1), title: z.string(), level: z.number().int().min(1).max(3) });
+export const BaselineIndexSchema = z.object({ chapters: z.array(z.object({
+  chapter: BaselineChapterSchema, title: z.string().default(""), position: z.number().int().default(0),
+  revision_id: id.nullable(), revision_number: z.number().int().nonnegative(), status: z.string(), sections: z.array(BaselineHeadingSchema),
+}).transform((v) => ({ chapter: v.chapter, title: v.title, position: v.position, revisionId: v.revision_id, revisionNumber: v.revision_number, status: v.status, sections: v.sections }))) });
+export const BaselineSliceSchema = z.object({
+  sections: z.array(BaselineHeadingSchema.extend({ chapter: BaselineChapterSchema, content_markdown: z.string() }).transform((v) => ({ chapter: v.chapter, anchor: v.anchor, title: v.title, level: v.level, contentMarkdown: v.content_markdown }))),
+  referenced_sections: z.array(BaselineHeadingSchema.extend({ chapter: BaselineChapterSchema, definition: z.string(), why: z.string() })),
+}).transform((v) => ({ sections: v.sections, referencedSections: v.referenced_sections }));
+export type BaselineIndex = z.infer<typeof BaselineIndexSchema>;
+export type BaselineSlice = z.infer<typeof BaselineSliceSchema>;

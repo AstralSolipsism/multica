@@ -18,6 +18,7 @@ import {
   mockTimeline,
   mockViewport,
   readonlyContentRenders,
+  renderedIssueContext,
   renderIssueDetail,
   renderIssueDetailWithHighlight,
   renderIssueDetailWithStatusCatalog,
@@ -33,7 +34,7 @@ import { issueKeys } from "@multica/core/issues/queries";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { toast } from "sonner";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
-import { useCommentCollapseStore } from "@multica/core/issues/stores";
+import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import {
   createTipAnchorRegistry,
   type TipAnchorRegistry,
@@ -100,6 +101,66 @@ describe("IssueDetail (shared)", () => {
     await screen.findByText("Implement authentication");
     await waitFor(() => expect(mockApiObj.getIssue).toHaveBeenCalledTimes(1));
     expect(mockApiObj.listIssues).not.toHaveBeenCalled();
+  });
+
+  it("submits sandbox answers as top-level comments and reports failures", async () => {
+    const created = { ...mockTimeline[0], id: "html-answer", content: "answer", type: "comment", author_type: "member", author_id: "user-1", created_at: "2026-08-13T00:00:00Z", updated_at: "2026-08-13T00:00:00Z" };
+    mockApiObj.createComment.mockResolvedValue(created);
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.submitComment).toBeDefined());
+    let ok;
+    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("answer"); });
+    expect(ok).toBe(true);
+    expect(mockApiObj.createComment).toHaveBeenCalledWith(mockIssue.id, "answer", undefined, undefined, undefined, undefined, undefined);
+    await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledTimes(2));
+    expect(scrollToIndexSpy).toHaveBeenLastCalledWith({ index: 2, align: "end", offset: 0 });
+    scrollToIndexSpy.mockClear();
+    mockApiObj.createComment.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("retry"); });
+    expect(ok).toBe(false);
+    expect(scrollToIndexSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes sandbox answers to this issue's draft and scrolls to its composer", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.fillCommentDraft).toBeDefined());
+    const setDraft = vi.fn();
+    const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({ ...useCommentDraftStore.getState(), setDraft });
+    act(() => renderedIssueContext.current!.fillCommentDraft!("answer"));
+    expect(setDraft).toHaveBeenCalledWith(`new:${mockIssue.id}`, "answer");
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "end" });
+    getState.mockRestore();
+  });
+
+  it("explicitly adopts a filled panel answer in an already edited composer", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    fireEvent.click(screen.getByTestId("comment-composer-shell"));
+    const editor = await screen.findByPlaceholderText("Leave a comment...");
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
+    fireEvent.change(editor, { target: { value: "existing draft" } });
+    // The harness draft store is empty; protection must read the live editor.
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
+    act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
+    expect(editor).toHaveValue("panel answer");
+  });
+
+  it.each(["upload", "annotation"])("protects an otherwise empty draft containing only an %s", async (kind) => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.hasCommentDraft).toBeDefined());
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
+    const getUploads = vi.fn().mockReturnValue(kind === "upload" ? [{ clientUploadId: "upload-1", status: "uploading" }] : []);
+    const getAnnotations = vi.fn().mockReturnValue(kind === "annotation" ? [{ id: "annotation-1", quote: "context", note: "review this" }] : []);
+    const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({
+      ...useCommentDraftStore.getState(), getDraft: () => "", getUploads, getAnnotations,
+    });
+    try {
+      expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
+      expect(kind === "upload" ? getUploads : getAnnotations).toHaveBeenCalledWith(`new:${mockIssue.id}`);
+    } finally { getState.mockRestore(); }
   });
 
   it("passes the issue's agent assignment to the local-directory hint", async () => {
