@@ -182,5 +182,12 @@
     "clear_filter": "Clear filter",
     "no_matches": "No matching rows",
     "close": "Close"
+  },
+  "html_action": {
+    "confirm_submit": "Post this comment as you?",
+    "confirm_fill": "Replace your existing draft?",
+    "post": "Post as me",
+    "replace_draft": "Replace draft",
+    "cancel": "Cancel"
   }
 }

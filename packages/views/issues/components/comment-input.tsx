@@ -35,6 +35,7 @@ interface CommentInputProps {
 }
 
 export interface CommentInputRef {
+  getMarkdown: () => string | undefined;
   /** Explicit replacement only; ordinary draft writes keep editor sync guards. */
   adoptContent: (content: string) => void;
 }
@@ -51,6 +52,7 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
   useImperativeHandle(ref, () => ({
+    getMarkdown: () => editorRef.current?.getMarkdown(),
     adoptContent: (content) => editorRef.current?.adoptContent(content),
   }), []);
   // Sending mid-upload would strip the pending image's blob URL out of the

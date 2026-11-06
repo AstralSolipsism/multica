@@ -1660,6 +1660,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return true;
   }, [submitComment, scrollToTimelineBottom]);
 
+  const hasHtmlCommentDraft = useCallback(() => {
+    const store = useCommentDraftStore.getState();
+    const draftKey = `new:${id}` as const;
+    const content = commentInputRef.current?.getMarkdown() ?? store.getDraft(draftKey);
+    return !!content?.trim() || store.getUploads(draftKey).length > 0 || store.getAnnotations(draftKey).length > 0;
+  }, [id]);
+
   const fillHtmlCommentDraft = useCallback((content: string) => {
     commentInputRef.current?.adoptContent(content);
     useCommentDraftStore.getState().setDraft(`new:${id}`, content);
@@ -2866,9 +2873,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             identifier: resolvedIssueIdentifier,
             submitComment: submitHtmlComment,
             fillCommentDraft: fillHtmlCommentDraft,
+            hasCommentDraft: hasHtmlCommentDraft,
           }
         : null,
-    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft],
+    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft, hasHtmlCommentDraft],
   );
 
   if (loading) {

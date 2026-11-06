@@ -25,11 +25,11 @@
  * `<NodeViewContent as="code" />` so the user can continue typing.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { HtmlPreviewSurface } from "./html-preview-surface";
 import { useT } from "../i18n";
-import { useCurrentIssueRenderContext } from "../issues/current-issue-render-context";
+import { useHtmlCommentActions } from "./use-html-comment-actions";
 import { CodeBlockIframe } from "./code-block-iframe";
 import {
   DYNAMIC_BLOCK_CHROME_PX,
@@ -118,6 +118,8 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
   const [error, setError] = useState<DynamicBlockError | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const { handleAction, confirmation } = useHtmlCommentActions(iframeRef, `${reloadKey}:${srcDoc}`);
   // The body's laid-out height, reported by HtmlBlockBody below. The frame
   // turns it into the collapse decision in the same paint the height lands
   // (see the flicker note in the file header).
@@ -150,6 +152,7 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
         onFullscreen={() => setFullscreen(true)}
         onReload={reload}
         bodyHeight={bodyHeight}
+        footer={!fullscreen && confirmation}
         preview={({ active, collapsed }) => (
           // Keyed by the content: a re-authored block restarts measurement
           // from scratch — a stale `frozen`/`loaded` from the previous
@@ -157,6 +160,9 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
           <HtmlBlockBody
             key={html}
             html={html}
+            iframeRef={iframeRef}
+            onCommentAction={handleAction}
+            confirmation={fullscreen ? confirmation : null}
             srcDoc={srcDoc}
             title={frameTitle}
             active={active}
@@ -176,6 +182,9 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
 
 function HtmlBlockBody({
   html,
+  iframeRef,
+  onCommentAction,
+  confirmation,
   srcDoc,
   title,
   active,
@@ -188,6 +197,9 @@ function HtmlBlockBody({
   onError,
 }: {
   html: string;
+  iframeRef: RefObject<HTMLIFrameElement | null>;
+  onCommentAction: ReturnType<typeof useHtmlCommentActions>["handleAction"];
+  confirmation: ReactNode;
   srcDoc: string | null;
   title: string;
   active: boolean;
@@ -200,9 +212,7 @@ function HtmlBlockBody({
   onBodyHeightChange: (height: number) => void;
   onError: (error: DynamicBlockError) => void;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const currentIssue = useCurrentIssueRenderContext();
-  const currentIssueRef = useRef(currentIssue);
+  const onCommentActionRef = useRef(onCommentAction);
   const [measured, setMeasured] = useState(INITIAL_HTML_BLOCK_HEIGHT);
   const [cachedHeight, setCachedHeight] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -222,7 +232,7 @@ function HtmlBlockBody({
     // A full-size document's bridge must not overwrite its inline height.
     activeRef.current = active && !fullscreen;
     onErrorRef.current = onError;
-    currentIssueRef.current = currentIssue;
+    onCommentActionRef.current = onCommentAction;
   });
 
   useEffect(() => {
@@ -233,36 +243,17 @@ function HtmlBlockBody({
       { [HTML_BLOCK_MESSAGE_KEY]: 1, type: "measure" },
       "*",
     );
-  }, [active, fullscreen]);
+  }, [active, fullscreen, iframeRef]);
 
   useEffect(() => {
-    const onMessage = async (event: MessageEvent) => {
+    const onMessage = (event: MessageEvent) => {
       // Only this block's own frame; every block shares the window.
       const frame = iframeRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
       const message = readHtmlBlockMessage(event.data);
       if (!message) return;
       if (message.type === "submit-comment" || message.type === "fill-comment") {
-        const issue = currentIssueRef.current;
-        let ok = false;
-        try {
-          if (message.type === "submit-comment") {
-            if (!issue?.submitComment) return;
-            ok = await issue.submitComment(message.content);
-          } else {
-            if (!issue?.fillCommentDraft) return;
-            issue.fillCommentDraft(message.content);
-            ok = true;
-          }
-        } catch {
-          // The card keeps its answer and offers a retry on failure.
-        }
-        frame.contentWindow?.postMessage({
-          [HTML_BLOCK_MESSAGE_KEY]: 1,
-          type: "action-result",
-          action: message.type,
-          ok,
-        }, "*");
+        onCommentActionRef.current(message);
         return;
       }
       if (message.type === "error") {
@@ -277,7 +268,7 @@ function HtmlBlockBody({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [iframeRef]);
 
   const height = measured.height;
   useEffect(() => {
@@ -321,9 +312,10 @@ function HtmlBlockBody({
       onOpenChange={onFullscreenChange}
       onReload={onReload}
       title={title}
+      footer={confirmation}
     >
       <div
-        className="relative"
+        className="relative min-h-0"
         style={{ height: fullscreen ? "100%" : bodyHeight }}
       >
         {srcDoc != null && (

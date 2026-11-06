@@ -139,7 +139,10 @@ describe("IssueDetail (shared)", () => {
     await screen.findByText("Implement authentication");
     fireEvent.click(screen.getByTestId("comment-composer-shell"));
     const editor = await screen.findByPlaceholderText("Leave a comment...");
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
     fireEvent.change(editor, { target: { value: "existing draft" } });
+    // The harness draft store is empty; protection must read the live editor.
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
     act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
     expect(editor).toHaveValue("panel answer");
   });

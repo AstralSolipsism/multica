@@ -11,6 +11,8 @@ export type CurrentIssueRenderContextValue = Readonly<{
   identifier: string;
   submitComment?: (content: string) => Promise<boolean>;
   fillCommentDraft?: (content: string) => void;
+  /** Read the live editor as well as the persisted draft before offering replacement. */
+  hasCommentDraft?: () => boolean;
 }>;
 
 /**
