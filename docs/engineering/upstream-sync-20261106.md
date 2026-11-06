@@ -227,6 +227,217 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 
 本轮增量验证：`go test -p 2 ./internal/daemon/... ./internal/imagemetadata ./internal/branding` 的 12 个包通过（Git 2.47.3）；图片元数据包 `-race` 通过；私有 UTF-8 PostgreSQL 上 `go test ./internal/handler -run 'TestUploadFile|TestParseUploadForm' -count=1 -v` 通过，新增 2 MiB JPEG 用例同时验证尺寸、流式调用及存储字节与原文件完全相同。`pnpm test:brand` 的 12 项脚本测试和 17 项品牌测试、gofmt 守卫及自测、`git diff --check` 均通过。本轮未重跑前后端全量；上述首轮全量结果和 4 项宿主限制仍单独保留，Stage 5 的 E2E、原生打包与双审安排不变。
 
+### 负责人拍板决策落地核对表（1B、2、3A、4、5 及方案 A）
+
+决策原文见 OL-1249「负责人已拍板的产品级决策基线」；下表逐项核对在本结果树（PR head）中的落地位置与验证证据，实现细节已在 Stage 2/3/4 各自审阅中通过。
+
+| 决策 | 要求（摘要） | 落地位置 | 验证证据 |
+| --- | --- | --- | --- |
+| 1B 一步合并路线 | `origin/main` 为第一父 + `v0.8.0` tag 为第二父的 `--no-ff` 两父合并，同分支顺带 #9914/#9906，不拆前置 PR、严禁 rebase | M1 `537956e4c`（父 `bd317ee3` + `9b1ab4f9`）；cherry-pick `ab3dc1948`（#9914）、`f6eea3cd9`（#9906）；全链在 `sync/v0.8.0-ol-1234` 单分支 | `git log --format='%H %P'` 两父拓扑核验（Stage 2 与首审独立复核）；CI run `42283534326` 于 head 全绿 |
+| 2-a 工程基线入口 | 项目详情页顶栏主入口 + Work 面板项目行右键「打开工程基线」 | `packages/views/projects/components/project-detail.tsx:584`（`projectEngineering` 顶栏入口）；`packages/views/layout/panels/work-tree.tsx:325`（`actions.open_baseline` 右键项） | `work-tree.test.tsx`、projects 组件测试（views 套件 694 文件全绿） |
+| 2-b 保存视图还原 DAG | 主工作区打开视图完整还原 `viewMode=dag` 及 `dagGrouping`/`dagShowCompleted`/`dagShowSatisfiedDependencies`；侧栏三角展开为紧凑列表 | `packages/core/issue-views/definition.ts:48-63`（viewMode 与三个 DAG 开关进序列化）；`packages/views/layout/panels/views-section.tsx` + `sidebar-tree.tsx:203`（`SidebarIssueList` 紧凑列表） | `packages/core/issue-views/definition.test.ts`、`sidebar-views.test.ts`、`sidebar-tree.test.tsx` |
+| 2-c 飞书二维码/内网下载收口 | 移除 `join-discord-card`，`FeishuQrDialog` 与 `DOWNLOAD_PAGE_URL` 收口 `HelpLauncher`，屏蔽 multica.ai/discord.gg 外链 | `packages/views/layout/help-launcher.tsx:28,73,126`（QR 弹窗 + 内网下载）；`join-discord-card.tsx` 在 M1 中删除（见裁决表 #72-73）；文案键 `help.discord` 值为「飞书群」 | `help-launcher.test.tsx`；品牌守卫 `pnpm test:brand`（含外链禁令）；保留 E2E `onboarding-smoke` 内网下载页断言 |
+| 2-d YSK 挂载与预取治理 | `DashboardLayout` 围绕主区挂载 `YouShouldKnowProvider`（排除浮层）；OL-1145 空闲不预热不回退 | `packages/views/layout/dashboard-layout.tsx:61`；`packages/views/layout/route-data-prefetch.tsx`（保留 OL-1145 行为） | `route-data-prefetch.test.tsx` |
+| 3A 智能体/技能换新壳保定制 | 两页对齐 v0.8.0 `CollectionPageHeader` 工具栏，保留文件夹树/技能包/导入导出/右键菜单 | `packages/views/agents/components/agents-page.tsx`、`packages/views/skills/components/skills-page.tsx:522`（`CollectionPageHeader`）+ `skills-page-folder-explorer.tsx:67`（Fork 文件夹树接线） | `agent-folder-tree.test.ts`、`skills-page.folder-explorer.test.tsx`、`skill-versions-tab.test.tsx`；E2E `agent-folders.spec.ts`、`skill-folders.spec.ts` |
+| 4 Runtimes 配额+并发双保留 | 服务端/sqlc 同保 Fork `plan_quota`/`system_stats`/`thinking_adapt` 与上游 `max_concurrent_tasks`；前端保留配额芯片、主机指标条并展示并发上限 | `server/internal/handler/runtime.go:53-65`（四字段并存）；`packages/views/runtimes/components/runtime-detail.tsx:398`（`RuntimeConcurrencyField`）；`machine-quota-chips.tsx:43` | `runtime-concurrency-field.test.tsx`、`machine-quota-chips*.test.ts*`、`runtime-detail-page.test.tsx`；`make sqlc` 二次零差异 |
+| 5 桌面 YSK 边聊精准交接 | 按 Issue 所属工作区路由/聚焦对应主窗口，未开则唤起，严禁串台 | `apps/desktop/src/main/chat-session-handoff.ts:22,48`（`resolveTargetMainWindow(workspaceSlug)`）；renderer 侧 `platform/chat-session-handoff.tsx` | `apps/desktop/src/main/chat-session-handoff.test.ts`（Desktop 85 文件套件） |
+| 方案 A 顺势合流 v0.8.1 | 不另开分支，以 Stage 3 头为第一父 + `v0.8.1` tag 为第二父二次两父合并 | M2 `ed6c70ab5`（父 `2623fc06e` + `b1ea927de`），含 611–616 迁移与技能版本历史 | Stage 4 全量验证 + 本文迁移台账复验；首审独立实测新装/一步升级 schema 一致 |
+
+### 冲突文件逐项裁决表
+
+与 `20261102.md` 的 94 项台账同格式。冲突集由 `git merge-tree --write-tree <第一父> <tag>` 重算：M1（`bd317ee3` × `9b1ab4f9`）114 个路径，M2（`2623fc06e` × `b1ea927de`）67 个路径，与首审独立重算一致。裁决类别按合并结果 blob 与双亲比对自动分类：`取上游` = 结果与 tag 字节一致；`保留 Fork` = 结果与第一父一致（上游改动不适用或已被 Fork 等价实现）；`合并双方` = 兼取两家（Fork 语义保留于上游新结构，含 Stage 2 先取上游、Stage 3/4 回迁 Fork 语义的路径）；`删除` = 随上游退役。55 个前端路径的逐步恢复过程另见 `upstream-sync-20261106-stage3.tsv` 与 Stage 3 章节。
+
+#### M1 — v0.8.0 两父合并（114 路径：47 取上游、40 合并双方、17 保留 Fork、10 删除）
+
+| # | 路径 | 裁决 |
+| --- | --- | --- |
+| 1 | `apps/desktop/build/icon.icns` | 保留 Fork（上游改动不适用） |
+| 2 | `apps/desktop/build/icon.ico` | 保留 Fork（上游改动不适用） |
+| 3 | `apps/desktop/build/icon.png` | 保留 Fork（上游改动不适用） |
+| 4 | `apps/desktop/build/icons/128x128.png` | 保留 Fork（上游改动不适用） |
+| 5 | `apps/desktop/build/icons/16x16.png` | 保留 Fork（上游改动不适用） |
+| 6 | `apps/desktop/build/icons/24x24.png` | 保留 Fork（上游改动不适用） |
+| 7 | `apps/desktop/build/icons/256x256.png` | 保留 Fork（上游改动不适用） |
+| 8 | `apps/desktop/build/icons/32x32.png` | 保留 Fork（上游改动不适用） |
+| 9 | `apps/desktop/build/icons/48x48.png` | 保留 Fork（上游改动不适用） |
+| 10 | `apps/desktop/build/icons/512x512.png` | 保留 Fork（上游改动不适用） |
+| 11 | `apps/desktop/build/icons/64x64.png` | 保留 Fork（上游改动不适用） |
+| 12 | `apps/desktop/package.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 13 | `apps/desktop/src/main/index.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 14 | `apps/desktop/src/main/updater.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 15 | `apps/desktop/src/preload/index.d.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 16 | `apps/desktop/src/preload/index.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 17 | `apps/desktop/src/renderer/src/App.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 18 | `apps/desktop/src/renderer/src/components/desktop-layout.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 19 | `apps/desktop/src/renderer/src/platform/navigation.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 20 | `apps/desktop/src/renderer/src/stores/tab-store.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 21 | `apps/desktop/src/shared/main-renderer-messages.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 22 | `apps/docs/content/docs/lark-bot-integration.mdx` | 合并双方（Fork 语义保留于上游新结构） |
+| 23 | `apps/docs/content/docs/lark-bot-integration.zh.mdx` | 合并双方（Fork 语义保留于上游新结构） |
+| 24 | `apps/ui-lab/package.json` | 删除（随上游退役 Fork 已改文件） |
+| 25 | `apps/web/app/custom.css` | 删除（随上游退役 Fork 已改文件） |
+| 26 | `apps/web/public/favicon.svg` | 保留 Fork（上游改动不适用） |
+| 27 | `apps/web/public/icons/apple-touch-icon.png` | 保留 Fork（上游改动不适用） |
+| 28 | `apps/web/public/icons/icon-192.png` | 保留 Fork（上游改动不适用） |
+| 29 | `apps/web/public/icons/icon-512.png` | 保留 Fork（上游改动不适用） |
+| 30 | `apps/web/public/icons/icon-maskable-512.png` | 保留 Fork（上游改动不适用） |
+| 31 | `apps/web/public/icons/icon.svg` | 保留 Fork（上游改动不适用） |
+| 32 | `e2e/navigation.spec.ts` | 取上游（结果 = tag 字节） |
+| 33 | `e2e/settings.spec.ts` | 取上游（结果 = tag 字节） |
+| 34 | `packages/core/api/client.ts` | 取上游（结果 = tag 字节） |
+| 35 | `packages/core/issues/delete-cache.ts` | 取上游（结果 = tag 字节） |
+| 36 | `packages/core/issues/queries.test.ts` | 取上游（结果 = tag 字节） |
+| 37 | `packages/core/issues/queries.ts` | 取上游（结果 = tag 字节） |
+| 38 | `packages/core/issues/stores/view-store.ts` | 取上游（结果 = tag 字节） |
+| 39 | `packages/core/issues/ws-updaters.ts` | 取上游（结果 = tag 字节） |
+| 40 | `packages/core/lark/queries.test.ts` | 取上游（结果 = tag 字节） |
+| 41 | `packages/core/realtime/use-realtime-sync-ws-instance.test.tsx` | 取上游（结果 = tag 字节） |
+| 42 | `packages/core/realtime/use-realtime-sync.ts` | 取上游（结果 = tag 字节） |
+| 43 | `packages/core/types/agent.ts` | 取上游（结果 = tag 字节） |
+| 44 | `packages/core/types/lark.ts` | 取上游（结果 = tag 字节） |
+| 45 | `packages/ui/components/common/multica-icon.tsx` | 取上游（结果 = tag 字节） |
+| 46 | `packages/ui/package.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 47 | `packages/views/agents/components/agent-list-toolbar.tsx` | 取上游（结果 = tag 字节） |
+| 48 | `packages/views/agents/components/agent-row-actions.tsx` | 取上游（结果 = tag 字节） |
+| 49 | `packages/views/agents/components/agents-page.tsx` | 取上游（结果 = tag 字节） |
+| 50 | `packages/views/agents/components/inspector/model-change-cleanup.test.ts` | 取上游（结果 = tag 字节） |
+| 51 | `packages/views/agents/components/inspector/model-change-cleanup.ts` | 取上游（结果 = tag 字节） |
+| 52 | `packages/views/agents/components/inspector/thinking-prop-row.tsx` | 取上游（结果 = tag 字节） |
+| 53 | `packages/views/autopilots/components/autopilot-detail-page.tsx` | 取上游（结果 = tag 字节） |
+| 54 | `packages/views/chat/components/chat-message-list.tsx` | 取上游（结果 = tag 字节） |
+| 55 | `packages/views/chat/components/chat-window-messages.test.tsx` | 取上游（结果 = tag 字节） |
+| 56 | `packages/views/chat/components/chat-window-messages.tsx` | 取上游（结果 = tag 字节） |
+| 57 | `packages/views/issues/actions/issue-actions-menu-items.tsx` | 取上游（结果 = tag 字节） |
+| 58 | `packages/views/issues/components/issues-header.tsx` | 取上游（结果 = tag 字节） |
+| 59 | `packages/views/issues/components/issues-page.tsx` | 取上游（结果 = tag 字节） |
+| 60 | `packages/views/issues/components/pickers/property-picker.tsx` | 取上游（结果 = tag 字节） |
+| 61 | `packages/views/issues/components/pickers/status-picker.tsx` | 取上游（结果 = tag 字节） |
+| 62 | `packages/views/issues/components/save-view-dialog.test.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 63 | `packages/views/issues/components/save-view-dialog.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 64 | `packages/views/issues/components/workspace-agent-working-chip.tsx` | 取上游（结果 = tag 字节） |
+| 65 | `packages/views/issues/surface/issue-surface.tsx` | 取上游（结果 = tag 字节） |
+| 66 | `packages/views/issues/surface/use-issue-surface-controller.ts` | 取上游（结果 = tag 字节） |
+| 67 | `packages/views/layout/app-sidebar.test.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 68 | `packages/views/layout/app-sidebar.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 69 | `packages/views/layout/dashboard-layout.tsx` | 取上游（结果 = tag 字节） |
+| 70 | `packages/views/layout/help-launcher.tsx` | 取上游（结果 = tag 字节） |
+| 71 | `packages/views/layout/join-discord-card.test.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 72 | `packages/views/layout/join-discord-card.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 73 | `packages/views/my-issues/components/my-issues-header.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 74 | `packages/views/my-issues/components/my-issues-page.tsx` | 取上游（结果 = tag 字节） |
+| 75 | `packages/views/package.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 76 | `packages/views/projects/components/project-detail.tsx` | 取上游（结果 = tag 字节） |
+| 77 | `packages/views/runtimes/components/runtime-detail-page.tsx` | 取上游（结果 = tag 字节） |
+| 78 | `packages/views/runtimes/components/runtime-detail.tsx` | 取上游（结果 = tag 字节） |
+| 79 | `packages/views/runtimes/components/runtime-list.tsx` | 取上游（结果 = tag 字节） |
+| 80 | `packages/views/runtimes/components/runtime-machines.test.ts` | 取上游（结果 = tag 字节） |
+| 81 | `packages/views/runtimes/components/runtimes-page.test.tsx` | 取上游（结果 = tag 字节） |
+| 82 | `packages/views/runtimes/components/runtimes-page.tsx` | 取上游（结果 = tag 字节） |
+| 83 | `packages/views/runtimes/utils.test.ts` | 取上游（结果 = tag 字节） |
+| 84 | `packages/views/settings/components/lark-tab.tsx` | 取上游（结果 = tag 字节） |
+| 85 | `packages/views/settings/components/use-settings-search-index.ts` | 取上游（结果 = tag 字节） |
+| 86 | `packages/views/skills/components/skill-list-actions.tsx` | 取上游（结果 = tag 字节） |
+| 87 | `packages/views/skills/components/skill-list-toolbar.tsx` | 删除（随上游退役 Fork 已改文件） |
+| 88 | `packages/views/skills/components/skills-page.tsx` | 取上游（结果 = tag 字节） |
+| 89 | `pnpm-lock.yaml` | 合并双方（Fork 语义保留于上游新结构） |
+| 90 | `pnpm-workspace.yaml` | 合并双方（Fork 语义保留于上游新结构） |
+| 91 | `scripts/ci-scope.test.mjs` | 合并双方（Fork 语义保留于上游新结构） |
+| 92 | `server/internal/cli/client.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 93 | `server/internal/daemon/daemon.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 94 | `server/internal/daemon/execenv/codex_user_skills_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 95 | `server/internal/daemon/execenv/codex_user_skills_windows_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 96 | `server/internal/daemon/execenv/context.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 97 | `server/internal/daemon/execenv/execenv.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 98 | `server/internal/daemon/execenv/execenv_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 99 | `server/internal/daemon/execenv/sidecar_manifest_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 100 | `server/internal/daemon/execenv/skill_visibility_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 101 | `server/internal/handler/agent_builder.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 102 | `server/internal/handler/lark.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 103 | `server/internal/handler/runtime.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 104 | `server/internal/handler/runtime_delete_guidance_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 105 | `server/internal/integrations/channel/channel.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 106 | `server/internal/integrations/lark/channel_store.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 107 | `server/internal/integrations/lark/feishu_channel.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 108 | `server/internal/integrations/lark/store.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 109 | `server/internal/qoderruntime/prompt.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 110 | `server/internal/service/builtin_skills/multica-platform/SKILL.md` | 合并双方（Fork 语义保留于上游新结构） |
+| 111 | `server/internal/service/builtin_skills/multica-platform/references/issues.md` | 合并双方（Fork 语义保留于上游新结构） |
+| 112 | `server/internal/service/builtin_skills_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 113 | `server/pkg/db/generated/models.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 114 | `server/pkg/db/generated/runtime.sql.go` | 合并双方（Fork 语义保留于上游新结构） |
+
+#### M2 — v0.8.1 两父合并（67 路径：42 合并双方、25 保留 Fork）
+
+| # | 路径 | 裁决 |
+| --- | --- | --- |
+| 1 | `.github/ci-paths.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 2 | `apps/desktop/build/icon.icns` | 保留 Fork（上游改动不适用） |
+| 3 | `apps/desktop/build/icon.ico` | 保留 Fork（上游改动不适用） |
+| 4 | `apps/desktop/build/icon.png` | 保留 Fork（上游改动不适用） |
+| 5 | `apps/desktop/build/icons/128x128.png` | 保留 Fork（上游改动不适用） |
+| 6 | `apps/desktop/build/icons/16x16.png` | 保留 Fork（上游改动不适用） |
+| 7 | `apps/desktop/build/icons/24x24.png` | 保留 Fork（上游改动不适用） |
+| 8 | `apps/desktop/build/icons/256x256.png` | 保留 Fork（上游改动不适用） |
+| 9 | `apps/desktop/build/icons/32x32.png` | 保留 Fork（上游改动不适用） |
+| 10 | `apps/desktop/build/icons/48x48.png` | 保留 Fork（上游改动不适用） |
+| 11 | `apps/desktop/build/icons/512x512.png` | 保留 Fork（上游改动不适用） |
+| 12 | `apps/desktop/build/icons/64x64.png` | 保留 Fork（上游改动不适用） |
+| 13 | `apps/desktop/package.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 14 | `apps/desktop/resources/icon.png` | 保留 Fork（上游改动不适用） |
+| 15 | `apps/docs/app/icon.svg` | 保留 Fork（上游改动不适用） |
+| 16 | `apps/mobile/assets/icon.png` | 保留 Fork（上游改动不适用） |
+| 17 | `apps/mobile/components/brand/multica-logo.tsx` | 保留 Fork（上游改动不适用） |
+| 18 | `apps/web/public/favicon.svg` | 保留 Fork（上游改动不适用） |
+| 19 | `apps/web/public/icons/apple-touch-icon.png` | 保留 Fork（上游改动不适用） |
+| 20 | `apps/web/public/icons/icon-192.png` | 保留 Fork（上游改动不适用） |
+| 21 | `apps/web/public/icons/icon-512.png` | 保留 Fork（上游改动不适用） |
+| 22 | `apps/web/public/icons/icon-maskable-512.png` | 保留 Fork（上游改动不适用） |
+| 23 | `apps/web/public/icons/icon.svg` | 保留 Fork（上游改动不适用） |
+| 24 | `apps/web/test/setup.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 25 | `docs/assets/logo-dark.svg` | 保留 Fork（上游改动不适用） |
+| 26 | `docs/assets/logo-light.svg` | 保留 Fork（上游改动不适用） |
+| 27 | `e2e/perf/README.md` | 合并双方（Fork 语义保留于上游新结构） |
+| 28 | `packages/core/inbox/mutations.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 29 | `packages/core/inbox/mutations.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 30 | `packages/core/issue-views/definition.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 31 | `packages/core/realtime/use-realtime-sync-ws-instance.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 32 | `packages/ui/components/common/multica-icon.tsx` | 保留 Fork（上游改动不适用） |
+| 33 | `packages/ui/components/common/multica-wordmark.tsx` | 保留 Fork（上游改动不适用） |
+| 34 | `packages/ui/package.json` | 合并双方（Fork 语义保留于上游新结构） |
+| 35 | `packages/views/agents/components/agents-page.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 36 | `packages/views/agents/components/agents-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 37 | `packages/views/common/task-transcript/transcript-button.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 38 | `packages/views/issue-views/view-header.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 39 | `packages/views/issue-views/view-header.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 40 | `packages/views/issues/components/issue-detail.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 41 | `packages/views/issues/components/issues-header.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 42 | `packages/views/issues/components/table-view.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 43 | `packages/views/issues/surface/use-issue-surface-controller.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 44 | `packages/views/layout/help-launcher.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 45 | `packages/views/layout/help-launcher.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 46 | `packages/views/layout/panels/team-panel.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 47 | `packages/views/layout/panels/views-section.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 48 | `packages/views/layout/panels/work-tree.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 49 | `packages/views/projects/components/project-detail.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 50 | `packages/views/projects/components/project-detail.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 51 | `packages/views/runtimes/components/runtimes-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 52 | `packages/views/skills/components/skills-page-filter-predicate.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 53 | `packages/views/skills/components/skills-page.header.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 54 | `packages/views/skills/components/skills-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 55 | `pnpm-lock.yaml` | 合并双方（Fork 语义保留于上游新结构） |
+| 56 | `scripts/ci-scope.test.mjs` | 合并双方（Fork 语义保留于上游新结构） |
+| 57 | `scripts/perf-compare.mjs` | 合并双方（Fork 语义保留于上游新结构） |
+| 58 | `server/cmd/multica/cmd_auth.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 59 | `server/internal/daemon/execenv/runtime_config_sections.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 60 | `server/internal/daemon/prompt.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 61 | `server/internal/handler/file.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 62 | `server/internal/handler/skill.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 63 | `server/internal/handler/skill_create.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 64 | `server/internal/qoderruntime/prompt.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 65 | `server/internal/service/task.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 66 | `server/internal/util/text.go` | 合并双方（Fork 语义保留于上游新结构） |
+| 67 | `server/internal/util/text_test.go` | 合并双方（Fork 语义保留于上游新结构） |
+
 ## Stage 5 — OL-1252：全量门禁、保留 E2E、记录归档与 PR 收口
 
 本阶段不引入产品改动：`server/migrations` 自 Stage 4 末次验证（`8183cb4e4`）以来零差异，Stage 4 的 736 条迁移台账与 3,076 项 Schema 一致性证明继续有效，并在本阶段环境原样复验。HEAD 起点 `d07ccad86e5fed9df69a581031391103c55a5055`，含 Stage 3 终版修复 `b19c59f10436c3ead3a7f7acd7080f5546770fb3`（前端审阅修复）与 DAG 选择操作响应性修复；两处两父合并（M1 `537956e4c`、M2 `ed6c70ab5`）与 #9914/#9906 cherry-pick 均未被改写。
@@ -268,15 +479,16 @@ Stage 3 交接时前端 core 套件为 217 文件通过、44 失败（占位文�
 - 新装（空库 → 全部 736 条）与升级（第一父 `2623fc06e` 的 730 条 → 补跑 611–616 共 6 条）两条路径各产出 3,076 项规范化记录，逐字节一致。
 - 结构 SHA-256 `de69c3256637eeb1400579ef70eb42be19c6cbd867d5e8eddff45e6356f6ce5e`，与 Stage 4 记录一致（迁移零变更的直接验证）。
 - ledger 内容指纹（`md5(string_agg(version, ',' ORDER BY version))`）两库同为 `631c68867cc1b8d86f89b521c1c5902b`；两库 `pg_index` 中 INVALID 索引均为 0。
+- 首审补充实测了生产实际的「PR base 一步升级」路径（base `bd317ee3` 先执行其 714 条，head 一次补齐 22 条），规范化 schema 与新装同样逐字节一致（3,076 项、SHA-256 `de69c325…6ce5e`）；存量安装由该路径覆盖，本文以 M2 第一父起算的表述是开发中间态复验。
 - Fork 保留迁移 `467_task_dependency_admission`、`467_labrastro_message_sources`、`9009_labrastro_wakeup_conversation_provenance`、`9028_labrastro_wakeup_skip_handed_to_agent`、`9054_labrastro_default_workflow_keep_in_use_statuses` 在两库 ledger 中均存在且只执行一次；上游 611–616 六组保持 `NNN_name` 命名。
 - 外部路由清单 `server/cmd/server/testdata/labrastro-external-routes.tsv` 为 593 行 60 allow / 457 deny / 76 separate-auth，与 Stage 4 审计表一致。
 
 ### 隔离保留 E2E 实测
 
-按 `docs/engineering/ci-gates.md` 以任务私有 PostgreSQL 15.19（端口 15432、`labrastro_e2e` 库）替代 CI 的 PostgreSQL 17 service，一次性脚本 `GOTOOLCHAIN=go1.27.3 bash scripts/test-retained-e2e.sh` 完整执行：真实 Go server 构建 + 全量迁移 + 生产 Web 构建 + Playwright 单 worker 无重试。**24/24 通过**（onboarding-smoke 11、issue-dependencies 5、dag-task-lines 2、comments 4、含退役路由 404 与内网下载页断言），HTML 报告留存于 `test-results/retained-e2e/report/`。首轮因 Playwright 缺少本仓库锁定的 chromium_headless_shell-1208 报 executable 缺失，`pnpm exec playwright install chromium` 后复跑全绿，属本机缓存问题非产品问题。
+按 `docs/engineering/ci-gates.md` 以任务私有 PostgreSQL 15.19（端口 15432、`labrastro_e2e` 库）替代 CI 的 PostgreSQL 17 service，一次性脚本 `GOTOOLCHAIN=go1.27.3 bash scripts/test-retained-e2e.sh` 完整执行：真实 Go server 构建 + 全量迁移 + 生产 Web 构建 + Playwright 单 worker 无重试。**24/24 通过**（onboarding-smoke 11、issue-dependencies 5、dag-task-lines 2、comments 4、含退役路由 404 与内网下载页断言），本机 HTML 报告留存于 `test-results/retained-e2e/report/`；head `44b24e7a8` 的 CI 亦已复跑同一门禁：run [`42283534326`](https://github.com/AstralSolipsism/multica/actions/runs/42283534326) 的 `retained-e2e-tests` 结论 success（24 passed，产物 `retained-e2e-42283534326-1`），`CI required` 聚合 pass，且 Linux runner 上完整的 `pkg/agent -race`（`backend-agent-tests`）通过——即本机宿主缺 pidfd 能力而失败的 4 项测试在 CI 已实测通过。首轮因 Playwright 缺少本仓库锁定的 chromium_headless_shell-1208 报 executable 缺失，`pnpm exec playwright install chromium` 后复跑全绿，属本机缓存问题非产品问题。
 
-关键界面证据（一次性截图脚本 `e2e/shots/stage5-shots.spec.ts` + `playwright.stage5-shots.config.ts`，同一后端/Web 实例，6/6 通过）：`1.0` 双层侧栏 Issues 页、DAG 任务线总览（真实 blocked-by 边）、智能体文件夹树 + thinking level 属性栏（Atlas · high）、技能文件夹树（Engineering 嵌套）、技能 v0.8.1 版本历史（v1 · Current · Created · Stage5 Shots）、Runtime 配额与并发上限页。截图随 PR 提交附件。
+关键界面证据（一次性截图脚本 `scripts/stage5-shots/stage5-shots.spec.ts` + 其独立 config，位于默认 `playwright.config.ts` 的 `testDir` 之外，不会被 `pnpm exec playwright test` 扫到；同一后端/Web 实例，6/6 通过）：`1.0` 双层侧栏 Issues 页、DAG 任务线总览（真实 blocked-by 边）、智能体文件夹树 + thinking level 属性栏（Atlas · high）、技能文件夹树（Engineering 嵌套）、技能 v0.8.1 版本历史（v1 · Current · Created · Stage5 Shots）、Runtime 配额与并发上限页。截图随 PR 提交附件。
 
 ### PR 收口
 
-正式非草稿 PR 向 `AstralSolipsism/multica` 的 `main` 发起（显式 `--repo AstralSolipsism/multica --base main --head sync/v0.8.0-ol-1234`），标题 `OL-1234: sync upstream v0.8.0 and v0.8.1 (OL-1252)`，最终 Head SHA 与 CI 聚合结果见 PR 正文与 OL-1252 评论；跨家族双审由审阅专家按顺序执行（首审 Claude、二审 GLM，涉及数据库迁移与安全边界须两轮通过后才合并，合并操作留给审阅方）。
+正式非草稿 PR 向 `AstralSolipsism/multica` 的 `main` 发起（显式 `--repo AstralSolipsism/multica --base main --head sync/v0.8.0-ol-1234`），标题 `OL-1234: sync upstream v0.8.0 and v0.8.1 (OL-1252)`，最终 Head SHA 与 CI 聚合结果见 PR 正文与 OL-1252 评论；跨家族双审由审阅专家按顺序执行（首审 Claude、二审 Codex——本 PR 作者属 GLM 家族，按工作区跨家族规则二审不能由 GLM 承担；两轮通过后才合并，合并操作留给审阅方）。

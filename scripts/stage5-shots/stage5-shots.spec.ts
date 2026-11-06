@@ -1,17 +1,16 @@
-import "../env";
+// One-shot evidence script, never part of any suite. Run explicitly from repo root:
+//   pnpm exec playwright test --config scripts/stage5-shots/playwright.stage5-shots.config.ts
 
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
 
-import { loginAsDefault } from "../helpers";
-import { TestApiClient } from "../fixtures";
+import { TestApiClient } from "../../e2e/fixtures";
 
 // Stage 5 (OL-1252) evidence capture: one disposable account tours the v0.8.x
 // surfaces the sync must retain. Not a product test — each step only proves the
 // page renders its retained feature, then screenshots it.
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+const DATABASE_URL = process.env.DATABASE_URL!; // required: this script writes fixtures directly
 const SHOTS = "test-results/stage5-shots/screenshots";
 const STAMP = `${Date.now()}`;
 
@@ -118,8 +117,7 @@ test("03 agents folder tree + thinking level property", async ({ page }) => {
     await shot(page, "03-agents-folder-tree");
 
     await page.locator('[role="row"]', { hasText: "Atlas" }).first().click();
-    const inspector = page.locator("aside, [data-agent-inspector], [role complementary]").first();
-    await expect(page.getByText(/thinking/i).first()).toBeVisible({ timeout: 30000 });
+      await expect(page.getByText(/thinking/i).first()).toBeVisible({ timeout: 30000 });
     await page.waitForTimeout(600);
     await shot(page, "04-agent-thinking-level");
   } finally {
