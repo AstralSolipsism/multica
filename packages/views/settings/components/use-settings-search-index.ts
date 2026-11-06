@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useT } from "../../i18n";
 import type { SettingsSearchEntry } from "./settings-search";
 import { CHANNEL_INTEGRATIONS } from "./settings-navigation";
-import { useYouShouldKnowSearchEntries } from "../../you-should-know/settings/use-ysk-search-entries";
+import { browserNotificationSettingAvailable } from "./browser-notification-setting";
 
 const NOTIFICATION_GROUPS = [
   "assignments",
@@ -26,14 +26,13 @@ export type SettingsSearchIndexEntry = SettingsSearchEntry;
  * The searchable settings for the pages currently in the navigation. Anchors
  * here must match the `anchor` props on the corresponding `SettingsSection` /
  * `SettingsRow`; entries for hidden pages (feature flags, desktop-only) are
- * dropped so a result never lands on a page the user cannot open.
+ * dropped so a result never lands on a page the user cannot open, and rows
+ * that only render on some platforms are indexed under the same condition.
  */
 export function useSettingsSearchIndex(
   pages: readonly SettingsSearchPage[],
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
-  // Fork (OL-187 §8): the personal YSK entry follows the workspace switch.
-  const yskEntries = useYouShouldKnowSearchEntries();
   return useMemo(() => {
     const visible = new Set(pages.map((page) => page.value));
     const rows: SettingsSearchIndexEntry[] = [
@@ -103,12 +102,16 @@ export function useSettingsSearchIndex(
         anchor: "system",
         title: t(($) => $.notifications.system.label),
       },
-      {
-        tab: "notifications",
-        anchor: "browser",
-        title: t(($) => $.notifications.browser.label),
-      },
-      ...yskEntries.personal,
+      // Web-only row: absent on desktop and without the Notification API.
+      ...(browserNotificationSettingAvailable()
+        ? [
+            {
+              tab: "notifications",
+              anchor: "browser",
+              title: t(($) => $.notifications.browser.label),
+            },
+          ]
+        : []),
       {
         tab: "tokens",
         title: t(($) => $.page.tabs.tokens),
@@ -139,7 +142,6 @@ export function useSettingsSearchIndex(
         anchor: "issue-prefix",
         title: t(($) => $.workspace.issue_prefix_label),
       },
-      ...yskEntries.workspace,
       { tab: "workspace", anchor: "leave", title: t(($) => $.workspace.leave_title) },
       { tab: "workspace", anchor: "delete", title: t(($) => $.workspace.delete_title) },
       { tab: "members", anchor: "invitations", title: t(($) => $.members.pending_label) },
@@ -228,5 +230,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t, yskEntries]);
+  }, [pages, t]);
 }

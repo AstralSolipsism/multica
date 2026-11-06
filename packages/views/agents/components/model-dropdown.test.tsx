@@ -156,7 +156,7 @@ describe("ModelDropdown", () => {
   });
 
   it("offers an explicit refresh that requests the runtime's live catalog", async () => {
-    const { container } = renderDropdown();
+    const { container } = renderDropdown({ workspaceSlug: "new-workspace" });
     openDropdown(container);
 
     await screen.findByText("GPT-5.6 Sol");
@@ -167,6 +167,7 @@ describe("ModelDropdown", () => {
     expect(mockRefreshRuntimeModels).toHaveBeenCalledWith(
       expect.any(QueryClient),
       "rt-codex",
+      "new-workspace",
     );
   });
 

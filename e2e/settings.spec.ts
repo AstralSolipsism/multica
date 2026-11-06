@@ -1,38 +1,42 @@
 import { test, expect } from "@playwright/test";
-import { loginAsDefault, waitForPageText } from "./helpers";
+import { appRail, currentWorkspaceTile, loginAsDefault, waitForPageText } from "./helpers";
 
 test.describe("Settings", () => {
-  test("updating workspace name reflects in sidebar immediately", async ({
+  test("updating workspace name reflects in the rail immediately", async ({
     page,
   }) => {
     const workspaceSlug = await loginAsDefault(page);
 
-    // Read the current workspace name from the sidebar
-    const sidebarName = page.getByRole("button", { name: /E2E Workspace/ }).first();
-    const originalName = (await sidebarName.innerText()).split("\n").pop()?.trim() ?? "E2E Workspace";
+    // Read the current workspace name from its rail tile
+    const tile = currentWorkspaceTile(page);
+    await expect(tile).toBeVisible({ timeout: 15000 });
+    const originalName = (await tile.getAttribute("aria-label")) ?? "E2E Workspace";
 
     await page.goto(`/${workspaceSlug}/settings?tab=workspace`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "General");
 
     // Change workspace name
-    const nameInput = page.getByRole("textbox", { name: "Name", exact: true });
+    const nameInput = page
+      .locator('input[type="text"]')
+      .first();
     await nameInput.clear();
     const newName = "Renamed WS " + Date.now();
     await nameInput.fill(newName);
 
-    // The upstream settings form saves changes automatically.
-    await nameInput.blur();
+    // Save
+    await page.locator("button", { hasText: "Save" }).click();
 
-    // Sidebar should reflect the new name WITHOUT page refresh
-    await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(nameInput).toHaveValue(newName);
+    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+
+    // The rail should reflect the new name WITHOUT page refresh
+    await expect(appRail(page).getByRole("link", { name: newName })).toBeVisible();
 
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await nameInput.blur();
-    await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
+    await page.locator("button", { hasText: "Save" }).click();
+    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    await expect(appRail(page).getByRole("link", { name: originalName })).toBeVisible();
   });
 
   // Composio connect flow, fully mocked at the network boundary so it runs

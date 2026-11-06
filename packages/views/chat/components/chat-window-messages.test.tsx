@@ -5,20 +5,34 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { chatKeys } from "@multica/core/chat/queries";
 import type { ChatMessage } from "@multica/core/types";
 import { ChatWindowMessages } from "./chat-window-messages";
-import { renderWithI18n } from "../../test/i18n";
-import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 
 const fetchMessages = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", () => ({ api: { listChatMessagesPage: fetchMessages } }));
 vi.mock("@multica/core/chat/mutations", () => ({
   useRegenerateChatQuickActions: () => ({ mutateAsync: vi.fn() }),
 }));
+const listProps = vi.hoisted(() => ({
+  current: null as null | { revealKey?: string | null; onRevealed?: () => void },
+}));
 vi.mock("./chat-message-list", () => ({
-  ChatMessageList: ({ active, messages }: { active: boolean; messages: ChatMessage[] }) => (
-    <div data-testid="messages" data-active={active}>
-      {messages.map((message) => <p key={message.id}>{message.content}</p>)}
-    </div>
-  ),
+  ChatMessageList: ({
+    active,
+    messages,
+    revealKey,
+    onRevealed,
+  }: {
+    active: boolean;
+    messages: ChatMessage[];
+    revealKey?: string | null;
+    onRevealed?: () => void;
+  }) => {
+    listProps.current = { revealKey, onRevealed };
+    return (
+      <div data-testid="messages" data-active={active}>
+        {messages.map((message) => <p key={message.id}>{message.content}</p>)}
+      </div>
+    );
+  },
   ChatMessageSkeleton: () => <div data-testid="skeleton" />,
 }));
 
@@ -33,22 +47,30 @@ function pages(messages: ChatMessage[]) {
   return { pages: [{ messages, limit: 50, has_more: false }], pageParams: [null] };
 }
 
-function renderWindow(open: boolean) {
+function renderWindow(
+  open: boolean,
+  {
+    sessionId = "session-1",
+    cached = true,
+    onReady,
+  }: { sessionId?: string | null; cached?: boolean; onReady?: () => void } = {},
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const key = chatKeys.messagesPage("session-1");
-  qc.setQueryData(key, pages([message("initial message")]));
+  if (cached) qc.setQueryData(key, pages([message("initial message")]));
   const content = (isOpen: boolean) => (
     <QueryClientProvider client={qc}>
       <AnimatePresence initial={false}>
         {isOpen && (
           <ChatWindowMessages
-            sessionId="session-1"
+            sessionId={sessionId}
             pendingTask={undefined}
             pendingTaskLoading={false}
             availability={undefined}
             onQuickAction={vi.fn()}
             quickActionsDisabled={false}
             quickActionsPendingMessageId={null}
+            onReady={onReady}
           >
             <div>empty</div>
           </ChatWindowMessages>
@@ -65,29 +87,48 @@ function renderWindow(open: boolean) {
   };
 }
 
-beforeEach(() => { fetchMessages.mockReset(); });
+beforeEach(() => {
+  fetchMessages.mockReset();
+  listProps.current = null;
+});
 
-describe("floating chat message lifetime", () => {
-  it("shows tip-session starters only while its message window is empty", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const key = chatKeys.messagesPage("session-1");
-    qc.setQueryData(key, pages([]));
-    renderWithI18n(
-      <QueryClientProvider client={qc}>
-        <ChatWindowMessages sessionId="session-1" pendingTask={null} pendingTaskLoading={false}
-          availability={undefined} onQuickAction={vi.fn()} quickActionsDisabled={false}
-          quickActionsPendingMessageId={null}>
-          <TipSideChatStarters onPick={vi.fn(async () => {})} disabled={false} />
-        </ChatWindowMessages>
-      </QueryClientProvider>,
-    );
-    expect(screen.getAllByRole("button")).toHaveLength(3);
-    expect(screen.queryByTestId("messages")).not.toBeInTheDocument();
-    act(() => qc.setQueryData(key, pages([message("tip reply")])));
-    expect(await screen.findByText("tip reply")).toBeInTheDocument();
-    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+// MUL-8417: the window fades in around this area, so it must say when the area
+// has something to show rather than an empty, hidden list.
+describe("floating chat message readiness", () => {
+  it("is ready at once for the empty state of a new chat", () => {
+    const onReady = vi.fn();
+    renderWindow(true, { sessionId: null, onReady });
+    expect(screen.getByText("empty")).toBeInTheDocument();
+    expect(onReady).toHaveBeenCalled();
   });
 
+  it("is ready at once for the skeleton of an uncached session", () => {
+    fetchMessages.mockReturnValue(new Promise(() => {}));
+    const onReady = vi.fn();
+    renderWindow(true, { cached: false, onReady });
+    expect(screen.getByTestId("skeleton")).toBeInTheDocument();
+    expect(onReady).toHaveBeenCalled();
+  });
+
+  it("leaves a list's readiness to the list, named by its session", () => {
+    const onReady = vi.fn();
+    renderWindow(true, { onReady });
+    expect(screen.getByTestId("messages")).toBeInTheDocument();
+    expect(onReady).not.toHaveBeenCalled();
+    expect(listProps.current?.revealKey).toBe("session-1");
+    expect(listProps.current?.onRevealed).toBe(onReady);
+  });
+
+  it("does not report ready while the area is leaving", () => {
+    const onReady = vi.fn();
+    const { setOpen } = renderWindow(true, { sessionId: null, onReady });
+    onReady.mockClear();
+    setOpen(false);
+    expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+describe("floating chat message lifetime", () => {
   it("keeps message observers absent when the window starts closed", () => {
     const { observers } = renderWindow(false);
     expect(screen.queryByTestId("messages")).not.toBeInTheDocument();
@@ -102,7 +143,7 @@ describe("floating chat message lifetime", () => {
 
     setOpen(false);
     expect(screen.getByTestId("messages")).toHaveAttribute("data-active", "false");
-    // DOM removal precedes the query subscription's passive-effect cleanup.
+    // The observer leaves in the unmount's passive cleanup, which can trail the DOM removal.
     await waitFor(() => {
       expect(screen.queryByTestId("messages")).not.toBeInTheDocument();
       expect(observers()).toBe(0);
@@ -127,12 +168,9 @@ describe("floating chat message lifetime", () => {
   });
 
   it("fetches the full message window when its inactive cache was collected", async () => {
-    const { qc, key, setOpen, observers } = renderWindow(true);
+    const { qc, key, setOpen } = renderWindow(true);
     setOpen(false);
-    await waitFor(() => {
-      expect(screen.queryByTestId("messages")).not.toBeInTheDocument();
-      expect(observers()).toBe(0);
-    });
+    await waitFor(() => expect(screen.queryByTestId("messages")).not.toBeInTheDocument());
     qc.removeQueries({ queryKey: key });
     fetchMessages.mockResolvedValue({ messages: [message("refetched after collection")], limit: 50, has_more: false });
 

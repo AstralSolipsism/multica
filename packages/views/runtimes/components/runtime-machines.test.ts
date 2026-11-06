@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "@multica/core/types";
 import {
   buildRuntimeMachines,
+  countRuntimeMachines,
   filterRuntimeMachines,
   runtimeMachineCounts,
   runtimeRowLabel,
@@ -385,248 +386,28 @@ describe("runtime machine grouping", () => {
   });
 });
 
-describe("runtime machine quota chips", () => {
-  const NOW_SEC = Math.floor(NOW / 1000);
-
-  function makeQuota(
-    overrides: Record<string, unknown> = {},
-  ): NonNullable<AgentRuntime["plan_quota"]> {
-    return {
-      provider: "codex",
-      status: "ok",
-      windows: [
-        {
-          name: "primary",
-          used_percent: 38,
-          window_minutes: 300,
-          resets_at: NOW_SEC + 3600,
-        },
-      ],
-      observed_at: NOW_SEC - 60,
-      source: "daemon",
-      ...overrides,
-    } as NonNullable<AgentRuntime["plan_quota"]>;
-  }
-
-  it("builds one chip per runtime from its tightest constraint", () => {
-    const machines = buildRuntimeMachines(
+describe("countRuntimeMachines", () => {
+  it("matches the machine grouping", () => {
+    const cases: AgentRuntime[][] = [
+      [],
+      Array.from({ length: 6 }, (_, i) => makeRuntime({ id: `rt-${i}` })),
       [
-        makeRuntime({
-          id: "rt-codex",
-          provider: "codex",
-          plan_quota: makeQuota({
-            windows: [
-              { name: "primary", used_percent: 38, window_minutes: 300, resets_at: NOW_SEC + 3600 },
-              { name: "secondary", used_percent: 88, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
-            ],
-          }),
-        }),
-        makeRuntime({
-          id: "rt-claude",
-          provider: "claude",
-          plan_quota: makeQuota({ provider: "claude", status: "limited" }),
-        }),
+        makeRuntime({ id: "rt-1", daemon_id: "daemon-1" }),
+        makeRuntime({ id: "rt-2", daemon_id: "daemon-2" }),
+        makeRuntime({ id: "rt-3", daemon_id: "daemon-2" }),
       ],
-      { now: NOW },
-    );
-
-    expect(machines[0]?.quotaChips).toEqual([
-      {
-        key: "rt-claude",
-        runtimeId: "rt-claude",
-        provider: "claude",
-        group: null,
-        remainingPercent: null,
-        limited: true,
-        tone: "destructive",
-        interrupted: false,
-      },
-      {
-        key: "rt-codex",
-        runtimeId: "rt-codex",
-        provider: "codex",
-        group: null,
-        remainingPercent: 12,
-        limited: false,
-        tone: "warning",
-        interrupted: false,
-      },
-    ]);
-  });
-
-  it("splits independent pools into one chip each", () => {
-    const machines = buildRuntimeMachines(
       [
-        makeRuntime({
-          id: "rt-agy",
-          provider: "antigravity",
-          plan_quota: makeQuota({
-            provider: "antigravity",
-            status: "limited",
-            windows: [
-              { name: "gemini_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "gemini" },
-              { name: "claude_gpt_5h", used_percent: 0, window_minutes: 300, resets_at: null, group: "claude_gpt" },
-              { name: "claude_gpt_weekly", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 86400, group: "claude_gpt" },
-            ],
-          }),
-        }),
+        makeRuntime({ id: "rt-legacy-claude", daemon_id: null, name: "Claude (macbook)", device_info: "" }),
+        makeRuntime({ id: "rt-legacy-codex", daemon_id: null, name: "Codex (macbook)", device_info: "" }),
+        makeRuntime({ id: "rt-unnamed", daemon_id: null, name: "Claude", device_info: "" }),
       ],
-      { now: NOW },
-    );
-
-    expect(machines[0]?.quotaChips).toEqual([
-      expect.objectContaining({ key: "rt-agy:gemini", group: "gemini", limited: false, remainingPercent: 100, tone: "ok" }),
-      expect.objectContaining({ key: "rt-agy:claude_gpt", group: "claude_gpt", limited: true, tone: "destructive" }),
-    ]);
-  });
-
-  it("keeps old, reset and interrupted snapshots, excluding malformed ones", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          id: "rt-idle",
-          provider: "codex",
-          plan_quota: makeQuota({ observed_at: NOW_SEC - 36 * 3600, windows: [
-            { name: "primary", used_percent: 59, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
-          ] }),
-        }),
-        makeRuntime({
-          id: "rt-malformed",
-          provider: "kimi",
-          plan_quota: "not-a-snapshot" as unknown as AgentRuntime["plan_quota"],
-        }),
-        makeRuntime({
-          id: "rt-reset",
-          provider: "claude",
-          plan_quota: makeQuota({
-            provider: "claude",
-            windows: [
-              { name: "five_hour", used_percent: 1, window_minutes: 300, resets_at: NOW_SEC - 5 },
-              { name: "seven_day", used_percent: 14, window_minutes: 10080, resets_at: NOW_SEC + 4 * 86400 },
-            ],
-          }),
-        }),
-        makeRuntime({
-          id: "rt-kimi",
-          provider: "kimi",
-          plan_quota: makeQuota({ provider: "kimi", observed_at: NOW_SEC - 2 * 3600 }),
-        }),
-      ],
-      { now: NOW },
-    );
-
-    expect(machines[0]?.quotaChips).toHaveLength(3);
-    expect(machines[0]?.quotaChips).toEqual(expect.arrayContaining([
-      // Task-reported data stays current until its reset.
-      expect.objectContaining({ runtimeId: "rt-idle", interrupted: false, remainingPercent: 41 }),
-      // A passed five-hour reset leaves the weekly balance in charge.
-      expect.objectContaining({ runtimeId: "rt-reset", interrupted: false, remainingPercent: 86 }),
-      expect.objectContaining({ runtimeId: "rt-kimi", interrupted: true, remainingPercent: 62 }),
-    ]));
-  });
-
-  it("leaves chips empty for an offline machine", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(NOW - 10 * 60_000).toISOString(),
-          plan_quota: makeQuota(),
-        }),
-      ],
-      { now: NOW },
-    );
-
-    expect(machines[0]?.quotaChips).toEqual([]);
-  });
-});
-
-describe("runtime machine system stats", () => {
-  const NOW_SEC = Math.floor(NOW / 1000);
-
-  it("picks the latest sample across the machine's runtimes", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          id: "rt-old",
-          provider: "codex",
-          system_stats: { cpu_percent: 10, memory_percent: 20, captured_at: NOW_SEC - 60, stale: false },
-        }),
-        makeRuntime({
-          id: "rt-new",
-          provider: "claude",
-          system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC - 5, stale: false },
-        }),
-      ],
-      { now: NOW },
-    );
-
-    expect(machines[0]).toMatchObject({
-      cpuPercent: 42,
-      memoryPercent: 68,
-      systemStatsCapturedAt: NOW_SEC - 5,
-      systemStatsStale: false,
-    });
-  });
-
-  it("propagates the server-computed stale flag and tolerates no data", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          id: "rt-stale",
-          system_stats: { cpu_percent: 42, memory_percent: null, captured_at: NOW_SEC - 45, stale: true },
-        }),
-      ],
-      { now: NOW },
-    );
-    expect(machines[0]).toMatchObject({
-      cpuPercent: 42,
-      memoryPercent: null,
-      systemStatsStale: true,
-    });
-
-    const empty = buildRuntimeMachines([makeRuntime({ id: "rt-none" })], {
-      now: NOW,
-    });
-    expect(empty[0]).toMatchObject({
-      cpuPercent: null,
-      memoryPercent: null,
-      systemStatsCapturedAt: null,
-      systemStatsStale: false,
-    });
-  });
-
-  it("advances freshness on the ticking clock when refetches stop arriving", () => {
-    // The daemon's sampler stopped (or the network did) right after this
-    // sample: the server response said fresh. Within the bounded-poll window
-    // the machine must NOT flicker stale; once no refetch has delivered for
-    // 2x the SLA, the ticking clock alone flips it to stale.
-    const runtime = makeRuntime({
-      id: "rt-aging",
-      system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: NOW_SEC, stale: false },
-    });
-
-    const fresh = buildRuntimeMachines([runtime], { now: NOW });
-    expect(fresh[0]?.systemStatsStale).toBe(false);
-
-    const withinPollWindow = buildRuntimeMachines([runtime], { now: NOW + 31_000 });
-    expect(withinPollWindow[0]?.systemStatsStale).toBe(false);
-
-    const aged = buildRuntimeMachines([runtime], { now: NOW + 61_000 });
-    expect(aged[0]?.systemStatsStale).toBe(true);
-  });
-
-  it("ignores malformed samples instead of failing the row", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          id: "rt-junk",
-          system_stats: "junk" as unknown as AgentRuntime["system_stats"],
-        }),
-      ],
-      { now: NOW },
-    );
-    expect(machines[0]?.cpuPercent).toBeNull();
+    ];
+    expect(cases.map(countRuntimeMachines)).toEqual([0, 1, 2, 2]);
+    for (const runtimes of cases) {
+      expect(countRuntimeMachines(runtimes)).toBe(
+        buildRuntimeMachines(runtimes, { now: NOW }).length,
+      );
+    }
   });
 });
 

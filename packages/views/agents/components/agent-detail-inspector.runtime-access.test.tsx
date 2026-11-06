@@ -146,7 +146,7 @@ describe("AgentDetailInspector runtime access", () => {
     renderInspector(privateRuntime.owner_id);
 
     await waitFor(() => {
-      expect(mockInitiateListModels).toHaveBeenCalledWith(privateRuntime.id);
+      expect(mockInitiateListModels).toHaveBeenCalledWith(privateRuntime.id, undefined, undefined);
     });
   });
 

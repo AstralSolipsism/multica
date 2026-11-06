@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { VIEW_MODE_CAPABILITIES, type ViewMode } from "@multica/core/issues/surface/view-mode";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -10,8 +9,8 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useModalStore } from "@multica/core/modals";
 import { useQuery } from "@tanstack/react-query";
-import { workspaceIssueUsageOptions } from "@multica/core/issues/queries";
 import { workspaceWakeupSummariesOptions } from "@multica/core/issues/wakeups";
 import {
   useViewStore,
@@ -22,7 +21,6 @@ import {
   seedIssueSurfaceViewState,
 } from "@multica/core/issues/stores/surface-view-store";
 import { useActiveIssueView } from "@multica/core/issue-views/use-active-view";
-import { baselineFromQuery } from "@multica/core/issue-views/baseline";
 import { ViewBaselineProvider, useViewBaseline } from "./view-baseline-context";
 import type { IssueViewScope } from "@multica/core/issue-views/queries";
 import {
@@ -32,13 +30,15 @@ import {
   type IssueScope,
 } from "@multica/core/issues/surface/scope";
 import type { Issue } from "@multica/core/types";
-import { BOARD_COL_WIDTH } from "../components/board-layout";
+import { BoardView } from "../components/board-view";
+import { BOARD_COL_WIDTH } from "../components/board-column";
 import { BatchActionToolbar } from "../components/batch-action-toolbar";
-import { IssuesHeader } from "../components/issues-header";
+import { GanttView } from "../components/gantt-view";
 import { ListView } from "../components/list-view";
-import { BoardView, TableView, GanttView, SwimLaneView, preloadIssueView } from "./issue-view-loaders";
-import { DagView } from "../dag/dag-view";
+import { SwimLaneView } from "../components/swimlane-view";
+import { TableView } from "../components/table-view";
 import { useT } from "../../i18n";
+import { CollectionPageState } from "../../layout/collection-page";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
 import { IssuePeekHost } from "../components/issue-peek";
@@ -53,11 +53,6 @@ import {
 export interface IssueSurfaceRenderContext {
   controller: IssueSurfaceController;
   issues: Issue[];
-  /** Issues the CURRENT view has loaded (OL-193): table pages rows in
-   *  through `tableLoadedIssues`, Gantt renders its filtered list, DAG has
-   *  no row anchors so the summary covers the graph's nodes. Drives the
-   *  You-should-know summary anchor scope in the headers. */
-  summaryScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
 }
 
 interface IssueSurfaceComponentProps extends IssueSurfaceProps {
@@ -68,37 +63,6 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   showClientEmpty?: (context: IssueSurfaceRenderContext) => boolean;
   batchToolbar?: "always" | "list" | "never";
   contentClassName?: string;
-}
-
-/** Stable empty list for the DAG-with-no-data summary scope case. */
-const NO_SCOPE_ISSUES: readonly Pick<Issue, "id" | "identifier">[] = [];
-
-/**
- * The issues the CURRENT view has loaded, for the YSK summary anchor scope
- * (OL-193). `surfaceIssues` is empty in table mode (rows page in through
- * TableView's own query) and unfiltered in gantt mode; DAG renders no row
- * anchors at all, so the summary covers the graph's nodes — otherwise tips
- * for graphed issues would have no visible position.
- */
-export function summaryScopeIssuesForViewMode(
-  viewMode: ViewMode,
-  sources: {
-    surfaceIssues: readonly Issue[];
-    tableLoadedIssues: readonly Issue[];
-    filteredGanttIssues: readonly Issue[];
-    dagNodes: readonly Pick<Issue, "id" | "identifier">[] | undefined;
-  },
-): readonly Pick<Issue, "id" | "identifier">[] {
-  switch (viewMode) {
-    case "table":
-      return sources.tableLoadedIssues;
-    case "gantt":
-      return sources.filteredGanttIssues;
-    case "dag":
-      return sources.dagNodes ?? NO_SCOPE_ISSUES;
-    default:
-      return sources.surfaceIssues;
-  }
 }
 
 /** An explicit, caller-owned store bypasses saved views and persisted surfaces. */
@@ -149,10 +113,6 @@ export function IssueSurface({
   const seedDefinition = activeView
     ? { ...activeView.query, ...activeView.display }
     : null;
-  const viewBaseline = useMemo(
-    () => (activeView ? baselineFromQuery(activeView.query) : null),
-    [activeView],
-  );
   // While a view is open, the scope axis the view captured belongs to the
   // VIEW, not to whichever tab the user stood on: workspace/project views
   // carry an assignee-type variant, my views a relation variant. The user's
@@ -191,7 +151,6 @@ export function IssueSurface({
 
   return (
     <ViewStoreProvider store={store}>
-      <ViewBaselineProvider baseline={viewBaseline}>
       {/* Remount on data-window change: the list queries keep the previous
           key's data as a placeholder (keepPreviousData) so sort/filter
           changes within ONE surface never flash a skeleton — but reusing the
@@ -217,7 +176,6 @@ export function IssueSurface({
         batchToolbar={batchToolbar}
         contentClassName={contentClassName}
       />
-      </ViewBaselineProvider>
     </ViewStoreProvider>
   );
 }
@@ -245,12 +203,6 @@ function IssueSurfaceContent({
     createDefaults,
     search,
   });
-  const showCost = useViewStore((state) => state.cardProperties.cost);
-  useQuery({
-    ...workspaceIssueUsageOptions(workspaceId),
-    enabled: !!workspaceId && showCost && ["board", "swimlane", "dag"].includes(controller.viewMode),
-  });
-  useEffect(() => { preloadIssueView(controller.viewMode); }, [controller.viewMode]);
   const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);
   const handleTableLoadedIssuesChange = useCallback((next: Issue[]) => {
     setTableLoadedIssues((current) =>
@@ -277,28 +229,9 @@ function IssueSurfaceContent({
         : controller.swimlaneIssues,
     [clientFilter, controller.swimlaneIssues],
   );
-  // YSK summary anchor scope (OL-193) — see summaryScopeIssuesForViewMode.
-  const summaryScopeIssues = useMemo<
-    readonly Pick<Issue, "id" | "identifier">[]
-  >(
-    () =>
-      summaryScopeIssuesForViewMode(controller.viewMode, {
-        surfaceIssues: controller.surfaceIssues,
-        tableLoadedIssues,
-        filteredGanttIssues: controller.filteredGanttIssues,
-        dagNodes: controller.dagGraph.data?.nodes,
-      }),
-    [
-      controller.viewMode,
-      controller.surfaceIssues,
-      controller.filteredGanttIssues,
-      controller.dagGraph.data,
-      tableLoadedIssues,
-    ],
-  );
   const renderContext = useMemo(
-    () => ({ controller, issues, summaryScopeIssues }),
-    [controller, issues, summaryScopeIssues],
+    () => ({ controller, issues }),
+    [controller, issues],
   );
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
@@ -312,9 +245,6 @@ function IssueSurfaceContent({
     (showClientEmpty ? showClientEmpty(renderContext) : true);
   const shouldShowBatchToolbar =
     batchToolbar !== "never" &&
-    // DAG has no row/card selection — batch actions stay with list-shaped
-    // modes.
-    VIEW_MODE_CAPABILITIES[controller.viewMode].batchSelection &&
     (batchToolbar === "always" ||
       controller.viewMode === "list" ||
       controller.viewMode === "table");
@@ -328,30 +258,7 @@ function IssueSurfaceContent({
       <IssueContextMenuProvider>
       <IssueSurfaceSelectionProvider selection={controller.selection}>
       <ColumnStatusesProvider statuses={controller.columnStatuses}>
-        {renderHeader ? (
-          renderHeader(renderContext)
-        ) : (
-          <IssuesHeader
-            scopedIssues={controller.surfaceIssues}
-            workingAgents={controller.workingAgents}
-            tipAnchorScopeIssues={summaryScopeIssues}
-            allowGantt={controller.allowGantt}
-            allowDag={controller.allowDag}
-            isRefreshing={controller.isRefreshing}
-            facetCountsExact={
-              controller.facetCountsExact
-            }
-            tableFacetCounts={controller.tableFacetCounts}
-            onTableFacetChange={controller.setActiveTableFacet}
-            saveViewScope={
-              scope.type === "project"
-                ? { kind: "project", projectId: scope.projectId }
-                : scope.type === "workspace"
-                  ? { kind: "workspace" }
-                  : null
-            }
-          />
-        )}
+        {renderHeader?.(renderContext)}
         {/* Every view opens the side peek on Shift+Click. The host wraps the
             loading and empty states too, so a view switch that briefly shows
             a skeleton keeps the peek open. */}
@@ -382,24 +289,35 @@ function IssueSurfaceContent({
           ) : renderEmpty ? (
             renderEmpty(renderContext)
           ) : (
-            <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
-              <ListTodo className="h-10 w-10 text-faint-foreground" />
-              <p className="text-body">{t(($) => $.detail.empty_issues_title)}</p>
-              <p className="text-caption">{t(($) => $.detail.empty_issues_hint)}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                onClick={() => controller.openCreateIssue()}
-              >
-                <Plus className="size-3.5 mr-1.5" />
-                {t(($) => $.detail.empty_issues_new_button)}
-              </Button>
-            </div>
+            <CollectionPageState
+              icon={ListTodo}
+              title={t(($) => $.detail.empty_issues_title)}
+              description={t(($) => $.detail.empty_issues_hint)}
+              actions={
+                <>
+                  <Button size="sm" onClick={() => controller.openCreateIssue()}>
+                    <Plus aria-hidden="true" />
+                    {t(($) => $.detail.empty_issues_new_button)}
+                  </Button>
+                  {scope.type === "project" ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        useModalStore
+                          .getState()
+                          .open("project-add-issue", { projectId: scope.projectId })
+                      }
+                    >
+                      {t(($) => $.detail.empty_issues_add_existing)}
+                    </Button>
+                  ) : null}
+                </>
+              }
+            />
           )
         ) : (
           <div className={cn("flex flex-col flex-1 min-h-0", contentClassName)}>
-            <Suspense fallback={<IssueSurfaceSkeleton mode={controller.viewMode} />}>
             {controller.viewMode === "board" && (
               <BoardView
                 issues={issues}
@@ -440,12 +358,6 @@ function IssueSurfaceContent({
             {controller.viewMode === "gantt" && (
               <GanttView issues={controller.filteredGanttIssues} />
             )}
-            {controller.viewMode === "dag" && (
-              <DagView
-                spec={controller.tableQuerySpec}
-                hasActiveFilters={controller.hasActiveFilters}
-              />
-            )}
             {controller.viewMode === "swimlane" && (
               <SwimLaneView
                 issues={issues}
@@ -460,7 +372,6 @@ function IssueSurfaceContent({
                 groupBranches={controller.groupBranches}
               />
             )}
-            </Suspense>
           </div>
         )}
         </IssuePeekHost>
@@ -491,23 +402,22 @@ function FilterDependencyErrorState({
 }) {
   const { t } = useT("issues");
   return (
-    <div
+    <CollectionPageState
       role="alert"
-      className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground"
-    >
-      <AlertTriangle className="h-10 w-10 text-faint-foreground" />
-      <p className="text-body">
-        {kind === "working"
+      tone="warning"
+      icon={AlertTriangle}
+      title={
+        kind === "working"
           ? t(($) => $.working_filter_error.title)
-          : t(($) => $.status_catalog_error.title)}
-      </p>
-      {kind === "status" && (
-        <p className="text-caption">{t(($) => $.status_catalog_error.hint)}</p>
-      )}
-      <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
-        {t(($) => $.status_catalog_error.retry)}
-      </Button>
-    </div>
+          : t(($) => $.status_catalog_error.title)
+      }
+      description={kind === "status" ? t(($) => $.status_catalog_error.hint) : undefined}
+      actions={
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          {t(($) => $.status_catalog_error.retry)}
+        </Button>
+      }
+    />
   );
 }
 
@@ -523,13 +433,16 @@ function FilteredEmptyState() {
     : clearFilters;
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-muted-foreground">
-      <FilterX className="h-10 w-10 text-faint-foreground" />
-      <p className="text-body">{t(($) => $.filtered_empty.title)}</p>
-      <Button variant="outline" size="sm" className="mt-1" onClick={handleClear}>
-        {t(($) => $.filtered_empty.clear_button)}
-      </Button>
-    </div>
+    <CollectionPageState
+      size="compact"
+      icon={FilterX}
+      title={t(($) => $.filtered_empty.title)}
+      actions={
+        <Button variant="outline" size="sm" onClick={handleClear}>
+          {t(($) => $.filtered_empty.clear_button)}
+        </Button>
+      }
+    />
   );
 }
 

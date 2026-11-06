@@ -47,8 +47,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	// This subprocess already gets a scratch cwd containing its input files.
-	if os.Getenv("MULTICA_DEPENDENCY_CLI_TEST") != "1" {
+	// These subprocesses already get a scratch cwd containing their input files.
+	if os.Getenv("MULTICA_DEPENDENCY_CLI_TEST") != "1" && os.Getenv("MULTICA_TEST_ATTACHMENT_ARGV") != "1" {
 		if err := os.Chdir(scratchHome); err != nil {
 			fmt.Fprintf(os.Stderr, "isolate cmd/multica test cwd: %v\n", err)
 			os.Exit(1)

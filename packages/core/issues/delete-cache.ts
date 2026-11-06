@@ -1,4 +1,3 @@
-import { invalidateIssueQueries } from "./invalidation";
 import type {
   InfiniteData,
   QueryClient,
@@ -212,7 +211,7 @@ export function cleanupDeletedIssueCaches(
   // refresh when an issue is removed — the deleted row may have been a
   // scheduled bar visible right now.
   qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
-  invalidateIssueQueries(qc, wsId, "graph");
+  qc.invalidateQueries({ queryKey: issueKeys.sidebarAll(wsId) });
   invalidateDeletedIssueDependentCaches(qc, wsId);
 
   // Recent Issues store persists to localStorage and survives reloads, so a

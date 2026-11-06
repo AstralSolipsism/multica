@@ -7,30 +7,34 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, ProjectStatus, PropertyFilterValue } from "../../types";
 import { PROJECT_STATUS_ORDER } from "../../projects/config";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
-import { DAG_OVERVIEW_VIEWPORT_KEY, sanitizeDagPersisted } from "./dag-preferences";
 import { defaultStorage } from "../../platform/storage";
-import { VIEW_MODE_CAPABILITIES, type ViewMode } from "../surface/view-mode";
+import {
+  advancedFilterFromSimple,
+  DUE_DATE_FILTERS,
+  EMPTY_SIMPLE_FILTER_FIELDS,
+  foldPropertyFiltersIntoTree,
+  ISSUE_RELATION_FILTERS,
+  NEGATABLE_FILTER_DIMENSIONS,
+  sanitizeAdvancedFilter,
+  simpleFromAdvancedFilter,
+  type AdvancedFilterGroup,
+  type DueDateFilter,
+  type IssueRelationFilter,
+  type NegatableFilterDimension,
+} from "./filter-tree";
 
-export type { ViewMode } from "../surface/view-mode";
+export {
+  DUE_DATE_FILTERS,
+  ISSUE_RELATION_FILTERS,
+  NEGATABLE_FILTER_DIMENSIONS,
+  type AdvancedFilterGroup,
+  type DueDateFilter,
+  type IssueRelationFilter,
+  type NegatableFilterDimension,
+};
+
+export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane";
 export type GanttZoom = "day" | "week" | "month";
-/** Direction of a DAG neighborhood highlight, anchored at a canvas node.
- *  "both" is the click-cycle's all upstream + downstream mode. */
-export type DagFocusWay = "upstream" | "downstream" | "both";
-export interface DagFocusState {
-  nodeId: string;
-  way: DagFocusWay;
-}
-/** Historical shared-view values retained at the data boundary. The current
- * DAG canvas always renders task-line containers. New definitions use parent. */
-export type DagGrouping = "project" | "parent" | "none";
-/** Representative id namespace for task-line cards on the DAG overview. */
-export const DAG_ISSUE_REP_PREFIX = "issue:";
-/** One remembered viewport per DAG level ("overview" or `line:<rootId>`). */
-export interface DagViewport {
-  x: number;
-  y: number;
-  zoom: number;
-}
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
  * groups columns by its options via the `property:<definitionId>` form.
@@ -122,7 +126,6 @@ export interface IssueDateFilter {
 export const SWIMLANE_GROUPINGS: SwimlaneGrouping[] = ["parent", "project", "assignee"];
 
 export interface CardProperties {
-  cost: boolean;
   priority: boolean;
   description: boolean;
   assignee: boolean;
@@ -138,8 +141,8 @@ export interface ActorFilterValue {
   id: string;
 }
 
-/** The ten query-defining filter fields as one value — what a saved view
- *  fixes, and what resets restore. */
+/** The query-defining filter fields as one value — what a saved view fixes,
+ *  and what resets restore. */
 export interface FilterSnapshot {
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
@@ -150,20 +153,58 @@ export interface FilterSnapshot {
   includeNoProject: boolean;
   projectStatusFilters: ProjectStatus[];
   labelFilters: string[];
+  relationFilters: IssueRelationFilter[];
+  dueDateFilters: DueDateFilter[];
+  negatedFilters: NegatableFilterDimension[];
   propertyFilters: Record<string, PropertyFilterValue[]>;
+  advancedFilter: AdvancedFilterGroup | null;
+  /** Only issues an agent is running on right now. */
+  agentRunningFilter: boolean;
 }
 
 /** Filter-bar chip dimensions. Date is excluded: `dateFilter` lives outside
  *  the persisted slice and clears through `setDateFilter(null)`. */
-export type FilterDimension =
-  | "status"
-  | "priority"
-  | "assignee"
-  | "creator"
-  | "project"
-  | "projectStatus"
-  | "label"
-  | `property:${string}`;
+export type FilterDimension = NegatableFilterDimension | `property:${string}`;
+
+/** Whether a negatable dimension has anything selected. */
+export function filterDimensionHasSelection(
+  state: Omit<FilterSnapshot, "negatedFilters" | "propertyFilters" | "advancedFilter">,
+  dimension: NegatableFilterDimension,
+): boolean {
+  switch (dimension) {
+    case "status":
+      return state.statusFilters.length > 0;
+    case "priority":
+      return state.priorityFilters.length > 0;
+    case "assignee":
+      return state.assigneeFilters.length > 0 || state.includeNoAssignee;
+    case "creator":
+      return state.creatorFilters.length > 0;
+    case "project":
+      return state.projectFilters.length > 0 || state.includeNoProject;
+    case "projectStatus":
+      return state.projectStatusFilters.length > 0;
+    case "label":
+      return state.labelFilters.length > 0;
+    case "relation":
+      return state.relationFilters.length > 0;
+    case "dueDate":
+      return state.dueDateFilters.length > 0;
+  }
+}
+
+/**
+ * The negations that actually change the result, in canonical order. "Is
+ * not" on a dimension with nothing selected is a UI state, not a filter.
+ */
+export function effectiveNegatedFilters(
+  state: Omit<FilterSnapshot, "propertyFilters" | "advancedFilter">,
+): NegatableFilterDimension[] {
+  const negated = new Set(state.negatedFilters);
+  return NEGATABLE_FILTER_DIMENSIONS.filter(
+    (dimension) => negated.has(dimension) && filterDimensionHasSelection(state, dimension),
+  );
+}
 
 export const PROPERTY_VIEW_PREFIX = "property:";
 
@@ -192,7 +233,6 @@ export const GROUPING_OPTIONS: { value: StaticIssueGrouping; label: string }[] =
 ];
 
 export const CARD_PROPERTY_OPTIONS: { key: keyof CardProperties; label: string }[] = [
-  { key: "cost", label: "Cost" },
   { key: "priority", label: "Priority" },
   { key: "description", label: "Description" },
   { key: "assignee", label: "Assignee" },
@@ -204,7 +244,6 @@ export const CARD_PROPERTY_OPTIONS: { key: keyof CardProperties; label: string }
 ];
 
 export const DEFAULT_CARD_PROPERTIES: Readonly<CardProperties> = {
-  cost: true,
   priority: true,
   description: false,
   assignee: true,
@@ -225,21 +264,17 @@ export function defaultSortDirection(field: SortField): SortDirection {
 
 /** Only expose card controls that the active renderer can honor. */
 export function cardPropertyOptionsForView(viewMode: ViewMode) {
-  if (!VIEW_MODE_CAPABILITIES[viewMode].cardProperties) return [];
+  if (viewMode === "table" || viewMode === "gantt") return [];
   if (viewMode === "list") {
-    return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description" && option.key !== "cost");
-  }
-  if (viewMode === "dag") {
-    return CARD_PROPERTY_OPTIONS.filter((option) => option.key === "cost");
+    return CARD_PROPERTY_OPTIONS.filter((option) => option.key !== "description");
   }
   return CARD_PROPERTY_OPTIONS;
 }
 
 export function sortOptionsForView(
-  viewMode: ViewMode,
+  _viewMode: ViewMode,
   grouping: IssueGrouping,
 ) {
-  if (!VIEW_MODE_CAPABILITIES[viewMode].ordering) return [];
   if (grouping !== "status") {
     return SORT_OPTIONS.filter((option) => option.value !== "position");
   }
@@ -281,6 +316,14 @@ export interface IssueViewState {
    */
   projectStatusFilters: ProjectStatus[];
   labelFilters: string[];
+  relationFilters: IssueRelationFilter[];
+  dueDateFilters: DueDateFilter[];
+  /**
+   * Dimensions whose selection is excluded instead of matched ("status is
+   * not done"). The selection itself lives in the dimension's own field; an
+   * entry here with nothing selected filters nothing.
+   */
+  negatedFilters: NegatableFilterDimension[];
   /**
    * Custom-property filters: definition id → selected values (checkbox
    * definitions use the pseudo-options "true"/"false"; scalars hold the
@@ -290,12 +333,17 @@ export interface IssueViewState {
    * across definitions, mirroring the other filter groups.
    */
   propertyFilters: Record<string, PropertyFilterValue[]>;
+  /**
+   * Advanced mode: a rule tree that can "or" across dimensions. Non-null
+   * means the surface is in advanced mode; entering moves the simple value
+   * fields into the tree, so they sit empty while it is set. Custom-property
+   * filters stay where they are and still apply.
+   */
+  advancedFilter: AdvancedFilterGroup | null;
   dateFilter: IssueDateFilter | null;
   // When true, the list only shows issues that currently have at least one
-  // agent task in `running` status. Drives the workspace "agents working"
-  // quick filter chip in the issues header. Not persisted across reloads —
-  // running state changes second-to-second, a persisted toggle would let
-  // users return to an empty list with no obvious cause.
+  // agent task in `running` status. Saved into views and persisted like the
+  // other filters.
   agentRunningFilter: boolean;
   sortBy: SortField;
   sortDirection: SortDirection;
@@ -338,51 +386,6 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
-  /** Shared-view metadata; see DagGrouping. */
-  dagGrouping: DagGrouping;
-  /** DAG's own display switch: show task lines and single tasks that already
-   *  reached a done/closed category. Off by default — finished work hides. */
-  dagShowCompleted: boolean;
-  /** Show satisfied cross-line dependencies (overview edges and the line
-   *  view's external side cards). Off by default; saved into view definitions. */
-  dagShowSatisfiedDependencies: boolean;
-  /** Underlying DAG level: `null` is the overview, otherwise a line's root issue
-   *  id ("independent:root" for the independent grid). Persisted per user,
-   *  never written into saved views. */
-  dagLineId: string | null;
-  /** Focus overlays the remembered overview/line level; persisted per user. */
-  dagFocusIssueId: string | null;
-  /** Selection to restore on exit; session only. */
-  dagFocusReturnSelection: string | null;
-  enterDagFocus: (issueId: string) => void;
-  exitDagFocus: () => void;
-  /** Set when the user deliberately returns to the overview: suppresses the
-   *  single-line auto-entry until they enter a line again. */
-  dagOverviewPinned: boolean;
-  /** Last viewport per level key ("overview" / `line:<id>` / `focus:<id>`). */
-  dagViewports: Record<string, DagViewport>;
-  /** Session selection; excluded from persisted/shared view definitions. */
-  dagSelectedNodeId: string | null;
-  /** Session neighborhood highlight anchored at the selected node. */
-  dagFocus: DagFocusState | null;
-  /** Session bus selection: the raw dependency IDs running through a clicked
-   *  trunk segment. Selecting a node (or changing levels) clears it. */
-  dagSelectedDependencyIds: string[] | null;
-  /** Persist the live viewport under a level key. */
-  setDagViewportFor: (key: string, viewport: DagViewport) => void;
-  setDagSelectedNodeId: (id: string | null) => void;
-  setDagFocus: (focus: DagFocusState | null) => void;
-  setDagSelectedDependencyIds: (ids: string[] | null) => void;
-  toggleDagShowCompleted: () => void;
-  toggleDagShowSatisfiedDependencies: () => void;
-  /** Low-level level change (restore/auto-entry/correction): clears the
-   *  session selection and focus, keeps `dagOverviewPinned` untouched. */
-  setDagLineId: (lineId: string | null) => void;
-  /** User deliberately enters a line: re-arms the single-line auto-entry. */
-  enterDagLine: (lineId: string) => void;
-  /** User deliberately returns to the overview: pins it and optionally selects
-   *  the line card they came from. */
-  exitDagLine: (selectCardId?: string | null) => void;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -396,11 +399,22 @@ export interface IssueViewState {
   toggleNoProject: () => void;
   toggleProjectStatusFilter: (status: ProjectStatus) => void;
   toggleLabelFilter: (labelId: string) => void;
+  toggleRelationFilter: (relation: IssueRelationFilter) => void;
+  toggleDueDateFilter: (bucket: DueDateFilter) => void;
+  setFilterNegated: (dimension: NegatableFilterDimension, negated: boolean) => void;
   togglePropertyFilter: (propertyId: string, optionId: string) => void;
   /** Replace a property's full filter value set (used by scalar value inputs
    *  for text/number/date/url, which build the array including "__none__"). */
   setPropertyFilterValues: (propertyId: string, optionIds: PropertyFilterValue[]) => void;
   setDateFilter: (filter: IssueDateFilter | null) => void;
+  /** Replace the advanced tree; null leaves advanced mode without carrying
+   *  anything back. */
+  setAdvancedFilter: (filter: AdvancedFilterGroup | null) => void;
+  /** Move the simple value filters into a tree and switch to advanced mode. */
+  enterAdvancedFilter: () => void;
+  /** Back to simple mode with the same filter. A no-op when the tree is
+   *  something simple mode cannot say (`simpleFromAdvancedFilter`). */
+  exitAdvancedFilter: () => void;
   toggleAgentRunningFilter: () => void;
   hideStatus: (status: IssueStatus) => void;
   showStatus: (status: IssueStatus) => void;
@@ -445,7 +459,11 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   includeNoProject: false,
   projectStatusFilters: [],
   labelFilters: [],
+  relationFilters: [],
+  dueDateFilters: [],
+  negatedFilters: [],
   propertyFilters: {},
+  advancedFilter: null,
   dateFilter: null,
   agentRunningFilter: false,
   sortBy: "created_at",
@@ -467,87 +485,6 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
-  dagGrouping: "parent",
-  dagShowCompleted: false,
-  dagShowSatisfiedDependencies: false,
-  dagLineId: null,
-  dagFocusIssueId: null,
-  dagFocusReturnSelection: null,
-  dagOverviewPinned: false,
-  dagViewports: {},
-  dagSelectedNodeId: null,
-  dagFocus: null,
-  dagSelectedDependencyIds: null,
-  setDagViewportFor: (key, viewport) =>
-    set((state) => {
-      // Bounded per-user history: keep the 50 most recently written levels,
-      // but never evict the overview slot — every return path lands there.
-      const entries = Object.entries(state.dagViewports).filter(([k]) => k !== key);
-      while (entries.length >= 50) {
-        const oldest = entries.findIndex(([k]) => k !== DAG_OVERVIEW_VIEWPORT_KEY);
-        if (oldest === -1) break;
-        entries.splice(oldest, 1);
-      }
-      entries.push([key, viewport]);
-      return { dagViewports: Object.fromEntries(entries) };
-    }),
-  setDagSelectedNodeId: (dagSelectedNodeId) =>
-    set({ dagSelectedNodeId, dagFocus: null, dagSelectedDependencyIds: null }),
-  setDagFocus: (dagFocus) => set({ dagFocus }),
-  setDagSelectedDependencyIds: (dagSelectedDependencyIds) =>
-    set({ dagSelectedDependencyIds, dagSelectedNodeId: null, dagFocus: null }),
-  toggleDagShowCompleted: () =>
-    set((state) => ({ dagShowCompleted: !state.dagShowCompleted })),
-  toggleDagShowSatisfiedDependencies: () =>
-    set((state) => ({
-      dagShowSatisfiedDependencies: !state.dagShowSatisfiedDependencies,
-    })),
-  enterDagFocus: (dagFocusIssueId) =>
-    set((state) => ({
-      dagFocusIssueId,
-      dagFocusReturnSelection: state.dagFocusIssueId
-        ? state.dagFocusReturnSelection : state.dagSelectedNodeId,
-      dagSelectedNodeId: null,
-      dagFocus: null,
-      dagSelectedDependencyIds: null,
-    })),
-  exitDagFocus: () =>
-    set((state) => ({
-      dagFocusIssueId: null,
-      dagSelectedNodeId: state.dagFocusReturnSelection,
-      dagFocusReturnSelection: null,
-      dagFocus: null,
-      dagSelectedDependencyIds: null,
-    })),
-  setDagLineId: (dagLineId) =>
-    set({
-      dagLineId,
-      dagFocusIssueId: null,
-      dagFocusReturnSelection: null,
-      dagSelectedNodeId: null,
-      dagFocus: null,
-      dagSelectedDependencyIds: null,
-    }),
-  enterDagLine: (dagLineId) =>
-    set({
-      dagLineId,
-      dagFocusIssueId: null,
-      dagFocusReturnSelection: null,
-      dagOverviewPinned: false,
-      dagSelectedNodeId: null,
-      dagFocus: null,
-      dagSelectedDependencyIds: null,
-    }),
-  exitDagLine: (selectCardId) =>
-    set({
-      dagLineId: null,
-      dagFocusIssueId: null,
-      dagFocusReturnSelection: null,
-      dagOverviewPinned: true,
-      dagSelectedNodeId: selectCardId ?? null,
-      dagFocus: null,
-      dagSelectedDependencyIds: null,
-    }),
 
   setViewMode: (mode) =>
     set((state) => ({
@@ -630,6 +567,27 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
         ? state.labelFilters.filter((id) => id !== labelId)
         : [...state.labelFilters, labelId],
     })),
+  toggleRelationFilter: (relation) =>
+    set((state) => ({
+      relationFilters: state.relationFilters.includes(relation)
+        ? state.relationFilters.filter((r) => r !== relation)
+        : [...state.relationFilters, relation],
+    })),
+  toggleDueDateFilter: (bucket) =>
+    set((state) => ({
+      dueDateFilters: state.dueDateFilters.includes(bucket)
+        ? state.dueDateFilters.filter((b) => b !== bucket)
+        : [...state.dueDateFilters, bucket],
+    })),
+  setFilterNegated: (dimension, negated) =>
+    set((state) => {
+      if (state.negatedFilters.includes(dimension) === negated) return state;
+      return {
+        negatedFilters: negated
+          ? [...state.negatedFilters, dimension]
+          : state.negatedFilters.filter((d) => d !== dimension),
+      };
+    }),
   togglePropertyFilter: (propertyId, optionId) =>
     set((state) => {
       const current = state.propertyFilters[propertyId] ?? [];
@@ -649,6 +607,22 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       return { propertyFilters };
     }),
   setDateFilter: (filter) => set({ dateFilter: filter }),
+  setAdvancedFilter: (advancedFilter) => set({ advancedFilter }),
+  enterAdvancedFilter: () =>
+    set((state) =>
+      state.advancedFilter
+        ? state
+        : {
+            ...EMPTY_SIMPLE_FILTER_FIELDS,
+            advancedFilter: advancedFilterFromSimple(state, effectiveNegatedFilters(state)),
+          },
+    ),
+  exitAdvancedFilter: () =>
+    set((state) => {
+      if (!state.advancedFilter) return state;
+      const simple = simpleFromAdvancedFilter(state.advancedFilter);
+      return simple ? { ...simple, advancedFilter: null } : state;
+    }),
   toggleAgentRunningFilter: () =>
     set((state) => ({ agentRunningFilter: !state.agentRunningFilter })),
   hideStatus: (status) =>
@@ -672,28 +646,37 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       includeNoProject: false,
       projectStatusFilters: [],
       labelFilters: [],
+      relationFilters: [],
+      dueDateFilters: [],
+      negatedFilters: [],
       propertyFilters: {},
+      advancedFilter: null,
       dateFilter: null,
       agentRunningFilter: false,
     }),
   resetFiltersTo: (snapshot) => set({ ...snapshot }),
   clearFilterDimension: (dimension) =>
     set((state) => {
+      const negatedFilters = state.negatedFilters.filter((d) => d !== dimension);
       switch (dimension) {
         case "status":
-          return { statusFilters: [] };
+          return { statusFilters: [], negatedFilters };
         case "priority":
-          return { priorityFilters: [] };
+          return { priorityFilters: [], negatedFilters };
         case "assignee":
-          return { assigneeFilters: [], includeNoAssignee: false };
+          return { assigneeFilters: [], includeNoAssignee: false, negatedFilters };
         case "creator":
-          return { creatorFilters: [] };
+          return { creatorFilters: [], negatedFilters };
         case "project":
-          return { projectFilters: [], includeNoProject: false };
+          return { projectFilters: [], includeNoProject: false, negatedFilters };
         case "projectStatus":
-          return { projectStatusFilters: [] };
+          return { projectStatusFilters: [], negatedFilters };
         case "label":
-          return { labelFilters: [] };
+          return { labelFilters: [], negatedFilters };
+        case "relation":
+          return { relationFilters: [], negatedFilters };
+        case "dueDate":
+          return { dueDateFilters: [], negatedFilters };
         default: {
           const propertyId = propertyIdFromViewKey(dimension);
           if (!propertyId || !(propertyId in state.propertyFilters)) return state;
@@ -812,11 +795,7 @@ export const viewStorePersistOptions = (name: string) => ({
   name,
   storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
   partialize: (state: IssueViewState) => ({
-    // NOTE: `agentRunningFilter` is intentionally NOT persisted — running
-    // state changes second-to-second, and a stored toggle would let users
-    // return to an unexplained empty list. Keep it ephemeral. See the
-    // field comment on IssueViewState.
-    // `dateFilter` is also intentionally not persisted: relative presets such
+    // `dateFilter` is intentionally not persisted: relative presets such
     // as Today would otherwise become stale after a calendar-day rollover.
     viewMode: state.viewMode,
     grouping: state.grouping,
@@ -829,7 +808,12 @@ export const viewStorePersistOptions = (name: string) => ({
     includeNoProject: state.includeNoProject,
     projectStatusFilters: state.projectStatusFilters,
     labelFilters: state.labelFilters,
+    relationFilters: state.relationFilters,
+    dueDateFilters: state.dueDateFilters,
+    negatedFilters: state.negatedFilters,
     propertyFilters: state.propertyFilters,
+    advancedFilter: state.advancedFilter,
+    agentRunningFilter: state.agentRunningFilter,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,
     sortDirections: state.sortDirections,
@@ -849,13 +833,6 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCollapsedParents: state.tableCollapsedParents,
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
-    dagGrouping: state.dagGrouping,
-    dagShowCompleted: state.dagShowCompleted,
-    dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
-    dagLineId: state.dagLineId,
-    dagFocusIssueId: state.dagFocusIssueId,
-    dagOverviewPinned: state.dagOverviewPinned,
-    dagViewports: state.dagViewports,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -874,21 +851,7 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   persisted: unknown,
   current: T,
 ): T {
-  const {
-    dagCollapsedIds: _legacyFolds,
-    dagExpandedIds: _legacyExpanded,
-    dagIndependentExpanded: _legacyIndependent,
-    dagDirection: _legacyDirection,
-    dagViewport: legacyViewport,
-    ...preferences
-  } = (persisted ?? {}) as Partial<T> & {
-    dagCollapsedIds?: unknown;
-    dagExpandedIds?: unknown;
-    dagIndependentExpanded?: unknown;
-    dagDirection?: unknown;
-    dagViewport?: unknown;
-  };
-  const p = preferences as Partial<T>;
+  const p = (persisted ?? {}) as Partial<T>;
   // Read the old category-named field once; new snapshots persist exact keys.
   const legacy = persisted as { hiddenStatusCategories?: unknown } | null;
   const statusesFromStorage = (value: unknown, fallback: IssueStatus[], legacyCategories = false) => {
@@ -936,10 +899,6 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   const merged = {
     ...current,
     ...p,
-    viewMode: p.viewMode && Object.hasOwn(VIEW_MODE_CAPABILITIES, p.viewMode)
-      ? p.viewMode
-      : current.viewMode,
-    ...sanitizeDagPersisted({ ...p, dagViewport: legacyViewport }, current),
     hiddenStatuses: statusesFromStorage(p.hiddenStatuses ?? legacy?.hiddenStatusCategories, current.hiddenStatuses, p.hiddenStatuses === undefined),
     listCollapsedStatuses: statusesFromStorage(p.listCollapsedStatuses, current.listCollapsedStatuses, p.hiddenStatuses === undefined),
     cardProperties: {
@@ -976,7 +935,34 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
           (PROJECT_STATUS_ORDER as readonly string[]).includes(status as string),
         )
       : current.projectStatusFilters,
+    relationFilters: Array.isArray(p.relationFilters)
+      ? p.relationFilters.filter((relation): relation is IssueRelationFilter =>
+          (ISSUE_RELATION_FILTERS as readonly unknown[]).includes(relation),
+        )
+      : current.relationFilters,
+    dueDateFilters: Array.isArray(p.dueDateFilters)
+      ? [...new Set(p.dueDateFilters.filter((bucket): bucket is DueDateFilter =>
+          (DUE_DATE_FILTERS as readonly unknown[]).includes(bucket),
+        ))]
+      : current.dueDateFilters,
+    advancedFilter: p.advancedFilter === undefined
+      ? current.advancedFilter
+      : sanitizeAdvancedFilter(p.advancedFilter),
+    agentRunningFilter: p.agentRunningFilter === undefined
+      ? current.agentRunningFilter
+      : p.agentRunningFilter === true,
+    negatedFilters: Array.isArray(p.negatedFilters)
+      ? [...new Set(p.negatedFilters.filter((dimension): dimension is NegatableFilterDimension =>
+          (NEGATABLE_FILTER_DIMENSIONS as readonly unknown[]).includes(dimension),
+        ))]
+      : current.negatedFilters,
   };
+  // Property filters are conditions in advanced mode; flat ones stored next to
+  // a tree (by an earlier build) would otherwise filter without being shown.
+  if (merged.advancedFilter && Object.keys(merged.propertyFilters ?? {}).length > 0) {
+    const folded = foldPropertyFiltersIntoTree(merged.advancedFilter, merged.propertyFilters);
+    if (folded) Object.assign(merged, { advancedFilter: folded, propertyFilters: {} });
+  }
   return {
     ...merged,
     ...normalizeSortForGrouping(

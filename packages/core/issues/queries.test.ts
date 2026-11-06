@@ -21,13 +21,12 @@ import {
   childrenByParentsOptions,
   childIssuesOptions,
   flattenIssueBuckets,
-  issueDetailOptions,
   issueIdentifierOptions,
   issueKeys,
   issueListOptions,
-  issueReactionsOptions,
   issueTableRowPageOptions,
   projectGanttIssuesOptions,
+  sidebarIssuesOptions,
   sourceContextPreviewOptions,
 } from "./queries";
 import { onIssueUpdated } from "./ws-updaters";
@@ -718,38 +717,55 @@ describe("issueIdentifierOptions", () => {
   });
 });
 
-describe("issueReactionsOptions", () => {
-  it("shares a cold detail read without sharing the reaction cache or suppressing later refetches", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const issue = makeIssue(1, {
-      reactions: [{
-        id: "reaction-1",
-        issue_id: "issue-1",
-        actor_type: "member",
-        actor_id: "user-1",
-        emoji: "+1",
-        created_at: "2026-01-01T00:00:00Z",
-      }],
+describe("sidebarIssuesOptions", () => {
+  const issues = Array.from({ length: 120 }, (_, i) => makeIssue(i));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("walks table pages past the server's 100-row cap", async () => {
+    const listIssueTableRows = vi.fn(async (params: IssueTableRowsRequest): Promise<IssueTableRowsResponse> => {
+      const start = params.page?.cursor ? Number(params.page.cursor) : 0;
+      const end = start + Math.min(params.page?.limit ?? 50, 100);
+      return {
+        query_fingerprint: "fp",
+        group_key: null,
+        parent_id: null,
+        total: issues.length,
+        rows: issues.slice(start, end).map((issue) => ({ issue, direct_child_count: 0 })),
+        branch_total: issues.length,
+        next_cursor: end < issues.length ? String(end) : null,
+      };
     });
-    let resolveIssue!: (value: Issue) => void;
-    const getIssue = vi.fn<(id: string) => Promise<Issue>>().mockImplementationOnce(
-      () => new Promise((resolve) => { resolveIssue = resolve; }),
+    setApiInstance({ listIssueTableRows } as unknown as ApiClient);
+    const table = { scope: { kind: "workspace" }, filters: {}, sort: { field: "position", direction: "asc" } } as const;
+
+    const result = await new QueryClient().fetchQuery(sidebarIssuesOptions(WS_ID, "view:a", { table }, 120));
+
+    expect(result.issues).toHaveLength(120);
+    expect(result.total).toBe(120);
+    expect(listIssueTableRows.mock.calls.map(([params]) => params.page)).toEqual([
+      { limit: 100, cursor: null },
+      { limit: 20, cursor: "100" },
+    ]);
+  });
+
+  it("walks list pages past the server's 100-row cap", async () => {
+    const listIssues = vi.fn(async (params?: ListIssuesParams): Promise<ListIssuesResponse> => {
+      const offset = params?.offset ?? 0;
+      return { issues: issues.slice(offset, offset + Math.min(params?.limit ?? 100, 100)), total: issues.length };
+    });
+    installFakeApi(listIssues);
+
+    const result = await new QueryClient().fetchQuery(
+      sidebarIssuesOptions(WS_ID, "builtin:my_issues", { assignee_id: "u1" }, 130),
     );
-    installFakeIssueApi(getIssue);
 
-    const detail = qc.fetchQuery(issueDetailOptions(WS_ID, "issue-1"));
-    const reactions = qc.fetchQuery(issueReactionsOptions(WS_ID, "issue-1"));
-    expect(getIssue).toHaveBeenCalledTimes(1);
-
-    resolveIssue(issue);
-    await expect(detail).resolves.toEqual(issue);
-    await expect(reactions).resolves.toEqual(issue.reactions);
-    expect(qc.getQueryData(issueKeys.reactions("issue-1"))).toEqual(issue.reactions);
-
-    getIssue.mockResolvedValue({ ...issue, reactions: [] });
-    await qc.invalidateQueries({ queryKey: issueKeys.reactions("issue-1") });
-    await expect(qc.fetchQuery(issueReactionsOptions(WS_ID, "issue-1"))).resolves.toEqual([]);
-    expect(getIssue).toHaveBeenCalledTimes(2);
-    qc.clear();
+    expect(result.issues.map((issue) => issue.id)).toEqual(issues.map((issue) => issue.id));
+    expect(listIssues.mock.calls.map(([params]) => [params?.limit, params?.offset])).toEqual([
+      [100, 0],
+      [30, 100],
+    ]);
   });
 });
