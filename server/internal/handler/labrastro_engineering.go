@@ -124,6 +124,12 @@ func (h *Handler) RegisterLabrastroEngineeringRoutes(r chi.Router) {
 	r.Post("/api/projects/{id}/baseline/candidates", h.LabrastroProposeBaseline)
 	r.Post("/api/projects/{id}/baseline/decisions", h.LabrastroDecideBaseline)
 	r.Get("/api/projects/{id}/baseline/revisions", h.LabrastroBaselineHistory)
+	r.Post("/api/projects/{id}/baseline/reviews", h.LabrastroSubmitBaselineReview)
+	r.Get("/api/projects/{id}/baseline/annotation-batches", h.LabrastroListAnnotationBatches)
+	r.Get("/api/projects/{id}/baseline/annotation-batches/{batch}", h.LabrastroReadAnnotationBatch)
+	r.Post("/api/projects/{id}/baseline/annotation-batches/{batch}/close", h.LabrastroCloseAnnotationBatch)
+	r.Post("/api/projects/{id}/baseline/annotations/responses", h.LabrastroRespondAnnotations)
+	r.Post("/api/projects/{id}/baseline/annotations/resolve", h.LabrastroResolveAnnotations)
 }
 
 type engineeringError struct {
@@ -641,8 +647,9 @@ func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Reques
 }
 
 type decideBaselineRequest struct {
-	Action    string `json:"action"`
-	Revisions []struct {
+	AnnotationBatchAction string `json:"annotation_batch_action"`
+	Action                string `json:"action"`
+	Revisions             []struct {
 		ID       string  `json:"revision_id"`
 		Expected *string `json:"expected_adopted_revision_id"`
 	} `json:"revisions"`
@@ -662,7 +669,7 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 	if !decodeEngineering(w, r, &req) {
 		return
 	}
-	if req.Action != "adopt" && req.Action != "reject" || len(req.Revisions) < 1 || len(req.Revisions) > 100 {
+	if req.AnnotationBatchAction != "" && req.AnnotationBatchAction != "close" && req.AnnotationBatchAction != "keep" || req.Action != "adopt" && req.Action != "reject" || len(req.Revisions) < 1 || len(req.Revisions) > 100 {
 		writeErrorCode(w, 400, "invalid_request", "specify adopt or reject and one to 100 revisions")
 		return
 	}
@@ -739,6 +746,7 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 		}
 		revisions[i] = candidate
 	}
+	closedBatches := []db.ProjectBaselineAnnotationBatch{}
 	for _, candidate := range revisions {
 		d := baselineDoc(docs, candidate.Chapter)
 		status := "rejected"
@@ -754,6 +762,14 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 		if _, err = s.decide(r.Context(), candidate.ID, status, actor); err != nil {
 			writeEngineeringError(w, err)
 			return
+		}
+		if req.AnnotationBatchAction != "keep" {
+			closed, err := s.q.LabrastroCloseRelatedAnnotationBatches(r.Context(), db.LabrastroCloseRelatedAnnotationBatchesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: candidate.Chapter, RevisionID: candidate.ID, SourceIssueID: candidate.SourceIssueID, Reason: pgtype.Text{String: status, Valid: true}, ActorID: actor.id})
+			if err != nil {
+				writeEngineeringError(w, err)
+				return
+			}
+			closedBatches = append(closedBatches, closed...)
 		}
 		if err = s.updateDoc(r.Context(), candidate.Chapter, adopted, pgtype.UUID{}); err != nil {
 			writeEngineeringError(w, err)
@@ -773,6 +789,9 @@ func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request
 	if err = s.tx.Commit(r.Context()); err != nil {
 		writeEngineeringError(w, err)
 		return
+	}
+	for _, batch := range closedBatches {
+		h.baselineAnnotationChanged(batch, actor)
 	}
 	for _, candidate := range revisions {
 		h.baselineChanged(s, actor, candidate.Chapter)

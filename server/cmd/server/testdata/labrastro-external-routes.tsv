@@ -363,8 +363,14 @@ DELETE	/api/projects/{id}/	user-auth	deny
 GET	/api/projects/{id}/	user-auth	allow
 PUT	/api/projects/{id}/	user-auth	deny
 GET	/api/projects/{id}/baseline	user-auth	deny
+GET	/api/projects/{id}/baseline/annotation-batches	user-auth	deny
+GET	/api/projects/{id}/baseline/annotation-batches/{batch}	user-auth	deny
+POST	/api/projects/{id}/baseline/annotation-batches/{batch}/close	user-auth	deny
+POST	/api/projects/{id}/baseline/annotations/resolve	user-auth	deny
+POST	/api/projects/{id}/baseline/annotations/responses	user-auth	deny
 POST	/api/projects/{id}/baseline/candidates	user-auth	deny
 POST	/api/projects/{id}/baseline/decisions	user-auth	deny
+POST	/api/projects/{id}/baseline/reviews	user-auth	deny
 GET	/api/projects/{id}/baseline/revisions	user-auth	deny
 GET	/api/projects/{id}/engineering	user-auth	deny
 PATCH	/api/projects/{id}/engineering	user-auth	deny
