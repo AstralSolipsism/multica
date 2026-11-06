@@ -196,6 +196,10 @@ services:
       MULTICA_VCS_INTEGRATION_ENABLED: ${MULTICA_VCS_INTEGRATION_ENABLED:-true}
       # VCS integration at-rest encryption key for token-based providers
       MULTICA_VCS_SECRET_KEY: ${MULTICA_VCS_SECRET_KEY:-}
+      # At-rest encryption key for user-registered subscription quota source
+      # credentials (GLM Coding Plan, ZenMux). Unset = the management
+      # endpoints answer 503 and polling is skipped.
+      MULTICA_QUOTA_SOURCE_SECRET_KEY: ${MULTICA_QUOTA_SOURCE_SECRET_KEY:-}
       # WeCom smart-bot integration. MULTICA_WECOM_SECRET_KEY is the
       # opt-in: unset = integration disabled. It encrypts each installation's
       # smart-bot secret at rest. The server needs it to unseal a bot's

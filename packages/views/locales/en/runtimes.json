@@ -72,6 +72,98 @@
       "offline": "Offline"
     }
   },
+  "quota_sources": {
+    "action": "Subscription quotas",
+    "kinds": {
+      "glm": "Zhipu GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "Subscription"
+    },
+    "cards": {
+      "region": "Subscription quotas",
+      "tokens_period": "{{period}} tokens",
+      "credits_period": "{{period}} credits",
+      "tools_period": "{{period}} tool credits",
+      "subscription_period": "{{period}} subscription",
+      "subscription_window": "Subscription balance",
+      "generic_window": "Quota window",
+      "waiting": "Waiting for the first collection"
+    },
+    "visibility": {
+      "private": "Private",
+      "shared": "Shared",
+      "private_hint": "Only you can see this subscription card.",
+      "shared_hint": "Visible to workspace members only where one of your shared machines is visible."
+    },
+    "dialog": {
+      "title": "Subscription quotas",
+      "description": "Manage your GLM and ZenMux subscription credentials and cards.",
+      "loading": "Loading subscriptions",
+      "load_failed": "Couldn't load subscription quotas.",
+      "retry": "Retry",
+      "empty_title": "No subscription quota sources yet",
+      "add": "Add subscription",
+      "auto_refresh": "The server checks enabled subscriptions every 5 minutes",
+      "toggle": "Toggle {{name}}",
+      "refresh": "Refresh {{name}}",
+      "refresh_now": "Refresh now",
+      "refresh_in": "Refresh available in {{seconds}}s",
+      "edit": "Edit {{name}}",
+      "delete": "Delete {{name}}"
+    },
+    "status": {
+      "ok": "Healthy",
+      "probing": "Checking",
+      "disabled": "Disabled"
+    },
+    "form": {
+      "back": "Back to subscriptions",
+      "add_title": "Add subscription quota source",
+      "edit_title": "Edit subscription quota source",
+      "description": "A new credential or endpoint is validated with the provider before it is saved.",
+      "kind_section": "1. Channel",
+      "credential_section": "2. Credential",
+      "name": "Name",
+      "name_placeholder": "For example: Primary GLM account",
+      "api_key": "API Key",
+      "management_key": "Management API Key",
+      "saved_credential": "Saved credential (masked)",
+      "replace_key": "Replace key",
+      "credential_placeholder": "Paste the API Key",
+      "credential_hint": "Encrypted for server-side collection; only the last four characters are shown after saving.",
+      "base_url": "Endpoint (optional)",
+      "visibility_section": "3. Visibility",
+      "name_required": "Enter a name.",
+      "credential_required": "Enter an API Key.",
+      "cancel": "Cancel",
+      "save": "Save and verify",
+      "saving": "Verifying and saving..."
+    },
+    "errors": {
+      "invalid_credential": "The provider rejected this credential. Check or replace the API Key.",
+      "rate_limited": "The provider is rate limiting requests. Try again later.",
+      "network_error": "The provider could not be reached. Check the endpoint and network.",
+      "invalid_base_url": "Use a public HTTPS endpoint supported by this channel.",
+      "unexpected_response": "The provider returned an unreadable quota response.",
+      "provider_error": "The provider couldn't collect quota data.",
+      "generic": "Unable to update the subscription. Try again.",
+      "encryption_unconfigured": "Subscription credentials are unavailable until the server administrator configures MULTICA_QUOTA_SOURCE_SECRET_KEY.",
+      "refresh_cooldown": "Refreshed recently. Wait for the 30-second cooldown."
+    },
+    "delete": {
+      "title": "Delete \"{{name}}\"?",
+      "description": "Its card will disappear and the encrypted credential will be destroyed. This cannot be undone.",
+      "cancel": "Cancel",
+      "confirm": "Delete subscription",
+      "deleting": "Deleting..."
+    },
+    "toasts": {
+      "created": "Subscription added",
+      "updated": "Subscription updated",
+      "refreshed": "Subscription refreshed",
+      "deleted": "Subscription deleted"
+    }
+  },
   "mika_setup": {
     "title": "Your runtime is ready. Start with Mika.",
     "description": "Let Mika organize work and coordinate agents.",

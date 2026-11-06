@@ -422,7 +422,7 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 }
 
 // taskEndpointsHandler routes the /tasks/... paths on the health server:
-// currently only the per-step thinking decision endpoint (contract §6).
+// per-step effort selection and generic task evaluations.
 func (d *Daemon) taskEndpointsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Path shape: /tasks/{task_id}/thinking-decision
@@ -433,6 +433,8 @@ func (d *Daemon) taskEndpointsHandler() http.HandlerFunc {
 			return
 		}
 		switch action {
+		case "jev-evaluate":
+			d.jevEvaluateHandler().ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), taskIDContextKey{}, taskID)))
 		case "thinking-decision":
 			d.thinkingDecisionHandler().ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), taskIDContextKey{}, taskID)))
 		default:

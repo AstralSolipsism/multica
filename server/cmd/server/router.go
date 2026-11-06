@@ -1322,6 +1322,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
 	// Without it, connect/webhook handlers return 503 (so a misconfigured
 	// self-host never stores plaintext secrets).
+	// User-registered subscription credentials (OL-1205 scenario 3) get
+	// their own domain key, same pattern as VCS/Lark: absent key leaves the
+	// write endpoints 503 and polling skipped, everything else running.
+	if qsKey, err := secretbox.LoadKey("MULTICA_QUOTA_SOURCE_SECRET_KEY"); err == nil {
+		if box, err := secretbox.New(qsKey); err != nil {
+			slog.Error("quota source: secretbox.New failed; quota sources disabled", "error", err)
+		} else {
+			h.QuotaSourceBox = box
+			slog.Info("quota source encryption enabled")
+		}
+	} else {
+		slog.Info("quota sources disabled (MULTICA_QUOTA_SOURCE_SECRET_KEY not set)")
+	}
 	if vcsKey, err := secretbox.LoadKey("MULTICA_VCS_SECRET_KEY"); err == nil {
 		box, err := secretbox.New(vcsKey)
 		if err != nil {
@@ -1694,6 +1707,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// Account-level GLM (Zhipu) Coding Plan balance for the runtimes
 		// page's fixed provider card. enabled=false when no key configured.
 		r.Get("/api/glm-quota", h.GetGlmQuota)
+		// User-scoped subscription quota sources (OL-1205 scenario 3).
+		// Human-only: an agent task token or cloud PAT authenticates as its
+		// owner and must not read or write subscription credentials.
+		r.Route("/api/me/quota-sources", func(r chi.Router) {
+			r.With(handler.RequireHumanActor).Get("/", h.ListQuotaSources)
+			r.With(handler.RequireHumanActor).Post("/", h.CreateQuotaSource)
+			r.Route("/{id}", func(r chi.Router) {
+				r.With(handler.RequireHumanActor).Patch("/", h.UpdateQuotaSource)
+				r.With(handler.RequireHumanActor).Delete("/", h.DeleteQuotaSource)
+				r.With(handler.RequireHumanActor).Post("/refresh", h.RefreshQuotaSource)
+			})
+		})
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
@@ -2422,6 +2447,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Runtimes
 			r.Route("/api/runtimes", func(r chi.Router) {
 				r.Get("/", h.ListAgentRuntimes)
+				// Subscription quota cards visible in this workspace
+				// (OL-1205 scenario 3): read-only, visibility-filtered.
+				r.Get("/quota-sources", h.ListWorkspaceQuotaSources)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
 					r.Get("/usage", h.GetRuntimeUsage)

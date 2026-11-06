@@ -4,8 +4,12 @@ import type { AgentRuntime } from "../types";
 // Account-level GLM (Zhipu) Coding Plan quota snapshot from the server-side
 // collector. Windows mirror the provider's limit entries (TOKENS_LIMIT 5h
 // token window, TIME_LIMIT monthly tool credits, CREDIT_LIMIT pools).
+// window_minutes is the window's real period (300 = 5h, 10080 = weekly)
+// derived from the provider's unit/number; absent on windows the provider
+// did not label — several windows of one type differ only by it.
 export const GlmQuotaWindowSchema = z.object({
   type: z.string(),
+  window_minutes: z.number().optional(),
   used_percent: z.number().optional(),
   usage: z.number().optional(),
   current_value: z.number().optional(),
@@ -65,6 +69,95 @@ export const RuntimePlanQuotaSchema = z.object({
   observed_at: z.number().default(0),
   source: z.string().default(""),
 }).loose();
+
+export type QuotaSourceKind = "glm" | "zenmux";
+export type QuotaSourceVisibility = "private" | "shared";
+
+export const QuotaSourceErrorSchema = z.object({
+  code: z.string().catch(""),
+  message: z.string().catch(""),
+}).loose();
+export type QuotaSourceError = z.infer<typeof QuotaSourceErrorSchema>;
+
+export const QuotaSourceProbeErrorBodySchema = z.object({
+  code: z.string().catch(""),
+  reason: z.string().optional().catch(""),
+  message: z.string().optional().catch(""),
+}).loose();
+
+const quotaSourceTimestamps = {
+  last_polled_at: z.string().nullable().optional().catch(null),
+  created_at: z.string().optional().catch(""),
+  updated_at: z.string().optional().catch(""),
+};
+
+export const QuotaSourceSchema = z.object({
+  id: z.string().catch(""),
+  kind: z.string().catch(""),
+  name: z.string().catch(""),
+  base_url: z.string().nullable().optional().catch(null),
+  credential_hint: z.string().optional().catch(""),
+  enabled: z.boolean().catch(false),
+  visibility: z.string().catch("private"),
+  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
+  ...quotaSourceTimestamps,
+}).loose();
+export type QuotaSource = z.infer<typeof QuotaSourceSchema>;
+
+export const WorkspaceQuotaSourceSchema = z.object({
+  id: z.string().catch(""),
+  kind: z.string().catch(""),
+  name: z.string().catch(""),
+  owner_id: z.string().optional().catch(""),
+  visibility: z.string().catch("private"),
+  is_own: z.boolean().optional().catch(false),
+  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  last_polled_at: quotaSourceTimestamps.last_polled_at,
+  last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
+}).loose();
+export type WorkspaceQuotaSource = z.infer<typeof WorkspaceQuotaSourceSchema>;
+
+function identifiedSources<T extends { id: string }>(sources: (T | null)[]): T[] {
+  return sources.filter((source): source is T => source !== null && source.id.length > 0);
+}
+
+export const QuotaSourceListResponseSchema = z.object({
+  encryption_configured: z.boolean().catch(false),
+  sources: z.array(QuotaSourceSchema.nullable().catch(null)).catch([])
+    .transform(identifiedSources),
+}).loose();
+export type QuotaSourceListResponse = z.infer<typeof QuotaSourceListResponseSchema>;
+
+export const WorkspaceQuotaSourceListResponseSchema = z.object({
+  sources: z.array(WorkspaceQuotaSourceSchema.nullable().catch(null)).catch([])
+    .transform(identifiedSources),
+}).loose();
+export type WorkspaceQuotaSourceListResponse = z.infer<typeof WorkspaceQuotaSourceListResponseSchema>;
+
+export const EMPTY_QUOTA_SOURCE_LIST: QuotaSourceListResponse = {
+  encryption_configured: false,
+  sources: [],
+};
+export const EMPTY_WORKSPACE_QUOTA_SOURCE_LIST: WorkspaceQuotaSourceListResponse = {
+  sources: [],
+};
+
+export interface CreateQuotaSourceInput {
+  kind: QuotaSourceKind;
+  name: string;
+  credential: string;
+  base_url?: string;
+  visibility: QuotaSourceVisibility;
+}
+
+export interface UpdateQuotaSourceInput {
+  name?: string;
+  credential?: string;
+  base_url?: string;
+  enabled?: boolean;
+  visibility?: QuotaSourceVisibility;
+}
 
 // Machine-level CPU/memory sample. `stale` is computed by the server at read
 // time and defaults to false for older backends. Unlike plan_quota (helper-

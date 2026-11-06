@@ -191,6 +191,7 @@ Les limites de débit d'authentification nécessitent `REDIS_URL` ; sans cette v
 | Composio | `COMPOSIO_STATE_SECRET` | Secret de signature de l'état OAuth ; peut être dérivé de `JWT_SECRET` |
 | Git auto-hébergé | `MULTICA_VCS_INTEGRATION_ENABLED` | Interrupteur de l'intégration Forgejo/Gitea/GitLab ; activé par défaut dans compose |
 | Git auto-hébergé | `MULTICA_VCS_SECRET_KEY` | Clé de chiffrement de 32 octets, encodée en Base64 (`openssl rand -base64 32`) ; sans elle, la fonctionnalité est entièrement indisponible |
+| Sources de quota d'abonnement | `MULTICA_QUOTA_SOURCE_SECRET_KEY` | Clé de 32 octets encodée en Base64 chiffrant les identifiants d'abonnement enregistrés par les utilisateurs (GLM Coding Plan, ZenMux) ; sans elle, les points de terminaison de gestion répondent 503 et l'interrogation est ignorée |
 | Plugins | `MULTICA_PLUGIN_SECRET_KEY` | Clé de 32 octets, encodée en Base64, pour les secrets stockés et les URL de lancement de surface chiffrées |
 | Plugins | `MULTICA_PLUGIN_SURFACE_ORIGIN` | Origine navigateur dédiée, sans cookies, routée vers ce backend ; doit différer des origines de l'application et de l'API, et préserver `Host` |
 | Plugins | `MULTICA_PLUGIN_API_URL` | URL de base complète et versionnée de la Plugin Public API, comme `https://plugin-api.example.com/v1` ; se rabat sur `MULTICA_PUBLIC_URL` + `/v1` |

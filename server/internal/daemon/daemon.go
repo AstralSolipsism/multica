@@ -1309,14 +1309,10 @@ func (d *Daemon) notifyRuntimeSetChanged() {
 	d.runtimeSet.notify()
 }
 
-// planQuotaCacheEntry is one cached plan-quota value: either a real
-// observation or a zenmux clear marker (a deliberate "not reported" state
-// after a manual unlink). One map entry per runtime — the marker flag can
-// never disagree with the payload because they are stored together (OL-5
-// convergence: this replaces a parallel marker map).
+// planQuotaCacheEntry is one cached plan-quota value (the zenmux clear
+// marker was retired with the daemon-side collector in OL-1205 scenario 3).
 type planQuotaCacheEntry struct {
-	quota       *protocol.RuntimePlanQuota
-	clearMarker bool
+	quota *protocol.RuntimePlanQuota
 }
 
 // recordRuntimePlanQuota caches a runtime's latest plan/rate-limit snapshot
@@ -1355,24 +1351,44 @@ func (d *Daemon) recordRuntimePlanQuota(runtimeID string, quota *protocol.Runtim
 	}
 }
 
-// recordZenMuxPlanQuotaClearMarker stores a windowless zenmux snapshot — the
-// deliberate "not reported" state for a runtime whose manual association was
-// removed — and marks it for per-heartbeat re-stamping (see
-// heartbeatExtrasFor) so the cleared state never ages into "stale" while
-// this daemon runs.
-func (d *Daemon) recordZenMuxPlanQuotaClearMarker(runtimeID string) {
-	if runtimeID == "" {
+// recordTaskPlanQuota caches a task-reported snapshot (Claude, Codex) for the
+// reporting runtime AND every other same-source runtime this daemon hosts:
+// same provider AND same profile_id means the same local agent installation,
+// so the balance is that runtime's too, whatever workspace registered it
+// (OL-1205). Each runtime's own heartbeat then forwards the snapshot, so the
+// server-side update stays per-runtime — no cross-workspace channel needed.
+// Timed collectors keep runtimeIDsForProvider: their target set is decided by
+// the collector, not by which runtime reported.
+func (d *Daemon) recordTaskPlanQuota(runtimeID string, quota *protocol.RuntimePlanQuota) {
+	if runtimeID == "" || quota == nil {
 		return
 	}
-	d.planQuotaCache.Store(runtimeID, planQuotaCacheEntry{
-		clearMarker: true,
-		quota: &protocol.RuntimePlanQuota{
-			Provider:   "zenmux",
-			Status:     protocol.PlanQuotaStatusOK,
-			ObservedAt: time.Now().Unix(),
-			Source:     protocol.PlanQuotaSourceDaemon,
-		},
-	})
+	for _, id := range d.runtimeIDsForQuotaSource(runtimeID) {
+		d.recordRuntimePlanQuota(id, quota)
+	}
+}
+
+// runtimeIDsForQuotaSource returns the sorted ids of this daemon's runtimes
+// that share the given runtime's quota source (provider + profile_id pair).
+// Always includes the reporting runtime itself when still registered.
+func (d *Daemon) runtimeIDsForQuotaSource(runtimeID string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	source, ok := d.runtimeIndex[runtimeID]
+	if !ok {
+		return []string{runtimeID}
+	}
+	var ids []string
+	for _, ws := range d.workspaces {
+		for _, rid := range ws.runtimeIDs {
+			rt, found := d.runtimeIndex[rid]
+			if found && rt.Provider == source.Provider && rt.ProfileID == source.ProfileID {
+				ids = append(ids, rid)
+			}
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // heartbeatExtrasFor assembles the optional heartbeat attachments for one
@@ -1392,17 +1408,7 @@ func (d *Daemon) heartbeatExtrasFor(runtimeID string) HeartbeatExtras {
 	}
 	if cached, ok := d.planQuotaCache.Load(runtimeID); ok {
 		if entry, ok := cached.(planQuotaCacheEntry); ok {
-			if entry.clearMarker {
-				// Clear markers represent a deliberate state, not an
-				// observation: re-stamp so "not reported" never goes stale.
-				// Real snapshots keep their observed_at — re-stamping them
-				// would mask a collector that stopped producing data.
-				clone := *entry.quota
-				clone.ObservedAt = time.Now().Unix()
-				extras.PlanQuota = &clone
-			} else {
-				extras.PlanQuota = entry.quota
-			}
+			extras.PlanQuota = entry.quota
 		}
 	}
 	return extras
@@ -2333,17 +2339,14 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
 	// providers whose quota lives behind a programmatic API rather
 	// than inside the agent session. Kimi probes its local Server API and
-	// self-gates on the token file and a registered kimi runtime; ZenMux
-	// polls the Management API only when the operator configured a key, and
-	// reports only to runtimes explicitly linked via MULTICA_ZENMUX_LINK (the
-	// loop also runs link-only so a removed association is actively cleared).
+	// self-gates on the token file and a registered kimi runtime. (The
+	// daemon-side ZenMux collector was retired in OL-1205 scenario 3;
+	// ZenMux subscriptions are user-registered quota sources polled by the
+	// server.)
 	go d.kimiPlanQuotaLoop(ctx)
 	// Antigravity polls Google's remote API using the CLI-managed OAuth
 	// token; it no longer needs a running task or a local language server.
 	go d.antigravityPlanQuotaLoop(ctx)
-	// ZenMux self-gates like Kimi: it always starts so removed associations
-	// are actively cleared, and polls only with key + link configured.
-	go d.zenmuxPlanQuotaLoop(ctx)
 	mediaDone := make(chan struct{})
 	go func() { defer close(mediaDone); d.mediaLoop(ctx) }()
 	defer func() { cancel(); <-mediaDone }()
@@ -9050,7 +9053,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	execOpts := agent.ExecOptions{
 		SkillInvocation: skillInvocation,
 		OnPlanQuota: func(quota *protocol.RuntimePlanQuota) {
-			d.recordRuntimePlanQuota(task.RuntimeID, quota)
+			d.recordTaskPlanQuota(task.RuntimeID, quota)
 		},
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		CursorHookCommand:          cursorHookCommand,
@@ -9289,7 +9292,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// terminal status below: a rate-limited failure is exactly when the
 	// "limited" snapshot matters most.
 	if result.PlanQuota != nil {
-		d.recordRuntimePlanQuota(task.RuntimeID, result.PlanQuota)
+		d.recordTaskPlanQuota(task.RuntimeID, result.PlanQuota)
 	}
 
 	// A map entry means the backend reported usage, including an explicit zero.

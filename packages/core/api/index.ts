@@ -14,7 +14,20 @@ export type {
   ClientUsageRequest,
   DependencyErrorDetails,
 } from "./client";
-export type { GlmQuotaStatus, GlmQuotaSnapshot, GlmQuotaWindow } from "./schemas";
+export type {
+  GlmQuotaStatus,
+  GlmQuotaSnapshot,
+  GlmQuotaWindow,
+  QuotaSource,
+  QuotaSourceError,
+  QuotaSourceKind,
+  QuotaSourceListResponse,
+  QuotaSourceVisibility,
+  WorkspaceQuotaSource,
+  WorkspaceQuotaSourceListResponse,
+  CreateQuotaSourceInput,
+  UpdateQuotaSourceInput,
+} from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
