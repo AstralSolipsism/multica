@@ -70,198 +70,129 @@ describe("HtmlBlockPreview — comment actions", () => {
   });
   afterEach(() => { delete (navigator as { userActivation?: unknown }).userActivation; });
 
-  function mount(submitComment = vi.fn().mockResolvedValue(true), fillCommentDraft = vi.fn(), hasCommentDraft = vi.fn().mockReturnValue(false)) {
-    const view = render(<CurrentIssueRenderContextProvider value={{ id: "issue-1", identifier: "OL-1223", submitComment, fillCommentDraft, hasCommentDraft }}>
+  function mount(submitComment = vi.fn().mockResolvedValue(true), fillCommentDraft = vi.fn()) {
+    const view = render(<CurrentIssueRenderContextProvider value={{ id: "issue-1", identifier: "OL-1223", submitComment, fillCommentDraft }}>
       <HtmlBlockPreview html="<p>decision</p>" />
     </CurrentIssueRenderContextProvider>);
     const frame = inlineFrame();
     const reply = vi.spyOn(frame.contentWindow!, "postMessage");
-    return { ...view, frame, reply, submitComment, fillCommentDraft, hasCommentDraft };
+    return { ...view, frame, reply, submitComment, fillCommentDraft };
   }
   const result = (action: string, ok: boolean) => ({ __multicaHtmlBlock: 1, type: "action-result", action, ok });
 
-  it.each(["submit-comment", "fill-comment"])("waits for a stable confirmation before executing %s", async (type) => {
-    vi.useFakeTimers();
-    try {
-      activation.isActive = true;
-      const { frame, submitComment, fillCommentDraft } = mount(undefined, undefined, vi.fn().mockReturnValue(true));
-      post(frame, { type, content: "answer" });
-      const button = screen.getByRole("button", { name: type === "submit-comment" ? "Post as me" : "Replace draft" });
-      fireEvent.click(button);
-      expect(submitComment).not.toHaveBeenCalled();
-      expect(fillCommentDraft).not.toHaveBeenCalled();
-      act(() => vi.advanceTimersByTime(499));
-      fireEvent.click(button);
-      expect(button).toBeDisabled();
-      expect(submitComment).not.toHaveBeenCalled();
-      expect(fillCommentDraft).not.toHaveBeenCalled();
-      act(() => vi.advanceTimersByTime(33));
-      expect(button).toBeEnabled();
-      await act(async () => { fireEvent.click(button); });
-      expect(type === "submit-comment" ? submitComment : fillCommentDraft).toHaveBeenCalledExactlyOnceWith("answer");
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("restarts the confirmation delay on position changes, including before the next animation frame", async () => {
-    vi.useFakeTimers();
-    try {
-      const { frame, submitComment } = mount();
-      post(frame, { type: "submit-comment", content: "answer" });
-      const button = screen.getByRole("button", { name: "Post as me" });
-      let y = 400;
-      vi.spyOn(button, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, y, 100, 30));
-      act(() => vi.advanceTimersByTime(600));
-      expect(button).toBeEnabled();
-      y = 250;
-      fireEvent.click(button);
-      expect(submitComment).not.toHaveBeenCalled();
-      expect(button).toBeDisabled();
-      act(() => vi.advanceTimersByTime(400));
-      expect(button).toBeDisabled();
-      y = 200;
-      act(() => vi.advanceTimersByTime(200));
-      expect(button).toBeDisabled();
-      act(() => vi.advanceTimersByTime(400));
-      expect(button).toBeEnabled();
-      await act(async () => { fireEvent.click(button); });
-      expect(submitComment).toHaveBeenCalledExactlyOnceWith("answer");
-    } finally { vi.useRealTimers(); }
-  });
-
-  it.each(["submit-comment", "fill-comment"])("defers height changes during %s confirmation and applies the latest after cancellation", (type) => {
-    vi.useFakeTimers();
-    try {
-      activation.isActive = true;
-      const { frame } = mount(undefined, undefined, vi.fn().mockReturnValue(true));
-      post(frame, { type: "height", height: 400 });
-      post(frame, { type, content: "answer" });
-      post(frame, { type: "height", height: 250 });
-      expect(frame.parentElement).toHaveStyle({ height: "400px" });
-      post(frame, { type: "height", height: 300 });
-      act(() => vi.advanceTimersByTime(600));
-      expect(frame.parentElement).toHaveStyle({ height: "400px" });
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(frame.parentElement).toHaveStyle({ height: "300px" });
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("holds automatic submissions for host confirmation and renders the exact content as text outside the clip", async () => {
-    const { frame, reply, submitComment } = mount();
-    post(frame, { type: "height", height: 3000 });
-    const content = "<script>parent.postMessage('malicious','*')</script> **answer**";
-    post(frame, { type: "submit-comment", content });
+  it.each(["submit-comment", "fill-comment"])("rejects %s without transient activation", (type) => {
+    const { frame, reply, submitComment, fillCommentDraft } = mount();
+    post(frame, { type, content: "answer" });
     expect(submitComment).not.toHaveBeenCalled();
-    const confirmation = screen.getByRole("region", { name: "Post this comment as you?" });
-    expect(confirmation.querySelector("pre")?.textContent).toBe(content);
-    expect(confirmation.querySelector("script")).toBeNull();
-    expect(confirmation.closest("[data-collapsed]")).toBeNull();
-    expect(reply).toHaveBeenCalledWith({ __multicaHtmlBlock: 1, type: "action-pending", action: "submit-comment" }, "*");
-    expect(reply).not.toHaveBeenCalledWith(result("submit-comment", true), "*");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Post as me" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Post as me" }));
-    await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
-    expect(submitComment).toHaveBeenCalledExactlyOnceWith(content);
+    expect(fillCommentDraft).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledExactlyOnceWith(result(type, false), "*");
     expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("ignores duplicate or replacement requests while waiting and while the post is in flight", async () => {
-    let resolve!: (ok: boolean) => void;
-    const submitComment = vi.fn(() => new Promise<boolean>((r) => { resolve = r; }));
-    const { frame, reply, fillCommentDraft } = mount(submitComment);
-    post(frame, { type: "height", height: 400 });
-    post(frame, { type: "submit-comment", content: "original" });
-    post(frame, { type: "submit-comment", content: "replacement" });
-    post(frame, { type: "fill-comment", content: "replacement" });
-    expect(screen.getByRole("region").querySelector("pre")?.textContent).toBe("original");
-    const confirm = screen.getByRole("button", { name: "Post as me" });
-    await waitFor(() => expect(confirm).toBeEnabled());
-    fireEvent.click(confirm);
-    fireEvent.click(confirm);
-    post(frame, { type: "submit-comment", content: "replacement" });
-    expect(confirm).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    expect(submitComment).toHaveBeenCalledExactlyOnceWith("original");
+  it.each(["submit-comment", "fill-comment"])("rejects %s when activation is unavailable", (type) => {
+    delete (navigator as { userActivation?: unknown }).userActivation;
+    const { frame, reply, submitComment, fillCommentDraft } = mount();
+    post(frame, { type, content: "answer" });
+    expect(submitComment).not.toHaveBeenCalled();
     expect(fillCommentDraft).not.toHaveBeenCalled();
-    expect(reply).not.toHaveBeenCalledWith(result("submit-comment", true), "*");
-    post(frame, { type: "height", height: 250 });
-    expect(frame.parentElement).toHaveStyle({ height: "400px" });
-    await act(async () => resolve(true));
-    expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*");
-    expect(frame.parentElement).toHaveStyle({ height: "250px" });
+    expect(reply).toHaveBeenCalledExactlyOnceWith(result(type, false), "*");
   });
 
-  it.each([false, new Error("send failed")])("reports a failed confirmed submission and permits retry", async (failure) => {
-    const submit = failure instanceof Error ? vi.fn().mockRejectedValue(failure) : vi.fn().mockResolvedValue(failure);
+  it.each(["submit-comment", "fill-comment"])("directly executes %s with activation and only returns the final result", async (type) => {
+    activation.isActive = true;
+    const { frame, reply, submitComment, fillCommentDraft } = mount();
+    const content = "**Decision** <b>literal text</b>";
+    post(frame, { type, content });
+    expect(type === "submit-comment" ? submitComment : fillCommentDraft).toHaveBeenCalledExactlyOnceWith(content);
+    expect(type === "submit-comment" ? fillCommentDraft : submitComment).not.toHaveBeenCalled();
+    await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result(type, true), "*"));
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  it.each([false, new Error("send failed")])("reports submission failure and permits retry", async (failure) => {
+    activation.isActive = true;
+    const submit = failure instanceof Error ? vi.fn().mockRejectedValueOnce(failure) : vi.fn().mockResolvedValueOnce(failure);
+    submit.mockResolvedValue(true);
     const { frame, reply } = mount(submit);
     post(frame, { type: "submit-comment", content: "answer" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Post as me" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Post as me" }));
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", false), "*"));
     post(frame, { type: "submit-comment", content: "retry" });
-    expect(screen.getByRole("region").querySelector("pre")?.textContent).toBe("retry");
+    await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
+    expect(submit.mock.calls).toEqual([["answer"], ["retry"]]);
   });
 
-  it.each(["submit-comment", "fill-comment"])("cancels %s without executing and acknowledges failure", (type) => {
+  it("returns failure for a throwing draft callback and unlocks", async () => {
     activation.isActive = true;
-    const { frame, reply, submitComment, fillCommentDraft } = mount(undefined, undefined, vi.fn().mockReturnValue(true));
-    post(frame, { type, content: "answer" });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(submitComment).not.toHaveBeenCalled();
-    expect(fillCommentDraft).not.toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledWith(result(type, false), "*");
-    expect(screen.queryByRole("region")).toBeNull();
-  });
-
-  it("rejects a fill without transient user activation", () => {
-    const { frame, reply, fillCommentDraft } = mount();
+    const fill = vi.fn().mockImplementationOnce(() => { throw new Error("fill failed"); });
+    const { frame, reply } = mount(undefined, fill);
     post(frame, { type: "fill-comment", content: "answer" });
-    expect(fillCommentDraft).not.toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledWith(result("fill-comment", false), "*");
-    expect(screen.queryByRole("region")).toBeNull();
-  });
-
-  it("fills an empty draft after a user gesture", async () => {
-    activation.isActive = true;
-    const { frame, reply, fillCommentDraft } = mount();
-    post(frame, { type: "fill-comment", content: "answer" });
+    await waitFor(() => expect(reply).toHaveBeenCalledWith(result("fill-comment", false), "*"));
+    post(frame, { type: "fill-comment", content: "retry" });
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("fill-comment", true), "*"));
-    expect(fillCommentDraft).toHaveBeenCalledExactlyOnceWith("answer");
-    expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("requires host confirmation before replacing a live draft", async () => {
+  it("ignores repeated and competing requests in flight without freezing card height", async () => {
     activation.isActive = true;
-    const { frame, reply, fillCommentDraft } = mount(undefined, undefined, vi.fn().mockReturnValue(true));
-    post(frame, { type: "fill-comment", content: "replacement" });
+    let finish!: (ok: boolean) => void;
+    const submit = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+    const { frame, reply, fillCommentDraft } = mount(submit);
+    post(frame, { type: "height", height: 400 });
+    post(frame, { type: "submit-comment", content: "original" });
+    post(frame, { type: "submit-comment", content: "duplicate" });
+    post(frame, { type: "fill-comment", content: "competing" });
+    post(frame, { type: "height", height: 250 });
+    expect(frame.parentElement).toHaveStyle({ height: "250px" });
+    expect(submit).toHaveBeenCalledExactlyOnceWith("original");
     expect(fillCommentDraft).not.toHaveBeenCalled();
-    expect(screen.getByRole("region", { name: "Replace your existing draft?" })).toBeTruthy();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Replace draft" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Replace draft" }));
+    expect(reply).not.toHaveBeenCalled();
+    await act(async () => finish(true));
+    expect(reply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", true), "*");
+    post(frame, { type: "fill-comment", content: "after completion" });
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("fill-comment", true), "*"));
-    expect(fillCommentDraft).toHaveBeenCalledExactlyOnceWith("replacement");
   });
 
-  it("keeps the confirmation reachable in fullscreen without reloading the frame", async () => {
-    const { frame, reply } = mount();
+  it("reloads without letting the old completion acknowledge or unlock a new request", async () => {
+    activation.isActive = true;
+    const finishes: ((ok: boolean) => void)[] = [];
+    const submit = vi.fn(() => new Promise<boolean>(resolve => finishes.push(resolve)));
+    const { frame, reply } = mount(submit);
+    post(frame, { type: "submit-comment", content: "old" });
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    const fresh = inlineFrame();
+    const freshReply = vi.spyOn(fresh.contentWindow!, "postMessage");
+    freshReply.mockClear();
+    post(fresh, { type: "submit-comment", content: "new" });
+    await act(async () => finishes[0]!(true));
+    expect(reply).not.toHaveBeenCalledWith(result("submit-comment", true), "*");
+    expect(freshReply).not.toHaveBeenCalledWith(result("submit-comment", true), "*");
+    post(fresh, { type: "submit-comment", content: "still in flight" });
+    expect(submit.mock.calls).toEqual([["old"], ["new"]]);
+    await act(async () => finishes[1]!(true));
+    expect(freshReply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", true), "*");
+  });
+
+  it("does not acknowledge a request after unmount", async () => {
+    activation.isActive = true;
+    let finish!: (ok: boolean) => void;
+    const { frame, reply, unmount } = mount(vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; })));
     post(frame, { type: "submit-comment", content: "answer" });
+    unmount();
+    await act(async () => finish(true));
+    expect(reply).not.toHaveBeenCalled();
+  });
+
+  it("executes directly in fullscreen without reloading the frame", async () => {
+    activation.isActive = true;
+    const { frame, reply, submitComment } = mount();
     fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.querySelector("iframe")).toBe(frame);
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Post as me" })).toBeEnabled());
-    fireEvent.click(within(dialog).getByRole("button", { name: "Post as me" }));
+    expect(screen.getByRole("dialog").querySelector("iframe")).toBe(frame);
+    post(frame, { type: "submit-comment", content: "answer" });
+    expect(submitComment).toHaveBeenCalledExactlyOnceWith("answer");
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
   });
 
-  it("drops an unconfirmed request when its document reloads", () => {
-    const { frame, reply, submitComment } = mount();
-    post(frame, { type: "submit-comment", content: "answer" });
-    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
-    expect(screen.queryByRole("region")).toBeNull();
-    expect(submitComment).not.toHaveBeenCalled();
-    expect(reply).toHaveBeenCalledWith(result("submit-comment", false), "*");
-  });
-
-  it("ignores another frame even when its marker and action are valid", () => {
+  it("ignores another frame even when activation, marker and action are valid", () => {
+    activation.isActive = true;
     const { submitComment, fillCommentDraft, reply } = mount();
     const foreign = document.createElement("iframe");
     document.body.append(foreign);
@@ -272,7 +203,8 @@ describe("HtmlBlockPreview — comment actions", () => {
     foreign.remove();
   });
 
-  it("ignores actions without issue callbacks so the card can fall back to copy", () => {
+  it("ignores actions without issue callbacks so the card can offer copyable text", () => {
+    activation.isActive = true;
     render(<HtmlBlockPreview html="<p>decision</p>" />);
     const frame = inlineFrame();
     const reply = vi.spyOn(frame.contentWindow!, "postMessage");
