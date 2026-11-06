@@ -405,16 +405,17 @@ const updateQuotaSourceFields = `-- name: UpdateQuotaSourceFields :execrows
 UPDATE quota_source SET
     updated_at = now(),
     name = COALESCE($1, name),
-    base_url = COALESCE($2, base_url),
-    credential_ciphertext = COALESCE($3, credential_ciphertext),
-    credential_hint = COALESCE($4, credential_hint),
-    enabled = COALESCE($5, enabled),
-    visibility = COALESCE($6, visibility)
-WHERE id = $7 AND owner_id = $8
+    base_url = CASE WHEN $2::bool THEN $3 ELSE base_url END,
+    credential_ciphertext = COALESCE($4, credential_ciphertext),
+    credential_hint = COALESCE($5, credential_hint),
+    enabled = COALESCE($6, enabled),
+    visibility = COALESCE($7, visibility)
+WHERE id = $8 AND owner_id = $9
 `
 
 type UpdateQuotaSourceFieldsParams struct {
 	Name                 pgtype.Text `json:"name"`
+	BaseUrlSet           bool        `json:"base_url_set"`
 	BaseUrl              pgtype.Text `json:"base_url"`
 	CredentialCiphertext []byte      `json:"credential_ciphertext"`
 	CredentialHint       pgtype.Text `json:"credential_hint"`
@@ -424,11 +425,14 @@ type UpdateQuotaSourceFieldsParams struct {
 	OwnerID              pgtype.UUID `json:"owner_id"`
 }
 
-// Partial update; NULL fields leave the stored value. Returns rows=0 when the
-// id does not exist under this owner.
+// Partial update. NULL fields leave the stored value — EXCEPT base_url when
+// @base_url_set: an explicit PATCH may clear the address back to the driver
+// default (NULL), which COALESCE alone cannot distinguish from "not sent".
+// Returns rows=0 when the id does not exist under this owner.
 func (q *Queries) UpdateQuotaSourceFields(ctx context.Context, arg UpdateQuotaSourceFieldsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateQuotaSourceFields,
 		arg.Name,
+		arg.BaseUrlSet,
 		arg.BaseUrl,
 		arg.CredentialCiphertext,
 		arg.CredentialHint,

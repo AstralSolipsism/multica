@@ -29,12 +29,14 @@ ORDER BY next_poll_at ASC
 LIMIT @max_sources;
 
 -- name: UpdateQuotaSourceFields :execrows
--- Partial update; NULL fields leave the stored value. Returns rows=0 when the
--- id does not exist under this owner.
+-- Partial update. NULL fields leave the stored value — EXCEPT base_url when
+-- @base_url_set: an explicit PATCH may clear the address back to the driver
+-- default (NULL), which COALESCE alone cannot distinguish from "not sent".
+-- Returns rows=0 when the id does not exist under this owner.
 UPDATE quota_source SET
     updated_at = now(),
     name = COALESCE(sqlc.narg('name'), name),
-    base_url = COALESCE(sqlc.narg('base_url'), base_url),
+    base_url = CASE WHEN @base_url_set::bool THEN sqlc.narg('base_url') ELSE base_url END,
     credential_ciphertext = COALESCE(sqlc.narg('credential_ciphertext'), credential_ciphertext),
     credential_hint = COALESCE(sqlc.narg('credential_hint'), credential_hint),
     enabled = COALESCE(sqlc.narg('enabled'), enabled),

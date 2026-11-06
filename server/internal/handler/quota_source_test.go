@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -482,5 +484,67 @@ func TestPatchCredentialClearsStaleError(t *testing.T) {
 	}
 	if failures != 0 || snapshot == nil {
 		t.Fatalf("consecutive_failures=%d snapshot=%v, want 0 and a snapshot", failures, snapshot)
+	}
+}
+
+// Review round-2 #2①: clearing a custom base_url must actually persist NULL
+// when the probe against the resulting (default) address passes — the
+// COALESCE update previously swallowed the NULL as "not sent". The default
+// endpoint is unreachable from this sandbox, so the passing-probe path is
+// proven at the query layer with the exact shape the handler sends.
+func TestUpdateQuotaSourceFields_ClearsBaseURLWhenSet(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	var id string
+	if err := testPool.QueryRow(context.Background(),
+		`INSERT INTO quota_source (owner_id, kind, name, base_url, credential_ciphertext)
+		 VALUES ($1, 'glm', 'clear-ok', 'https://api.z.ai', '\x00'::bytea) RETURNING id::text`,
+		testUserID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, id)
+	})
+
+	// Exactly what UpdateQuotaSource sends when the PATCH carries
+	// base_url:"" and the probe passed: set-flag true, value NULL.
+	if n, err := testHandler.Queries.UpdateQuotaSourceFields(context.Background(), db.UpdateQuotaSourceFieldsParams{
+		ID:         parseUUID(id),
+		OwnerID:    parseUUID(testUserID),
+		Name:       textFromString("clear-ok"),
+		BaseUrlSet: true,
+		BaseUrl:    pgtype.Text{}, // NULL = driver default
+	}); err != nil || n == 0 {
+		t.Fatalf("update: rows=%d err=%v", n, err)
+	}
+	var stored *string
+	if err := testPool.QueryRow(context.Background(), `SELECT base_url FROM quota_source WHERE id = $1`, id).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != nil {
+		t.Fatalf("cleared base_url = %q, want NULL", *stored)
+	}
+
+	// Without the flag the stored value survives — an unrelated PATCH must
+	// not resurrect or clear the address.
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE quota_source SET base_url = 'https://api.z.ai' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := testHandler.Queries.UpdateQuotaSourceFields(context.Background(), db.UpdateQuotaSourceFieldsParams{
+		ID:         parseUUID(id),
+		OwnerID:    parseUUID(testUserID),
+		Name:       textFromString("clear-ok-renamed"),
+		BaseUrlSet: false,
+		BaseUrl:    pgtype.Text{},
+	}); err != nil || n == 0 {
+		t.Fatalf("update without flag: rows=%d err=%v", n, err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT base_url FROM quota_source WHERE id = $1`, id).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || *stored != "https://api.z.ai" {
+		t.Fatalf("base_url after flagless update = %v, want https://api.z.ai", stored)
 	}
 }

@@ -348,9 +348,13 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := db.UpdateQuotaSourceFieldsParams{
-		ID:         row.ID,
-		OwnerID:    row.OwnerID,
-		Name:       textFromString(name),
+		ID:      row.ID,
+		OwnerID: row.OwnerID,
+		Name:    textFromString(name),
+		// An explicit base_url (even an empty one = "back to driver
+		// default") must overwrite the stored value; COALESCE alone cannot
+		// tell a deliberate NULL from an absent field.
+		BaseUrlSet: req.BaseURL != nil,
 		BaseUrl:    baseURL,
 		Enabled:    pgtype.Bool{Bool: enabled, Valid: true},
 		Visibility: textFromString(visibility),
