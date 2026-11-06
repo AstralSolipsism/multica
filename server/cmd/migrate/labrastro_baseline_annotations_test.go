@@ -39,7 +39,7 @@ func TestLabrastroAnnotationMigrationsFreshUpgradeAndRollback(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			versions := []string{"9049_labrastro_baseline_annotations", "9050_labrastro_baseline_review_client_key_index", "9051_labrastro_baseline_annotation_active_index", "9052_labrastro_baseline_annotation_ordinal_index", "9053_labrastro_baseline_review_batch_index"}
+			versions := []string{"9054_labrastro_baseline_annotations", "9055_labrastro_baseline_review_client_key_index", "9056_labrastro_baseline_annotation_active_index", "9057_labrastro_baseline_annotation_ordinal_index", "9058_labrastro_baseline_review_batch_index"}
 			opts := runOptions{Direction: "up", SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1, Hooks: hooksForDirection("up")}
 			if upgrade {
 				opts.Files = realMigrationFiles(t, []string{"9039_labrastro_engineering_tables", "9048_labrastro_baseline_module_chapters"}, "up")
