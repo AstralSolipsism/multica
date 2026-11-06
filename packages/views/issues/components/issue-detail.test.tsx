@@ -139,28 +139,9 @@ describe("IssueDetail (shared)", () => {
     await screen.findByText("Implement authentication");
     fireEvent.click(screen.getByTestId("comment-composer-shell"));
     const editor = await screen.findByPlaceholderText("Leave a comment...");
-    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
     fireEvent.change(editor, { target: { value: "existing draft" } });
-    // The harness draft store is empty; protection must read the live editor.
-    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
     act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
     expect(editor).toHaveValue("panel answer");
-  });
-
-  it.each(["upload", "annotation"])("protects an otherwise empty draft containing only an %s", async (kind) => {
-    renderIssueDetail();
-    await screen.findByText("Implement authentication");
-    await waitFor(() => expect(renderedIssueContext.current?.hasCommentDraft).toBeDefined());
-    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
-    const getUploads = vi.fn().mockReturnValue(kind === "upload" ? [{ clientUploadId: "upload-1", status: "uploading" }] : []);
-    const getAnnotations = vi.fn().mockReturnValue(kind === "annotation" ? [{ id: "annotation-1", quote: "context", note: "review this" }] : []);
-    const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({
-      ...useCommentDraftStore.getState(), getDraft: () => "", getUploads, getAnnotations,
-    });
-    try {
-      expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
-      expect(kind === "upload" ? getUploads : getAnnotations).toHaveBeenCalledWith(`new:${mockIssue.id}`);
-    } finally { getState.mockRestore(); }
   });
 
   it("passes the issue's agent assignment to the local-directory hint", async () => {

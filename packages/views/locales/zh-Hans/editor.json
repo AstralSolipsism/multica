@@ -178,12 +178,5 @@
     "clear_filter": "清除筛选",
     "no_matches": "没有匹配的行",
     "close": "关闭"
-  },
-  "html_action": {
-    "confirm_submit": "确认以你的身份发表以下原文？",
-    "confirm_fill": "覆盖已有评论草稿？",
-    "post": "以我的身份发表",
-    "replace_draft": "覆盖草稿",
-    "cancel": "取消"
   }
 }

@@ -25,7 +25,6 @@ export function HtmlPreviewSurface({
   onReload,
   title,
   children,
-  footer,
 }: {
   open: boolean;
   /** The inline body's height, or zero when its preview is hidden. */
@@ -34,7 +33,6 @@ export function HtmlPreviewSurface({
   onReload?: () => void;
   title: string;
   children: ReactNode;
-  footer?: ReactNode;
 }) {
   const { t } = useT("editor");
   const titleId = useId();
@@ -101,7 +99,6 @@ export function HtmlPreviewSurface({
         className="relative m-0 block max-h-none w-full max-w-none border-0 bg-transparent p-0 text-inherit open:fixed open:inset-0 open:m-auto open:flex open:flex-col open:h-[min(90dvh,calc(100dvh-2rem))] open:w-[min(72rem,calc(100vw-2rem))] open:overflow-hidden open:rounded-xl open:bg-surface-raised open:shadow-[var(--floating-shadow)] open:ring-1 open:ring-surface-border backdrop:bg-black/10 backdrop:backdrop-blur-xs"
       >
         {children}
-        {footer}
         {open && (
           <>
             <span id={titleId} className="sr-only">

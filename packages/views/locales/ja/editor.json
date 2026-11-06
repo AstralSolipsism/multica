@@ -178,12 +178,5 @@
     "clear_filter": "絞り込みを解除",
     "no_matches": "一致する行がありません",
     "close": "閉じる"
-  },
-  "html_action": {
-    "confirm_submit": "あなたとしてこのコメントを投稿しますか？",
-    "confirm_fill": "既存の下書きを置き換えますか？",
-    "post": "自分として投稿",
-    "replace_draft": "下書きを置き換える",
-    "cancel": "キャンセル"
   }
 }

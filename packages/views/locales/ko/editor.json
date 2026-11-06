@@ -178,12 +178,5 @@
     "clear_filter": "필터 지우기",
     "no_matches": "일치하는 행이 없습니다",
     "close": "닫기"
-  },
-  "html_action": {
-    "confirm_submit": "내 이름으로 이 댓글을 게시할까요?",
-    "confirm_fill": "기존 초안을 덮어쓸까요?",
-    "post": "내 이름으로 게시",
-    "replace_draft": "초안 덮어쓰기",
-    "cancel": "취소"
   }
 }
