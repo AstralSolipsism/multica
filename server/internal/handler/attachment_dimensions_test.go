@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"mime/multipart"
 	"net/http"
@@ -24,12 +25,19 @@ func TestUploadFileImageDimensions(t *testing.T) {
 	if err := png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 80, 40))); err != nil {
 		t.Fatal(err)
 	}
+	var jpegBytes bytes.Buffer
+	if err := jpeg.Encode(&jpegBytes, image.NewRGBA(image.Rect(0, 0, 80, 40)), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Force multipart disk spill and verify metadata read-ahead never alters storage.
+	jpegBytes.Write(bytes.Repeat([]byte{0xff}, 2<<20))
 	for _, tc := range []struct {
 		filename string
 		data     []byte
 		image    bool
 	}{
 		{"shot.png", imageBytes.Bytes(), true},
+		{"padded.jpg", jpegBytes.Bytes(), true},
 		{"notes.txt", []byte("notes"), false},
 	} {
 		t.Run(tc.filename, func(t *testing.T) {
@@ -60,6 +68,9 @@ func TestUploadFileImageDimensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if !bytes.Equal(store.files[store.KeyFromURL(stored.Url)], tc.data) {
+				t.Fatal("metadata inspection changed the uploaded bytes")
+			}
 			if tc.image {
 				if response.Width == nil || *response.Width != 80 || response.Height == nil || *response.Height != 40 {
 					t.Fatalf("response dimensions = %v/%v", response.Width, response.Height)
@@ -72,7 +83,7 @@ func TestUploadFileImageDimensions(t *testing.T) {
 			}
 		})
 	}
-	if len(store.files) != 2 {
-		t.Fatalf("stored %d objects, want two originals", len(store.files))
+	if len(store.files) != 3 || store.uploadStreamCalls != 3 {
+		t.Fatalf("stored %d objects with %d stream calls, want three originals", len(store.files), store.uploadStreamCalls)
 	}
 }

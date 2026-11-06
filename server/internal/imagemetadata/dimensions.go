@@ -2,6 +2,7 @@
 package imagemetadata
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"image"
@@ -11,6 +12,9 @@ import (
 	"io"
 	"math"
 )
+
+// Metadata is optional; cap work even if malformed headers never reach pixels.
+const maxHeaderBytes = 1 << 20
 
 type Size struct {
 	Width  int32
@@ -26,7 +30,7 @@ func Dimensions(data []byte) (Size, bool) {
 // DimensionsFromReader reads headers without buffering the uploaded file.
 // The caller must rewind the reader before uploading its contents.
 func DimensionsFromReader(reader io.ReadSeeker) (Size, bool) {
-	cfg, format, err := image.DecodeConfig(reader)
+	cfg, format, err := image.DecodeConfig(io.LimitReader(reader, maxHeaderBytes))
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > math.MaxInt32 || cfg.Height > math.MaxInt32 {
 		return Size{}, false
 	}
@@ -81,37 +85,42 @@ func jpegOrientationFromReader(reader io.ReadSeeker) int {
 	if _, err := reader.Seek(2, io.SeekStart); err != nil {
 		return 1
 	}
+	header := bufio.NewReader(io.LimitReader(reader, maxHeaderBytes-2))
 	for {
 		var marker [2]byte
-		if _, err := io.ReadFull(reader, marker[:]); err != nil || marker[0] != 0xff {
+		if _, err := io.ReadFull(header, marker[:]); err != nil || marker[0] != 0xff {
 			return 1
 		}
-		if marker[1] == 0xff {
-			if _, err := reader.Seek(-1, io.SeekCurrent); err != nil {
+		for marker[1] == 0xff {
+			next, err := header.ReadByte()
+			if err != nil {
 				return 1
 			}
-			continue
+			marker[1] = next
 		}
-		if marker[1] == 0xda || marker[1] == 0xd9 {
+		// EXIF precedes the first frame. C4 (DHT), C8 (JPG) and CC (DAC)
+		// are the non-frame markers in the C0-CF range.
+		isFrame := marker[1] >= 0xc0 && marker[1] <= 0xcf && marker[1] != 0xc4 && marker[1] != 0xc8 && marker[1] != 0xcc
+		if isFrame || marker[1] == 0xda || marker[1] == 0xd9 {
 			return 1
 		}
 		var size [2]byte
-		if _, err := io.ReadFull(reader, size[:]); err != nil {
+		if _, err := io.ReadFull(header, size[:]); err != nil {
 			return 1
 		}
-		length := int64(binary.BigEndian.Uint16(size[:])) - 2
+		length := int(binary.BigEndian.Uint16(size[:])) - 2
 		if length < 0 {
 			return 1
 		}
 		if marker[1] == 0xe1 {
 			payload := make([]byte, length)
-			if _, err := io.ReadFull(reader, payload); err != nil {
+			if _, err := io.ReadFull(header, payload); err != nil {
 				return 1
 			}
 			if bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
 				return tiffOrientation(payload[6:])
 			}
-		} else if _, err := reader.Seek(length, io.SeekCurrent); err != nil {
+		} else if _, err := header.Discard(length); err != nil {
 			return 1
 		}
 	}
