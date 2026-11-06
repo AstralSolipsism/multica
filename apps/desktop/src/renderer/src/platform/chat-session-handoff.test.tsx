@@ -133,11 +133,13 @@ describe("DesktopChatSessionBridge (main window)", () => {
 
   it("switches to another workspace's session, then opens it in the floating chat there", async () => {
     const api = stubDesktopAPI("main");
-    const view = renderBridge(navigationAt("/acme/issues"));
+    const navigation = navigationAt("/acme/issues");
+    const view = renderBridge(navigation);
 
     api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
     // The window restores that workspace's tabs; nothing opens on this one.
-    expect(useTabStore.getState().activeWorkspaceSlug).toBe("beta");
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith("/beta/issues");
+    expect(useTabStore.getState().activeWorkspaceSlug).toBe("acme");
     expect(useChatStore.getState()).toMatchObject({ isOpen: false, activeSessionId: null });
 
     const there = navigationAt("/beta/issues");
@@ -149,10 +151,26 @@ describe("DesktopChatSessionBridge (main window)", () => {
     expect(there.push).not.toHaveBeenCalled();
   });
 
+  it("hands an existing workspace window its session without switching this window", () => {
+    const api = stubDesktopAPI("main");
+    const focusWorkspaceWindow = vi.fn(() => true);
+    window.desktopAPI.focusWorkspaceWindow = focusWorkspaceWindow;
+    const navigation = navigationAt("/acme/issues");
+    renderBridge(navigation);
+
+    api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
+
+    expect(focusWorkspaceWindow).toHaveBeenCalledExactlyOnceWith("beta", `/beta/chat?session=${SESSION}`);
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(useTabStore.getState().activeWorkspaceSlug).toBe("acme");
+    expect(useChatStore.getState()).toMatchObject({ isOpen: false, activeSessionId: null });
+  });
+
   it("switches to another workspace's session, then goes to its Chat page when the floating chat is off", async () => {
     const api = stubDesktopAPI("main");
     useChatStore.getState().setFloatingChatEnabled(false);
-    const view = renderBridge(navigationAt("/acme/issues"));
+    const navigation = navigationAt("/acme/issues");
+    const view = renderBridge(navigation);
 
     api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
     const there = navigationAt("/beta/issues");
@@ -164,7 +182,8 @@ describe("DesktopChatSessionBridge (main window)", () => {
 
   it("drops another workspace's session when the member goes somewhere else first", async () => {
     const api = stubDesktopAPI("main");
-    const view = renderBridge(navigationAt("/acme/issues"));
+    const navigation = navigationAt("/acme/issues");
+    const view = renderBridge(navigation);
 
     api.deliver({ workspaceSlug: "beta", sessionId: SESSION });
     await land(view, "gamma", navigationAt("/gamma/issues"));

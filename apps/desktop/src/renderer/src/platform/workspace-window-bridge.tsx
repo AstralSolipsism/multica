@@ -39,6 +39,10 @@ export function WorkspaceWindowBridge() {
         const slug = workspaceSlugForPath(path);
         if (slug) {
           useTabStore.getState().switchWorkspace(slug, path);
+          // switchWorkspace deduplicates by resource and may reuse a tab's
+          // older URL. An explicit handoff must carry its comment hash or
+          // chat session query into that reused tab as well.
+          useTabStore.getState().navigateActiveSession(path);
           clearCommentHighlightMemento(path);
         }
       }),

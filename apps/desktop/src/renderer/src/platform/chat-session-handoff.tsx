@@ -75,7 +75,7 @@ export function DesktopChatSessionBridge() {
         return;
       }
       waiting.current = { handoff, from: current };
-      latest.current.navigation.switchWorkspace(handoff.workspaceSlug);
+      latest.current.navigation.push(paths.workspace(handoff.workspaceSlug).issues());
     });
   }, []);
 

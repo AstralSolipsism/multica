@@ -559,7 +559,7 @@ const callbackSuccessHTML = `<!DOCTYPE html>
     <div class="icon-wrap">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
     </div>
-    <div class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -30.5 421.36 106.5" height="18" width="71" role="img" aria-label="Multica"><g fill="none" stroke="currentColor" stroke-width="16"><path d="M8 76V31A23 23 0 0 1 54 31V76M54 31A23 23 0 0 1 100 31V76"/><path d="M128 0V45A23 23 0 0 0 174 45M174 0V76"/><path d="M202 -30V76"/><path d="M239.6 -19.8V76M219.6 8H259.6"/><path d="M277.8 0V76"/><circle cx="277.8" cy="-18.6" r="8.96" fill="currentColor" stroke="none"/><path d="M344.103 14.737A23 23 0 0 0 304.84 31V45A23 23 0 0 0 344.103 61.263"/><path d="M367.36 31A23 23 0 0 1 413.36 31V45A23 23 0 0 1 367.36 45ZM413.36 0V76"/></g></svg></div>
+    <div class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="24" height="24" fill="currentColor" aria-hidden="true">      <ellipse cx="18.5" cy="42" rx="10.5" ry="14" transform="rotate(-24 18.5 42)" />      <ellipse cx="38.5" cy="27" rx="10.5" ry="14" transform="rotate(-8 38.5 27)" />      <ellipse cx="61.5" cy="27" rx="10.5" ry="14" transform="rotate(8 61.5 27)" />      <ellipse cx="81.5" cy="42" rx="10.5" ry="14" transform="rotate(24 81.5 42)" />      <ellipse cx="50" cy="70" rx="24" ry="19" /></svg><span>Labrastro</span></div>
     <h1>Authentication successful</h1>
     <p>You can close this tab and return to the terminal.</p>
     <p class="hint">Your CLI session is now authenticated.</p>

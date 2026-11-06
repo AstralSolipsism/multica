@@ -1,5 +1,5 @@
 # Unmodified upstream Go files that are not gofmt-clean.
-# Source: multica-ai/multica at f05a525ac8e82f5e9169ad078e44f166fad6d5c8
+# Source: multica-ai/multica at 9b1ab4f9eed9153a94719596eb8a728d2770f065
 # Format: Git blob ID, then a literal repository-relative Go path (no whitespace).
 # A changed file loses its exemption automatically. Never refresh a hash from fork content.
 # Reconcile with docs/engineering/upstream-sync-checklist.md on every upstream sync.

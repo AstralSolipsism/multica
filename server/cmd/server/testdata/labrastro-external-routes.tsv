@@ -252,6 +252,7 @@ GET	/api/issues/search	user-auth	allow
 POST	/api/issues/table/facets	user-auth	deny
 POST	/api/issues/table/groups	user-auth	deny
 POST	/api/issues/table/rows	user-auth	deny
+GET	/api/issues/unread	user-auth	deny
 GET	/api/issues/usage-summary	user-auth	deny
 POST	/api/issues/with-dependencies	user-auth	allow
 DELETE	/api/issues/{id}/	user-auth	deny
@@ -282,6 +283,7 @@ POST	/api/issues/{id}/quick-actions/{quickActionId}/render	user-auth	deny
 POST	/api/issues/{id}/quick-actions/{quickActionId}/run	user-auth	deny
 DELETE	/api/issues/{id}/reactions	user-auth	allow
 POST	/api/issues/{id}/reactions	user-auth	allow
+POST	/api/issues/{id}/read	user-auth	deny
 POST	/api/issues/{id}/rerun	user-auth	deny
 POST	/api/issues/{id}/squad-evaluated	user-auth	deny
 POST	/api/issues/{id}/subscribe	user-auth	deny
@@ -294,6 +296,7 @@ POST	/api/issues/{id}/tasks/{taskId}/supplements	user-auth	deny
 POST	/api/issues/{id}/tasks/{taskId}/supplements/{commentId}/retry	user-auth	deny
 GET	/api/issues/{id}/timeline	user-auth	allow
 GET	/api/issues/{id}/tips	user-auth	deny
+POST	/api/issues/{id}/unread	user-auth	deny
 POST	/api/issues/{id}/unsubscribe	user-auth	deny
 POST	/api/issues/{id}/unsubscribe/subtree	user-auth	deny
 GET	/api/issues/{id}/usage	user-auth	deny
@@ -552,7 +555,9 @@ GET	/api/workspaces/{id}/vcs/connections	user-auth	deny
 POST	/api/workspaces/{id}/vcs/connections	user-auth	deny
 DELETE	/api/workspaces/{id}/vcs/connections/{connectionId}	user-auth	deny
 POST	/api/workspaces/{id}/vcs/connections/{connectionId}/rotate-webhook	user-auth	deny
+POST	/api/workspaces/{id}/wecom/install/begin	user-auth	deny
 POST	/api/workspaces/{id}/wecom/install/byo	user-auth	deny
+GET	/api/workspaces/{id}/wecom/install/{sessionId}	user-auth	deny
 GET	/api/workspaces/{id}/wecom/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/wecom/installations/{installationId}	user-auth	deny
 GET	/api/workspaces/{workspaceId}/issues/graph	user-auth	allow

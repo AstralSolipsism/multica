@@ -34,7 +34,7 @@ vi.mock("@multica/core/auth", () => ({
 
 import { DesktopNavigationProvider, routeContentLinkPath } from "./navigation";
 import { currentPath, useNavigation } from "@multica/views/navigation";
-import { useTabStore, getActiveTab } from "@/stores/tab-store";
+import { useTabStore, getActiveTab, scrollMementoKey } from "@/stores/tab-store";
 
 let unbindWorkspaces: () => void = () => {};
 
@@ -92,6 +92,23 @@ function acmeGroup() {
 }
 
 describe("openInNewTab", () => {
+  it("leaves this window's memento intact when a comment link opens in another workspace window", () => {
+    withWorkspaces(["acme", "beta"]);
+    const focusWorkspaceWindow = vi.fn(() => true);
+    window.desktopAPI.focusWorkspaceWindow = focusWorkspaceWindow;
+    const route = "/beta/issues/OL-2";
+    const entry = "highlight:issue-2";
+    const active = getActiveTab(useTabStore.getState())!;
+    useTabStore.getState().commitViewState(active.id, route, entry, "old-comment");
+    const getAdapter = renderProvider();
+
+    act(() => getAdapter().push(`${route}#comment-new-comment`));
+
+    expect(focusWorkspaceWindow).toHaveBeenCalledExactlyOnceWith("beta", `${route}#comment-new-comment`);
+    expect(useTabStore.getState().activeWorkspaceSlug).toBe("acme");
+    expect(getActiveTab(useTabStore.getState())?.memento.view[scrollMementoKey(route, entry)]).toBe("old-comment");
+  });
+
   it("opens a background tab (active tab unchanged) for a same-workspace path", () => {
     const getAdapter = renderProvider();
     const activeBefore = acmeGroup().activeTabId;

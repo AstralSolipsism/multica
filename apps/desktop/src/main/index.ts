@@ -90,7 +90,6 @@ import {
   parseNativeNotificationPayload,
 } from "./notification-gate";
 import {
-  OPEN_CHAT_SESSION_CHANNEL,
   OPEN_CHAT_SESSION_REQUEST_CHANNEL,
 } from "../shared/chat-session-handoff";
 import { createChatSessionHandoff } from "./chat-session-handoff";

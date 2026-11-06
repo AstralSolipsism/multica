@@ -12,19 +12,19 @@
       "install_error_bot_info": "授權完成，但 Labrastro 無法獲取 Bot 身份資訊，請重試。"
     },
     "slack": {
-      "byo_docs_link": "Step-by-step：把你的 Labrastro 智慧體連線到 Slack"
+      "byo_docs_link": "Step-by-step：把你的 Labrastro AI 代理連線到 Slack"
     },
     "dingtalk": {
       "group_forget_description": "該群會從 Labrastro 的群列表中移除，對話和訊息記錄不會刪除。以後再次 @ 機器人時，群會重新出現。",
-      "byo_docs_link": "Step-by-step：把你的 Labrastro 智慧體連線到釘釘"
+      "byo_docs_link": "Step-by-step：把你的 Labrastro AI 代理連線到釘釘"
     },
     "wecom": {
       "byo_bot_name_placeholder": "例如 Labrastro Bot",
       "byo_conflict_other_workspace": "該機器人已連線到另一個 Labrastro 工作區。請先在那邊斷開，再連線到這裡。"
     },
     "telegram": {
-      "disconnect_confirm_description": "機器人將停止接收本工作區的 Telegram 訊息。Labrastro 中的會話記錄會保留；之後可在同一智慧體上重新連線。",
-      "connect_docs_link": "分步指南：將 Labrastro 智慧體連線到 Telegram"
+      "disconnect_confirm_description": "機器人將停止接收本工作區的 Telegram 訊息。Labrastro 中的會話記錄會保留；之後可在同一 AI 代理上重新連線。",
+      "connect_docs_link": "分步指南：將 Labrastro AI 代理連線到 Telegram"
     }
   },
   "common": {
@@ -66,7 +66,7 @@
     },
     "mika_setup": {
       "title": "執行時已準備好，和 Mizuki 開始。",
-      "description": "讓 Mizuki 幫你安排任務和協調智慧體。",
+      "description": "讓 Mizuki 幫你安排任務和協調 AI 代理。",
       "action": "和 Mizuki 開始",
       "failed": "無法啟動 Mizuki",
       "dialog_title": "讓 Mizuki 在哪臺機器上執行？"
@@ -83,7 +83,7 @@
     },
     "qoder": {
       "description": "連線 Qoder Cloud Agents，由 Labrastro 管理執行並加密儲存憑證。工作區管理員可修改配置。",
-      "add_agent_description": "建立 Labrastro 智慧體並關聯已有的 Qoder Cloud Agents 智慧體，使用 Qoder 雲端已配置的環境和憑證。",
+      "add_agent_description": "建立 Labrastro AI 代理並關聯已有的 Qoder Cloud Agents AI 代理，使用 Qoder 雲端已配置的環境和憑證。",
       "data_disclosure_title": "Labrastro 會傳送給 Qoder 的內容",
       "connect_description": "Labrastro 會在 Qoder 的沙箱裡執行任務。"
     }
@@ -177,7 +177,7 @@
     },
     "step_runtime": {
       "found_headline": "讓 Mizuki 在哪臺電腦上執行？",
-      "hint_pick": "在上方選擇一個智慧體執行時，就可以開始使用 Mizuki。",
+      "hint_pick": "在上方選擇一個 AI 代理執行時，就可以開始使用 Mizuki。",
       "continue": "開始使用 Mizuki"
     },
     "step_platform": {
@@ -187,9 +187,9 @@
       "mika_setup_failed": "無法啟動 Mizuki 工作區"
     },
     "mika_intro": {
-      "headline": "認識一下 Mizuki，你的第一個智慧體隊友。",
+      "headline": "認識一下 Mizuki，你的第一個 AI 代理隊友。",
       "name": "Mizuki",
-      "blurb": "把你想做的事告訴 Mizuki，它會變成一個任務，並交給合適的智慧體處理。"
+      "blurb": "把你想做的事告訴 Mizuki，它會變成一個任務，並交給合適的 AI 代理處理。"
     }
   },
   "projects": {
@@ -202,7 +202,7 @@
       "instructions": {
         "system_layer_label": "由 Labrastro 維護",
         "system_layer_hint": "隨 Labrastro 版本更新。你無法編輯這部分，你在下面寫的內容也永遠不會被覆蓋。",
-        "workspace_notes_intro": "在下面補充你們團隊的上下文和偏好，它們會疊加在 Labrastro 為這個智慧體維護的指令之上。支援 Markdown。"
+        "workspace_notes_intro": "在下面補充你們團隊的上下文和偏好，它們會疊加在 Labrastro 為這個 AI 代理維護的指令之上。支援 Markdown。"
       },
       "mcp_config": {
         "managed_title": "由 Labrastro 管理",

@@ -16,6 +16,21 @@ function createQueue(live: Set<string> = new Set(["a", "b"])) {
 }
 
 describe("MainRendererMessageQueue", () => {
+  it("discards only the selected window and channel", () => {
+    const { queue, send } = createQueue();
+    queue.enqueue("a", "invite:open", "discard");
+    queue.enqueue("b", "invite:open", "other window");
+    queue.enqueue("a", "inbox:open", "other channel");
+    queue.discard("invite:open", "a");
+    queue.setReady("a", "invite:open", true);
+    queue.setReady("b", "invite:open", true);
+    queue.setReady("a", "inbox:open", true);
+    expect(send.mock.calls).toEqual([
+      ["b", "invite:open", "other window"],
+      ["a", "inbox:open", "other channel"],
+    ]);
+  });
+
   it("holds messages until their matching listener is ready", () => {
     const { queue, send } = createQueue();
 
