@@ -194,7 +194,10 @@ def main():
             bundle = inputs / "candidate-123-1-images-amd64" / "images.json"
             original_bundle = bundle.read_bytes()
             for mutate in (lambda item: item.update(archive={"name": item["archive"]["name"], "sha256": "f" * 64}),
-                           lambda item: item.update(build_method="local_from_source")):
+                           lambda item: item.update(build_method="local_from_source"),
+                           lambda item: item.update(archive={}),
+                           lambda item: item.update(archive=[]),
+                           lambda item: item.update(archive={**item["archive"], "name": f'labrastro-web-{meta["version"]}-linux-amd64-node-standalone.tar.gz'})):
                 payload = json.loads(original_bundle)
                 anchor = next(item for item in payload["images"] if item.get("archive"))
                 mutate(anchor)

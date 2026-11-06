@@ -96,6 +96,11 @@ def check_needs(needs):
     require(not failures, f"required jobs failed/skipped/missing: {failures}")
 
 
+def archive_name(component, version, arch):
+    return (f'labrastro-backend-{version}-linux-{arch}.tar.gz' if component == "backend"
+            else f'labrastro-web-{version}-linux-amd64-node-standalone.tar.gz')
+
+
 def cli_names(version):
     return [(system, arch, name) for system in ("darwin", "linux", "windows") for arch in ("amd64", "arm64")
             for name in (f'multica-cli-{version}-{system}-{arch}.{"zip" if system == "windows" else "tar.gz"}',
@@ -331,6 +336,14 @@ def assemble_tree(inputs, output, meta, ctx, needs):
                     and re.fullmatch(r"sha256:[a-f0-9]{64}", item["id"]), "invalid local image evidence")
             require(item.get("archive") is not None or item["build_method"] == "local_from_source",
                     "archive packaging must record its consumed archive")
+            if item.get("archive") is not None:
+                # Non-empty object bound to this component/arch; {} / [] / a
+                # foreign component's archive must not pass as an anchor.
+                archive = item["archive"]
+                require(isinstance(archive, dict) and archive.get("name") and archive.get("sha256"),
+                        "archive anchor must be a non-empty object with name and sha256")
+                require(archive["name"] == archive_name(item["component"], meta["version"], arch),
+                        "archive anchor names a different component or architecture")
             proof = item["evidence"] if item["component"] == "web" else item["evidence"]["cli"]
             require(all(proof.get(k) == meta[k] for k in ("version", "commit", "date")), "image binary identity differs")
             if item.get("archive"):
