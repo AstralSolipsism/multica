@@ -169,6 +169,21 @@ func TestBaselineAnnotationsValidationRepliesAndPermissions(t *testing.T) {
 	response := map[string]any{"responses": []map[string]string{{"annotation_id": uuidToString(annotation.ID), "response": "fixed"}}}
 	testutil.Call(t, testHandler.LabrastroRespondAnnotations, f.request("POST", "/baseline/annotations/responses", response, "session")).Want(403)
 	testutil.Call(t, testHandler.LabrastroRespondAnnotations, f.request("POST", "/baseline/annotations/responses", response, "task")).Want(403)
+	t.Run("non_carrier_task", func(t *testing.T) {
+		otherIssue := dbfx.Issue(t, "Other issue in the same project", testutil.Cols{"project_id": f.project})
+		other := f
+		other.task = dbfx.Task(t, f.agent, testutil.Cols{"issue_id": otherIssue, "runtime_id": testRuntimeID, "status": "running"})
+		wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroRespondAnnotations,
+			other.request("POST", "/baseline/annotations/responses", response, "task")).Want(403), "baseline_carrier_required")
+		var storedResponse pgtype.Text
+		var respondedAt pgtype.Timestamptz
+		var respondedBy pgtype.UUID
+		dbfx.QueryRow(t, `SELECT response, responded_at, responded_by_task_id FROM project_baseline_annotation WHERE id=$1`,
+			uuidToString(annotation.ID)).Scan(&storedResponse, &respondedAt, &respondedBy)
+		if storedResponse.Valid || respondedAt.Valid || respondedBy.Valid {
+			t.Fatalf("non-carrier task changed response: text=%+v at=%+v task=%+v", storedResponse, respondedAt, respondedBy)
+		}
+	})
 	dbfx.QueryRow(t, `SELECT id FROM agent_task_queue WHERE issue_id=$1 AND trigger_comment_id IS NULL`, uuidToString(result.Batch.IssueID)).Scan(&f.task)
 	count := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE issue_id=$1`, uuidToString(result.Batch.IssueID))
 	testutil.Call(t, testHandler.LabrastroRespondAnnotations, f.request("POST", "/baseline/annotations/responses", response, "task")).Want(200)
