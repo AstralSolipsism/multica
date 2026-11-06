@@ -2,6 +2,7 @@
   "page": {
     "title": "Skills",
     "new_skill": "New skill",
+    "search": "Search skills",
     "scopes": {
       "all": {
         "label": "All skills",

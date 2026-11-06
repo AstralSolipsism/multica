@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  BarChart3,
   Check,
   Cloud,
   Download,
@@ -12,6 +13,7 @@ import {
 } from "@multica/ui/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
@@ -29,6 +31,7 @@ import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import {
   runtimeListOptions,
   runtimeKeys,
+  workspaceQuotaSourceListOptions,
 } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import {
@@ -39,6 +42,7 @@ import type { AgentRuntime, MemberWithUser } from "@multica/core/types";
 import type { QoderConnection } from "@multica/core/runtimes/qoder";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
+import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
   Dialog,
   DialogContent,
@@ -85,6 +89,10 @@ import { ProviderLogo } from "./provider-logo";
 import { RuntimeList, buildWorkloadIndex } from "./runtime-list";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
+import { MachineQuotaChips } from "./machine-quota-chips";
+import { SubscriptionQuotaCards } from "./subscription-quota-cards";
+import { QuotaSourcesDialog } from "./quota-sources-dialog";
+import { HostMetricsBars } from "./host-metrics-bars";
 import {
   HealthIcon,
   ProviderIconStack,
@@ -109,15 +117,9 @@ export interface RuntimesPageProps {
 type StatusFilter = "all" | "online" | "offline";
 const STATUS_FILTERS: StatusFilter[] = ["all", "online", "offline"];
 
-const COMING_SOON_SERVICES = [
-  { provider: "cursor", name: "Cursor Cloud Agents", vendor: "Cursor" },
-  { provider: "claude", name: "Claude Managed Agents", vendor: "Anthropic" },
-];
-
 type RuntimeRow =
   | { kind: "machine"; id: string; machine: RuntimeMachine; agentCount: number }
   | { kind: "qoder"; id: string; connection: QoderConnection; agentCount: number }
-  | { kind: "coming-soon"; id: string; provider: string; name: string; vendor: string }
   | {
       kind: "action";
       id: string;
@@ -170,6 +172,7 @@ export function RuntimesPage({
   cloudRuntimeEnabled = false,
 }: RuntimesPageProps = {}) {
   const { t } = useT("runtimes");
+  const { t: tForkUi } = useT("fork-ui");
   const isAuthLoading = useAuthStore((state) => state.isLoading);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const wsId = useWorkspaceId();
@@ -180,6 +183,7 @@ export function RuntimesPage({
   const [qoderDialogOpen, setQoderDialogOpen] = useState(false);
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
+  const [showQuotaSourcesDialog, setShowQuotaSourcesDialog] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
@@ -190,6 +194,9 @@ export function RuntimesPage({
   );
   const { data: agents = [], isLoading: agentsLoading } = useQuery(
     agentListOptions(wsId),
+  );
+  const { data: workspaceQuotaSourceData } = useQuery(
+    workspaceQuotaSourceListOptions(wsId),
   );
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
@@ -287,15 +294,13 @@ export function RuntimesPage({
     qoder !== null &&
     (statusFilter === "all" ||
       (qoderConfigured && matchesStatus(qoderIsOnline(qoder))));
-  const visibleComingSoon = statusFilter === "all" ? COMING_SOON_SERVICES : [];
   const showThisComputerRow =
     !filtering && !isDesktop && machineList.length === 0;
   const showAddMachineRow = !filtering && machineList.length === 0;
   const nothingMatches =
     filtering &&
     visibleMachines.length === 0 &&
-    !showQoderRow &&
-    visibleComingSoon.length === 0;
+    !showQoderRow;
 
   const configuredCloudCount = qoderConfigured ? 1 : 0;
   const totalCount = machineList.length + configuredCloudCount;
@@ -362,6 +367,37 @@ export function RuntimesPage({
         cell: (row) => <RuntimeWorkloadCell row={row} />,
       },
       {
+        key: "quota",
+        header: tForkUi(($) => $.runtimes.machine.metrics.quota),
+        width: 224,
+        cell: (row) =>
+          row.kind === "machine" ? (
+            <MachineQuotaChips machine={row.machine} now={now} />
+          ) : row.kind === "qoder" ? (
+            <CollectionEmptyValue />
+          ) : null,
+      },
+      {
+        key: "host",
+        header: tForkUi(($) => $.runtimes.machine.metrics.host),
+        width: 160,
+        cell: (row) => {
+          if (row.kind === "machine") {
+            const statsLive =
+              row.machine.health === "online" ||
+              row.machine.health === "recently_lost";
+            return (
+              <HostMetricsBars
+                cpuPercent={statsLive ? row.machine.cpuPercent : null}
+                memoryPercent={statsLive ? row.machine.memoryPercent : null}
+                stale={row.machine.systemStatsStale}
+              />
+            );
+          }
+          return row.kind === "qoder" ? <CollectionEmptyValue /> : null;
+        },
+      },
+      {
         key: "status",
         header: t(($) => $.page.columns.status),
         width: 136,
@@ -369,7 +405,7 @@ export function RuntimesPage({
         cell: (row) => <RuntimeStatusCell row={row} bootstrapping={bootstrapping} />,
       },
     ],
-    [t, currentUserId, members, bootstrapping],
+    [t, tForkUi, currentUserId, members, bootstrapping, now],
   );
 
   const machineRows: RuntimeRow[] = visibleMachines.map((machine) => ({
@@ -390,7 +426,7 @@ export function RuntimesPage({
       description: t(($) => $.page.rows.this_computer_hint),
       action: (
         <a
-          href="/download"
+          href={DOWNLOAD_PAGE_URL}
           target="_blank"
           rel="noreferrer"
           className={buttonVariants({ variant: "outline", size: "xs" })}
@@ -423,9 +459,6 @@ export function RuntimesPage({
       connection: qoder,
       agentCount: qoderAgentCount,
     });
-  }
-  for (const service of visibleComingSoon) {
-    cloudRows.push({ kind: "coming-soon", id: `soon:${service.provider}`, ...service });
   }
   const groups: CollectionGroup<RuntimeRow>[] = nothingMatches
     ? []
@@ -467,19 +500,34 @@ export function RuntimesPage({
           />
         }
         actions={
-          <AddRuntimeMenu
-            isDesktop={isDesktop}
-            localMachineName={localMachineName ?? localMachine?.title ?? null}
-            qoder={qoder}
-            cloudRuntimeEnabled={cloudRuntimeEnabled}
-            onAddMachine={() => setShowConnectDialog(true)}
-            onQoder={openQoder}
-            onCloudRuntime={() => setShowCloudRuntimeDialog(true)}
-          />
+          <>
+            <IconButton
+              label={t(($) => $.quota_sources.action)}
+              onClick={() => setShowQuotaSourcesDialog(true)}
+              className="text-muted-foreground"
+            >
+              <BarChart3 />
+            </IconButton>
+            <AddRuntimeMenu
+              isDesktop={isDesktop}
+              localMachineName={localMachineName ?? localMachine?.title ?? null}
+              qoder={qoder}
+              cloudRuntimeEnabled={cloudRuntimeEnabled}
+              onAddMachine={() => setShowConnectDialog(true)}
+              onQoder={openQoder}
+              onCloudRuntime={() => setShowCloudRuntimeDialog(true)}
+            />
+          </>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="px-6 pt-6 empty:hidden">
+          <SubscriptionQuotaCards
+            sources={workspaceQuotaSourceData?.sources}
+            now={now}
+          />
+        </div>
         <CollectionList
           embedded
           pageShortcuts
@@ -527,6 +575,10 @@ export function RuntimesPage({
         </div>
       </div>
 
+      <QuotaSourcesDialog
+        open={showQuotaSourcesDialog}
+        onOpenChange={setShowQuotaSourcesDialog}
+      />
       {qoderDialogOpen && (
         <RemoteRuntimeDialog onClose={() => setQoderDialogOpen(false)} />
       )}
@@ -585,7 +637,7 @@ function AddRuntimeMenu({
               icon={<Laptop className="size-4 text-muted-foreground" />}
               title={t(($) => $.page.add_menu.this_computer)}
               description={t(($) => $.page.add_menu.this_computer_download)}
-              render={<a href="/download" target="_blank" rel="noreferrer" />}
+              render={<a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" />}
             />
           )}
           <AddMenuItem
@@ -623,22 +675,6 @@ function AddRuntimeMenu({
               onClick={onCloudRuntime}
             />
           )}
-          {COMING_SOON_SERVICES.map((service) => (
-            <AddMenuItem
-              key={service.provider}
-              icon={<ProviderLogo provider={service.provider} className="size-4" />}
-              title={service.name}
-              description={t(($) => $.page.rows.provided_by, {
-                vendor: service.vendor,
-              })}
-              trailing={
-                <Badge variant="secondary" className="shrink-0">
-                  {t(($) => $.page.groups.cloud.coming_soon)}
-                </Badge>
-              }
-              disabled
-            />
-          ))}
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -736,19 +772,6 @@ function RuntimeNameCell({
         />
       );
     }
-    case "coming-soon":
-      return (
-        <CollectionNameCell
-          icon={
-            <span className="shrink-0 opacity-60">
-              <ProviderLogo provider={row.provider} className="size-4" />
-            </span>
-          }
-          title={row.name}
-          description={t(($) => $.page.rows.provided_by, { vendor: row.vendor })}
-          muted
-        />
-      );
     case "action": {
       const Icon = row.icon;
       return (
@@ -770,11 +793,20 @@ function RuntimeNameCell({
 function WorkloadText({
   running,
   queued,
+  maxConcurrentTasks = null,
 }: {
   running: number;
   queued: number;
+  maxConcurrentTasks?: number | null;
 }) {
   const { t } = useT("runtimes");
+  if (maxConcurrentTasks != null) {
+    return (
+      <span className="truncate tabular-nums text-foreground">
+        {running}/{maxConcurrentTasks}
+      </span>
+    );
+  }
   if (running + queued === 0) return <>{t(($) => $.machine.metrics.workload_idle)}</>;
   return (
     <span className="truncate tabular-nums text-foreground">
@@ -785,8 +817,20 @@ function WorkloadText({
 
 function RuntimeWorkloadCell({ row }: { row: RuntimeRow }) {
   if (row.kind === "machine") {
+    const limits = row.machine.runtimes.map(
+      (runtime) => runtime.max_concurrent_tasks,
+    );
+    const maxConcurrentTasks =
+      limits.length > 0 &&
+      limits.every((limit): limit is number => limit != null)
+        ? limits.reduce((sum, limit) => sum + limit, 0)
+        : null;
     return row.machine.health === "online" ? (
-      <WorkloadText running={row.machine.runningCount} queued={row.machine.queuedCount} />
+      <WorkloadText
+        running={row.machine.runningCount}
+        queued={row.machine.queuedCount}
+        maxConcurrentTasks={maxConcurrentTasks}
+      />
     ) : (
       <CollectionEmptyValue />
     );
@@ -857,8 +901,6 @@ function RuntimeStatusCell({
         </>
       );
     }
-    case "coming-soon":
-      return <Badge variant="secondary">{t(($) => $.page.groups.cloud.coming_soon)}</Badge>;
     case "action":
       return null;
   }

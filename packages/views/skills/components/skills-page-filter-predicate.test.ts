@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SkillListFilters } from "@multica/core/skills/stores";
 import type { Agent, Label, SkillSummary } from "@multica/core/types";
 import { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
+import { matchesSkillSearch } from "./skills-page";
 
 function makeSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
   return {
@@ -106,5 +107,25 @@ describe("rowMatchesFilters — labels dimension", () => {
     };
     expect(rowMatchesFilters(used, filters)).toBe(true);
     expect(rowMatchesFilters(unused, filters)).toBe(false);
+  });
+});
+
+describe("matchesSkillSearch", () => {
+  it("matches trimmed, case-insensitive names and descriptions", () => {
+    const row = makeRow({
+      name: "Review Helper",
+      description: "Pull request review",
+    });
+    expect(matchesSkillSearch(row, "")).toBe(true);
+    expect(matchesSkillSearch(row, "  review helper ")).toBe(true);
+    expect(matchesSkillSearch(row, "pull request")).toBe(true);
+    expect(matchesSkillSearch(row, "deploy")).toBe(false);
+  });
+
+  it("matches Chinese names by pinyin without changing row filters", () => {
+    const row = makeRow({ name: "审核助手" });
+    expect(matchesSkillSearch(row, "shenhe")).toBe(true);
+    expect(matchesSkillSearch(row, "shzs")).toBe(true);
+    expect(rowMatchesFilters(row, EMPTY_FILTERS)).toBe(true);
   });
 });

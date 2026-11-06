@@ -916,6 +916,16 @@ describe("IssuesPage (shared)", () => {
     // current view has loaded. In table mode controller.surfaceIssues is
     // EMPTY — passing it along would scope the summary to nothing.
     mockViewState.viewMode = "table";
+    mockListIssueTableFacets.mockResolvedValue({
+      query_fingerprint: "test",
+      total: 0,
+      facets: [
+        {
+          kind: "working_agents",
+          values: [{ key: "agent-1", count: 1 }],
+        },
+      ],
+    });
     mockListIssueTableRows.mockResolvedValue({
       query_fingerprint: "test",
       group_key: null,

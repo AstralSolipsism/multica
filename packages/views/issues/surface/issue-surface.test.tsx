@@ -114,17 +114,10 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
-// Captures the props the surface hands the DEFAULT IssuesHeader, so the
-// table-mode tip anchor scope wiring (OL-193) is pinned end to end.
+// Captures the surface render context so the table-mode tip anchor scope
+// wiring (OL-193) is pinned end to end.
 const issuesHeaderProps = vi.hoisted(() => ({
   current: undefined as Record<string, unknown> | undefined,
-}));
-
-vi.mock("../components/issues-header", () => ({
-  IssuesHeader: (props: Record<string, unknown>) => {
-    issuesHeaderProps.current = props;
-    return null;
-  },
 }));
 
 function makeIssue(id: string, title: string, projectId: string): Issue {
@@ -1099,7 +1092,7 @@ describe("summaryScopeIssues (OL-193)", () => {
     pruneIssueSurfaceViewStates([]);
   });
 
-  it("feeds the table's loaded rows to the DEFAULT header as tipAnchorScopeIssues", async () => {
+  it("feeds the table's loaded rows through summaryScopeIssues", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const store = getIssueSurfaceViewStore("project:ysk-scope-default");
     store.getState().setViewMode("table");
@@ -1129,14 +1122,17 @@ describe("summaryScopeIssues (OL-193)", () => {
       listSquads: vi.fn(() => never()),
     } as unknown as ApiClient);
 
-    // No renderHeader prop: the surface renders its stock IssuesHeader
-    // (mocked above to capture props). Passing controller.surfaceIssues here
-    // would hand the chip an EMPTY list in table mode.
+    // Passing controller.surfaceIssues here would hand the header an EMPTY
+    // list in table mode; the render context must carry the table's rows.
     render(
       <QueryClientProvider client={qc}>
         <IssueSurface
           scope={{ type: "project", projectId: "ysk-scope-default" }}
           modes={["table"]}
+          renderHeader={(context) => {
+            issuesHeaderProps.current = context as unknown as Record<string, unknown>;
+            return null;
+          }}
           renderLoading={() => <div data-testid="surface-loading" />}
           batchToolbar="never"
         />
@@ -1145,7 +1141,7 @@ describe("summaryScopeIssues (OL-193)", () => {
 
     await waitFor(() =>
       expect(
-        (issuesHeaderProps.current?.tipAnchorScopeIssues as { id: string }[] | undefined)?.map(
+        (issuesHeaderProps.current?.summaryScopeIssues as { id: string }[] | undefined)?.map(
           (issue) => issue.id,
         ),
       ).toEqual(["t9"]),

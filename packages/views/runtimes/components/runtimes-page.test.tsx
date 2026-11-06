@@ -8,7 +8,12 @@ import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
 import { runtimeProfileListOptions } from "@multica/core/runtimes";
 import { qoderOptions, type QoderConnection } from "@multica/core/runtimes/qoder";
-import { runtimeListOptions } from "@multica/core/runtimes/queries";
+import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
+import {
+  quotaSourceListOptions,
+  runtimeListOptions,
+  workspaceQuotaSourceListOptions,
+} from "@multica/core/runtimes/queries";
 import type { AgentRuntime } from "@multica/core/types";
 import {
   agentListOptions,
@@ -17,10 +22,18 @@ import {
 import enCommon from "../../locales/en/common.json";
 import enLayout from "../../locales/en/layout.json";
 import enRuntimes from "../../locales/en/runtimes.json";
+import enQuota from "../../locales/en/quota.json";
+import enForkUi from "../../locales/en/fork-ui.json";
 import { RuntimesPage } from "./runtimes-page";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, layout: enLayout, runtimes: enRuntimes },
+  en: {
+    common: enCommon,
+    layout: enLayout,
+    runtimes: enRuntimes,
+    quota: enQuota,
+    "fork-ui": enForkUi,
+  },
 };
 const WS = "ws-test";
 
@@ -119,6 +132,8 @@ function renderPage({
   qc.setQueryData(agentTaskSnapshotOptions(WS).queryKey, []);
   qc.setQueryData(chatSessionsOptions(WS).queryKey, []);
   qc.setQueryData(qoderOptions(WS).queryKey, connection);
+  qc.setQueryData(quotaSourceListOptions().queryKey, { encryption_configured: true, sources: [] });
+  qc.setQueryData(workspaceQuotaSourceListOptions(WS).queryKey, { sources: [] });
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
@@ -145,8 +160,8 @@ describe("RuntimesPage", () => {
     expect(screen.getByText("dev-machine.local")).toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-    expect(screen.getByText("Cursor Cloud Agents")).toBeInTheDocument();
-    expect(screen.getByText("Claude Managed Agents")).toBeInTheDocument();
+    expect(screen.queryByText("Cursor Cloud Agents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Claude Managed Agents")).not.toBeInTheDocument();
   });
 
   it("keeps the header and column headers up while the list loads", () => {
@@ -170,6 +185,9 @@ describe("RuntimesPage", () => {
     expect(within(header).queryByText("2")).not.toBeInTheDocument();
     const add = within(header).getByRole("button", { name: "Add runtime" });
     expect(add).not.toHaveTextContent("Add runtime");
+    expect(
+      within(header).getByRole("button", { name: "Subscription quotas" }),
+    ).not.toHaveTextContent("Subscription quotas");
     expect(screen.queryByRole("button", { name: /^Offline/ })).not.toBeInTheDocument();
   });
 
@@ -184,8 +202,8 @@ describe("RuntimesPage", () => {
     expect(within(menu).getByText("Other machine or server")).toBeInTheDocument();
     expect(within(menu).getByText("Cloud services")).toBeInTheDocument();
     expect(within(menu).getByText("Qoder Cloud Agents")).toBeInTheDocument();
-    expect(within(menu).getByText("Cursor Cloud Agents")).toBeInTheDocument();
-    expect(within(menu).getByText("Claude Managed Agents")).toBeInTheDocument();
+    expect(within(menu).queryByText("Cursor Cloud Agents")).not.toBeInTheDocument();
+    expect(within(menu).queryByText("Claude Managed Agents")).not.toBeInTheDocument();
   });
 
   it("counts machines and cloud services per status in the scope menu", async () => {
@@ -220,9 +238,25 @@ describe("RuntimesPage", () => {
     expect(screen.getByText("Run on this computer")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Download desktop/ })).toHaveAttribute(
       "href",
-      "/download",
+      DOWNLOAD_PAGE_URL,
     );
     expect(screen.getByText("Add another machine or server")).toBeInTheDocument();
+  });
+
+  it("retains host usage and plan quota in the machine table beside Qoder", () => {
+    renderPage({ runtimes: [makeRuntime({
+      max_concurrent_tasks: 3,
+      system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: Math.floor(NOW / 1000), stale: false },
+      plan_quota: {
+        provider: "claude", status: "ok", source: "api", observed_at: Math.floor(NOW / 1000),
+        windows: [{ name: "5h", used_percent: 25, window_minutes: 300, resets_at: null }],
+      },
+    })] });
+    expect(screen.getByText("0/3")).toBeInTheDocument();
+    expect(screen.getByText("42%")).toBeInTheDocument();
+    expect(screen.getByText("68%")).toBeInTheDocument();
+    expect(screen.getAllByText("75%").length).toBeGreaterThan(0);
+    expect(screen.getByText("Qoder Cloud Agents")).toBeInTheDocument();
   });
 
   it("pins this device on desktop and marks it connected in the add menu", async () => {
@@ -238,6 +272,8 @@ describe("RuntimesPage", () => {
     expect(within(menu).getByText("Other machine or server")).toBeInTheDocument();
     expect(within(menu).getByText("Qoder Cloud Agents")).toBeInTheDocument();
     expect(within(menu).getByText("By Qoder")).toBeInTheDocument();
+    expect(within(menu).queryByText("Cursor Cloud Agents")).not.toBeInTheDocument();
+    expect(within(menu).queryByText("Claude Managed Agents")).not.toBeInTheDocument();
   });
 
   it("filters rows by status", async () => {

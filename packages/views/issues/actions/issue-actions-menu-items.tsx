@@ -24,6 +24,7 @@ import {
   Trash2,
   Unlink,
   UserMinus,
+  Workflow,
 } from "@multica/ui/icons";
 import type { AgentTask, Issue } from "@multica/core/types";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
@@ -128,6 +129,7 @@ export function IssueActionsMenuItems({
   onStopRun,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
+  const { t: tDependencies } = useT("dependencies");
   const wsId = useWorkspaceId();
   const sidebar = variant === "sidebar";
   const statusLabel = useStatusLabel(wsId);
@@ -158,6 +160,7 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openMarkDuplicate,
+    openEditDependencies,
     openDeleteConfirm,
   } = actions;
 
@@ -483,6 +486,10 @@ export function IssueActionsMenuItems({
                   {t(($) => $.actions.mark_duplicate)}
                 </P.Item>
               )}
+              <P.Item onClick={openEditDependencies}>
+                <Workflow className="h-3.5 w-3.5" />
+                {tDependencies(($) => $.actions.edit_dependencies)}
+              </P.Item>
             </P.SubContent>
           </P.Sub>
 

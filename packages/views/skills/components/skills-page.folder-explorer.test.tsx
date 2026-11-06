@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  queryOptions: (options: unknown) => options,
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey ?? [];
     if (key[0] === "skills") {
@@ -146,36 +147,29 @@ vi.mock("@multica/ui/components/ui/skeleton", () => ({
     <div data-testid="skeleton" {...props} />
   ),
 }));
-vi.mock("@multica/ui/components/ui/tooltip", () => ({
+vi.mock("@multica/ui/components/ui/tooltip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/ui/components/ui/tooltip")>()),
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ render }: { render: React.ReactNode }) => <>{render}</>,
   TooltipContent: () => null,
 }));
 vi.mock("./create-skill-dialog", () => ({ CreateSkillDialog: () => null }));
-vi.mock("./skill-list-toolbar", () => ({
-  SkillListToolbar: ({
-    search,
-    onSearchChange,
-    visibleCount,
-    countLabel,
-    folderActions,
+vi.mock("../../layout/collection-page", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../layout/collection-page")>()),
+  CollectionSearch: ({
+    value,
+    onChange,
+    label,
   }: {
-    search: string;
-    onSearchChange: (value: string) => void;
-    visibleCount: number;
-    countLabel?: string;
-    folderActions?: React.ReactNode;
+    value: string;
+    onChange: (value: string) => void;
+    label: string;
   }) => (
-    <div>
-      <input
-        aria-label="Search skills"
-        value={search}
-        onChange={(event) => onSearchChange(event.target.value)}
-      />
-      <span data-testid="visible-count">{visibleCount}</span>
-      {countLabel && <span>{countLabel}</span>}
-      {folderActions}
-    </div>
+    <input
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   ),
 }));
 vi.mock("./skill-list-actions", () => ({
@@ -391,7 +385,6 @@ describe("SkillsPage folder hierarchy", () => {
     expect(screen.queryByText("engineering-skill")).toBeNull();
     expect(screen.queryByText("design-skill")).toBeNull();
     expect(screen.queryByText("gray-skill")).toBeNull();
-    expect(screen.getByTestId("visible-count").textContent).toBe("4");
   });
 
   it("expands direct children in place and collapses the whole subtree without routing", async () => {
@@ -431,7 +424,6 @@ describe("SkillsPage folder hierarchy", () => {
     expect(screen.getByRole("button", { name: "Expand Design" })).toBeTruthy();
     expect(screen.getByText("loose-skill")).toBeTruthy();
     expect(screen.queryByText("This folder is empty.")).toBeNull();
-    expect(screen.getByTestId("visible-count").textContent).toBe("4");
   });
 
   it("navigates to skill details without a folder query", async () => {
@@ -602,17 +594,16 @@ describe("SkillsPage flat view and tree fallback", () => {
     expect(controller.path).toBe("/acme/skills?view=compact");
   });
 
-  it("passes the filtered skill row count to the toolbar instead of the explorer row count", async () => {
+  it("searches skill rows across folders rather than filtering explorer rows", async () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Expand Engineering" }));
-    expect(screen.getByTestId("visible-count").textContent).toBe("4");
-    expect(mocks.virtualizerCount).toBe(6);
+    expect(screen.getByText("engineering-skill")).toBeTruthy();
 
     const search = screen.getByRole("textbox", { name: "Search skills" });
     await userEvent.type(search, "design");
     expect(await screen.findByText("design-skill")).toBeTruthy();
-    expect(screen.getByTestId("visible-count").textContent).toBe("1");
-    expect(mocks.virtualizerCount).toBe(1);
+    expect(screen.queryByText("engineering-skill")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expand Engineering" })).toBeNull();
   });
 
   it("uses flat view immediately when persisted filters are active", async () => {
@@ -727,11 +718,11 @@ describe("SkillsPage review regressions", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Collapse Design" }));
     const header = screen.getAllByRole("row")[0]!;
-    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    await userEvent.click(within(header).getByRole("checkbox", { name: "Select all" }));
     expect(screen.getByTestId("batch-selection").textContent).toBe("loose");
   });
 
-  it("keeps folder rows first and uses composite keys for virtualizer and React rows", async () => {
+  it("keeps folder rows first and uses composite CollectionList row ids", async () => {
     renderPage();
     const packageButton = await screen.findByRole("button", { name: "Expand Engineering" });
     expect(packageButton.textContent).toContain("Package");
@@ -739,8 +730,9 @@ describe("SkillsPage review regressions", () => {
     const looseRow = screen.getByText("loose-skill").closest("[role='row']")!;
 
     await userEvent.click(packageButton);
-    expect(mocks.virtualizerCount).toBe(6);
-    expect(mocks.virtualizerKeys).toEqual([
+    expect(
+      screen.getAllByRole("row").slice(1).map((row) => row.getAttribute("data-row-id")),
+    ).toEqual([
       "folder-f-design",
       "folder-f-empty",
       "folder-f-eng",
@@ -1043,8 +1035,7 @@ describe("SkillsPage folder rows without skills", () => {
     expect(screen.getByRole("button", { name: "Expand Empty" })).toBeTruthy();
     // The upstream empty-workspace state stays hidden while folders exist.
     expect(screen.queryByText("No skills yet")).toBeNull();
-    expect(screen.getByTestId("visible-count").textContent).toBe("0");
-    expect(mocks.virtualizerCount).toBe(3);
+    expect(screen.getAllByRole("row").slice(1)).toHaveLength(3);
   });
 });
 
@@ -1053,7 +1044,7 @@ describe("SkillsPage select-all scope", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Expand all" }));
     const header = screen.getAllByRole("row")[0]!;
-    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    await userEvent.click(within(header).getByRole("checkbox", { name: "Select all" }));
     const selected = screen.getByTestId("batch-selection").textContent!.split(",");
     expect(selected).toEqual(["design", "placed", "engineering", "loose"]);
     expect(new Set(selected).size).toBe(selected.length);

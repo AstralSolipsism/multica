@@ -5,10 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient, setApiInstance } from "@multica/core/api";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ChatMessage } from "@multica/core/types";
-import { ChatMessageList } from "../../../packages/views/chat/components/chat-message-list";
-import enChat from "../../../packages/views/locales/en/chat.json";
-import enEditor from "../../../packages/views/locales/en/editor.json";
-import "../src/styles.css";
+import { ChatMessageList } from "../../packages/views/chat/components/chat-message-list";
+import enChat from "../../packages/views/locales/en/chat.json";
+import enEditor from "../../packages/views/locales/en/editor.json";
+import "./chat-history-browser.css";
 
 setApiInstance(new ApiClient(window.location.origin));
 const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -9,6 +9,25 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { useLocale, useT } from "../../i18n";
 import { LarkConversationForm } from "./lark-conversation-form";
 
+export function LarkReceiptGuidance({
+  installation,
+  showStatus = true,
+}: {
+  installation: LarkInstallation;
+  showStatus?: boolean;
+}) {
+  const { t } = useT("settings");
+  const verified = !!installation.first_message_received_at;
+  return (
+    <div className="space-y-1 text-caption text-muted-foreground">
+      {showStatus && (
+        <p>{verified ? t(($) => $.lark.inbound_verified) : t(($) => $.lark.inbound_pending)}</p>
+      )}
+      <p>{verified ? t(($) => $.lark.inbound_verified_hint) : t(($) => $.lark.inbound_pending_hint)}</p>
+    </div>
+  );
+}
+
 export function LarkInstallationList({
   data,
   isLoading,
@@ -152,6 +171,7 @@ function InstallationRow({
               </span>
             )}
           </p>
+          {isActive && <LarkReceiptGuidance installation={installation} />}
           <p className="text-micro text-muted-foreground">
             {t(($) => $.lark.installed_at_label, {
               when: new Date(installation.installed_at).toLocaleString(locale),

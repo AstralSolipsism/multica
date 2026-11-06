@@ -103,3 +103,51 @@ describe("agent running in a saved view", () => {
     expect(isIssueViewModified(legacy, store.getState()).filters).toBe(false);
   });
 });
+
+describe("DAG display in a saved view", () => {
+  const view = {
+    query: {},
+    display: {
+      viewMode: "dag",
+      dagGrouping: "parent",
+      dagShowCompleted: true,
+      dagShowSatisfiedDependencies: true,
+    },
+  };
+
+  it("round-trips shared DAG settings without saving personal graph state", () => {
+    const store = liveStateFor(view);
+    expect(store.getState()).toMatchObject({
+      viewMode: "dag",
+      dagGrouping: "parent",
+      dagShowCompleted: true,
+      dagShowSatisfiedDependencies: true,
+    });
+
+    store.setState({
+      dagLineId: "line:issue-1",
+      dagFocusIssueId: "issue-1",
+      dagFocusReturnSelection: "issue-2",
+      dagOverviewPinned: true,
+      dagViewports: { overview: { x: 1, y: 2, zoom: 0.5 } },
+      dagSelectedNodeId: "issue-2",
+      dagSelectedDependencyIds: ["dependency-1"],
+    });
+    const state = store.getState();
+    const { display } = issueViewDefinitionFromState(state);
+    expect(display).toMatchObject(view.display);
+    for (const key of [
+      "dagLineId",
+      "dagFocusIssueId",
+      "dagFocusReturnSelection",
+      "dagOverviewPinned",
+      "dagViewports",
+      "dagSelectedNodeId",
+      "dagSelectedDependencyIds",
+      "dagFocus",
+    ]) {
+      expect(display).not.toHaveProperty(key);
+    }
+    expect(isIssueViewModified(view, state)).toEqual({ filters: false, display: false });
+  });
+});

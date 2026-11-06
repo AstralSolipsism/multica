@@ -69,6 +69,7 @@ import type {
   AutopilotExecutionMode,
   AutopilotRun,
   AutopilotTrigger,
+  MessageDelivery,
 } from "@multica/core/types";
 import type { AgentTask } from "@multica/core/types/agent";
 import { ReadonlyContent } from "../../editor";
@@ -79,6 +80,13 @@ import { useRunAutopilotNow } from "./use-run-autopilot-now";
 import { useRegisterCommandBarContext } from "../../search/register-context";
 import { WebhookPayloadPreview } from "./webhook-payload-preview";
 import { WebhookDeliveriesSection } from "./webhook-deliveries-section";
+import {
+  MessageDeliveriesSection,
+  MessageDeliverySection,
+} from "../../message-delivery";
+import { RunDeliveryBadges } from "../../message-delivery/components/run-delivery-badges";
+import { RunDeliveriesDialog } from "../../message-delivery/components/run-deliveries-dialog";
+import { DeliveryDetailDialog } from "../../message-delivery/components/message-deliveries-section";
 import { AgentPicker } from "./pickers/agent-picker";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ProjectIcon } from "../../projects/components/project-icon";
@@ -156,7 +164,19 @@ function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId
   return <WebhookPayloadPreview payload={data.trigger_payload} />;
 }
 
-function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: string; agentName: string }) {
+function RunRow({
+  run,
+  agentId,
+  agentName,
+  onOpenDelivery,
+  onOpenRunDeliveries,
+}: {
+  run: AutopilotRun;
+  agentId: string;
+  agentName: string;
+  onOpenDelivery: (delivery: MessageDelivery) => void;
+  onOpenRunDeliveries: (runId: string) => void;
+}) {
   const { t, i18n } = useT("autopilots");
   const wsPaths = useWorkspacePaths();
   const status = (RUN_VISUAL[run.status as RunStatus] ? (run.status as RunStatus) : "issue_created");
@@ -206,6 +226,16 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
           ? t(($) => $.run.issue_linked)
           : run.failure_reason || statusLabel}
       </span>
+      {/* Result-push deliveries for this run (OL-26): status at a glance.
+          Opening a delivery is delegated up so the detail dialog renders
+          OUTSIDE this row's AppLink subtree — a portal's clicks still bubble
+          through the React tree and would otherwise navigate away. */}
+      <RunDeliveryBadges
+        autopilotId={run.autopilot_id}
+        runId={run.id}
+        onOpenDelivery={onOpenDelivery}
+        onOpenRunList={onOpenRunDeliveries}
+      />
       <span className="shrink-0 text-caption text-muted-foreground">
         {t(($) => $.run_source[run.source as "schedule" | "manual" | "webhook" | "api"]) ?? run.source}
       </span>
@@ -238,25 +268,70 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
   return <div className={rowClass}>{content}</div>;
 }
 
-function RunHistoryList({
+// Exported for the R5 navigation-isolation test (run rows + real AppLink
+// + hoisted dialogs). Not part of the page's public surface.
+export function RunHistoryList({
   runs,
   agentId,
   agentName,
+  canWrite,
 }: {
   runs: AutopilotRun[];
   agentId: string;
   agentName: string;
+  canWrite: boolean;
 }) {
+  // Delivery dialogs live HERE, outside every row's AppLink subtree (R5).
+  const [openDelivery, setOpenDelivery] = useState<MessageDelivery | null>(null);
+  const [runListId, setRunListId] = useState<string | null>(null);
   const visibleRuns = runs.filter((run) => run.status !== "skipped");
   const skippedRuns = runs.filter((run) => run.status === "skipped");
 
   return (
     <ObjectSectionCard>
       {visibleRuns.map((run) => (
-        <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} />
+        <RunRow
+          key={run.id}
+          run={run}
+          agentId={agentId}
+          agentName={agentName}
+          onOpenDelivery={setOpenDelivery}
+          onOpenRunDeliveries={setRunListId}
+        />
       ))}
       {skippedRuns.length > 0 && (
-        <SkippedRunsGroup runs={skippedRuns} agentId={agentId} agentName={agentName} />
+        <SkippedRunsGroup
+          runs={skippedRuns}
+          agentId={agentId}
+          agentName={agentName}
+          onOpenDelivery={setOpenDelivery}
+          onOpenRunDeliveries={setRunListId}
+        />
+      )}
+      {openDelivery && (
+        <DeliveryDetailDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setOpenDelivery(null);
+          }}
+          autopilotId={openDelivery.autopilot_id}
+          delivery={openDelivery}
+          canWrite={canWrite}
+        />
+      )}
+      {runListId && (
+        <RunDeliveriesDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setRunListId(null);
+          }}
+          autopilotId={runs[0]?.autopilot_id ?? ""}
+          runId={runListId}
+          onOpenDelivery={(delivery) => {
+            setRunListId(null);
+            setOpenDelivery(delivery);
+          }}
+        />
       )}
     </ObjectSectionCard>
   );
@@ -266,10 +341,14 @@ function SkippedRunsGroup({
   runs,
   agentId,
   agentName,
+  onOpenDelivery,
+  onOpenRunDeliveries,
 }: {
   runs: AutopilotRun[];
   agentId: string;
   agentName: string;
+  onOpenDelivery: (delivery: MessageDelivery) => void;
+  onOpenRunDeliveries: (runId: string) => void;
 }) {
   const { t, i18n } = useT("autopilots");
   const [open, setOpen] = useState(false);
@@ -300,7 +379,14 @@ function SkippedRunsGroup({
       {open && (
         <div className="divide-y border-t bg-background">
           {runs.map((run) => (
-            <RunRow key={run.id} run={run} agentId={agentId} agentName={agentName} />
+            <RunRow
+              key={run.id}
+              run={run}
+              agentId={agentId}
+              agentName={agentName}
+              onOpenDelivery={onOpenDelivery}
+              onOpenRunDeliveries={onOpenRunDeliveries}
+            />
           ))}
         </div>
       )}
@@ -1209,6 +1295,16 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
           )}
         </ObjectSection>
 
+        {/* Result push (OL-26) — the automation's own config stays in the
+            edit dialog; push routes are a separate revision-guarded save
+            area. The component fetches its own data and renders the real
+            403/404 states for read-only users and pre-OL-25 servers. */}
+        <MessageDeliverySection
+          autopilotId={autopilotId}
+          canWrite={canWrite}
+          executionMode={autopilot.execution_mode}
+        />
+
         {/* Webhook deliveries — only renders when at least one webhook
             trigger is configured. The component does its own fetch so
             schedule-only autopilots don't pay for an empty list query. */}
@@ -1234,9 +1330,17 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
               runs={runs}
               agentId={autopilot.assignee_id}
               agentName={getActorName(autopilot.assignee_type, autopilot.assignee_id)}
+              canWrite={canWrite}
             />
           )}
         </ObjectSection>
+
+        {/* Delivery records for result push (OL-26): per-source status,
+            frozen report content, receipts and a permission-gated retry. */}
+        <MessageDeliveriesSection
+          autopilotId={autopilotId}
+          canWrite={canWrite}
+        />
       </div>
 
       {/* Mounted only while open, like the edit dialog: otherwise a rejected

@@ -63,6 +63,13 @@ vi.mock("../../search/register-context", () => ({ useRegisterCommandBarContext: 
 vi.mock("../../editor", () => ({
   ReadonlyContent: ({ content }: { content: string }) => <div>{content}</div>,
 }));
+vi.mock("../../message-delivery", () => ({
+  MessageDeliverySection: () => null,
+  MessageDeliveriesSection: () => null,
+}));
+vi.mock("../../message-delivery/components/run-delivery-badges", () => ({
+  RunDeliveryBadges: () => null,
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { AutopilotDetailPage } from "./autopilot-detail-page";

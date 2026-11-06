@@ -54,6 +54,9 @@ import {
 import { isRefreshableOrigin, readOrigin } from "../lib/origin";
 import { RefreshSkillDialog } from "./refresh-skill-dialog";
 import type { SkillRow } from "./skill-list-filter";
+// Labrastro fork: folder-tree actions and refresh notices live in fork-owned files.
+import { useBatchRefreshNotices } from "./refresh-skill-notices";
+import { SkillTreeBatchMoveAction, SkillTreeRowMenuItems, type SkillTreeActions } from "./skill-tree-actions";
 
 // Shared context the row kebab and the batch toolbar both need. Assembled
 // once at the page level.
@@ -63,6 +66,8 @@ export interface SkillActionsContext {
   currentUserId: string | null;
   /** Workspace owner/admin — may manage every agent, not only their own. */
   isAdmin: boolean;
+  /** Labrastro fork (OL-104): folder-tree row/batch actions when the tree loaded. */
+  treeActions?: SkillTreeActions;
 }
 
 // Add-to-agent dialog (multi-select; shared by row kebab and batch toolbar)
@@ -539,23 +544,27 @@ export function UpdateSkillsDialog({
   const qc = useQueryClient();
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const refreshNotices = useBatchRefreshNotices({ open, onOpenChange, onUpdated });
 
   const handleConfirm = async () => {
     setUpdating(true);
     let updated = 0;
     let failed = 0;
+    const notices = refreshNotices.start();
     try {
       for (const row of rows) {
         setProgress(updated + failed + 1);
         try {
-          await api.refreshSkill(row.skill.id);
+          const refreshed = await api.refreshSkill(row.skill.id);
           updated++;
+          notices.add(row, refreshed);
         } catch {
           failed++;
         }
       }
       qc.invalidateQueries({ queryKey: workspaceKeys.skills(ctx.wsId) });
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(ctx.wsId) });
+      if (notices.hold(updated, failed)) return;
       if (failed === 0) {
         toast.success(t(($) => $.actions.updated_toast, { count: updated }));
         onOpenChange(false);
@@ -572,6 +581,7 @@ export function UpdateSkillsDialog({
     }
   };
 
+  if (refreshNotices.dialog) return refreshNotices.dialog;
   return (
     <Dialog
       open={open}
@@ -681,6 +691,7 @@ export function SkillRowActions({
             {t(($) => $.actions.refresh)}
           </DropdownMenuItem>
         )}
+        <SkillTreeRowMenuItems row={row} ctx={ctx} />
         {row.canEdit && (
           <>
             <DropdownMenuSeparator />
@@ -776,6 +787,8 @@ export function SkillBatchToolbar({
           <Plus className="mr-1 size-3.5" />
           {t(($) => $.actions.add_to_agent)}
         </Button>
+
+        <SkillTreeBatchMoveAction rows={rows} ctx={ctx} />
 
         {updatable.length > 0 ? (
           updateButton

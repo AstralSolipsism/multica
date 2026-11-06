@@ -77,8 +77,11 @@ export function sidebarProjectPrefsToDoc(prefs: SidebarProjectPrefs): IssueViewP
  * The user's Projects section settings. Until their server copy is first
  * saved, the settings this device kept locally stand in for it.
  */
-export function useSidebarProjectPrefs(wsId: string): SidebarProjectPrefs & { loaded: boolean } {
-  const { data, isSuccess } = useQuery(issueViewPreferenceOptions(wsId, SIDEBAR_PROJECTS_SCOPE));
+export function useSidebarProjectPrefs(wsId: string, enabled = true): SidebarProjectPrefs & { loaded: boolean } {
+  const { data, isSuccess } = useQuery({
+    ...issueViewPreferenceOptions(wsId, SIDEBAR_PROJECTS_SCOPE),
+    enabled,
+  });
   const local = useSidebarTreeStore(
     useShallow((s) => ({ projectSettings: s.projectSettings, issueSettings: s.issueSettings, projectOrder: s.projectOrder })),
   );
@@ -91,8 +94,8 @@ export function useSidebarProjectPrefs(wsId: string): SidebarProjectPrefs & { lo
  * Saves a change for every device. A write replaces the whole document, so
  * it waits until the saved one has loaded rather than replace it with defaults.
  */
-export function useUpdateSidebarProjectPrefs(wsId: string) {
-  const { projectSettings, issueSettings, projectOrder, loaded } = useSidebarProjectPrefs(wsId);
+export function useUpdateSidebarProjectPrefs(wsId: string, enabled = true) {
+  const { projectSettings, issueSettings, projectOrder, loaded } = useSidebarProjectPrefs(wsId, enabled);
   const save = useUpdateIssueViewPreference(wsId, SIDEBAR_PROJECTS_SCOPE);
   return useCallback(
     (patch: SidebarProjectPrefsPatch) => {

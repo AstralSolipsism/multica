@@ -83,13 +83,16 @@ export function reorderSidebarViewOrder(order: readonly string[], visibleIds: re
  * them. Until the first write the list is derived, so views the user creates
  * elsewhere still show up.
  */
-export function useSidebarViews(wsId: string, userId: string | undefined) {
-  const viewsQuery = useQuery(issueViewEverywhereOptions(wsId));
+export function useSidebarViews(wsId: string, userId: string | undefined, enabled = true) {
+  const viewsQuery = useQuery({ ...issueViewEverywhereOptions(wsId), enabled });
   const views = viewsQuery.data ?? EMPTY_VIEWS;
-  const preferenceQuery = useQuery(issueViewPreferenceOptions(wsId, SIDEBAR_VIEWS_SCOPE));
+  const preferenceQuery = useQuery({
+    ...issueViewPreferenceOptions(wsId, SIDEBAR_VIEWS_SCOPE),
+    enabled,
+  });
   const pinsQuery = useQuery({
     ...pinListOptions(wsId, userId ?? ""),
-    enabled: !!wsId && !!userId,
+    enabled: enabled && !!wsId && !!userId,
   });
   const pins = pinsQuery.data ?? EMPTY_PINS;
   const save = useUpdateIssueViewPreference(wsId, SIDEBAR_VIEWS_SCOPE);

@@ -10,7 +10,7 @@ import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
 import type { Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { projectDetailOptions } from "@multica/core/projects/queries";
+import { projectEngineeringOptions, projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
 import { pinListOptions } from "@multica/core/pins";
 import { useCreatePin, useDeletePin } from "@multica/core/pins";
@@ -112,6 +112,7 @@ function ProjectWorkflowPropRow({ project }: { project: Project }) {
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
+  const { t: tEngineering } = useT("engineering");
   const statusLabels = useProjectStatusLabels();
   const priorityLabels = useProjectPriorityLabels();
   const wsId = useWorkspaceId();
@@ -119,6 +120,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const router = useNavigation();
   const userId = useAuthStore((s) => s.user?.id);
   const { data: project, isLoading } = useQuery(projectDetailOptions(wsId, projectId));
+  const { data: engineeringOverview } = useQuery(projectEngineeringOptions(wsId, projectId));
   useRegisterCommandBarContext(
     useMemo(() => (project ? { kind: "project", project } : null), [project]),
   );
@@ -513,13 +515,14 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         <div ref={rightSidebarShortcutTargetRef} className="flex h-full flex-col">
           <IssueSurface
             scope={issueScope}
-            modes={["board", "list", "table", "swimlane", "gantt"]}
-            renderHeader={({ controller }) => (
+            modes={["board", "list", "table", "swimlane", "gantt", "dag"]}
+            renderHeader={({ controller, summaryScopeIssues }) => (
               <ProjectWorkflowMenuHost project={project}>
                 {(workflowSubmenu) => (
                   <IssueViewHeader
                     controller={controller}
                     base={{ kind: "project", project }}
+                    tipAnchorScopeIssues={summaryScopeIssues}
                     baseMenu={
                       <>
                         <DropdownMenuItem onClick={() => {
@@ -561,22 +564,42 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                       </>
                     }
                     trailing={
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant={sidebarOpen ? "secondary" : "ghost"}
-                              size="icon-sm"
-                              className={sidebarOpen ? "" : "text-muted-foreground"}
-                              aria-label={t(($) => $.detail.sidebar_tooltip)}
-                              onClick={handleToggleSidebar}
-                            >
-                              <PanelRight />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
-                      </Tooltip>
+                      <>
+                        {engineeringOverview?.engineering?.enabled === true && (
+                          <AppLink
+                            href={wsPaths.projectEngineering(project.id)}
+                            newTabTitle={tEngineering(($) => $.title)}
+                            className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            {tEngineering(($) => $.title)}
+                          </AppLink>
+                        )}
+                        {isWorkspaceAdmin && engineeringOverview?.engineering && engineeringOverview.engineering.enabled !== true && (
+                          <AppLink
+                            href={wsPaths.projectEngineering(project.id)}
+                            newTabTitle={tEngineering(($) => $.actions.enable)}
+                            className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          >
+                            {tEngineering(($) => $.actions.enable)}
+                          </AppLink>
+                        )}
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant={sidebarOpen ? "secondary" : "ghost"}
+                                size="icon-sm"
+                                className={sidebarOpen ? "" : "text-muted-foreground"}
+                                aria-label={t(($) => $.detail.sidebar_tooltip)}
+                                onClick={handleToggleSidebar}
+                              >
+                                <PanelRight />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
+                        </Tooltip>
+                      </>
                     }
                   />
                 )}

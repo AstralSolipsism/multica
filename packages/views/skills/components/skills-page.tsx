@@ -44,6 +44,7 @@ import {
   CollectionPageState,
   CollectionResetButton,
   CollectionScopeItems,
+  CollectionSearch,
 } from "../../layout/collection-page";
 import {
   CollectionDisplayMenu,
@@ -59,6 +60,12 @@ import {
   CreateSkillDialog,
   type CreateSkillMethod,
 } from "./create-skill-dialog";
+// Labrastro fork: folder explorer, package import and move/detach wiring.
+import {
+  SkillPackageImportAction,
+  useSkillsPageFolderExplorer,
+  type SkillExplorerSkillRow,
+} from "./skills-page-folder-explorer";
 import {
   useSkillsViewStore,
   type SkillColumnKey,
@@ -71,10 +78,10 @@ import {
 } from "./skill-list-controls";
 import {
   SkillBatchToolbar,
-  SkillRowActions,
-  type SkillActionsContext,
 } from "./skill-list-actions";
 import { useT, useTimeAgo } from "../../i18n";
+import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { FolderExplorerDepth } from "../../common/folder-explorer";
 
 // Sort/filter/column types and defaults live in the core view store
 // (@multica/core/skills/stores/view-store) so the persisted state and the
@@ -82,16 +89,42 @@ import { useT, useTimeAgo } from "../../i18n";
 export type SortField = SkillSortField;
 export { rowMatchesFilters, type SkillRow } from "./skill-list-filter";
 
+export function matchesSkillSearch(row: SkillRow, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  const { name, description } = row.skill;
+  return (
+    name.toLowerCase().includes(query) ||
+    matchesPinyin(name, query) ||
+    (!!description &&
+      (description.toLowerCase().includes(query) ||
+        matchesPinyin(description, query)))
+  );
+}
+
 type SkillScope = "all" | "mine";
 
 // Cells
 
-function NameCell({ row }: { row: SkillRow }) {
+function NameCell({
+  row,
+  pathHint,
+  depth = 0,
+}: {
+  row: SkillRow;
+  pathHint?: string;
+  depth?: number;
+}) {
   const { t } = useT("skills");
   const { skill, canEdit } = row;
   return (
     <CollectionNameCell
-      icon={<SkillIcon className="size-4 shrink-0 text-muted-foreground" />}
+      icon={
+        <>
+          <FolderExplorerDepth depth={depth} />
+          <SkillIcon className="size-4 shrink-0 text-muted-foreground" />
+        </>
+      }
       title={skill.name}
       badges={
         !canEdit && (
@@ -103,9 +136,13 @@ function NameCell({ row }: { row: SkillRow }) {
           </Tooltip>
         )
       }
-      description={skill.description || undefined}
+      description={pathHint ?? (skill.description || undefined)}
     />
   );
+}
+
+function renderSkillName(row: SkillExplorerSkillRow) {
+  return <NameCell row={row.row} pathHint={row.pathHint} depth={row.depth} />;
 }
 
 function UsedByCell({ agents }: { agents: Agent[] }) {
@@ -293,11 +330,12 @@ export default function SkillsPage() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [search, setSearch] = useState("");
   const [scope, setScope] = useState<SkillScope>("all");
 
   // Persisted view preferences (per workspace, per user/device). Header sort
   // buttons and the header's display panel mutate the SAME store, so both
-  // surfaces always agree. Selection stays session-local on purpose.
+  // surfaces always agree. Search and selection stay session-local on purpose.
   const sortField = useSkillsViewStore((s) => s.sortField);
   const sortDirection = useSkillsViewStore((s) => s.sortDirection);
   const hiddenColumns = useSkillsViewStore((s) => s.hiddenColumns);
@@ -327,13 +365,17 @@ export default function SkillsPage() {
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
   const isAdmin = myRole === "owner" || myRole === "admin";
-
-  const actionsCtx: SkillActionsContext = {
+  const skillFolders = useSkillsPageFolderExplorer({
     wsId,
-    agents,
     currentUserId,
     isAdmin,
-  };
+    agents,
+    search,
+    filters,
+    renderSkillName,
+    onMoved: () => setSelectedIds(new Set()),
+  });
+  const actionsCtx = skillFolders.actionsCtx;
 
   const allRows = useMemo<SkillRow[]>(() => {
     return skills.map((skill) => {
@@ -366,9 +408,12 @@ export default function SkillsPage() {
   // from this.
   const scopeRows = scope === "mine" ? mineRows : allRows;
 
-  // Visible rows: filters, then sort.
+  // Matching skill rows: name search + filters, then sort. The explorer adds
+  // direct folders and package candidates around these rows.
   const rows = useMemo<SkillRow[]>(() => {
-    const filtered = scopeRows.filter((row) => rowMatchesFilters(row, filters));
+    const filtered = scopeRows.filter(
+      (row) => matchesSkillSearch(row, search) && rowMatchesFilters(row, filters),
+    );
 
     const dir = sortDirection === "asc" ? 1 : -1;
     filtered.sort((a, b) => {
@@ -392,13 +437,23 @@ export default function SkillsPage() {
       );
     });
     return filtered;
-  }, [scopeRows, filters, sortField, sortDirection]);
+  }, [scopeRows, search, filters, sortField, sortDirection]);
+  const { organizeRows } = skillFolders;
+  const listModel = useMemo(() => organizeRows(rows), [rows, organizeRows]);
 
   const handleCreated = (skill: Skill) => {
     navigation.push(paths.skillDetail(skill.id));
   };
 
-  const selectedRows = rows.filter((row) => selectedIds.has(row.skill.id));
+  const selectedRows = [
+    ...new Map(
+      listModel.rows.flatMap((listRow) =>
+        listRow.kind === "skill" && selectedIds.has(listRow.key)
+          ? [[listRow.row.skill.id, listRow.row] as const]
+          : [],
+      ),
+    ).values(),
+  ];
 
   const columns = useMemo<CollectionColumn<SkillRow>[]>(
     () => [
@@ -450,6 +505,11 @@ export default function SkillsPage() {
     ],
     [t, timeAgo],
   );
+  const { explorerColumns: toExplorerColumns } = skillFolders;
+  const explorerColumns = useMemo(
+    () => toExplorerColumns(columns),
+    [toExplorerColumns, columns],
+  );
 
   const sort: CollectionSort = {
     field: sortField,
@@ -460,6 +520,21 @@ export default function SkillsPage() {
   };
 
   const narrowed = countActiveFilterDimensions(filters) > 0;
+  const hasSearch = search.trim() !== "";
+  const resetNarrowing = () => {
+    clearFilters();
+    setSearch("");
+  };
+  const noMatchText = hasSearch
+    ? t(($) => $.page.no_matches.with_query, {
+        query: search.trim(),
+        filterSuffix: narrowed
+          ? t(($) => $.page.no_matches.with_query_filter_suffix)
+          : "",
+      })
+    : narrowed
+      ? t(($) => $.page.no_matches.filter_only)
+      : undefined;
   const scopeLabels: Record<SkillScope, string> = {
     all: t(($) => $.page.scopes.all.label),
     mine: t(($) => $.page.scopes.mine.label),
@@ -486,11 +561,18 @@ export default function SkillsPage() {
             onToggleFilter={toggleFilter}
             rows={scopeRows}
           />
-          {narrowed && <CollectionResetButton onClick={clearFilters} />}
+          <CollectionSearch
+            value={search}
+            onChange={setSearch}
+            label={t(($) => $.page.search)}
+          />
+          {(narrowed || hasSearch) && <CollectionResetButton onClick={resetNarrowing} />}
         </>
       }
       actions={
         <>
+          {skillFolders.headerActions}
+          <SkillPackageImportAction onClick={skillFolders.openImport} />
           <CollectionDisplayMenu
             columns={columns}
             hiddenColumns={hiddenColumns}
@@ -538,11 +620,16 @@ export default function SkillsPage() {
           }
         />
         {createDialog}
+        {skillFolders.dialogs}
       </div>
     );
   }
 
-  const showEmpty = !isLoading && skills.length === 0;
+  const showEmpty =
+    !isLoading &&
+    !skillFolders.treeLoading &&
+    skills.length === 0 &&
+    !skillFolders.hasFolders;
   const supportingQueryDown =
     !!agentsError || !!membersError || !!runtimesError;
 
@@ -561,6 +648,7 @@ export default function SkillsPage() {
           <span>{t(($) => $.page.supporting_data_warning)}</span>
         </div>
       )}
+      {skillFolders.notice}
 
       {showEmpty ? (
         <div className="flex flex-1 items-center justify-center">
@@ -569,22 +657,33 @@ export default function SkillsPage() {
       ) : (
         <CollectionList
           label={scopeLabels[scope]}
-          columns={columns}
+          columns={explorerColumns}
           hiddenColumns={hiddenColumns}
-          rows={rows}
-          loading={isLoading}
-          getRowId={(row) => row.skill.id}
-          getRowHref={(row) => paths.skillDetail(row.skill.id)}
-          getRowTitle={(row) => row.skill.name}
-          rowMenu={(row) => <SkillRowActions row={row} ctx={actionsCtx} />}
+          rows={listModel.rows}
+          loading={isLoading || skillFolders.treeLoading}
+          getRowId={(row) => row.key}
+          getRowHref={(row) =>
+            row.kind === "skill" ? paths.skillDetail(row.row.skill.id) : null
+          }
+          getRowTitle={(row) =>
+            row.kind === "skill" ? row.row.skill.name : undefined
+          }
+          getRowClassName={(row) =>
+            row.kind === "candidate"
+              ? "cursor-default text-faint-foreground hover:bg-transparent"
+              : undefined
+          }
+          onRowOpen={skillFolders.onRowOpen}
+          rowMenu={skillFolders.rowMenu}
           sort={sort}
-          selection={{ selectedIds, onChange: setSelectedIds }}
+          selection={skillFolders.selection(selectedIds, setSelectedIds)}
           empty={
             <CollectionNoMatches
               title={t(($) => $.page.no_matches.title)}
-              description={narrowed ? t(($) => $.page.no_matches.filter_only) : undefined}
-              onReset={clearFilters}
+              description={listModel.emptyMessage ?? noMatchText}
+              onReset={resetNarrowing}
               hasFilters={narrowed}
+              hasSearch={hasSearch}
             />
           }
         />
@@ -597,6 +696,7 @@ export default function SkillsPage() {
       />
 
       {createDialog}
+      {skillFolders.dialogs}
     </div>
   );
 }

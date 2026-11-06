@@ -25,6 +25,7 @@ import {
   PanelSection,
   isPathWithin,
 } from "../panel-nav";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 
 const EMPTY_AUTOPILOTS: Autopilot[] = [];
 const PANEL_TEMPLATE_LIMIT = 3;
@@ -74,14 +75,16 @@ export function AutopilotsPanel() {
   const p = useWorkspacePaths();
   const { pathname, searchParams, push } = useNavigation();
   const wsId = useCurrentWorkspace()?.id;
+  const open = useSpacePanelOpen();
   const setScope = useAutopilotsViewStore((s) => s.setScope);
   const { data: autopilots = EMPTY_AUTOPILOTS } = useQuery({
     ...autopilotListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: open && !!wsId,
   });
   const { data: wakeups } = useQuery({
     ...wakeupCountsOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: open && !!wsId,
+    refetchInterval: false,
   });
   const visible = useMemo(
     () => autopilots.filter((autopilot) => autopilot.status !== "archived"),

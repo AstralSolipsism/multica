@@ -74,7 +74,7 @@ import {
   countAdvancedConditions,
   type NegatableFilterDimension,
 } from "@multica/core/issues/stores/filter-tree";
-import type { Project } from "@multica/core/types";
+import type { Issue, Project } from "@multica/core/types";
 import { PageHeader } from "../layout/page-header";
 import { RefreshablePageIcon } from "../layout/refreshable-page-icon";
 import { ActionShortcutKeycaps } from "../common/shortcut-keycaps";
@@ -82,6 +82,7 @@ import { ProjectIcon } from "../projects/components/project-icon";
 import { IssueDisplayControls, IssueFilterMenu } from "../issues/components/issues-header";
 import { useFilterChips } from "../issues/components/filter-chips-bar";
 import { WorkspaceAgentWorkingChip } from "../issues/components/workspace-agent-working-chip";
+import { tipAnchorScopeFromIssues } from "../you-should-know/anchors/tip-anchor-scope";
 import type { IssueSurfaceController } from "../issues/surface/use-issue-surface-controller";
 import { useT } from "../i18n";
 import { useMyIssuesScope } from "../my-issues/use-my-issues-scope";
@@ -122,6 +123,7 @@ export function IssueViewHeader({
   base,
   baseMenu,
   trailing,
+  tipAnchorScopeIssues,
 }: {
   controller: IssueSurfaceController;
   base: IssueViewHeaderBase;
@@ -129,6 +131,8 @@ export function IssueViewHeader({
   baseMenu?: ReactNode;
   /** Layout toggles at the far end, e.g. the project's properties panel. */
   trailing?: ReactNode;
+  /** Issues loaded by the current view, used by the agents-working summary anchor. */
+  tipAnchorScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
 }) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
@@ -161,6 +165,10 @@ export function IssueViewHeader({
   const setDateFilter = useViewStore((s) => s.setDateFilter);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
   const toggleAgentRunningFilter = useViewStore((s) => s.toggleAgentRunningFilter);
+  const tipAnchorScope = useMemo(
+    () => tipAnchorScopeFromIssues(tipAnchorScopeIssues),
+    [tipAnchorScopeIssues],
+  );
 
   const builtinKey: BuiltinViewKey | null =
     base.kind === "workspace" ? "all_issues" : base.kind === "my" ? (myScope === "agents" ? "my_agents" : "my_issues") : null;
@@ -506,6 +514,7 @@ export function IssueViewHeader({
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
             agents={controller.workingAgents}
+            tipAnchorScope={tipAnchorScope}
             compact
           />
         )}
@@ -513,6 +522,7 @@ export function IssueViewHeader({
           hideFilter
           scopedIssues={controller.surfaceIssues}
           allowGantt={controller.allowGantt}
+          allowDag={controller.allowDag}
           facetCountsExact={controller.facetCountsExact}
           tableFacetCounts={controller.tableFacetCounts}
           onTableFacetChange={controller.setActiveTableFacet}

@@ -527,6 +527,11 @@ describe("DagView error and refresh handling", () => {
       includeNoProject: false,
       projectStatusFilters: [],
       labelFilters: [],
+      relationFilters: [],
+      dueDateFilters: [],
+      negatedFilters: [],
+      advancedFilter: null,
+      agentRunningFilter: false,
       propertyFilters: {},
     };
     const baseline: IssueViewBaseline = {
@@ -539,6 +544,10 @@ describe("DagView error and refresh handling", () => {
       includeNoProject: false,
       projectStatus: new Set(),
       label: new Set(),
+      relation: new Set(),
+      dueDate: new Set(),
+      negated: new Set(),
+      agentRunning: false,
       property: new Map(),
       raw,
     };

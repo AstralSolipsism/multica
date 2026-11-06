@@ -115,6 +115,7 @@ export function useIssueStatusOptions(
   workflow: IssueWorkflow | null;
   project: Project | null;
   defaultScope: IssueWorkflow | null;
+  catalog: StatusOption[];
 } {
   const catalogOptions = useStatusOptions(wsId);
   const { categoryOf, colorOf, iconOf } = useIssueStatuses(wsId);
@@ -143,5 +144,5 @@ export function useIssueStatusOptions(
     while (at > 0 && (CATEGORY_RANK.get(steps[at - 1]!.category) ?? 0) > rank) at -= 1;
     return [...steps.slice(0, at), current, ...steps.slice(at)];
   }, [catalogOptions, categoryOf, colorOf, currentStatus, defaultScope, iconOf, labelOf, workflow]);
-  return { options, workflow, project, defaultScope };
+  return { options, workflow, project, defaultScope, catalog: catalogOptions };
 }

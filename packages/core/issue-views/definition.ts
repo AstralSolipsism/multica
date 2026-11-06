@@ -57,6 +57,9 @@ export function issueViewDefinitionFromState(state: IssueViewState): IssueViewDe
       swimlaneGrouping: state.swimlaneGrouping,
       ganttZoom: state.ganttZoom,
       ganttShowCompleted: state.ganttShowCompleted,
+      dagGrouping: "parent",
+      dagShowCompleted: state.dagShowCompleted,
+      dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
     },
   };
 }

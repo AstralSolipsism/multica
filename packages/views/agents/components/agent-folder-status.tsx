@@ -1,7 +1,6 @@
 "use client";
 
 import type { AgentPresenceDetail } from "@multica/core/agents";
-import { ListGridCell } from "@multica/ui/components/ui/list-grid";
 import {
   Tooltip,
   TooltipContent,
@@ -29,7 +28,7 @@ export function aggregateAgentFolderPresence(rows: readonly AgentListRow[]) {
 export function AgentFolderStatusCell({ rows }: { rows: readonly AgentListRow[] }) {
   const { t } = useT("agent-folders");
   if (rows.length === 0) {
-    return <ListGridCell><span className="text-caption text-faint-foreground">—</span></ListGridCell>;
+    return <span className="text-faint-foreground">—</span>;
   }
 
   const { workingCount, queuedCount, onlineCount, active } = aggregateAgentFolderPresence(rows);
@@ -58,9 +57,9 @@ export function AgentFolderStatusCell({ rows }: { rows: readonly AgentListRow[] 
       : t(($) => $.tree.status_online, { count: primaryCount });
 
   const cell = (
-    <ListGridCell className="gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5">
       <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${dotClass}`} />
-      <span className={`truncate text-caption ${textClass}`}>
+      <span className={`truncate ${textClass}`}>
         {working || queued || online
           ? primaryLabel
           : t(($) => $.tree.status_offline)}
@@ -71,7 +70,7 @@ export function AgentFolderStatusCell({ rows }: { rows: readonly AgentListRow[] 
           </span>
         )}
       </span>
-    </ListGridCell>
+    </span>
   );
 
   if (active.length === 0) return cell;

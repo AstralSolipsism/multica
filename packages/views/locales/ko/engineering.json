@@ -192,6 +192,7 @@
     "reject": "수정 요청",
     "adopt": "채택",
     "enable": "개요 사용",
+    "open_baseline": "엔지니어링 기준선 열기",
     "editChapter": "이 장 편집",
     "initializeChapter": "이 장 초기화",
     "addModule": "모듈 장 추가",

@@ -24,6 +24,7 @@ import { pinListOptions } from "@multica/core/pins/queries";
 import { useSidebarTreeStore } from "@multica/core/issues/stores/sidebar-tree-store";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { useIssueUnread } from "@multica/core/issues/unread";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 import { useWorkspacePaths, type WorkspacePaths } from "@multica/core/paths";
 import type { Issue, PinnedItem } from "@multica/core/types";
 import { AppLink } from "../../navigation";
@@ -63,11 +64,12 @@ export function usePanelPins(
   userId: string | undefined,
   pathname: string,
   currentIssueId: string | null,
+  enabled = true,
 ) {
   const p = useWorkspacePaths();
   const { data: allPins = EMPTY_PINS } = useQuery({
     ...pinListOptions(wsId ?? "", userId ?? ""),
-    enabled: !!wsId && !!userId,
+    enabled: enabled && !!wsId && !!userId,
   });
   // View pins moved into the Views section's starred list; a reorder here
   // still carries them so the cache keeps them.
@@ -315,14 +317,15 @@ function PinRow({
   wsId: string;
 }) {
   const isIssue = pin.item_type === "issue";
-  const agents = useIssueAgentState(wsId, isIssue ? pin.item_id : "");
-  const unread = useIssueUnread(wsId, isIssue ? pin.item_id : "");
-  const statusCatalog = useIssueStatuses(wsId);
-  const statusLabel = useStatusLabel(wsId);
-  const issueQuery = useQuery({ ...issueDetailOptions(wsId, pin.item_id), enabled: isIssue });
+  const open = useSpacePanelOpen();
+  const agents = useIssueAgentState(wsId, isIssue ? pin.item_id : "", open);
+  const unread = useIssueUnread(wsId, isIssue ? pin.item_id : "", open);
+  const statusCatalog = useIssueStatuses(wsId, open);
+  const statusLabel = useStatusLabel(wsId, open);
+  const issueQuery = useQuery({ ...issueDetailOptions(wsId, pin.item_id), enabled: open && isIssue });
   const projectQuery = useQuery({
     ...projectDetailOptions(wsId, pin.item_id),
-    enabled: pin.item_type === "project",
+    enabled: open && pin.item_type === "project",
   });
 
   const triggeredRef = useRef(false);

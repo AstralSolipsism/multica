@@ -30,12 +30,22 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: (options: { queryKey?: readonly unknown[] }) => ({
-    data: options.queryKey?.[0] === "skills" ? mocks.skills : [],
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
+  queryOptions: (options: unknown) => options,
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQuery: (options: { queryKey?: readonly unknown[] }) => {
+    const key = options.queryKey ?? [];
+    return {
+      data: key.includes("skill-folders")
+        ? { folders: [], placements: [], packages: [] }
+        : key[0] === "skills"
+          ? mocks.skills
+          : [],
+      isLoading: false,
+      error: null,
+      failureCount: 0,
+      refetch: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -72,6 +82,12 @@ vi.mock("@multica/core/workspace/queries", () => ({
 }));
 vi.mock("@multica/core/labels/queries", () => ({
   labelListOptions: () => ({ queryKey: ["labels"] }),
+}));
+vi.mock("@multica/core/skills/package-queries", () => ({
+  skillFolderTreeOptions: () => ({
+    queryKey: ["workspaces", "ws-1", "skill-folders"],
+  }),
+  invalidateSkillPackageQueries: vi.fn(),
 }));
 vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
@@ -147,7 +163,13 @@ describe("SkillsPage header", () => {
     expect(
       within(header).getByRole("heading", { name: "All skills", level: 1 }),
     ).toBeInTheDocument();
-    for (const name of ["Filter", "Display settings", "New skill"]) {
+    for (const name of [
+      "Filter",
+      "Search skills",
+      "Import package",
+      "Display settings",
+      "New skill",
+    ]) {
       expect(within(header).getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: /Learn more/ })).toBeNull();
@@ -173,11 +195,20 @@ describe("SkillsPage header", () => {
     expect(screen.queryByText("team-skill")).toBeNull();
   });
 
-  it("has no search, and offers Reset only while a filter narrows the list", () => {
+  it("searches skills from the header and resets the query", async () => {
+    const user = userEvent.setup();
     const header = renderPage();
     expect(within(header).queryByRole("textbox")).toBeNull();
-    expect(within(header).queryByRole("button", { name: /search/i })).toBeNull();
     expect(within(header).queryByRole("button", { name: "Reset" })).toBeNull();
+
+    await user.click(within(header).getByRole("button", { name: "Search skills" }));
+    await user.type(within(header).getByRole("textbox", { name: "Search skills" }), "team");
+    expect(screen.getByText("team-skill")).toBeInTheDocument();
+    expect(screen.queryByText("mine-skill")).toBeNull();
+
+    await user.click(within(header).getByRole("button", { name: "Reset" }));
+    expect(screen.getByText("mine-skill")).toBeInTheDocument();
+    expect(screen.getByText("team-skill")).toBeInTheDocument();
   });
 
   it("resets the filters", async () => {

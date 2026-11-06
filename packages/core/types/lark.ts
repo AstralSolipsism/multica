@@ -1,46 +1,38 @@
-/** A Lark Bot installation bound to a single Multica agent.
- *
- * Wire shape mirrors `LarkInstallationResponse` in
- * `server/internal/handler/lark.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing
- * the response — see CLAUDE.md → API Response Compatibility. */
-export interface LarkInstallation {
-  id: string;
-  workspace_id: string;
-  agent_id: string;
-  app_id: string;
-  tenant_key?: string | null;
-  bot_open_id: string;
-  installer_user_id: string;
-  status: "active" | "revoked" | string;
-  /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
-   * (international). Auto-detected at install time. Optional so an older
-   * desktop build parsing a newer server — or a newer build hitting a
-   * server that predates the field — defaults to Feishu in the UI
-   * (see CLAUDE.md → API Response Compatibility). */
-  region?: "feishu" | "lark" | string;
-  /** First valid message observed for this binding; absence means no recorded proof. */
-  first_message_received_at?: string | null;
-  installed_at: string;
-  created_at: string;
-  updated_at: string;
-}
+export type { LarkConversationGrant } from "../lark/schema";
 
-export interface ListLarkInstallationsResponse {
-  installations: LarkInstallation[];
-  /** Whether the deployment has the at-rest secret key configured. When
-   * false the Bind button must be disabled and the panel renders an
-   * empty / "ask the operator to enable Lark" state. */
-  configured: boolean;
-  /** Whether new installs via the device-flow scan-to-bind path can
-   * complete end-to-end — i.e. the device-flow RegistrationService is
-   * wired AND the real Lark HTTP APIClient (not the no-op stub) is in
-   * place. When false the install entry points are hidden and the
-   * panel surfaces a "coming soon" notice. Optional so older desktop
-   * builds receiving a server that does not yet emit the field
-   * default to `undefined`, treated as not supported. */
-  install_supported?: boolean;
-}
+// --- Target discovery (OL-72 contract, OL-74 frontend) ---
+// Wire shapes mirror server/internal/messagedelivery/TARGET-DISCOVERY-CONTRACT.md
+// and server/internal/integrations/lark/target-discovery.schema.json. Read-only
+// discovery for the group / message-anchor / conversation-grant pickers; it
+// never saves or approves a target.
+
+export type { LarkTargetCapabilities } from "../lark/schema";
+
+// --- Private chat discovery (OL-75 contract, OL-76 frontend) ---
+// Wire shapes mirror server/internal/messagedelivery/PRIVATE-CHAT-DISCOVERY-CONTRACT.md
+// and server/internal/integrations/lark/private-chat-discovery.schema.json.
+// An observation is NOT consent: it becomes an authorized conversation only
+// through an explicit human confirmation.
+
+export type { LarkPrivateChatCandidateSender } from "../lark/schema";
+
+export type { LarkPrivateChatCandidate } from "../lark/schema";
+
+export type { LarkPrivateChatCandidateList } from "../lark/schema";
+
+export type { LarkDiscoveredChat } from "../lark/schema";
+
+export type { LarkChatsPage } from "../lark/schema";
+
+export type { LarkMessageAnchorSender } from "../lark/schema";
+
+export type { LarkMessageAnchor } from "../lark/schema";
+
+export type { LarkAnchorsPage } from "../lark/schema";
+
+export type { LarkInstallation } from "../lark/schema";
+
+export type { ListLarkInstallationsResponse } from "../lark/schema";
 
 /** First half of the device-flow install: the server has opened a
  * registration session against accounts.feishu.cn and returned the QR

@@ -2,6 +2,7 @@
   "page": {
     "title": "Skills",
     "new_skill": "新建 skill",
+    "search": "搜索 skill",
     "scopes": {
       "all": {
         "label": "全部 skill",

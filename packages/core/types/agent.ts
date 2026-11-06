@@ -55,6 +55,70 @@ export interface AgentInvocationTargetInput {
 // the fallback.
 export type RuntimeVisibility = "private" | "public";
 
+/**
+ * One plan-quota window reported for a runtime (e.g. a provider's 5h or
+ * weekly rate-limit window). `used_percent` is null when the provider only
+ * signals exhaustion without a percentage; `resets_at` is unix seconds.
+ * `group` is the optional quota pool the window belongs to — providers with
+ * several independent pools per account (antigravity: gemini, claude_gpt)
+ * label their windows so the UI can show every pool; single-pool providers
+ * omit it.
+ */
+export interface RuntimePlanQuotaWindow {
+  name: string;
+  used_percent: number | null;
+  window_minutes: number | null;
+  resets_at: number | null;
+  group?: string | null;
+}
+
+/**
+ * A point-in-time snapshot of a runtime's plan quota (`observed_at` is unix
+ * seconds). `status: "limited"` means the provider rate-limited / exhausted
+ * the plan; `source` records where the snapshot came from ("daemon" |
+ * "external"). The wire shape deliberately carries no account identifiers,
+ * plan names, or credentials.
+ */
+export interface RuntimePlanQuota {
+  provider: string;
+  status: "ok" | "limited";
+  windows: RuntimePlanQuotaWindow[];
+  observed_at: number;
+  source: string;
+}
+
+/**
+ * Host-level CPU / memory sample reported by the machine's daemon
+ * (`captured_at` is unix seconds). Null percents mean the sampler could not
+ * read that metric — consumers must render "no data", never 0. `stale` is
+ * computed by the server at read time: true means the sample is older than
+ * the freshness SLA and no longer describes current load, which the UI must
+ * render distinctly from "never reported".
+ */
+export interface RuntimeSystemStats {
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  captured_at: number;
+  stale: boolean;
+}
+
+/**
+ * Jev health snapshot for adaptive thinking (contract §3), reported by the
+ * runtime's daemon. `status` is idle | available | degraded | unavailable;
+ * anything else came from a newer daemon and consumers must render a
+ * neutral state. Only runtimes whose provider supports thinking control
+ * carry the field; older backends omit it.
+ */
+export interface RuntimeThinkingAdapt {
+  status: string;
+  active_source: string;
+  last_latency_ms: number;
+  decisions_ok: number;
+  decisions_fallback: number;
+  since: string | null;
+  updated_at: string | null;
+}
+
 export interface RuntimeDevice {
   id: string;
   workspace_id: string;
@@ -86,6 +150,26 @@ export interface RuntimeDevice {
    * a missing value as `null` (built-in).
    */
   profile_id?: string | null;
+  /**
+   * Latest plan-quota snapshot for this runtime (5h / weekly windows).
+   * Older backends omit the field — consumers must treat a missing or
+   * malformed value as "no data" and render the not-reported state instead
+   * of inventing numbers (see parsePlanQuota in core/runtimes/plan-quota).
+   */
+  plan_quota?: RuntimePlanQuota | null;
+  /**
+   * Last host-level CPU / memory sample reported by this runtime's daemon.
+   * Older backends omit the field — consumers must treat a missing value as
+   * "no data" (render `--`), never as 0.
+   */
+  system_stats?: RuntimeSystemStats | null;
+  /**
+   * Jev health snapshot for adaptive thinking (contract §3), reported by
+   * this runtime's daemon. Present only on rows whose provider supports
+   * thinking control; null when nothing was reported or the payload was
+   * malformed. Older backends omit the field.
+   */
+  thinking_adapt?: RuntimeThinkingAdapt | null;
   /**
    * Runtime-wide cap on tasks running at once across every agent bound to
    * this runtime (GitHub #9626). `null` means no runtime cap; each agent's
@@ -282,7 +366,7 @@ export interface TaskEvidence {
 export interface TaskAttribution {
   /**
    * Waterfall level that resolved the accountable human:
-   * `direct_human` | `delegation` | `comment_source` | `rule_owner` |
+   * `direct_human` | `channel_integration` | `delegation` | `comment_source` | `rule_owner` |
    * `owner_fallback` | `backfill` | `unattributed`. Never blank.
    */
   source: string;
@@ -895,6 +979,16 @@ export interface SkillSummary {
 export interface Skill extends SkillSummary {
   content: string;
   files: SkillFile[];
+  /** Import/refresh only; null means diagnostic data could not be parsed. */
+  diagnostics?: SkillImportDiagnostic[] | null;
+}
+
+export interface SkillImportDiagnostic {
+  code: string;
+  path?: string;
+  target?: string;
+  message: string;
+  retryable: boolean;
 }
 
 export interface SkillFile {
@@ -985,6 +1079,10 @@ export interface RuntimeUsage {
   uncosted_cache_read_tokens?: number;
   uncosted_cache_write_tokens?: number;
 }
+
+export type IssueUsageRow = Omit<RuntimeUsage, "runtime_id" | "date"> & {
+  issue_id: string;
+};
 
 export interface RuntimeHourlyActivity {
   hour: number;

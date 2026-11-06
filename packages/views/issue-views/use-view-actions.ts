@@ -40,18 +40,18 @@ export interface CreateViewInput {
  * Every write a saved view offers, shared by the sidebar, the page header and
  * the All views directory so each entrance behaves the same.
  */
-export function useIssueViewActions() {
+export function useIssueViewActions({ enabled = true }: { enabled?: boolean } = {}) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const userId = useAuthStore((s) => s.user?.id);
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [] } = useQuery({ ...memberListOptions(wsId), enabled });
   const role = useMemo(
     () => members.find((member) => member.user_id === userId)?.role ?? null,
     [members, userId],
   );
-  const sidebar = useSidebarViews(wsId, userId);
+  const sidebar = useSidebarViews(wsId, userId, enabled);
   const createView = useCreateIssueView(wsId);
   const updateView = useUpdateIssueView(wsId);
   const deleteView = useDeleteIssueView(wsId);

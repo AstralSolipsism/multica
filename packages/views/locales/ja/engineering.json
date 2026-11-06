@@ -192,6 +192,7 @@
     "reject": "修正を依頼",
     "adopt": "採用",
     "enable": "概要を有効化",
+    "open_baseline": "エンジニアリング基線を開く",
     "editChapter": "この章を編集",
     "initializeChapter": "この章を初期化",
     "addModule": "モジュール章を追加",

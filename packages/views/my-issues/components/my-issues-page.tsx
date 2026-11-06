@@ -30,7 +30,13 @@ export function MyIssuesPage() {
           }}
           modes={["board", "list", "table", "swimlane"]}
           batchToolbar="list"
-          renderHeader={({ controller }) => <IssueViewHeader controller={controller} base={MY_BASE} />}
+          renderHeader={({ controller, summaryScopeIssues }) => (
+            <IssueViewHeader
+              controller={controller}
+              base={MY_BASE}
+              tipAnchorScopeIssues={summaryScopeIssues}
+            />
+          )}
           renderEmpty={({ controller }) => (
             <CollectionPageState
               icon={CircleUser}

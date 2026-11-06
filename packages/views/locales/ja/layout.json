@@ -91,6 +91,7 @@
       "new_project": "新規プロジェクト",
       "new_issue_in_project": "{{name}} に新規タスク",
       "all_projects_other": "すべてのプロジェクト（{{count}}）",
+      "project_actions": "{{name}} のプロジェクト操作",
       "project_issues": "{{name}} のタスク",
       "project_issues_empty": "タスクはありません",
       "project_issues_error": "タスクを読み込めませんでした",

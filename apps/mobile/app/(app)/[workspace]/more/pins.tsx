@@ -1,6 +1,6 @@
 /**
  * Pinned items list — mirrors the role of web's sidebar "Pinned" section
- * (packages/views/layout/app-sidebar.tsx PinnedItemRow), one screen up the
+ * (packages/views/layout/panels/pinned-section.tsx), one screen up the
  * navigation tree because phones have no sidebar.
  *
  * Architecture invariant (matches web): `PinnedItem` only carries metadata

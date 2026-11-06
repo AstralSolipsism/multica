@@ -6,6 +6,7 @@ import { useAutopilotsViewStore } from "@multica/core/autopilots/stores";
 import type { Autopilot } from "@multica/core/types";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { renderWithI18n } from "../../test/i18n";
+import { SpacePanelOpenProvider } from "../space-panel-open-context";
 import { AutopilotsPanel } from "./autopilots-panel";
 
 vi.mock("@multica/core/api", () => ({
@@ -23,7 +24,7 @@ function autopilot(id: string, title: string, status: Autopilot["status"]): Auto
   return { id, title, status, trigger_kinds: ["schedule"] } as unknown as Autopilot;
 }
 
-function mount(path: string, push = vi.fn()) {
+function mount(path: string, push = vi.fn(), open = true) {
   const url = new URL(path, "https://example.test");
   const adapter: NavigationAdapter = {
     pathname: url.pathname,
@@ -38,7 +39,9 @@ function mount(path: string, push = vi.fn()) {
   return renderWithI18n(
     <QueryClientProvider client={client}>
       <NavigationProvider value={adapter}>
-        <AutopilotsPanel />
+        <SpacePanelOpenProvider open={open}>
+          <AutopilotsPanel />
+        </SpacePanelOpenProvider>
       </NavigationProvider>
     </QueryClientProvider>,
   );
@@ -105,5 +108,11 @@ describe("AutopilotsPanel", () => {
     fireEvent.click(allRow());
     expect(useAutopilotsViewStore.getState().scope).toBe("all");
     expect(push).toHaveBeenCalledWith("/ws/autopilots");
+  });
+
+  it("does not fetch or poll while the space panel is closed", () => {
+    mount("/ws/autopilots", vi.fn(), false);
+    expect(api.listAutopilots).not.toHaveBeenCalled();
+    expect(api.listWorkspaceWakeups).not.toHaveBeenCalled();
   });
 });

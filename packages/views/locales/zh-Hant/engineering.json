@@ -192,6 +192,7 @@
     "reject": "退回修改",
     "adopt": "採用",
     "enable": "啟用總覽",
+    "open_baseline": "開啟工程基線",
     "editChapter": "編輯本章",
     "initializeChapter": "初始化本章",
     "addModule": "新增功能模組章節",

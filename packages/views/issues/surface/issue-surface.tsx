@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { VIEW_MODE_CAPABILITIES, type ViewMode } from "@multica/core/issues/surface/view-mode";
 import type { StoreApi } from "zustand/vanilla";
 import type { IssueViewState } from "@multica/core/issues/stores/view-store";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -11,6 +12,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useModalStore } from "@multica/core/modals";
 import { useQuery } from "@tanstack/react-query";
+import { workspaceIssueUsageOptions } from "@multica/core/issues/queries";
 import { workspaceWakeupSummariesOptions } from "@multica/core/issues/wakeups";
 import {
   useViewStore,
@@ -30,13 +32,11 @@ import {
   type IssueScope,
 } from "@multica/core/issues/surface/scope";
 import type { Issue } from "@multica/core/types";
-import { BoardView } from "../components/board-view";
-import { BOARD_COL_WIDTH } from "../components/board-column";
+import { BOARD_COL_WIDTH } from "../components/board-layout";
 import { BatchActionToolbar } from "../components/batch-action-toolbar";
-import { GanttView } from "../components/gantt-view";
 import { ListView } from "../components/list-view";
-import { SwimLaneView } from "../components/swimlane-view";
-import { TableView } from "../components/table-view";
+import { BoardView, TableView, GanttView, SwimLaneView, preloadIssueView } from "./issue-view-loaders";
+import { DagView } from "../dag/dag-view";
 import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
 import { IssueContextMenuProvider } from "../actions";
@@ -53,6 +53,11 @@ import {
 export interface IssueSurfaceRenderContext {
   controller: IssueSurfaceController;
   issues: Issue[];
+  /** Issues the CURRENT view has loaded (OL-193): table pages rows in
+   *  through `tableLoadedIssues`, Gantt renders its filtered list, DAG has
+   *  no row anchors so the summary covers the graph's nodes. Drives the
+   *  You-should-know summary anchor scope in the headers. */
+  summaryScopeIssues: readonly Pick<Issue, "id" | "identifier">[];
 }
 
 interface IssueSurfaceComponentProps extends IssueSurfaceProps {
@@ -63,6 +68,37 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   showClientEmpty?: (context: IssueSurfaceRenderContext) => boolean;
   batchToolbar?: "always" | "list" | "never";
   contentClassName?: string;
+}
+
+/** Stable empty list for the DAG-with-no-data summary scope case. */
+const NO_SCOPE_ISSUES: readonly Pick<Issue, "id" | "identifier">[] = [];
+
+/**
+ * The issues the CURRENT view has loaded, for the YSK summary anchor scope
+ * (OL-193). `surfaceIssues` is empty in table mode (rows page in through
+ * TableView's own query) and unfiltered in gantt mode; DAG renders no row
+ * anchors at all, so the summary covers the graph's nodes — otherwise tips
+ * for graphed issues would have no visible position.
+ */
+export function summaryScopeIssuesForViewMode(
+  viewMode: ViewMode,
+  sources: {
+    surfaceIssues: readonly Issue[];
+    tableLoadedIssues: readonly Issue[];
+    filteredGanttIssues: readonly Issue[];
+    dagNodes: readonly Pick<Issue, "id" | "identifier">[] | undefined;
+  },
+): readonly Pick<Issue, "id" | "identifier">[] {
+  switch (viewMode) {
+    case "table":
+      return sources.tableLoadedIssues;
+    case "gantt":
+      return sources.filteredGanttIssues;
+    case "dag":
+      return sources.dagNodes ?? NO_SCOPE_ISSUES;
+    default:
+      return sources.surfaceIssues;
+  }
 }
 
 /** An explicit, caller-owned store bypasses saved views and persisted surfaces. */
@@ -203,6 +239,12 @@ function IssueSurfaceContent({
     createDefaults,
     search,
   });
+  const showCost = useViewStore((state) => state.cardProperties.cost);
+  useQuery({
+    ...workspaceIssueUsageOptions(workspaceId),
+    enabled: !!workspaceId && showCost && ["board", "swimlane", "dag"].includes(controller.viewMode),
+  });
+  useEffect(() => { preloadIssueView(controller.viewMode); }, [controller.viewMode]);
   const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);
   const handleTableLoadedIssuesChange = useCallback((next: Issue[]) => {
     setTableLoadedIssues((current) =>
@@ -229,9 +271,28 @@ function IssueSurfaceContent({
         : controller.swimlaneIssues,
     [clientFilter, controller.swimlaneIssues],
   );
+  // YSK summary anchor scope (OL-193) — see summaryScopeIssuesForViewMode.
+  const summaryScopeIssues = useMemo<
+    readonly Pick<Issue, "id" | "identifier">[]
+  >(
+    () =>
+      summaryScopeIssuesForViewMode(controller.viewMode, {
+        surfaceIssues: controller.surfaceIssues,
+        tableLoadedIssues,
+        filteredGanttIssues: controller.filteredGanttIssues,
+        dagNodes: controller.dagGraph.data?.nodes,
+      }),
+    [
+      controller.viewMode,
+      controller.surfaceIssues,
+      controller.filteredGanttIssues,
+      controller.dagGraph.data,
+      tableLoadedIssues,
+    ],
+  );
   const renderContext = useMemo(
-    () => ({ controller, issues }),
-    [controller, issues],
+    () => ({ controller, issues, summaryScopeIssues }),
+    [controller, issues, summaryScopeIssues],
   );
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
@@ -245,6 +306,9 @@ function IssueSurfaceContent({
     (showClientEmpty ? showClientEmpty(renderContext) : true);
   const shouldShowBatchToolbar =
     batchToolbar !== "never" &&
+    // DAG has no row/card selection — batch actions stay with list-shaped
+    // modes.
+    VIEW_MODE_CAPABILITIES[controller.viewMode].batchSelection &&
     (batchToolbar === "always" ||
       controller.viewMode === "list" ||
       controller.viewMode === "table");
@@ -318,6 +382,7 @@ function IssueSurfaceContent({
           )
         ) : (
           <div className={cn("flex flex-col flex-1 min-h-0", contentClassName)}>
+            <Suspense fallback={<IssueSurfaceSkeleton mode={controller.viewMode} />}>
             {controller.viewMode === "board" && (
               <BoardView
                 issues={issues}
@@ -358,6 +423,12 @@ function IssueSurfaceContent({
             {controller.viewMode === "gantt" && (
               <GanttView issues={controller.filteredGanttIssues} />
             )}
+            {controller.viewMode === "dag" && (
+              <DagView
+                spec={controller.tableQuerySpec}
+                hasActiveFilters={controller.hasActiveFilters}
+              />
+            )}
             {controller.viewMode === "swimlane" && (
               <SwimLaneView
                 issues={issues}
@@ -372,6 +443,7 @@ function IssueSurfaceContent({
                 groupBranches={controller.groupBranches}
               />
             )}
+            </Suspense>
           </div>
         )}
         </IssuePeekHost>

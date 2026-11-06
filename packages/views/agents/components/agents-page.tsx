@@ -68,7 +68,6 @@ import {
   type CollectionSort,
 } from "../../layout/collection-list";
 import { availabilityConfig } from "../presence";
-import { AgentRowActions } from "./agent-row-actions";
 import { AgentSetupChecklist } from "./agent-setup-checklist";
 import {
   AgentListFilterMenu,
@@ -76,6 +75,7 @@ import {
 } from "./agent-list-toolbar";
 import { useLocale, useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { FolderExplorerDepth } from "../../common/folder-explorer";
 
 export interface AgentListRow {
   agent: Agent;
@@ -176,6 +176,12 @@ export function rowMatchesFilters(
  */
 import { isAccessChangeReady } from "@multica/core/agents";
 import { AgentBatchToolbar } from "./agent-batch-toolbar";
+// Labrastro fork (OL-1030): folder explorer — hierarchy view, squad folders,
+// move/place dialogs. Logic lives in the fork module; this file only mounts it.
+import {
+  useAgentsPageFolderExplorer,
+  type AgentExplorerAgentRow,
+} from "./agents-page-folder-explorer";
 export { isAccessChangeReady };
 
 export interface AgentsPageProps {
@@ -250,7 +256,17 @@ function EmptyState({
 
 // Cells
 
-function NameCell({ row }: { row: AgentListRow }) {
+function NameCell({
+  row,
+  pathHints,
+  leaderLabel,
+  depth = 0,
+}: {
+  row: AgentListRow;
+  pathHints?: string[];
+  leaderLabel?: string;
+  depth?: number;
+}) {
   const { t } = useT("agents");
   const { agent, isOwnedByMe } = row;
   const isArchived = !!agent.archived_at;
@@ -258,13 +274,16 @@ function NameCell({ row }: { row: AgentListRow }) {
   return (
     <CollectionNameCell
       icon={
-        <ActorAvatar
-          actorType="agent"
-          actorId={agent.id}
-          size="sm"
-          className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
-          showStatusDot
-        />
+        <>
+          <FolderExplorerDepth depth={depth} />
+          <ActorAvatar
+            actorType="agent"
+            actorId={agent.id}
+            size="sm"
+            className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
+            showStatusDot
+          />
+        </>
       }
       title={agent.name}
       muted={isArchived}
@@ -279,9 +298,43 @@ function NameCell({ row }: { row: AgentListRow }) {
             </Tooltip>
           )}
           {isOwnedByMe && <CollectionTag>{t(($) => $.row.you)}</CollectionTag>}
+          {leaderLabel && <CollectionTag>{leaderLabel}</CollectionTag>}
+          {pathHints && pathHints.length > 1 && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={(event) => event.stopPropagation()}
+                    className="shrink-0 rounded-xs bg-muted px-1 text-micro font-medium leading-4 text-muted-foreground"
+                  >
+                    +{pathHints.length - 1}
+                  </button>
+                }
+              />
+              <TooltipContent>
+                {pathHints.map((hint) => (
+                  <div key={hint}>{hint}</div>
+                ))}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </>
       }
-      description={agent.description || undefined}
+      description={
+        pathHints?.[0] ?? (agent.description || undefined)
+      }
+    />
+  );
+}
+
+function renderAgentName(row: AgentExplorerAgentRow) {
+  return (
+    <NameCell
+      row={row.row}
+      pathHints={row.pathHints}
+      leaderLabel={row.leaderLabel}
+      depth={row.depth}
     />
   );
 }
@@ -472,6 +525,27 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
 
+  // Straight to the manual form: a duplicate already has every field decided,
+  // so the method chooser would be a step with nothing to choose.
+  const duplicateHref = useCallback(
+    (agent: Agent) =>
+      `${paths.newAgentManual()}?duplicate=${encodeURIComponent(agent.id)}`,
+    [paths],
+  );
+
+  // Labrastro fork (OL-1030): hierarchy view with custom + squad folders.
+  const agentFolders = useAgentsPageFolderExplorer({
+    wsId,
+    currentUserId: currentUser?.id ?? null,
+    isAdmin: isWorkspaceAdmin,
+    scope,
+    search,
+    filters,
+    duplicateHref,
+    renderAgentName,
+    onMoved: () => setSelectedIds(new Set()),
+  });
+
   // Scope counts come from the FULL set (filters never affect them).
   // Archived ignores the ownership lens (see the view store comment).
   const scopeCounts = useMemo<Record<AgentsScope, number>>(() => {
@@ -563,6 +637,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return filtered;
   }, [scopeRows, search, filters, sortField, sortDirection]);
 
+  // Labrastro fork (OL-1030, OL-1170): wrap the sorted rows with the visible
+  // in-place tree, or with every matching entry and its folder path hints.
+  const { organizeRows } = agentFolders;
+  const listModel = useMemo(() => organizeRows(rows), [rows, organizeRows]);
+
   const noMatchText = useMemo(() => {
     const query = search.trim();
     if (query) {
@@ -581,15 +660,15 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return null;
   }, [filters, scope, search, t]);
 
-  // Straight to the manual form: a duplicate already has every field decided,
-  // so the method chooser would be a step with nothing to choose.
-  const duplicateHref = useCallback(
-    (agent: Agent) =>
-      `${paths.newAgentManual()}?duplicate=${encodeURIComponent(agent.id)}`,
-    [paths],
-  );
-
-  const selectedRows = rows.filter((row) => selectedIds.has(row.agent.id));
+  const selectedRows = [
+    ...new Map(
+      listModel.rows.flatMap((listRow) =>
+        listRow.kind === "agent" && selectedIds.has(listRow.key)
+          ? [[listRow.row.agent.id, listRow.row] as const]
+          : [],
+      ),
+    ).values(),
+  ];
 
   const columns = useMemo<CollectionColumn<AgentListRow>[]>(
     () => [
@@ -673,6 +752,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     ],
     [t, locale],
   );
+  const { explorerColumns: toExplorerColumns } = agentFolders;
+  const explorerColumns = useMemo(
+    () => toExplorerColumns(columns),
+    [toExplorerColumns, columns],
+  );
 
   const sort: CollectionSort = {
     field: sortField,
@@ -682,7 +766,12 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     onDirectionChange: setSortDirection,
   };
 
-  const showEmpty = !listError && !isLoading && agents.length === 0;
+  const showEmpty =
+    !listError &&
+    !isLoading &&
+    !agentFolders.treeLoading &&
+    agents.length === 0 &&
+    !agentFolders.hasFolders;
   const hasNarrowing =
     countActiveFilterDimensions(filters) > 0 || search.trim() !== "";
   const resetNarrowing = () => {
@@ -753,6 +842,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         }
         actions={
           <>
+            {agentFolders.headerActions}
             <CollectionDisplayMenu
               columns={columns}
               hiddenColumns={hiddenColumns}
@@ -766,6 +856,8 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
           </>
         }
       />
+
+      {agentFolders.notice}
 
       {listError ? (
         <ListError listError={listError} onRetry={() => refetchList()} />
@@ -781,27 +873,25 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       ) : (
         <CollectionList
           label={scopeTitles[scope]}
-          columns={columns}
+          columns={explorerColumns}
           hiddenColumns={hiddenColumns}
-          rows={rows}
-          loading={isLoading || !listReady}
-          getRowId={(row) => row.agent.id}
-          getRowHref={(row) => paths.agentDetail(row.agent.id)}
-          getRowTitle={(row) => row.agent.name}
-          rowMenu={(row) => (
-            <AgentRowActions
-              agent={row.agent}
-              presence={row.presence}
-              canManage={row.canManage}
-              duplicateHref={duplicateHref(row.agent)}
-            />
-          )}
+          rows={listModel.rows}
+          loading={isLoading || agentFolders.treeLoading || !listReady}
+          getRowId={(row) => row.key}
+          getRowHref={(row) =>
+            row.kind === "agent" ? paths.agentDetail(row.row.agent.id) : null
+          }
+          getRowTitle={(row) =>
+            row.kind === "agent" ? row.row.agent.name : undefined
+          }
+          onRowOpen={agentFolders.onRowOpen}
+          rowMenu={agentFolders.rowMenu}
           sort={sort}
-          selection={{ selectedIds, onChange: setSelectedIds }}
+          selection={agentFolders.selection(selectedIds, setSelectedIds)}
           empty={
             <CollectionNoMatches
               title={t(($) => $.no_matches.title)}
-              description={noMatchText}
+              description={listModel.emptyMessage ?? noMatchText}
               onReset={resetNarrowing}
               hasFilters={countActiveFilterDimensions(filters) > 0}
               hasSearch={search.trim() !== ""}
@@ -815,8 +905,10 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         members={members}
         currentUserId={currentUser?.id ?? null}
         onClear={() => setSelectedIds(new Set())}
+        treeActions={agentFolders.treeActions}
       />
 
+      {agentFolders.dialogs}
     </div>
   );
 }

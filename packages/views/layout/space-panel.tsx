@@ -6,6 +6,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { useSidebar } from "@multica/ui/components/ui/sidebar";
 import { useAppShell } from "./app-shell-context";
 import { PanelResizeHandle } from "./panel-resize-handle";
+import { SpacePanelOpenProvider } from "./space-panel-open-context";
 import { AutopilotsPanel } from "./panels/autopilots-panel";
 import { ChatPeek, InboxPeek } from "./panels/list-space-peeks";
 import { NAV_COLUMN_MOTION_CLASS, NAV_PEEK_CLASS } from "./rail-styles";
@@ -52,7 +53,7 @@ export function SpacePanel() {
     navCollapsed && peekSpace && (hasPanel || peekSpace !== space) ? PEEKS[peekSpace] : undefined;
 
   return (
-    <>
+    <SpacePanelOpenProvider open={open}>
       <KeptRowsRelease />
       {hasPanel && (
         <aside
@@ -88,6 +89,6 @@ export function SpacePanel() {
           <Peek />
         </aside>
       )}
-    </>
+    </SpacePanelOpenProvider>
   );
 }

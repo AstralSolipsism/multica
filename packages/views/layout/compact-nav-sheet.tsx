@@ -14,6 +14,7 @@ import { useNavigation } from "../navigation";
 import { AppRail } from "./app-rail";
 import { useAppShell } from "./app-shell-context";
 import { SpacePanelContent } from "./space-panel";
+import { SpacePanelOpenProvider } from "./space-panel-open-context";
 
 /**
  * Below `md` the rail and the current space's panel move into one sheet,
@@ -51,7 +52,9 @@ export function CompactNavSheet({ globalActions = true }: { globalActions?: bool
         <AppRail globalActions={globalActions} />
         {hasPanel && (
           <div className="my-2 mr-2 flex w-[260px] min-w-0 flex-col overflow-hidden rounded-xl bg-page-canvas shadow-[var(--surface-shadow)] ring-1 ring-surface-border">
-            <SpacePanelContent space={shell?.space ?? null} />
+            <SpacePanelOpenProvider open={openMobile}>
+              <SpacePanelContent space={shell?.space ?? null} />
+            </SpacePanelOpenProvider>
           </div>
         )}
       </SheetContent>

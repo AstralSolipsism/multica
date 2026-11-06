@@ -250,10 +250,10 @@ function ProjectIssuesGroup({
  * Display settings for the whole Projects section: which projects it lists,
  * and how every expanded project lists its issues.
  */
-export function ProjectsSectionSettings({ wsId, className }: { wsId: string; className?: string }) {
+export function ProjectsSectionSettings({ wsId, enabled = true, className }: { wsId: string; enabled?: boolean; className?: string }) {
   const { t } = useT("layout");
-  const { projectSettings, issueSettings } = useSidebarProjectPrefs(wsId);
-  const update = useUpdateSidebarProjectPrefs(wsId);
+  const { projectSettings, issueSettings } = useSidebarProjectPrefs(wsId, enabled);
+  const update = useUpdateSidebarProjectPrefs(wsId, enabled);
   const changed =
     !sameSettings(projectSettings, DEFAULT_SIDEBAR_PROJECT_SETTINGS) ||
     !sameSettings(issueSettings, DEFAULT_SIDEBAR_ISSUE_SETTINGS);

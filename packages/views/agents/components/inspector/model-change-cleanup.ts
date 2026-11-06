@@ -1,3 +1,7 @@
+import {
+  hasAdaptThinkingCandidates,
+  THINKING_LEVEL_ADAPT,
+} from "@multica/core/agents";
 import type { RuntimeModel } from "@multica/core/types";
 import {
   findModelCapabilityEntry,
@@ -72,13 +76,15 @@ export function buildModelChangeUpdate(input: {
   );
   if (!entry) return update;
 
+  const levels = entry.thinking?.supported_levels ?? [];
   const thinkingDefault = needsThinkingDefault
     ? entry.thinking?.default_level
     : undefined;
 
-  const supportsThinking = (entry.thinking?.supported_levels ?? []).some(
-    (level) => level.value === input.thinkingLevel,
-  );
+  const supportsThinking =
+    input.thinkingLevel === THINKING_LEVEL_ADAPT
+      ? hasAdaptThinkingCandidates(levels)
+      : levels.some((level) => level.value === input.thinkingLevel);
   if (input.thinkingLevel && !supportsThinking) {
     update.thinking_level = thinkingDefault ?? "";
   } else if (!input.thinkingLevel && thinkingDefault) {

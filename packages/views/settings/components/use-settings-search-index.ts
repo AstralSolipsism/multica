@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useT } from "../../i18n";
 import type { SettingsSearchEntry } from "./settings-search";
 import { CHANNEL_INTEGRATIONS } from "./settings-navigation";
+import { useYouShouldKnowSearchEntries } from "../../you-should-know/settings/use-ysk-search-entries";
 import { browserNotificationSettingAvailable } from "./browser-notification-setting";
 
 const NOTIFICATION_GROUPS = [
@@ -33,6 +34,8 @@ export function useSettingsSearchIndex(
   pages: readonly SettingsSearchPage[],
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
+  // Fork (OL-187 §8): the personal YSK entry follows the workspace switch.
+  const yskEntries = useYouShouldKnowSearchEntries();
   return useMemo(() => {
     const visible = new Set(pages.map((page) => page.value));
     const rows: SettingsSearchIndexEntry[] = [
@@ -112,6 +115,7 @@ export function useSettingsSearchIndex(
             },
           ]
         : []),
+      ...yskEntries.personal,
       {
         tab: "tokens",
         title: t(($) => $.page.tabs.tokens),
@@ -142,6 +146,7 @@ export function useSettingsSearchIndex(
         anchor: "issue-prefix",
         title: t(($) => $.workspace.issue_prefix_label),
       },
+      ...yskEntries.workspace,
       { tab: "workspace", anchor: "leave", title: t(($) => $.workspace.leave_title) },
       { tab: "workspace", anchor: "delete", title: t(($) => $.workspace.delete_title) },
       { tab: "members", anchor: "invitations", title: t(($) => $.members.pending_label) },
@@ -230,5 +235,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t]);
+  }, [pages, t, yskEntries]);
 }

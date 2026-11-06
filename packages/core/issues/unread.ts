@@ -32,12 +32,16 @@ export async function refreshIssueUnread(qc: QueryClient, wsId: string) {
 }
 
 /** The viewer's unread mark on one issue, or `null` when it is read. */
-export function useIssueUnread(wsId: string, issueId: string): IssueUnread | null {
+export function useIssueUnread(wsId: string, issueId: string, enabled = true): IssueUnread | null {
   const select = useCallback(
     (items: IssueUnread[]) => items.find((item) => item.issue_id === issueId) ?? null,
     [issueId],
   );
-  const { data = null } = useQuery({ ...issueUnreadOptions(wsId), select, enabled: !!issueId });
+  const { data = null } = useQuery({
+    ...issueUnreadOptions(wsId),
+    select,
+    enabled: enabled && !!issueId,
+  });
   return data;
 }
 

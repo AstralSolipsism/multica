@@ -16,7 +16,12 @@ import type { Project } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { ProjectsSection } from "./work-tree";
 
-const apiMock = vi.hoisted(() => ({ putIssueViewPreference: vi.fn() }));
+const apiMock = vi.hoisted(() => ({
+  putIssueViewPreference: vi.fn(),
+  getProjectEngineering: vi.fn(),
+  listMembers: vi.fn(),
+}));
+const navigationMock = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("@multica/core/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@multica/core/api")>()),
   api: apiMock,
@@ -53,6 +58,7 @@ vi.mock("../../navigation", () => ({
       {children}
     </a>
   ),
+  useNavigation: () => navigationMock,
 }));
 vi.mock("../../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("@multica/ui/components/common/tooltip-hint", () => ({
@@ -72,6 +78,12 @@ beforeEach(() => {
   apiMock.putIssueViewPreference
     .mockReset()
     .mockImplementation(async ({ prefs }: { prefs: Record<string, unknown> }) => savedPrefs(prefs));
+  apiMock.getProjectEngineering.mockReset().mockResolvedValue({
+    engineering: { enabled: true },
+    chapters: [],
+  });
+  apiMock.listMembers.mockReset().mockResolvedValue([{ user_id: "u1", role: "member" }]);
+  navigationMock.push.mockReset();
 });
 
 const savedPrefs = (prefs: Record<string, unknown>): IssueViewPreference => ({
@@ -136,6 +148,18 @@ describe("ProjectsSection", () => {
     renderSection();
     fireEvent.click(screen.getByRole("button", { name: "New issue in Mobile" }));
     expect(openCreateIssue).toHaveBeenCalledWith({ project_id: "p2" });
+  });
+
+  it("loads engineering only for an open project menu and opens its baseline", async () => {
+    renderSection();
+    expect(apiMock.getProjectEngineering).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+    const item = await screen.findByRole("menuitem", { name: "Open engineering baseline" });
+    expect(apiMock.getProjectEngineering).toHaveBeenCalledWith("ws-1", "p2");
+
+    fireEvent.click(item);
+    expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
   });
 
   it("collapses from the section label", () => {

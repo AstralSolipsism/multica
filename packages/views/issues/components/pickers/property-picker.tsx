@@ -43,7 +43,7 @@ export function PropertyPicker({
   onOpenChange,
   trigger,
   triggerRender,
-  nativeButton = true,
+  nativeButton: nativeButtonProp,
   width = "w-48",
   align = "end",
   side = "bottom",
@@ -91,6 +91,20 @@ export function PropertyPicker({
   // on top of) the popover that just opened on click.
   const tooltipOpen = !!tooltip && tooltipHover && !open;
 
+  // Base UI's trigger expects a real <button> in `render` unless
+  // `nativeButton={false}` opts into the non-native path (role="button" +
+  // synthesized Enter/Space). Some `triggerRender` callers pass a plain host
+  // element instead — the DAG selection node and the shared context menu
+  // anchor their menu-opened pickers on invisible spans, and the label
+  // picker wraps its chips in a div — so any host element other than
+  // <button> takes the non-native path. Component triggers (PillButton,
+  // Button, ClearablePillButton) forward the merged props onto a real
+  // <button> and keep the default.
+  const nativeButton = nativeButtonProp ?? (
+    typeof triggerRender?.type === "string" && triggerRender.type !== "button"
+      ? false
+      : true
+  );
   const popoverTrigger = (
     <PopoverTrigger
       nativeButton={nativeButton}

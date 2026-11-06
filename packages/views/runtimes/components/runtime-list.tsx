@@ -63,6 +63,7 @@ import {
   pctChange,
 } from "../utils";
 import { runtimeRowLabel } from "./runtime-machines";
+import { RuntimeQuotaCell } from "./runtime-quota-cell";
 import {
   customRuntimeRegistrationFailure,
   isDisabledCustomRuntime,
@@ -558,6 +559,7 @@ export function RuntimeList({
   machineTitle?: string;
 }) {
   const { t } = useT("runtimes");
+  const { t: tQuota } = useT("quota");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const user = useAuthStore((s) => s.user);
@@ -679,6 +681,17 @@ export function RuntimeList({
         ),
     },
     {
+      key: "quota",
+      header: tQuota(($) => $.column_label),
+      width: 120,
+      cell: (row) =>
+        isPendingCustomRuntime(row.runtime) ? (
+          <CollectionEmptyValue />
+        ) : (
+          <RuntimeQuotaCell runtime={row.runtime} now={now} />
+        ),
+    },
+    {
       key: "cli",
       header: t(($) => $.list.col_cli),
       width: 112,
@@ -699,6 +712,7 @@ export function RuntimeList({
       rows={rows}
       getRowId={(row) => row.runtime.id}
       getRowHref={detailHrefOf}
+      getRowClassName={() => "h-auto min-h-9 py-1.5"}
       // The ⋯ slot only earns its width when some row can show the menu.
       rowMenu={
         rows.some((row) => row.canDelete)

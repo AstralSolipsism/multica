@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type {
   Issue,
@@ -30,6 +30,9 @@ import {
 } from "@multica/core/issues/stores/filter-tree";
 import type { IssueSortParam } from "@multica/core/issues/queries";
 import { issueTableFacetsOptions } from "@multica/core/issues/queries";
+import { supportsDagScope, useDagSurfaceGraph } from "@multica/core/issues/dag";
+import { useStableByContent } from "./use-stable-by-content";
+import { VIEW_MODE_CAPABILITIES } from "@multica/core/issues/surface/view-mode";
 import {
   buildIssueSurfaceQueryPlan,
   type IssueSurfaceQueryPlan,
@@ -89,6 +92,11 @@ export interface IssueSurfaceController {
   createDefaults: IssueCreateDefaults;
   viewMode: IssueSurfaceMode;
   allowGantt: boolean;
+  /** The surface declared DAG mode and the scope supports the graph query. */
+  allowDag: boolean;
+  /** Complete-graph query state for DAG mode; only active while dag is the
+   *  effective mode. `isPending` is false when dag is not selected. */
+  dagGraph: ReturnType<typeof useDagSurfaceGraph>["graph"];
   surfaceIssues: Issue[];
   projectIssues: Issue[];
   issues: Issue[];
@@ -204,25 +212,6 @@ const EMPTY_LIST: never[] = [];
 const TABLE_NEGATE_FIELD: Record<NegatableFilterDimension, IssueTableNegatableFilter> =
   FILTER_DIMENSION_TABLE_FIELD;
 
-/**
- * Pin a derived value's identity to its CONTENT.
- *
- * `tableQuerySpec` is rebuilt from 17 dependencies, so any one of them losing
- * referential stability hands every consumer a new object even though the query
- * it describes is unchanged. Consumers use it as a memo dependency and, in the
- * Table's case, as the source of a `useQueries` list — so a new-but-equal spec
- * rebuilt that list on every render.
- *
- * Hashed with TanStack's own `hashKey` rather than `JSON.stringify` so this
- * agrees exactly with how the same spec is hashed into a `queryKey`: object
- * keys are sorted, so two specs that resolve to one query also resolve to one
- * identity here.
- */
-function useStableByContent<T>(value: T): T {
-  const contentKey = hashKey([value]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- identity follows the content hash, not the reference
-  return useMemo(() => value, [contentKey]);
-}
 
 export function useIssueSurfaceController({
   scope,
@@ -405,6 +394,7 @@ export function useIssueSurfaceController({
       : grouping;
   const usesGantt = effectiveViewMode === "gantt" && !!projectId;
   const usesTable = effectiveViewMode === "table";
+  const usesDag = VIEW_MODE_CAPABILITIES[effectiveViewMode].graph && supportsDagScope(scope);
   const activeSearch = usesTable ? tableSearch : search;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
   const usesServerStatusSurface =
@@ -652,6 +642,8 @@ export function useIssueSurfaceController({
   // them for a query that did not change.
   const tableQuerySpec = useStableByContent(derivedTableQuerySpec);
 
+  const dagSurface = useDagSurfaceGraph(wsId, scope, effectiveViewMode, tableQuerySpec, statusFilterUnresolved);
+
   const [activeTableFacet, setActiveTableFacet] =
     useState<IssueTableFacetSpec | null>(null);
   const requestedFacets = useMemo<IssueTableFacetSpec[]>(() => {
@@ -867,6 +859,7 @@ export function useIssueSurfaceController({
     projectId,
     usesGantt,
     usesTable,
+    usesDag,
     serverStatusBranches,
     serverGroupBranches,
     ganttShowCompleted,
@@ -992,7 +985,10 @@ export function useIssueSurfaceController({
     createDefaults: resolvedCreateDefaults,
     viewMode: effectiveViewMode,
     allowGantt: allowedModes.has("gantt") && !!projectId,
+    allowDag: allowedModes.has("dag") && supportsDagScope(scope),
+    dagGraph: dagSurface.graph,
     ...surfaceData,
+    isRefreshing: surfaceData.isRefreshing || dagSurface.isRefreshing,
     isLoading: data.isLoading || workingFilterPending,
     workingAgents,
     hasActiveFilters,
@@ -1033,7 +1029,7 @@ export function useIssueSurfaceController({
         ? tableFacetsQuery.data
         : undefined,
     facetCountsExact:
-      !usesTable && !usesServerStatusSurface && !usesServerGroupSurface,
+      !usesTable && !usesServerStatusSurface && !usesServerGroupSurface && !usesDag,
     setActiveTableFacet: requestActiveTableFacet,
     setTableSearch,
     openCreateIssue,

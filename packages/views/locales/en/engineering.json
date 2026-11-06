@@ -192,6 +192,7 @@
     "reject": "Return for changes",
     "adopt": "Adopt",
     "enable": "Enable overview",
+    "open_baseline": "Open engineering baseline",
     "editChapter": "Edit chapter",
     "initializeChapter": "Initialize chapter",
     "addModule": "Add module chapter",

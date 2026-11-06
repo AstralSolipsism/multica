@@ -87,7 +87,7 @@ describe("IssueViewHeader copy link", () => {
     renderWithI18n(
       <NavigationProvider value={adapter}>
         <ViewStoreProvider store={getIssueSurfaceViewStore("header-copy-link")}>
-          <IssueViewHeader controller={controller} base={{ kind }} />
+          <IssueViewHeader controller={controller} base={{ kind }} tipAnchorScopeIssues={[]} />
         </ViewStoreProvider>
       </NavigationProvider>,
     );

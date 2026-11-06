@@ -16,6 +16,7 @@ import { useNavigation } from "../../navigation";
 import { IssueContextMenuProvider } from "../../issues/actions";
 import { useT } from "../../i18n";
 import { PanelBody, PanelHeader, isPathWithin } from "../panel-nav";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 import { PinnedSection, usePanelPins } from "./pinned-section";
 import { useKeptActiveItem } from "./sidebar-tree";
 import { ProjectsSection, useIssueIdInTree } from "./work-tree";
@@ -66,10 +67,12 @@ export function WorkPanel() {
   const { pathname } = useNavigation();
   const wsId = useCurrentWorkspace()?.id;
   const userId = useAuthStore((s) => s.user?.id);
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
 
   const { data: projects = EMPTY_PROJECTS } = useQuery({
     ...projectListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: open && !collapsed && !!wsId,
   });
   // Cache read only: the detail page owns resolving the route's issue.
   const issueSegment = routeSegment(pathname, p.issues());
@@ -93,7 +96,7 @@ export function WorkPanel() {
     !clickedIssue.fromPins &&
     !!currentIssueId &&
     (clickedIssue.segment === currentIssueId || clickedIssue.segment === currentIssue?.identifier);
-  const pins = usePanelPins(wsId, userId, pathname, treeClaimsIssue ? null : currentIssueId);
+  const pins = usePanelPins(wsId, userId, pathname, treeClaimsIssue ? null : currentIssueId, open);
   const rememberClickedIssue = (event: React.MouseEvent) => {
     const link = (event.target as HTMLElement).closest("a[href]");
     if (!link) return;
@@ -111,7 +114,7 @@ export function WorkPanel() {
     if (revealProjectId) setExpanded(projectSidebarSource(revealProjectId), true);
   }, [revealProjectId, setExpanded]);
 
-  const { projectSettings, projectOrder } = useSidebarProjectPrefs(wsId ?? "");
+  const { projectSettings, projectOrder } = useSidebarProjectPrefs(wsId ?? "", open && !collapsed);
   const filteredProjects = useMemo(
     () => sidebarProjects(projects, projectSettings, projectOrder, userId),
     [projects, projectSettings, projectOrder, userId],

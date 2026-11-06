@@ -7,15 +7,12 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { Bot, CircleUser, Copy, EyeOff, Layers, Link2, ListTodo, MoreHorizontal, Pencil, Plus, Trash2 } from "@multica/ui/icons";
+import { Bot, CircleUser, Copy, EyeOff, Layers, Link2, ListTodo, Pencil, Plus, Trash2 } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import type { IssueView } from "@multica/core/api/schemas";
 import { isMyAgentsSearch, useWorkspacePaths } from "@multica/core/paths";
@@ -53,17 +50,15 @@ import { useBuiltinViewNavigation } from "../../issue-views/builtin-views";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { PANEL_ROW_CLASS, PanelCount, PanelLink, PanelList, PanelSection, isPathWithin, panelRowStateClass } from "../panel-nav";
-import { SidebarIssueList, TREE_ROW_BUTTON_CLASS, TreeRow } from "./sidebar-tree";
+import { useSpacePanelOpen } from "../space-panel-open-context";
+import { RowMenu } from "./row-menu";
+import { SidebarIssueList, TreeRow } from "./sidebar-tree";
 
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 const EMPTY_VIEWS: IssueView[] = [];
 const WORKSPACE_SCOPE = { scope_type: "workspace" } as const;
 const MY_SCOPE = { scope_type: "my" } as const;
 const NO_SEARCH = new URLSearchParams();
-const ROW_MENU_CLASS = cn(
-  TREE_ROW_BUTTON_CLASS,
-  "text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[popup-open]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-);
 
 interface ViewsSectionProps {
   wsId: string;
@@ -87,12 +82,17 @@ export function ViewsSection({
 }: ViewsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
-  const actions = useIssueViewActions();
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
+  const enabled = open && !collapsed;
+  const actions = useIssueViewActions({ enabled });
   const { items, reorder } = actions.sidebar;
-  const { data: allViews = EMPTY_VIEWS } = useQuery(issueViewEverywhereOptions(wsId));
+  const { data: allViews = EMPTY_VIEWS } = useQuery({
+    ...issueViewEverywhereOptions(wsId),
+    enabled,
+  });
   const [deleteTarget, setDeleteTarget] = useState<IssueView | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
   const setCollapsed = useSidebarTreeStore((s) => s.setViewsCollapsed);
 
   const onDragEnd = useCallback(
@@ -227,39 +227,6 @@ function SortableViewRow({ id, children }: { id: string; children: (drag: DragBi
   );
 }
 
-/** "…" on hover, and the same menu on right-click. */
-function RowMenu({
-  label,
-  open,
-  onOpenChange,
-  children,
-}: {
-  label: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={label}
-            onPointerDown={(event) => event.stopPropagation()}
-            className={ROW_MENU_CLASS}
-          />
-        }
-      >
-        <MoreHorizontal className="size-3.5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="right" className="w-auto min-w-48">
-        {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 const BUILTIN_ICON: Record<BuiltinViewKey, React.ReactNode> = {
   my_issues: <CircleUser className="size-4 shrink-0" />,
   my_agents: <Bot className="size-4 shrink-0" />,
@@ -317,8 +284,10 @@ function BuiltinViewRow({
   const source = builtinSidebarSource(builtin);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const statusCatalog = useIssueStatuses(wsId);
-  const { issueSettings } = useSidebarProjectPrefs(wsId);
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
+  const statusCatalog = useIssueStatuses(wsId, open && !collapsed);
+  const { issueSettings } = useSidebarProjectPrefs(wsId, open && !collapsed);
   const request = statusCatalog.isLoaded
     ? builtinSidebarRequest(builtin, myIssuesRelationFromScope(myScope), issueSettings, statusCatalog.statuses)
     : undefined;

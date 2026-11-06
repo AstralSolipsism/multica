@@ -40,10 +40,9 @@ describe("DAG header controls", () => {
   it("switches to Graph and offers neither ordering nor direction controls", async () => {
     const user = userEvent.setup();
     const { store } = renderControls(true);
-    await user.click(screen.getByRole("button", { name: "List" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Graph" }));
-    expect(store.getState().viewMode).toBe("dag");
     await user.click(screen.getByRole("button", { name: "Display" }));
+    await user.click(screen.getByRole("button", { name: "Graph" }));
+    expect(store.getState().viewMode).toBe("dag");
     expect(screen.queryByRole("combobox", { name: "Ordering" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Grouping" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Direction" })).toBeNull();
@@ -57,11 +56,9 @@ describe("DAG header controls", () => {
   it("does not offer Graph on a surface that cannot render it", async () => {
     const user = userEvent.setup();
     const { store } = renderControls(false);
-    await user.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.queryByRole("menuitemradio", { name: "Graph" })).toBeNull();
-    expect(store.getState().viewMode).toBe("list");
-    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Display" }));
+    expect(screen.queryByRole("button", { name: "Graph" })).toBeNull();
+    expect(store.getState().viewMode).toBe("list");
     expect(screen.queryByRole("button", { name: "Cost" })).toBeNull();
   });
 });

@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ApiError } from "@multica/core/api";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
+import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
+import enLayout from "../../locales/en/layout.json";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 
 // MUL-4155: batch status changes must apply directly (no run-confirm modal),
@@ -43,7 +45,12 @@ vi.mock("@multica/core/modals", () => ({
 }));
 
 vi.mock("../../i18n", () => ({
-  useT: () => ({ t: (selector: (labels: typeof enIssues) => string) => selector(enIssues) }),
+  useT: (namespace: string) => ({
+    t: (selector: (labels: unknown) => string) =>
+      selector(
+        namespace === "common" ? enCommon : namespace === "layout" ? enLayout : enIssues,
+      ),
+  }),
 }));
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: mockToast }));

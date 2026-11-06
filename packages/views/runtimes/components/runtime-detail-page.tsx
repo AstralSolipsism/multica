@@ -54,6 +54,7 @@ import {
   machineHasCliInfo,
   machineUpdateRuntime,
 } from "./machine-cli-section";
+import { HostMetricsInline } from "./host-metrics-bars";
 import { isQoderLocator, QoderDetailPage } from "./qoder-detail-page";
 import {
   HealthIcon,
@@ -426,6 +427,7 @@ function MachineProperties({
 }) {
   const { t } = useT("runtimes");
   const { t: tLayout } = useT("layout");
+  const { t: tForkUi } = useT("fork-ui");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
   const ownerId = machine.runtimes[0]?.owner_id ?? null;
@@ -483,6 +485,15 @@ function MachineProperties({
             : t(($) => $.machine.metrics.workload_idle)}
         </span>
       </ObjectProperty>
+      {(machine.health === "online" || machine.health === "recently_lost") && (
+        <ObjectProperty label={tForkUi(($) => $.runtimes.machine.metrics.host)}>
+          <HostMetricsInline
+            cpuPercent={machine.cpuPercent}
+            memoryPercent={machine.memoryPercent}
+            stale={machine.systemStatsStale}
+          />
+        </ObjectProperty>
+      )}
       {daemonShort && (
         <ObjectProperty label={t(($) => $.detail.fact_daemon_id)}>
           <span className="truncate font-mono">{daemonShort}</span>

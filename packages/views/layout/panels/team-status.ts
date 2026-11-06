@@ -19,10 +19,10 @@ export function isAgentStuck(detail: AgentPresenceDetail | undefined): boolean {
 }
 
 /** Live (non-archived) agents bucketed by what the team panel surfaces. */
-export function useTeamAgentStatus(wsId: string | undefined) {
+export function useTeamAgentStatus(wsId: string | undefined, enabled = true) {
   const { data: agents = EMPTY_AGENTS } = useQuery({
     ...agentListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const { byAgent } = useWorkspacePresenceMap(wsId);
   return useMemo(() => {

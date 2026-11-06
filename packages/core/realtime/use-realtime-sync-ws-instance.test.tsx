@@ -6,6 +6,10 @@ import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
+import { setApiInstance, type ApiClient } from "../api";
+import { IssueGraphSchema, type IssueGraph } from "../api/issue-graph-schemas";
+import referenceGraph from "../api/testdata/issue-graph.json";
+import { issueGraphOptions } from "../issues/graph";
 import { EMPTY_ISSUE_VIEW_PREFERENCE } from "../api/schemas";
 import { defaultStorage } from "../platform/storage";
 import { issueKeys } from "../issues/queries";
@@ -21,8 +25,6 @@ import {
   markWorkspaceDeletePending,
   unmarkWorkspaceDeletePending,
 } from "../workspace/pending-delete";
-import { setApiInstance } from "../api";
-import type { ApiClient } from "../api/client";
 import type { IssueTableQuerySpec } from "../types";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { forgetLocalSearchIndex } from "../search-index/instance";
@@ -130,16 +132,13 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (19 workspace-scoped [incl. property definitions, workflows, saved views
-    // and view preferences] + 6 per-issue prefixes + the workspace
-    // working-agents projection + 5 per-chat prefixes + 1 workspaceKeys.list()
-    // + 1 cross-workspace inbox unread summary + 1 issue unread marks = 35
-    // calls).
+    // Includes both Fork dependency recovery and upstream issue-unread,
+    // saved-view and view-preference invalidations (36 calls total).
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(35));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(36));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -662,6 +661,90 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
   });
 });
 
+describe("useRealtimeSync — graph snapshot invalidation", () => {
+  it.each(["task:completed", "reconnect"])("supersedes the first graph read on %s", async (event) => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const before = IssueGraphSchema.parse(referenceGraph);
+    const after = { ...before, snapshotId: "after-event" };
+    const signals: AbortSignal[] = [];
+    let resolveFirst!: (value: IssueGraph) => void;
+    const getIssueGraph = vi.fn((_ws: string, _query: unknown, { signal }: { signal: AbortSignal }) => {
+      signals.push(signal);
+      if (signals.length === 1) return new Promise<IssueGraph>((resolve) => { resolveFirst = resolve; });
+      return Promise.resolve(after);
+    });
+    setApiInstance({ getIssueGraph } as unknown as ApiClient);
+    const ws = createMockWs();
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    const observer = new QueryObserver(qc, issueGraphOptions("ws-1", {
+      scope: { kind: "workspace" }, filters: {}, sort: { field: "position", direction: "asc" },
+    }));
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+      if (event === "reconnect") void vi.mocked(ws.onReconnect).mock.calls[0]![0]();
+      else vi.mocked(ws.onAny).mock.calls[0]![0]({ type: event, payload: {} } as never);
+      // Leave the first snapshot in flight until the actual event handler runs,
+      // including the task-prefix debounce. No graph data is pre-seeded.
+      await vi.waitFor(() => expect(getIssueGraph).toHaveBeenCalledTimes(2));
+      expect(signals[0]!.aborted).toBe(true);
+      resolveFirst(before);
+      await vi.waitFor(() => expect(observer.getCurrentResult().data?.snapshotId).toBe(after.snapshotId));
+    } finally {
+      unsubscribe();
+      unmount();
+      qc.clear();
+    }
+  });
+
+  it("refreshes committed changes and reconnects without patching topology", () => {
+    vi.useFakeTimers();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ws = createMockWs();
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), {
+      wrapper: createWrapper(qc),
+    });
+    const key = [...issueKeys.graphAll("ws-1"), "reference"];
+    const otherKey = [...issueKeys.graphAll("ws-2"), "reference"];
+    const snapshot = { snapshotId: "before", nodes: [{ id: "issue-1" }] };
+    const onAny = vi.mocked(ws.onAny).mock.calls[0]![0];
+    const emit = (event: string, payload: unknown) => {
+      const handler = vi.mocked(ws.on).mock.calls.find(([name]) => name === event)?.[1];
+      expect(handler).toBeDefined();
+      (handler as (payload: unknown) => void)(payload);
+    };
+    try {
+      const changes = [
+        // Compound dependency writes also publish issue:updated.
+        () => emit("issue:updated", { issue: { id: "issue-1", revision: 9, parent_issue_id: "new-parent", project_id: "new-project" } }),
+        () => emit("property:updated", {}),
+        () => emit("issue_attachments:changed", { issue_id: "issue-1", issue_revision: 10 }),
+        () => emit("comment:created", { comment: { issue_id: "issue-1" }, issue_revision: 11 }),
+        ...["project:updated", "issue_status:changed", "member:removed", "task:dispatch", "task:completed"].map(
+          (type) => () => { onAny({ type, payload: {} } as never); vi.advanceTimersByTime(100); },
+        ),
+        () => { void vi.mocked(ws.onReconnect).mock.calls[0]![0](); },
+      ];
+      for (const [index, change] of changes.entries()) {
+        qc.setQueryData(key, snapshot);
+        qc.setQueryData(otherKey, snapshot);
+        change();
+        expect(qc.getQueryState(key)?.isInvalidated, `graph event ${index}`).toBe(true);
+        expect(qc.getQueryData(key)).toBe(snapshot);
+        expect(qc.getQueryState(otherKey)?.isInvalidated).toBe(false);
+      }
+      qc.setQueryData(key, snapshot);
+      onAny({ type: "task:message", payload: {} } as never);
+      vi.advanceTimersByTime(100);
+      expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+    } finally {
+      unmount();
+      qc.clear();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("useRealtimeSync — workspace:deleted self-initiated suppression", () => {
   let qc: QueryClient;
   let stores: RealtimeSyncStores;
@@ -747,4 +830,161 @@ describe("useRealtimeSync — member:removed", () => {
     // Let the relocate lookup settle before the test tears down.
     await waitFor(() => expect(qc.getQueryData(workspaceKeys.list())).toEqual([]));
   });
+});
+
+
+it("invalidates card usage only in the active workspace on reconnect", () => {
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  const key = issueKeys.workspaceUsage("ws-1");
+  const other = issueKeys.workspaceUsage("ws-other");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    qc.setQueryData(key, {});
+    qc.setQueryData(other, {});
+    void vi.mocked(ws.onReconnect).mock.calls[0]![0]();
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(other)?.isInvalidated).toBe(false);
+  } finally { unmount(); qc.clear(); }
+});
+
+it("does not invalidate global queries on task progress", () => {
+  vi.useFakeTimers();
+  vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  const invalidate = vi.spyOn(qc, "invalidateQueries");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    invalidate.mockClear();
+    vi.mocked(ws.onAny).mock.calls[0]![0]({ type: "task:progress", payload: {} } as never);
+    vi.advanceTimersByTime(2_000);
+    expect(invalidate).not.toHaveBeenCalled();
+  } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+});
+
+const taskServiceStatusAgent = {
+  id: "agent-1",
+  workspace_id: "ws-1",
+  runtime_id: "runtime-1",
+  name: "One",
+  description: "Agent one",
+  avatar_url: "https://objects.example.test/agent-1.png",
+  runtime_mode: "local",
+  runtime_config: { example: "raw" },
+  visibility: "private",
+  status: "working",
+  max_concurrent_tasks: 4,
+  owner_id: "user-1",
+  skills: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-02T00:00:00Z",
+  archived_at: null,
+  archived_by: null,
+};
+
+it.each(["task-service", "reconciliation"])(
+  "patches a status-only %s broadcast without invalidating the agent list",
+  (shape) => {
+    vi.useFakeTimers();
+    vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+    const qc = new QueryClient();
+    const ws = createMockWs();
+    const agentsKey = workspaceKeys.agents("ws-1");
+    const detailKey = workspaceKeys.agent("ws-1", "agent-1");
+    qc.setQueryData(agentsKey, [{
+      id: "agent-1",
+      name: "One",
+      status: "idle",
+      avatar_url: "/api/avatars/signature/agent-1.png",
+      runtime_config: { example: "masked" },
+      runtime_bound: true,
+      skills: [{ id: "skill-1" }],
+    }]);
+    qc.setQueryData(detailKey, { id: "agent-1", name: "One", status: "idle" });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    try {
+      invalidate.mockClear();
+      vi.mocked(ws.onAny).mock.calls[0]![0]({
+        type: "agent:status",
+        payload: shape === "task-service"
+          ? { agent: taskServiceStatusAgent }
+          : { agent_id: "agent-1", status: "working" },
+      } as never);
+      vi.advanceTimersByTime(100);
+
+      expect(qc.getQueryData(agentsKey)).toEqual([{
+        id: "agent-1",
+        name: "One",
+        status: "working",
+        avatar_url: "/api/avatars/signature/agent-1.png",
+        runtime_config: { example: "masked" },
+        runtime_bound: true,
+        skills: [{ id: "skill-1" }],
+      }]);
+      expect(qc.getQueryData(detailKey)).toEqual({ id: "agent-1", name: "One", status: "working" });
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: agentsKey });
+    } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+  },
+);
+
+it("keeps the generic refresh for a full agent update that also carries status", () => {
+  vi.useFakeTimers();
+  vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  const agentsKey = workspaceKeys.agents("ws-1");
+  qc.setQueryData(agentsKey, [{ id: "agent-1", name: "Before", status: "idle", runtime_bound: true }]);
+  const invalidate = vi.spyOn(qc, "invalidateQueries");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    invalidate.mockClear();
+    vi.mocked(ws.onAny).mock.calls[0]![0]({
+      type: "agent:status",
+      payload: { agent: { id: "agent-1", name: "After", status: "working", runtime_bound: true } },
+    } as never);
+    vi.advanceTimersByTime(100);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: agentsKey });
+  } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+});
+
+it("coalesces folder and squad refreshes for a burst of status patches", () => {
+  vi.useFakeTimers();
+  vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  qc.setQueryData(workspaceKeys.agents("ws-1"), [{ id: "agent-1", status: "idle" }]);
+  const invalidate = vi.spyOn(qc, "invalidateQueries");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    invalidate.mockClear();
+    for (let i = 0; i < 5; i++) {
+      vi.mocked(ws.onAny).mock.calls[0]![0]({
+        type: "agent:status",
+        payload: { agent: { id: "agent-1", status: i % 2 === 0 ? "working" : "idle" } },
+      } as never);
+    }
+    expect(invalidate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+  } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+});
+
+it("keeps the generic refresh for agent status events without a status patch", () => {
+  vi.useFakeTimers();
+  vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  const invalidate = vi.spyOn(qc, "invalidateQueries");
+  const { unmount } = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+  try {
+    invalidate.mockClear();
+    vi.mocked(ws.onAny).mock.calls[0]![0]({
+      type: "agent:status",
+      payload: { agent_id: "agent-1", skills: [] },
+    } as never);
+    vi.advanceTimersByTime(100);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: workspaceKeys.agents("ws-1") });
+  } finally { unmount(); qc.clear(); vi.useRealTimers(); }
 });

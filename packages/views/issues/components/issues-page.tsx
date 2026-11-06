@@ -20,9 +20,15 @@ export function IssuesPage() {
     <div className="flex flex-1 min-h-0 flex-col">
       <IssueSurface
         scope={{ type: "workspace", actorKind: scope }}
-        modes={["board", "list", "table", "swimlane"]}
+        modes={["board", "list", "table", "swimlane", "dag"]}
         batchToolbar="list"
-        renderHeader={({ controller }) => <IssueViewHeader controller={controller} base={WORKSPACE_BASE} />}
+        renderHeader={({ controller, summaryScopeIssues }) => (
+          <IssueViewHeader
+            controller={controller}
+            base={WORKSPACE_BASE}
+            tipAnchorScopeIssues={summaryScopeIssues}
+          />
+        )}
         renderEmpty={({ controller }) => (
           <CollectionPageState
             icon={ListTodo}

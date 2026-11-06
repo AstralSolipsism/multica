@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -9,6 +10,10 @@ import {
 } from "@multica/ui/components/ui/hover-card";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { WorkingAgentSummary } from "@multica/core/types";
+import type {
+  TipAnchorDescriptor,
+  TipAnchorScope,
+} from "@multica/core/you-should-know/anchors";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { useT } from "../../i18n";
 
@@ -18,6 +23,10 @@ interface WorkspaceAgentWorkingChipProps {
   /** Agents working inside the surface this header belongs to, already narrowed
    *  by its scope and every active filter. `undefined` = not resolved yet. */
   agents: readonly WorkingAgentSummary[] | undefined;
+  /** You-should-know summary anchor scope (OL-193): the surface's loaded
+   *  issues as id → identifier, memoized by the header. When set, the avatar
+   *  stack registers as a `summary`-level anchor while agents are working. */
+  tipAnchorScope?: TipAnchorScope;
   /** Avatars and the number only, for a header that has run out of room. */
   compact?: boolean;
 }
@@ -146,11 +155,21 @@ export function WorkspaceAgentWorkingChip({
   value,
   onToggle,
   agents,
+  tipAnchorScope,
   compact = false,
 }: WorkspaceAgentWorkingChipProps) {
   const { t } = useT("issues");
   const activity = chipActivity(agents);
   const agentIds = agents?.map((agent) => agent.id) ?? [];
+  // YSK summary anchor (OL-193): registers only while agents are working and
+  // the header supplied a scope. Memoized — descriptors must be stable.
+  const tipAnchor = useMemo<TipAnchorDescriptor | undefined>(
+    () =>
+      activity === "some" && tipAnchorScope
+        ? { level: "summary", scope: tipAnchorScope }
+        : undefined,
+    [activity, tipAnchorScope],
+  );
   const label =
     activity === "unknown"
       ? t(($) => $.agent_activity.chip_agents_working_unknown)
@@ -167,7 +186,12 @@ export function WorkspaceAgentWorkingChip({
       aria-label={label}
     >
       {activity === "some" && (
-        <AgentAvatarStack agentIds={agentIds} size="sm" max={3} />
+        <AgentAvatarStack
+          agentIds={agentIds}
+          size="sm"
+          max={3}
+          tipAnchor={tipAnchor}
+        />
       )}
       <span className={compact ? "tabular-nums" : "tabular-nums md:hidden @max-3xl/issue-header:inline"}>
         {activity === "unknown" ? "—" : agentIds.length}
