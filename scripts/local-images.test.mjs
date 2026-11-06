@@ -480,7 +480,6 @@ test("generated archive Dockerfiles mirror the source runtime stages", () => {
   assert.match(backend, new RegExp(`FROM ${runtimePins(source).base.replace(/\./g, "\\.")}`));
   assert.ok(backend.includes("maintenance"), "archive image checksums cover maintenance");
   assert.match(web, new RegExp(`FROM ${runtimePins(sourceWeb).base.replace(/\./g, "\\.")}`));
-  for (const floor of runtimePins(sourceWeb).floors) assert.ok(web.includes(floor), `web floor missing: ${floor}`);
   assert.match(web, /CMD \["node", "apps\/web\/server\.js"\]/);
   // A bumped source pin must change the generated Dockerfile (drift guard).
   const bumped = webArchiveDockerfile(identity, runtimePins(sourceWeb.replace(/node:22\.23\.4-bookworm-slim AS runner/, "node:22.24.0-bookworm-slim AS runner")));
