@@ -112,8 +112,6 @@ interface DynamicBlockProps {
    * for previews the frame must measure (mermaid).
    */
   bodyHeight?: number | null;
-  /** Host-owned controls outside the untrusted preview and its collapse clip. */
-  footer?: ReactNode;
   className?: string;
 }
 
@@ -128,7 +126,6 @@ export function DynamicBlock({
   fullscreenButtonRef,
   preview,
   bodyHeight,
-  footer,
   className,
 }: DynamicBlockProps) {
   const { t } = useT("editor");
@@ -300,7 +297,6 @@ export function DynamicBlock({
           />
         </SelfCollapsingBody>
       </TabsContent>
-      {footer}
     </Tabs>
   );
 }
