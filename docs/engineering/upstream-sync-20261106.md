@@ -115,7 +115,7 @@ gofmt 豁免源更新为完整 v0.8.0 tag SHA；11 个历史文件的 blob 均�
 
 ## Stage 4 — OL-1255：v0.8.1 增量融合
 
-本阶段以 Stage 3 已交付的 `2623fc06e11e08356ad399af8856164f4d2035c6` 为第一父，正式 tag `v0.8.1` / `b1ea927def6490c43bedff537b6f4ed9a47fa828` 为第二父执行 `--no-ff` 合并，未 rebase，也未重复 cherry-pick #9914 / #9906。交付仍推往 `AstralSolipsism/multica` 的 `sync/v0.8.0-ol-1234`，不创建独立 PR；Stage 5 承接保留 E2E、跨家族双审和发布门禁。
+本阶段以 Stage 3 已交付的 `2623fc06e11e08356ad399af8856164f4d2035c6` 为第一父，正式 tag `v0.8.1` / `b1ea927def6490c43bedff537b6f4ed9a47fa828` 为第二父执行 `--no-ff` 合并，合并提交为 `ed6c70ab547823a27a85b77fa17710aa7c288290`，未 rebase，也未重复 cherry-pick #9914 / #9906。交付仍推往 `AstralSolipsism/multica` 的 `sync/v0.8.0-ol-1234`，不创建独立 PR；Stage 5 承接保留 E2E、跨家族双审和发布门禁。
 
 ### 迁移身份与命名纠正
 
@@ -191,10 +191,30 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 
 - Skills：保留文件夹树、二级技能包、ZIP 导入导出和详情侧栏，接入上游版本列表/详情/回滚及标签布局。搜索复用持久化 view store，搜索跨文件夹并保留路径提示。版本快照和 package placement 共用同一事务；覆盖导入不能提前 commit。新增回归验证 placement 失败时内容/版本都回滚，以及恢复 v1 内容后 placement 原样保留并新增 restore 版本。预览指纹只纳入成员身份/权限字段，新增的工作区 pinned_at 不再使预览失效；旧 scanner 的两套字节快照不变，权限和 membership 更换仍使指纹变化。
 - Help：保留飞书 QR 和 Web 内网 `DOWNLOAD_PAGE_URL`，What's New 统一进入菜单，AppRail 不恢复独立卡片。面板保留版本亮点，移除外网 changelog/release 出口；Help 测试继续禁止 multica.ai/discord.gg。运行时空态下载也接入内部地址，云推广仍受已有关闭开关约束。
-- 品牌：桌面、Web、Docs、移动图标及字标按第一父字节保留，移动图标仍为 1024×1024 RGB 无 alpha。上游生成器改为拒绝覆写独立 Fork 资产；`scripts/brand/labrastro-assets.json` 与 sync 校验冻结身份，CI 路径包含 manifest。G2 新图形组件兼容上游 API 并使用爪印。补齐西语覆盖与新增繁中文档内网分发入口，未扩大品牌豁免。
+- 品牌：桌面、Web、Docs、移动图标及字标按第一父字节保留，移动图标仍为 1024×1024 RGB 无 alpha。上游生成器改为拒绝覆写独立 Fork 资产；`scripts/brand/labrastro-assets.json` 与 sync 校验冻结身份，CI 路径包含 manifest。G2 新图形组件兼容上游 API 并使用爪印。补齐西语品牌覆盖与新增繁中文档内网分发入口，未扩大品牌豁免。新增西语沿用上游翻译，Fork 尚未翻译的 1,175 个键显式回退到已品牌化的英语；与繁中的既有资源合并机制一致，单语言入口也有完整 namespace，未修改 parity 断言。
 - 保留持久化 idle/tool watchdog 配置、agent thinking level、子单选择性复制父字段、工作区置顶、100 MiB 上传、聊天/运行记录虚拟滚动。修复无评论运行链接在折叠/已解决线程中的展开落点，保留 Fork 到达高亮、DAG、配额和项目工程开关。Qoder 采用上游新增的聊天附件挂载/续聊及 squad leader 支持；quick-create 附件限制仍保留。
 - gofmt 清单仍为 11 个字节等同上游的原文件，来源改为完整 v0.8.1 SHA；Fork 修改全部格式化，不添加内容豁免。
 
 ### Stage 4 验证结果
 
-待本次运行收齐测试结果后补齐。
+代码基线为合并提交及后续 `7687c5cf2628bfbf7b95b2f5d209b2dbade9a5a5`；后续交付提交仅补齐本文记录。环境为 Node 24.21.0、pnpm 10.28.2、Go 1.27.3、Git 2.47.3 和私有 PostgreSQL 15 UTF-8 测试库。测试库已在结果收齐后关闭。
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm install --frozen-lockfile --offline` | 通过，锁文件无漂移 |
+| `pnpm typecheck` | 9 个任务通过 |
+| `pnpm lint` | 6 个任务通过，0 error；保留现有 warning |
+| `pnpm test:brand`（亦由根 `pnpm test` 调用） | 11 项脚本测试、17 项语言品牌测试通过；资产、源文案和内网分发守卫通过 |
+| 根 `VITEST_MAX_WORKERS=4 pnpm test --env-mode=loose --concurrency=1` | 7 个任务通过（4 个命中本轮已通过的本地缓存）；1,118 个 Vitest 文件、14,976 测试通过，2 项既有 skip；另有 ESLint 4 项、桌面 source-root 12 项脚本测试通过 |
+| `pnpm --filter @multica/mobile test` | 44 文件、342 测试通过；`ios-run.test.sh` 通过 |
+| 语言完整性、品牌覆盖与头像裁剪定向复验 | 3 文件、485 测试通过，包含最终西语 fallback 与 Fork 256px 裁剪尺寸 |
+| CI scope 脚本回归 | 70 项通过 |
+| `bash scripts/check-gofmt.sh` 及其自测 | 通过；11 个上游原文件仍逐字节验证 |
+| 连续 `make sqlc` / `git diff --check` | 通过，生成结果无差异 / 无空白错误 |
+| UTF-8 新装与升级迁移 | 两路径 schema 与 ledger 全同，736 条迁移，重复 up 无新增执行，无 INVALID 索引 |
+| `GOTOOLCHAIN=go1.27.3 go -C server test -p 1 -timeout 20m ./...` | 88 个测试包通过、17 个包无测试；仅 `pkg/agent` 中下述 4 个宿主相关测试失败，因此整体退出码为 1 |
+| agent 宿主兼容复验 | 仅按完整名称排除下述 4 项，`-p 1 -parallel 2` 运行其余 `./pkg/agent/...` 通过（57.417s） |
+
+本次后端最终全量结果中，router、middleware、branding、handler、daemon、service、migration、Qoder 和图片尺寸包均通过。保留 Stage 2 已定位的宿主限制：Linux `5.15.0-157-generic` 不支持 pidfd 进程组信号 `flags=4`，返回 `EINVAL`。失败名称仍为 `TestCaptureCursorBackgroundLateDescendant`、`TestCaptureCursorBackgroundProcessReapsLeaderExitedGroup`、`TestCaptureCursorBackgroundSurvivesRootExitDuringCapture`、`TestCursorBackgroundLifecycle`。未改变生产保护，也未在源码中跳过这些测试；兼容复验只在命令行精确排除这四项，不能表述为后端全绿。Stage 5 应在支持该能力的宿主补齐这四项，再承接保留 E2E、桌面原生打包/安装及跨家族双审；本阶段未执行这些发布验收。
+
+前端套件明细：core 278 文件 / 3,677 通过 / 1 skip，UI 12 / 454 / 1 skip，Docs 6 / 30，views 694 / 9,439，Web 43 / 375，Desktop 85 / 1,001。根脚本按仓库定义不含 mobile，故另行运行并记录移动套件。jsdom 的 canvas/navigation 未实现提示未导致测试失败。
