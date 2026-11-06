@@ -320,6 +320,11 @@ PATCH	/api/me	user-auth	deny
 PATCH	/api/me/onboarding	user-auth	deny
 POST	/api/me/onboarding/cloud-waitlist	user-auth	deny
 POST	/api/me/onboarding/complete	user-auth	deny
+GET	/api/me/quota-sources/	user-auth	deny
+POST	/api/me/quota-sources/	user-auth	deny
+DELETE	/api/me/quota-sources/{id}/	user-auth	deny
+PATCH	/api/me/quota-sources/{id}/	user-auth	deny
+POST	/api/me/quota-sources/{id}/refresh	user-auth	deny
 POST	/api/media/jobs	user-auth	deny
 GET	/api/media/jobs/{id}	user-auth	deny
 POST	/api/media/jobs/{id}/cancel	user-auth	deny
@@ -381,6 +386,7 @@ POST	/api/quick-actions/	user-auth	deny
 DELETE	/api/quick-actions/{id}/	user-auth	deny
 PATCH	/api/quick-actions/{id}/	user-auth	deny
 GET	/api/runtimes/	user-auth	deny
+GET	/api/runtimes/quota-sources	user-auth	deny
 DELETE	/api/runtimes/{runtimeId}/	user-auth	deny
 PATCH	/api/runtimes/{runtimeId}/	user-auth	deny
 GET	/api/runtimes/{runtimeId}/activity	user-auth	deny
