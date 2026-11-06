@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Spinner } from "@multica/ui/components/ui/spinner";
 import { useCurrentIssueRenderContext } from "../issues/current-issue-render-context";
@@ -21,7 +21,6 @@ function reply(request: PendingAction, ok: boolean) {
 
 /** Untrusted frames can request an action; only host controls authorize a post. */
 export function useHtmlCommentActions(iframeRef: RefObject<HTMLIFrameElement | null>, documentKey: string) {
-  const { t } = useT("editor");
   const issue = useCurrentIssueRenderContext();
   const pendingRef = useRef<PendingAction | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
@@ -80,26 +79,68 @@ export function useHtmlCommentActions(iframeRef: RefObject<HTMLIFrameElement | n
   };
 
   const confirmation = pending && (
+    <CommentConfirmation request={pending} sending={sending} onConfirm={() => void execute(pending)} onCancel={() => finish(pending, false)} />
+  );
+  return { handleAction, confirmation, hasPendingAction: () => pendingRef.current !== null };
+}
+
+function CommentConfirmation({ request, sending, onConfirm, onCancel }: {
+  request: PendingAction;
+  sending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useT("editor");
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const position = useRef<DOMRect | null>(null);
+  const stableSince = useRef(0);
+  const [ready, setReady] = useState(false);
+  const canConfirm = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+    const previous = position.current;
+    const now = performance.now();
+    if (!previous || rect.x !== previous.x || rect.y !== previous.y || rect.width !== previous.width || rect.height !== previous.height) {
+      position.current = rect;
+      stableSince.current = now;
+    }
+    const stable = now - stableSince.current >= 500;
+    setReady(stable);
+    return stable;
+  }, []);
+
+  useLayoutEffect(() => {
+    position.current = null;
+    let frame: number;
+    // Scroll, layout shifts and fullscreen can move the button without resizing it.
+    const observe = () => {
+      canConfirm();
+      frame = requestAnimationFrame(observe);
+    };
+    observe();
+    return () => cancelAnimationFrame(frame);
+  }, [request, canConfirm]);
+
+  return (
     <section
-      aria-label={pending.message.type === "submit-comment" ? t(($) => $.html_action.confirm_submit) : t(($) => $.html_action.confirm_fill)}
+      aria-label={request.message.type === "submit-comment" ? t(($) => $.html_action.confirm_submit) : t(($) => $.html_action.confirm_fill)}
       aria-busy={sending}
       className="shrink-0 space-y-2 border-t bg-muted p-3"
     >
       <p className="text-label font-medium">
-        {pending.message.type === "submit-comment" ? t(($) => $.html_action.confirm_submit) : t(($) => $.html_action.confirm_fill)}
+        {request.message.type === "submit-comment" ? t(($) => $.html_action.confirm_submit) : t(($) => $.html_action.confirm_fill)}
       </p>
       {/* Plain text, never another markdown/HTML preview of the untrusted body. */}
-      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-caption">{pending.message.content}</pre>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-caption">{request.message.content}</pre>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={sending} onClick={() => finish(pending, false)}>
+        <Button type="button" variant="outline" size="sm" disabled={sending} onClick={onCancel}>
           {t(($) => $.html_action.cancel)}
         </Button>
-        <Button type="button" size="sm" disabled={sending} onClick={() => void execute(pending)}>
+        <Button ref={buttonRef} type="button" size="sm" disabled={sending || !ready} onClick={() => { if (canConfirm()) onConfirm(); }}>
           {sending && <Spinner />}
-          {pending.message.type === "submit-comment" ? t(($) => $.html_action.post) : t(($) => $.html_action.replace_draft)}
+          {request.message.type === "submit-comment" ? t(($) => $.html_action.post) : t(($) => $.html_action.replace_draft)}
         </Button>
       </div>
     </section>
   );
-  return { handleAction, confirmation };
 }

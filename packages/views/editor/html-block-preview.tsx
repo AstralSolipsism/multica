@@ -119,7 +119,7 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const { handleAction, confirmation } = useHtmlCommentActions(iframeRef, `${reloadKey}:${srcDoc}`);
+  const { handleAction, confirmation, hasPendingAction } = useHtmlCommentActions(iframeRef, `${reloadKey}:${srcDoc}`);
   // The body's laid-out height, reported by HtmlBlockBody below. The frame
   // turns it into the collapse decision in the same paint the height lands
   // (see the flicker note in the file header).
@@ -162,7 +162,8 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
             html={html}
             iframeRef={iframeRef}
             onCommentAction={handleAction}
-            confirmation={fullscreen ? confirmation : null}
+            hasPendingAction={hasPendingAction}
+            confirmation={confirmation}
             srcDoc={srcDoc}
             title={frameTitle}
             active={active}
@@ -184,6 +185,7 @@ function HtmlBlockBody({
   html,
   iframeRef,
   onCommentAction,
+  hasPendingAction,
   confirmation,
   srcDoc,
   title,
@@ -199,6 +201,7 @@ function HtmlBlockBody({
   html: string;
   iframeRef: RefObject<HTMLIFrameElement | null>;
   onCommentAction: ReturnType<typeof useHtmlCommentActions>["handleAction"];
+  hasPendingAction: () => boolean;
   confirmation: ReactNode;
   srcDoc: string | null;
   title: string;
@@ -213,12 +216,15 @@ function HtmlBlockBody({
   onError: (error: DynamicBlockError) => void;
 }) {
   const onCommentActionRef = useRef(onCommentAction);
+  const hasPendingActionRef = useRef(hasPendingAction);
+  const deferredHeight = useRef<number | null>(null);
   const [measured, setMeasured] = useState(INITIAL_HTML_BLOCK_HEIGHT);
   const [cachedHeight, setCachedHeight] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
 
   useLayoutEffect(() => {
+    deferredHeight.current = null;
     setMeasured(INITIAL_HTML_BLOCK_HEIGHT);
     setLoaded(false);
     setTimedOut(false);
@@ -233,7 +239,15 @@ function HtmlBlockBody({
     activeRef.current = active && !fullscreen;
     onErrorRef.current = onError;
     onCommentActionRef.current = onCommentAction;
+    hasPendingActionRef.current = hasPendingAction;
   });
+
+  useLayoutEffect(() => {
+    if (confirmation || !active || fullscreen || deferredHeight.current == null) return;
+    const height = deferredHeight.current;
+    deferredHeight.current = null;
+    setMeasured((previous) => nextHtmlBlockHeight(previous, height));
+  }, [confirmation, active, fullscreen]);
 
   useEffect(() => {
     if (!active || fullscreen) return;
@@ -263,7 +277,11 @@ function HtmlBlockBody({
       // A hidden frame lays out at zero width; what it reports is not its
       // height. It reports again once it is shown and resized back.
       if (activeRef.current) {
-        setMeasured((previous) => nextHtmlBlockHeight(previous, message.height));
+        if (hasPendingActionRef.current()) {
+          deferredHeight.current = message.height;
+        } else {
+          setMeasured((previous) => nextHtmlBlockHeight(previous, message.height));
+        }
       }
     };
     window.addEventListener("message", onMessage);
@@ -312,7 +330,7 @@ function HtmlBlockBody({
       onOpenChange={onFullscreenChange}
       onReload={onReload}
       title={title}
-      footer={confirmation}
+      footer={fullscreen ? confirmation : null}
     >
       <div
         className="relative min-h-0"

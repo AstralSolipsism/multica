@@ -147,6 +147,22 @@ describe("IssueDetail (shared)", () => {
     expect(editor).toHaveValue("panel answer");
   });
 
+  it.each(["upload", "annotation"])("protects an otherwise empty draft containing only an %s", async (kind) => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.hasCommentDraft).toBeDefined());
+    expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(false);
+    const getUploads = vi.fn().mockReturnValue(kind === "upload" ? [{ clientUploadId: "upload-1", status: "uploading" }] : []);
+    const getAnnotations = vi.fn().mockReturnValue(kind === "annotation" ? [{ id: "annotation-1", quote: "context", note: "review this" }] : []);
+    const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({
+      ...useCommentDraftStore.getState(), getDraft: () => "", getUploads, getAnnotations,
+    });
+    try {
+      expect(renderedIssueContext.current!.hasCommentDraft!()).toBe(true);
+      expect(kind === "upload" ? getUploads : getAnnotations).toHaveBeenCalledWith(`new:${mockIssue.id}`);
+    } finally { getState.mockRestore(); }
+  });
+
   it("passes the issue's agent assignment to the local-directory hint", async () => {
     const agent = { id: "agent-vue", name: "Vue developer", runtime_id: "runtime-vue" };
     mockApiObj.getIssue.mockResolvedValue({
