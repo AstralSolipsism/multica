@@ -315,27 +315,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
+      # v5 extracts a single named artifact directly into `path`, so give each
+      # bundle its own subdirectory matching the receipt layout candidate.py
+      # verifies. A missing bundle must fail, never `continue`.
       - uses: actions/download-artifact@v5
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
-          path: dist/inputs
+          path: dist/inputs/candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
       - uses: actions/download-artifact@v5
         if: matrix.from-archives == 'backend,web'
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
-          path: dist/inputs
-      # Archive inputs arrive as receipt-bound transfer bundles; restore the
-      # assets layout local-images.mjs verifies archives against.
+          path: dist/inputs/candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
       - name: Restore candidate archives for packaging
         run: |
           python - <<'EOF'
           import json, os, pathlib, shutil
           run_id, attempt = "${{ github.run_id }}", "${{ github.run_attempt }}"
           tag, sha = os.environ["LABRASTRO_RELEASE_TAG"], os.environ["LABRASTRO_RELEASE_SHA"]
+          inputs = pathlib.Path("dist/inputs")
           assets = pathlib.Path("dist/candidate") / tag / "assets"
           assets.mkdir(parents=True, exist_ok=True)
+          restored = []
           for job in ("backend", "web"):
-              source = pathlib.Path("dist/inputs") / f"candidate-{run_id}-{attempt}-{job}"
+              source = inputs / f"candidate-{run_id}-{attempt}-{job}"
               if not source.is_dir():
                   continue
               receipt = json.loads((source / "receipt.json").read_text())
@@ -344,7 +347,9 @@ jobs:
               for path in source.iterdir():
                   if path.name != "receipt.json" and path.suffix in (".gz", ".json"):
                       shutil.copyfile(path, assets / path.name)
-          print("restored", sorted(p.name for p in assets.iterdir()))
+                      restored.append(path.name)
+          assert restored, "no candidate archives restored from component bundles"
+          print("restored", sorted(restored))
           EOF
       - run: python scripts/candidate.py start images-${{ matrix.arch }}
       - name: Package images from verified archives (web from source when no archive matches)

@@ -7,6 +7,17 @@ must explicitly target `AstralSolipsism/multica`. Never let a tool infer the for
 upstream as its target. Historical module paths and copyright attribution are
 not publishing destinations; retain LICENSE and NOTICE.
 
+## Repository boundary with Labrastro-runtime
+
+This repository owns the platform service components only (`backend`, `web`,
+`cli`, `desktop`). Agent Runtime container images are built and versioned in
+the separate private repository `AstralSolipsism/Labrastro-runtime`; the two
+repositories interface exclusively through this project's published CLI
+release artifacts — the `multica-cli-<version>-<os>-<arch>` archives
+(`.tar.gz`, `.zip` on Windows) and `cli-checksums.txt`. Renaming either side
+of that interface is a breaking cross-repository change. See
+[local build instructions](../docs/local-builds.md#repository-boundary-with-labrastro-runtime).
+
 `release.yml` contains the complete candidate graph described below. PR/main
 events run static verification; only `workflow_dispatch` from fork `main` can
 build an existing authorized tag. All jobs default to `contents: read`; only
@@ -225,7 +236,7 @@ clean-tree check carries the same single `apps/web/next-env.d.ts` exemption).
 | `make build` / direct Go build | Run preflight first, then `make build VERSION="$VERSION" COMMIT="$COMMIT" DATE="$DATE"`. `GOOS` and `GOARCH` select the binary target; `CGO_ENABLED=0` for distributed CLI. All distributed Go binaries retain full source SHA and Go build metadata. | OL-82 |
 | Web standalone | Preflight, then `node scripts/build-candidate-web.mjs`. It runs `STANDALONE=true NEXT_PUBLIC_APP_VERSION="$VERSION" pnpm --filter @multica/web build` itself, refuses output it cannot prove belongs to this version, and packs standalone output, `.next/static`, public assets, LICENSE/NOTICE and `web-build.json` evidence into `labrastro-web-<version>-linux-amd64-node-standalone.tar.gz` under `C/assets/` plus the inactive `C/downloads/releases/<tag>/`. | OL-81 |
 | Desktop `apps/desktop/scripts/package.mjs` | Preflight runs before cleanup/build inside `package.mjs` whenever the three release inputs are set; the preflight version goes to `extraMetadata.version` and the same version/full SHA/date reach `bundle-cli.mjs` as `VERSION`/`COMMIT`/`DATE`. Candidate packaging is always local: `--publish never` is pinned and any other publish mode fails. Invoke through `pnpm -C apps/desktop package -- --linux AppImage --win --x64 --arm64`. Generic internal feed stays configured. Afterwards `node apps/desktop/scripts/stage-candidate.mjs` verifies each target (app version/notices, bundled CLI platform/arch/version, installer hashes, channel pact) and writes the version directory, proposed feeds and inventory below. | OL-81 |
-| Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. | OL-82 |
+| Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. `scripts/local-images.mjs --from-archives backend,web` packages the same tags from the candidate component archives after SHA-256 verification against their builder evidence, without recompiling (web archive is linux/amd64 only; other architectures build web from source). | OL-82 |
 
 The table is the interface for successor work. Web and Desktop candidate
 entries are implemented as `scripts/build-candidate-web.mjs`,
@@ -302,7 +313,9 @@ Keep existing manifest identity fields `tag`, `version`, `commit`, `prepared_at`
 Do not set operational completion flags from a successful build. Retain image
 `build_method: "local_from_source"` or `"local_from_archives"` (archive
 packaging additionally records the consumed archive name and SHA-256, which
-assembly cross-checks against the candidate's own archive inventory),
+assembly cross-checks against the candidate's own archive inventory, and
+requires — both directions — that only archive packaging carries an archive
+anchor),
 `registry_required: false`, explicit status and actual local Image IDs when
 available; do not require a registry digest.
 Add `repository: "AstralSolipsism/multica"` and identify each artifact's

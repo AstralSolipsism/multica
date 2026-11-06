@@ -109,12 +109,14 @@ def build_inputs(root, meta):
                 item = {"component": component, "arch": arch, "os": "linux", "id": "sha256:" + "a" * 64,
                         "status": "verified", "build_method": "local_from_source", "registry_required": False,
                         "evidence": meta if component == "web" else {"cli": meta}}
-                if arch == "amd64":
-                    # Mirror the release graph: amd64 images are packaged from
-                    # the component archives, anchored to their exact SHA-256.
+                # Mirror the release graph: every architecture's backend image
+                # and amd64's web image are archive-packaged; only arm64's web
+                # image builds from source (the web archive is amd64-only).
+                archive_packaged = component == "backend" or arch == "amd64"
+                if archive_packaged:
                     evidence_name = "backend-build.json" if component == "backend" else "web-inventory.json"
                     archive_name = next(e["name"] for e in c.read(assets / evidence_name)["artifacts"]
-                                        if e["component"] == component and e.get("arch", "amd64") == "amd64")
+                                        if e["component"] == component and e.get("arch", "amd64") == arch)
                     item["build_method"] = "local_from_archives"
                     item["archive"] = {"name": archive_name, "sha256": c.sha(assets / archive_name)}
                 images.append(item)

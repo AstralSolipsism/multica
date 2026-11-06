@@ -15,7 +15,8 @@ they live in the separate private repository `AstralSolipsism/Labrastro-runtime`
 (runtime base layers, agent CLI toolchains, the `multica` CLI seed layer and
 its build/verify scripts). The two repositories interface exclusively through
 this project's published CLI release artifacts: the
-`multica-cli-<version>-<os>-<arch>.tar.gz` archives and `cli-checksums.txt`.
+`multica-cli-<version>-<os>-<arch>` archives (`.tar.gz`, `.zip` on Windows)
+and `cli-checksums.txt`.
 Labrastro-runtime consumes those seed binaries after SHA-256 verification;
 nothing in this repository references, builds or pins a runtime image.
 
@@ -160,9 +161,15 @@ archive's SHA-256 and size against its builder evidence (`backend-build.json`
 / `web-inventory.json`, identity-checked against the same preflight), and
 records `build_method: "local_from_archives"` with the consumed archive
 name/hash. Backend binaries inside such an image are additionally compared
-byte-for-byte against the archive's own checksum list. The web archive is
-linux/amd64 only, so `--arch arm64 --from-archives backend` builds web from
-source. Source builds remain available at any time as the fallback path.
+against the **verified host archive's own** checksum list (`archive-checksums.txt`
+byte-identical to the archive's `checksums.txt`, then every binary hashed
+against it), and the web image's `web-build.json` against the archive copy.
+Toolchain evidence comes from the archive's `build-info.json`. The web archive
+is linux/amd64 only, so `--arch arm64 --from-archives backend` builds web from
+source. Source builds remain available at any time as the fallback path. The
+backend archive ships `maintenance` (like the source image's `/app/maintenance`
+used by [maintenance jobs](maintenance-jobs.md)) but not `go-build-info.txt`;
+both archives' member sets are pinned by `scripts/build-backend.py`.
 
 `dist/candidate/<tag>/local-images/linux-<arch>/images.json` records these results,
 full local IDs, versions, toolchains and build/verification times. `images.env`

@@ -329,6 +329,8 @@ def assemble_tree(inputs, output, meta, ctx, needs):
             require(item["arch"] == arch and item["os"] == "linux" and item["status"] == "verified"
                     and item["build_method"] in ("local_from_source", "local_from_archives") and item["registry_required"] is False
                     and re.fullmatch(r"sha256:[a-f0-9]{64}", item["id"]), "invalid local image evidence")
+            require(item.get("archive") is not None or item["build_method"] == "local_from_source",
+                    "archive packaging must record its consumed archive")
             proof = item["evidence"] if item["component"] == "web" else item["evidence"]["cli"]
             require(all(proof.get(k) == meta[k] for k in ("version", "commit", "date")), "image binary identity differs")
             if item.get("archive"):

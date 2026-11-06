@@ -107,8 +107,10 @@ def main():
         # values, including on the architecture that the host cannot execute.
         (root / "server/cmd/server/ignored.go").unlink()
         for arch in backend.ARCHES:
-            cases = [(command, "version", "dev") for command in backend.COMMANDS]
-            cases += [(command, "commit", "0" * 40) for command in backend.COMMANDS if command.startswith("backfill_")]
+            # maintenance has no --version output; it is version-checked via
+            # build_settings metadata only, not runtime execution.
+            cases = [(command, "version", "dev") for command in backend.VERSION_CHECKED]
+            cases += [(command, "commit", "0" * 40) for command in backend.VERSION_CHECKED if command.startswith("backfill_")]
             cases += [("multica", "date", "unknown")]
             for command, key, value in cases:
                 linked = {**identity, key: value}
