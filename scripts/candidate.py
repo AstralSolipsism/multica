@@ -324,12 +324,20 @@ def assemble_tree(inputs, output, meta, ctx, needs):
         info = read(bundles["images-" + arch][0] / "images.json")
         same_identity(info, meta)
         require({i["component"] for i in info["images"]} == {"backend", "web"} and len(info["images"]) == 2, "image matrix differs")
+        archive_hashes = {e["name"]: e["sha256"] for e in entries if e["component"] in ("backend", "web")}
         for item in info["images"]:
             require(item["arch"] == arch and item["os"] == "linux" and item["status"] == "verified"
-                    and item["build_method"] == "local_from_source" and item["registry_required"] is False
+                    and item["build_method"] in ("local_from_source", "local_from_archives") and item["registry_required"] is False
                     and re.fullmatch(r"sha256:[a-f0-9]{64}", item["id"]), "invalid local image evidence")
             proof = item["evidence"] if item["component"] == "web" else item["evidence"]["cli"]
             require(all(proof.get(k) == meta[k] for k in ("version", "commit", "date")), "image binary identity differs")
+            if item.get("archive"):
+                # An archive-packaged image must have consumed the exact archive
+                # bytes this candidate inventories, not a same-named local file.
+                require(item["build_method"] == "local_from_archives", "archive anchor requires archive packaging")
+                require(item["archive"]["name"] in archive_hashes
+                        and archive_hashes[item["archive"]["name"]] == item["archive"]["sha256"],
+                        "image was packaged from bytes that differ from the candidate archive")
             images.append(item)
         name = f"local-images-linux-{arch}.json"
         write_json(assets / name, info)

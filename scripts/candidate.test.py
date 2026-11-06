@@ -104,9 +104,20 @@ def build_inputs(root, meta):
             arch = job.removeprefix("images-")
             directory = root / meta["artifact_dir"] / "local-images" / ("linux-" + arch)
             directory.mkdir(parents=True)
-            images = [{"component": component, "arch": arch, "os": "linux", "id": "sha256:" + "a" * 64,
-                       "status": "verified", "build_method": "local_from_source", "registry_required": False,
-                       "evidence": meta if component == "web" else {"cli": meta}} for component in ("backend", "web")]
+            images = []
+            for component in ("backend", "web"):
+                item = {"component": component, "arch": arch, "os": "linux", "id": "sha256:" + "a" * 64,
+                        "status": "verified", "build_method": "local_from_source", "registry_required": False,
+                        "evidence": meta if component == "web" else {"cli": meta}}
+                if arch == "amd64":
+                    # Mirror the release graph: amd64 images are packaged from
+                    # the component archives, anchored to their exact SHA-256.
+                    evidence_name = "backend-build.json" if component == "backend" else "web-inventory.json"
+                    archive_name = next(e["name"] for e in c.read(assets / evidence_name)["artifacts"]
+                                        if e["component"] == component and e.get("arch", "amd64") == "amd64")
+                    item["build_method"] = "local_from_archives"
+                    item["archive"] = {"name": archive_name, "sha256": c.sha(assets / archive_name)}
+                images.append(item)
             c.write_json(directory / "images.json", {**meta, "images": images, "fixture_only": True})
         c.seal(job, meta, CTX)
     inputs = root / "dist/inputs"
@@ -175,6 +186,32 @@ def main():
             assert manifest["internal_upload_complete"] is False and len(manifest["images"]) == 4
             reject(lambda: c.assemble(inputs, output, meta, CTX, NEEDS), "already exists")
             reject(lambda: c.verify_cli(output / "assets", {**meta, "commit": "b" * 40}), "wrong vcs.revision")
+            # An archive-anchored image whose anchor drifts from the candidate's
+            # own archive bytes must fail assembly; so must an anchor claimed by
+            # a source-built image. Rebuild from a tampered bundle.
+            bundle = inputs / "candidate-123-1-images-amd64" / "images.json"
+            original_bundle = bundle.read_bytes()
+            for mutate in (lambda item: item.update(archive={"name": item["archive"]["name"], "sha256": "f" * 64}),
+                           lambda item: item.update(build_method="local_from_source")):
+                payload = json.loads(original_bundle)
+                anchor = next(item for item in payload["images"] if item.get("archive"))
+                mutate(anchor)
+                bundle.write_text(json.dumps(payload))
+                receipt = c.read(bundle.parent / "receipt.json")
+                receipt["files"] = [{"name": f["name"], "bytes": bundle.stat().st_size, "sha256": c.sha(bundle)}
+                                    if f["name"] == "images.json" else f for f in receipt["files"]]
+                c.write_json(bundle.parent / "receipt.json", receipt)
+                shutil.rmtree(output)
+                shutil.rmtree(root / "apps/desktop/dist")
+                reject(lambda: c.assemble(inputs, output, meta, CTX, NEEDS), "archive")
+                bundle.write_bytes(original_bundle)
+                c.write_json(bundle.parent / "receipt.json",
+                             {**receipt, "files": [{"name": f["name"], "bytes": bundle.stat().st_size, "sha256": c.sha(bundle)}
+                                                   if f["name"] == "images.json" else f for f in receipt["files"]]})
+            shutil.rmtree(output)
+            shutil.rmtree(root / "apps/desktop/dist")
+            c.assemble(inputs, output, meta, CTX, NEEDS)
+            c.verify_candidate(output, meta, CTX)
             missing = output / "downloads/desktop" / meta["tag"] / f'labrastro-desktop-{meta["version"]}-windows-arm64.exe'
             saved = missing.read_bytes()
             missing.unlink()

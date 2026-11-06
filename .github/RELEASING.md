@@ -300,8 +300,11 @@ Keep existing manifest identity fields `tag`, `version`, `commit`, `prepared_at`
 `release_state: "draft"`, `release_url` (fork only), `internal_upload_complete`,
 `production_inventory_complete`, `deployment_performed`, `images` and `artifacts`.
 Do not set operational completion flags from a successful build. Retain image
-`build_method: "local_from_source"`, `registry_required: false`, explicit status
-and actual local Image IDs when available; do not require a registry digest.
+`build_method: "local_from_source"` or `"local_from_archives"` (archive
+packaging additionally records the consumed archive name and SHA-256, which
+assembly cross-checks against the candidate's own archive inventory),
+`registry_required: false`, explicit status and actual local Image IDs when
+available; do not require a registry digest.
 Add `repository: "AstralSolipsism/multica"` and identify each artifact's
 `component`, `os`, `arch` (omit os/arch for shared metadata). Each artifact has:
 
@@ -418,7 +421,7 @@ reviewed history record and component `--mode rebuild` contract above.
 | `backend` | Existing `make candidate-backend`, independent archive verification; QEMU required for cross-target version execution |
 | `web` | Existing Linux x64 standalone builder and its build/inventory evidence |
 | `desktop` | Linux and Windows build hosts each package x64 + arm64, stage both targets, seal the **full** target directories in tar plus host verification; Windows also runs PowerShell installer regressions |
-| `images` | Both native Linux architectures build backend/Web images locally with the existing image entry, verify actual container bytes, retain Image IDs and evidence only; no image export or registry push |
+| `images` | Both native Linux architectures package backend/Web images from the backend and web jobs' SHA-256-verified candidate archives (amd64: backend+web; arm64: backend from archive, web from source because the web archive is linux/amd64 only), verify actual container bytes, retain Image IDs and evidence only; no image export or registry push and no duplicate Go/Next.js compile |
 | `assemble` | Runs even if a dependency failed/skipped; requires every job and receipt, verifies CLI/backend binaries, Web archive/client version and all Desktop staging inputs/feeds, merges manifest and download tree |
 | `draft` | Protected environment; recheck candidate identity and transferred bytes/feeds; create a new incomplete draft, upload, download every remote asset and compare hashes, then mark notes complete |
 
