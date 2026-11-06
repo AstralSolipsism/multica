@@ -632,7 +632,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const selectedRows = [
     ...new Map(
       listModel.rows.flatMap((listRow) =>
-        listRow.kind === "agent" && selectedIds.has(listRow.key)
+        listRow.kind === "agent" && selectedIds.has(listRow.row.agent.id)
           ? [[listRow.row.agent.id, listRow.row] as const]
           : [],
       ),
@@ -859,7 +859,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
           onRowOpen={agentFolders.onRowOpen}
           rowMenu={agentFolders.rowMenu}
           sort={sort}
-          selection={agentFolders.selection(selectedIds, setSelectedIds)}
+          selection={agentFolders.selection(listModel.rows, selectedIds, setSelectedIds)}
           empty={
             <CollectionNoMatches
               title={t(($) => $.no_matches.title)}

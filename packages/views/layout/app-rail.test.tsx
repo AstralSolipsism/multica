@@ -29,6 +29,27 @@ vi.mock("../navigation", () => ({
   ),
   useNavigation: () => ({ pathname: state.pathname, push: vi.fn() }),
 }));
+vi.mock("@multica/core/auth", async (importOriginal) => {
+  const authState = {
+    user: {
+      id: "user-1",
+      name: "Test User",
+      email: "test@example.com",
+      avatar_url: null,
+    },
+    logout: vi.fn(),
+  };
+  return {
+    ...(await importOriginal<typeof import("@multica/core/auth")>()),
+    useAuthStore: Object.assign(
+      (selector: (s: typeof authState) => unknown) => selector(authState),
+      { getState: () => authState },
+    ),
+  };
+});
+vi.mock("@multica/core/workspace/avatar-url", () => ({
+  resolvePublicFileUrl: (url: string | null) => url,
+}));
 vi.mock("@multica/core/paths", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/paths")>();
   return {
@@ -57,12 +78,18 @@ vi.mock("@multica/core/shortcuts", () => ({ useShortcut: () => null }));
 vi.mock("../common/use-app-foreground", () => ({
   useAppForeground: () => state.appForeground,
 }));
+vi.mock("../common/use-language-switch", () => ({
+  useLanguageSwitch: () => ({
+    currentLocale: "en",
+    options: [{ value: "en", label: "English" }],
+    changeLanguage: vi.fn(),
+  }),
+}));
 vi.mock("./panels/team-status", () => ({
   useTeamAgentStatus: () => ({ stuck: state.stuck }),
 }));
 vi.mock("./rail-workspaces", () => ({ RailWorkspaces: () => null }));
 vi.mock("./help-launcher", () => ({ HelpLauncher: () => null }));
-vi.mock("./account-menu", () => ({ AccountMenu: () => null }));
 vi.mock("@multica/ui/components/common/tooltip-hint", () => ({
   TooltipHint: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
@@ -219,6 +246,19 @@ describe("AppRail chat badge", () => {
     state.appForeground = false;
     renderRail();
     expect(chatBadge()).toHaveAttribute("aria-label", "5");
+  });
+});
+
+describe("AppRail account menu", () => {
+  it("omits retired docs, changelog, and Discord links", async () => {
+    renderRail();
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+
+    const menu = await screen.findByRole("menu");
+    expect(menu).toHaveTextContent("Profile");
+    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg"]) {
+      expect(menu.querySelector(`a[href*="${href}"]`)).toBeNull();
+    }
   });
 });
 

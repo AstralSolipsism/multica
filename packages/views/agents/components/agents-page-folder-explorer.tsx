@@ -106,6 +106,7 @@ export interface AgentsPageFolderExplorer {
   ) => CollectionColumn<AgentExplorerListRow>[];
   rowMenu: (row: AgentExplorerListRow) => ReactNode;
   selection: (
+    rows: readonly AgentExplorerListRow[],
     selectedIds: ReadonlySet<string>,
     onChange: (next: ReadonlySet<string>) => void,
   ) => CollectionSelection<AgentExplorerListRow>;
@@ -481,13 +482,42 @@ export function useAgentsPageFolderExplorer({
 
   const selection = useCallback(
     (
+      rows: readonly AgentExplorerListRow[],
       selectedIds: ReadonlySet<string>,
       onChange: (next: ReadonlySet<string>) => void,
-    ): CollectionSelection<AgentExplorerListRow> => ({
-      selectedIds,
-      onChange,
-      isSelectable: (row) => row.kind === "agent",
-    }),
+    ): CollectionSelection<AgentExplorerListRow> => {
+      const agentIdByRowKey = new Map(
+        rows.flatMap((row) =>
+          row.kind === "agent" ? [[row.key, row.row.agent.id] as const] : [],
+        ),
+      );
+      const selectedRowKeys = new Set(
+        rows.flatMap((row) =>
+          row.kind === "agent" && selectedIds.has(row.row.agent.id)
+            ? [row.key]
+            : [],
+        ),
+      );
+      return {
+        selectedIds: selectedRowKeys,
+        onChange: (nextRowKeys) => {
+          if (nextRowKeys.size === 0) {
+            onChange(new Set());
+            return;
+          }
+          const nextSelectedIds = new Set(selectedIds);
+          for (const [rowKey, agentId] of agentIdByRowKey) {
+            const wasSelected = selectedRowKeys.has(rowKey);
+            const isSelected = nextRowKeys.has(rowKey);
+            if (wasSelected === isSelected) continue;
+            if (isSelected) nextSelectedIds.add(agentId);
+            else nextSelectedIds.delete(agentId);
+          }
+          onChange(nextSelectedIds);
+        },
+        isSelectable: (row) => row.kind === "agent",
+      };
+    },
     [],
   );
 

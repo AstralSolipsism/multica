@@ -129,6 +129,14 @@ describe("HelpLauncher", () => {
     expect(link).toHaveAttribute("href", "https://multica.outlune.com/download");
   });
 
+  it("omits retired docs, changelog, and Discord links", () => {
+    render(<HelpLauncher />);
+
+    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg"]) {
+      expect(document.querySelector(`a[href*="${href}"]`)).toBeNull();
+    }
+  });
+
   // The community entry opens the group QR dialog in place — it must not be
   // an outbound anchor, so joining never leaves the app or hits a
   // third-party host.

@@ -333,11 +333,21 @@ export default function SkillsPage() {
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
   const isAdmin = myRole === "owner" || myRole === "admin";
+  const scopeSkillIds = useMemo(() => {
+    const scopedSkills =
+      scope === "mine"
+        ? currentUserId
+          ? skills.filter((skill) => skill.created_by === currentUserId)
+          : []
+        : skills;
+    return new Set(scopedSkills.map((skill) => skill.id));
+  }, [skills, scope, currentUserId]);
   const skillFolders = useSkillsPageFolderExplorer({
     wsId,
     currentUserId,
     isAdmin,
     agents,
+    scopeSkillIds,
     search,
     filters,
     renderSkillName,
@@ -416,7 +426,7 @@ export default function SkillsPage() {
   const selectedRows = [
     ...new Map(
       listModel.rows.flatMap((listRow) =>
-        listRow.kind === "skill" && selectedIds.has(listRow.key)
+        listRow.kind === "skill" && selectedIds.has(listRow.row.skill.id)
           ? [[listRow.row.skill.id, listRow.row] as const]
           : [],
       ),
@@ -642,7 +652,7 @@ export default function SkillsPage() {
           onRowOpen={skillFolders.onRowOpen}
           rowMenu={skillFolders.rowMenu}
           sort={sort}
-          selection={skillFolders.selection(selectedIds, setSelectedIds)}
+          selection={skillFolders.selection(listModel.rows, selectedIds, setSelectedIds)}
           empty={
             <CollectionNoMatches
               title={t(($) => $.page.no_matches.title)}

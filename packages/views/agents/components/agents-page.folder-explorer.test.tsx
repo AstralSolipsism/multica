@@ -1096,6 +1096,38 @@ describe("AgentsPage folder regressions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Collapse Game design" }));
     expect(await screen.findByText("2 selected")).toBeTruthy();
   });
+
+  it("keeps entity selection across tree and flat search views", async () => {
+    renderPage();
+    await expandFolder("Game design");
+    await expandFolder("Design");
+    await expandFolder("Research");
+    const treeRow = document.querySelector(
+      '[data-row-id="agent-sq-game-a-both"]',
+    ) as HTMLElement;
+    expect(treeRow).not.toBeNull();
+    await userEvent.click(within(treeRow).getByRole("checkbox", { name: "Select row" }));
+    expect(await screen.findByText("1 selected")).toBeTruthy();
+
+    const search = screen.getByRole("textbox", { name: "Search agents" });
+    await userEvent.type(search, "dual");
+    const flatRow = (await screen.findByText("dual-agent")).closest("[role='row']") as HTMLElement;
+    expect(flatRow.getAttribute("data-row-id")).toBe("agent-root-a-both");
+    expect(within(flatRow).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
+    await userEvent.clear(search);
+    const dualRows = (await screen.findAllByText("dual-agent")).map(
+      (name) => name.closest("[role='row']") as HTMLElement,
+    );
+    expect(dualRows).toHaveLength(2);
+    for (const row of dualRows) {
+      expect(within(row).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    }
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    const leaderRow = screen.getByText("squad-leader").closest("[role='row']") as HTMLElement;
+    expect(within(leaderRow).getByRole("checkbox", { name: "Select row" })).not.toBeChecked();
+  });
 });
 
 describe("AgentsPage unreadable folder move/delete responses", () => {

@@ -93,7 +93,9 @@ export function SpacePanel() {
             peekSpace && LIST_PEEKS[peekSpace] && LIST_COLUMN_WIDTH_CLASS,
           )}
         >
-          <Peek />
+          <SpacePanelOpenProvider open>
+            <Peek />
+          </SpacePanelOpenProvider>
         </aside>
       )}
     </SpacePanelOpenProvider>

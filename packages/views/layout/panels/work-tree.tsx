@@ -236,6 +236,7 @@ function ProjectTreeItem({
 }) {
   const { t } = useT("layout");
   const { t: tEngineering } = useT("engineering");
+  const { t: tCommon } = useT("common");
   const p = useWorkspacePaths();
   const { push } = useNavigation();
   const listId = useId();
@@ -250,11 +251,11 @@ function ProjectTreeItem({
     ? undefined
     : projectSidebarRequest(project.id, issueSettings, statusCatalog.statuses, userId);
   const prefetch = usePrefetch(wsId, source, params);
-  const { data: engineeringOverview } = useQuery({
+  const { data: engineeringOverview, isPending: engineeringPending } = useQuery({
     ...projectEngineeringOptions(wsId, project.id),
     enabled: open && menuOpen,
   });
-  const { data: members = [] } = useQuery({
+  const { data: members = [], isPending: membersPending } = useQuery({
     ...memberListOptions(wsId),
     enabled: open && menuOpen,
   });
@@ -317,12 +318,18 @@ function ProjectTreeItem({
                 open={menuOpen}
                 onOpenChange={setMenuOpen}
               >
-                {showEngineering && (
+                {showEngineering ? (
                   <DropdownMenuItem onClick={() => push(p.projectEngineering(project.id))}>
                     <Folder className="size-3.5" />
                     {engineeringEnabled
                       ? tEngineering(($) => $.actions.open_baseline)
                       : tEngineering(($) => $.actions.enable)}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem disabled>
+                    {engineeringPending || membersPending
+                      ? tCommon(($) => $.loading)
+                      : tEngineering(($) => $.disabled.title)}
                   </DropdownMenuItem>
                 )}
               </RowMenu>

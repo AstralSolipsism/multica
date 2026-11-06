@@ -14,12 +14,11 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
   await page.context().addCookies([{ name: "multica-locale", value: "en", url: baseURL }]);
   await page.addInitScript((value) => localStorage.setItem("multica_token", value), token);
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
-  const mode = page.getByRole("button", { name: /^(Board|List|Table|Graph)$/ }).first();
-  await expect(mode).toBeVisible({ timeout: 30_000 });
-  if ((await mode.innerText()).trim() !== "Graph") {
-    await mode.click();
-    await page.getByText("Graph", { exact: true }).last().click();
-  }
+  const display = page.getByRole("button", { name: "Display", exact: true });
+  await expect(display).toBeVisible({ timeout: 30_000 });
+  await display.click();
+  await page.getByRole("group", { name: "View", exact: true }).getByRole("button", { name: "Graph", exact: true }).click();
+  await page.keyboard.press("Escape");
   // Warm the dev server's on-demand compile of the issue detail route: the
   // first soft navigation commits its URL only after the route compiles,
   // which can outlast the navigation assertion on a cold server.
