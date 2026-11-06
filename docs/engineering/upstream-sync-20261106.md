@@ -183,7 +183,7 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 | `DELETE /api/issues/{id}/reactions` | `RemoveIssueReaction` 不变 | 当前主体 reaction 删除不变 |
 | `POST /api/issues/{id}/reactions` | `AddIssueReaction` 不变 | 当前主体 reaction 写入不变 |
 | `PATCH /api/issues/{id}/with-dependencies` | `UpdateIssueWithDependencies` 请求、依赖事务不变；共用 step guard | 依赖与工作流权限不变 |
-| `POST /api/upload-file` | `UploadFile` 复用 `parseUploadForm`；100 MiB、media 较小上限和 1 MiB 落盘保留；响应新增可选 width/height | 流式存储与归属授权保留；尺寸只读取头部并 rewind，新增大文件读取量回归 |
+| `POST /api/upload-file` | `UploadFile` 复用 `parseUploadForm`；默认 100 MiB、`?media=1` 的 1 GiB 上限和 1 MiB 落盘阈值保留；响应新增可选 width/height | 流式存储与归属授权保留；尺寸只读取头部并 rewind，新增大文件读取量回归 |
 
 冻结 grantor、持久化会话根、后代、重试、唤醒、撤权及工作区/ownership/invocation 校验相关 Fork 文件和 SQL 保留。Issue/Project 的 DELETE 仍不对外部会话开放；上游新建的删除权限 helper 在取消任务/清理前检查整个集合，成员只可删除自己或自己当前拥有的 agent 创建的对象，owner/admin 可管理，agent 不继承 token 用户权限；未知历史项目创建者不获得推断权限。
 
@@ -197,7 +197,7 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 
 ### Stage 4 验证结果
 
-代码基线为合并提交及后续 `7687c5cf2628bfbf7b95b2f5d209b2dbade9a5a5`；后续交付提交仅补齐本文记录。环境为 Node 24.21.0、pnpm 10.28.2、Go 1.27.3、Git 2.47.3 和私有 PostgreSQL 15 UTF-8 测试库。测试库已在结果收齐后关闭。
+首轮提审 HEAD 为 `aec6bafbfd55fdf928c1d728d613d6701f4cdb57`，代码基线为合并提交及后续 `7687c5cf2628bfbf7b95b2f5d209b2dbade9a5a5`。本节记录首轮验证，首审修复的增量验证见下节。环境为 Node 24.21.0、pnpm 10.28.2、Go 1.27.3、Git 2.47.3 和私有 PostgreSQL 15 UTF-8 测试库。测试库已在结果收齐后关闭。
 
 | 检查 | 结果 |
 | --- | --- |
@@ -218,3 +218,11 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 本次后端最终全量结果中，router、middleware、branding、handler、daemon、service、migration、Qoder 和图片尺寸包均通过。保留 Stage 2 已定位的宿主限制：Linux `5.15.0-157-generic` 不支持 pidfd 进程组信号 `flags=4`，返回 `EINVAL`。失败名称仍为 `TestCaptureCursorBackgroundLateDescendant`、`TestCaptureCursorBackgroundProcessReapsLeaderExitedGroup`、`TestCaptureCursorBackgroundSurvivesRootExitDuringCapture`、`TestCursorBackgroundLifecycle`。未改变生产保护，也未在源码中跳过这些测试；兼容复验只在命令行精确排除这四项，不能表述为后端全绿。Stage 5 应在支持该能力的宿主补齐这四项，再承接保留 E2E、桌面原生打包/安装及跨家族双审；本阶段未执行这些发布验收。
 
 前端套件明细：core 278 文件 / 3,677 通过 / 1 skip，UI 12 / 454 / 1 skip，Docs 6 / 30，views 694 / 9,439，Web 43 / 375，Desktop 85 / 1,001。根脚本按仓库定义不含 mobile，故另行运行并记录移动套件。jsdom 的 canvas/navigation 未实现提示未导致测试失败。
+
+### 首审阻断修复
+
+- JPEG：原方向扫描对落盘文件逐字节 read/seek，且会扫描 SOF 后的填充内容。改用缓冲读取，在首个 SOFn 停止，移除循环内 seek；尺寸解码和 EXIF 扫描各限制在头部 1 MiB。超限保留未知尺寸或默认方向，不阻断原文件上传。落盘 1 / 4 / 16 MiB 填充回归均固定为读取 8 KiB、2 次 read、1 次 seek；本机单次观察为 34 / 34 / 25 微秒，测试断言只依赖 I/O 上界，不以耗时为门禁。SOF 前持续填充也分别验证两条解析路径的 1 MiB 上限，EXIF 八种方向和两种字节序仍通过。回归已在旧实现上失败，再在修复后通过。
+- 简报：保留 Labrastro 品牌词，恢复上游 #9915 / `fe5fd221a` 的缺口处理要求：没有 CLI 命令或已记载的平台机制时，在结果中报告缺口；不再默认要求提及工作区负责人。issue、chat、autopilot、quick-create 四类简报均有回归断言。
+- 文档：繁中 PAT 示例的 `/api/me`、`/api/issues` 改为 `https://multica.outlune.com`；文档分发守卫新增上游 API endpoint 检查，覆盖多行 Bearer 示例和本地化页面。上传台账更正为默认 100 MiB、media 1 GiB，1 MiB 是 multipart 落盘阈值。
+
+本轮增量验证：`go test -p 2 ./internal/daemon/... ./internal/imagemetadata ./internal/branding` 的 12 个包通过（Git 2.47.3）；图片元数据包 `-race` 通过；私有 UTF-8 PostgreSQL 上 `go test ./internal/handler -run 'TestUploadFile|TestParseUploadForm' -count=1 -v` 通过，新增 2 MiB JPEG 用例同时验证尺寸、流式调用及存储字节与原文件完全相同。`pnpm test:brand` 的 12 项脚本测试和 17 项品牌测试、gofmt 守卫及自测、`git diff --check` 均通过。本轮未重跑前后端全量；上述首轮全量结果和 4 项宿主限制仍单独保留，Stage 5 的 E2E、原生打包与双审安排不变。
