@@ -145,7 +145,7 @@ describe("AvatarCropDialog encoding", () => {
     fireEvent.click(apply);
     expect(encode).toHaveBeenCalledWith(
       "blob:synthetic-avatar", { x: 10, y: 20, width: 100, height: 100 }, 90,
-      { output: 512, type: "image/webp", quality: 0.9, background: undefined },
+      { output: 256, type: "image/webp", quality: 0.9, background: undefined },
     );
     await act(async () => pending.resolve(new Blob(["cropped"])));
   });

@@ -500,12 +500,14 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
 const BRANDED_RESOURCES = applyBrandOverrides(UPSTREAM_RESOURCES);
 
 // Web SSR, hydration, desktop and hot resource reloads all consume this same
-// effective bundle. Materialize the branded zh-Hans fallback so single-locale
-// entry points receive namespaces that have no zh-Hant translation files.
+// effective bundle. Materialize fallbacks so single-locale entry points also
+// receive fork namespaces: zh-Hant uses zh-Hans, and the new Spanish locale
+// uses branded English for fork copy that has not been translated yet.
 export const RESOURCES = {
   ...BRANDED_RESOURCES,
   "zh-Hant": mergeResources(
     BRANDED_RESOURCES["zh-Hans"],
     BRANDED_RESOURCES["zh-Hant"],
   ),
+  es: mergeResources(BRANDED_RESOURCES.en, BRANDED_RESOURCES.es),
 };
