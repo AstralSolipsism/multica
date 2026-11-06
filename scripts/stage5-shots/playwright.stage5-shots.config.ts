@@ -10,7 +10,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 180_000,
-  outputDir: "../../../test-results/stage5-shots/results",
+  outputDir: "../../test-results/stage5-shots/results",
   reporter: [["list"]],
   use: {
     baseURL: "http://127.0.0.1:13000",

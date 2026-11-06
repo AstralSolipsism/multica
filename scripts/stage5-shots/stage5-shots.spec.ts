@@ -117,7 +117,7 @@ test("03 agents folder tree + thinking level property", async ({ page }) => {
     await shot(page, "03-agents-folder-tree");
 
     await page.locator('[role="row"]', { hasText: "Atlas" }).first().click();
-      await expect(page.getByText(/thinking/i).first()).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText(/thinking/i).first()).toBeVisible({ timeout: 30000 });
     await page.waitForTimeout(600);
     await shot(page, "04-agent-thinking-level");
   } finally {

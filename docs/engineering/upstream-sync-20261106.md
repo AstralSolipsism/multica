@@ -236,18 +236,18 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 | 1B 一步合并路线 | `origin/main` 为第一父 + `v0.8.0` tag 为第二父的 `--no-ff` 两父合并，同分支顺带 #9914/#9906，不拆前置 PR、严禁 rebase | M1 `537956e4c`（父 `bd317ee3` + `9b1ab4f9`）；cherry-pick `ab3dc1948`（#9914）、`f6eea3cd9`（#9906）；全链在 `sync/v0.8.0-ol-1234` 单分支 | `git log --format='%H %P'` 两父拓扑核验（Stage 2 与首审独立复核）；CI run `42283534326` 于 head 全绿 |
 | 2-a 工程基线入口 | 项目详情页顶栏主入口 + Work 面板项目行右键「打开工程基线」 | `packages/views/projects/components/project-detail.tsx:584`（`projectEngineering` 顶栏入口）；`packages/views/layout/panels/work-tree.tsx:325`（`actions.open_baseline` 右键项） | `work-tree.test.tsx`、projects 组件测试（views 套件 694 文件全绿） |
 | 2-b 保存视图还原 DAG | 主工作区打开视图完整还原 `viewMode=dag` 及 `dagGrouping`/`dagShowCompleted`/`dagShowSatisfiedDependencies`；侧栏三角展开为紧凑列表 | `packages/core/issue-views/definition.ts:48-63`（viewMode 与三个 DAG 开关进序列化）；`packages/views/layout/panels/views-section.tsx` + `sidebar-tree.tsx:203`（`SidebarIssueList` 紧凑列表） | `packages/core/issue-views/definition.test.ts`、`sidebar-views.test.ts`、`sidebar-tree.test.tsx` |
-| 2-c 飞书二维码/内网下载收口 | 移除 `join-discord-card`，`FeishuQrDialog` 与 `DOWNLOAD_PAGE_URL` 收口 `HelpLauncher`，屏蔽 multica.ai/discord.gg 外链 | `packages/views/layout/help-launcher.tsx:28,73,126`（QR 弹窗 + 内网下载）；`join-discord-card.tsx` 在 M1 中删除（见裁决表 #72-73）；文案键 `help.discord` 值为「飞书群」 | `help-launcher.test.tsx`；品牌守卫 `pnpm test:brand`（含外链禁令）；保留 E2E `onboarding-smoke` 内网下载页断言 |
+| 2-c 飞书二维码/内网下载收口 | 移除 `join-discord-card`，`FeishuQrDialog` 与 `DOWNLOAD_PAGE_URL` 收口 `HelpLauncher`，屏蔽 multica.ai/discord.gg 外链 | `packages/views/layout/help-launcher.tsx:28,73,126`（QR 弹窗 + 内网下载）；`join-discord-card.tsx` 在 M1 中删除（见裁决表 #71/72）；文案键 `help.discord` 值为「飞书群」 | `help-launcher.test.tsx`；品牌守卫 `pnpm test:brand`（含外链禁令）；保留 E2E `onboarding-smoke` 内网下载页断言 |
 | 2-d YSK 挂载与预取治理 | `DashboardLayout` 围绕主区挂载 `YouShouldKnowProvider`（排除浮层）；OL-1145 空闲不预热不回退 | `packages/views/layout/dashboard-layout.tsx:61`；`packages/views/layout/route-data-prefetch.tsx`（保留 OL-1145 行为） | `route-data-prefetch.test.tsx` |
 | 3A 智能体/技能换新壳保定制 | 两页对齐 v0.8.0 `CollectionPageHeader` 工具栏，保留文件夹树/技能包/导入导出/右键菜单 | `packages/views/agents/components/agents-page.tsx`、`packages/views/skills/components/skills-page.tsx:522`（`CollectionPageHeader`）+ `skills-page-folder-explorer.tsx:67`（Fork 文件夹树接线） | `agent-folder-tree.test.ts`、`skills-page.folder-explorer.test.tsx`、`skill-versions-tab.test.tsx`；E2E `agent-folders.spec.ts`、`skill-folders.spec.ts` |
-| 4 Runtimes 配额+并发双保留 | 服务端/sqlc 同保 Fork `plan_quota`/`system_stats`/`thinking_adapt` 与上游 `max_concurrent_tasks`；前端保留配额芯片、主机指标条并展示并发上限 | `server/internal/handler/runtime.go:53-65`（四字段并存）；`packages/views/runtimes/components/runtime-detail.tsx:398`（`RuntimeConcurrencyField`）；`machine-quota-chips.tsx:43` | `runtime-concurrency-field.test.tsx`、`machine-quota-chips*.test.ts*`、`runtime-detail-page.test.tsx`；`make sqlc` 二次零差异 |
+| 4 Runtimes 配额+并发双保留 | 服务端/sqlc 同保 Fork `plan_quota`/`system_stats`/`thinking_adapt` 与上游 `max_concurrent_tasks`；前端保留配额芯片、主机指标条并展示并发上限 | `server/internal/handler/runtime.go:53-70`（四字段并存，`ThinkingAdapt` 在 66-70 行）；`packages/views/runtimes/components/runtime-detail.tsx:398`（`RuntimeConcurrencyField`）；`machine-quota-chips.tsx:43` | `runtime-concurrency-field.test.tsx`、`machine-quota-chips*.test.ts*`、`runtime-detail-page.test.tsx`；`make sqlc` 二次零差异 |
 | 5 桌面 YSK 边聊精准交接 | 按 Issue 所属工作区路由/聚焦对应主窗口，未开则唤起，严禁串台 | `apps/desktop/src/main/chat-session-handoff.ts:22,48`（`resolveTargetMainWindow(workspaceSlug)`）；renderer 侧 `platform/chat-session-handoff.tsx` | `apps/desktop/src/main/chat-session-handoff.test.ts`（Desktop 85 文件套件） |
 | 方案 A 顺势合流 v0.8.1 | 不另开分支，以 Stage 3 头为第一父 + `v0.8.1` tag 为第二父二次两父合并 | M2 `ed6c70ab5`（父 `2623fc06e` + `b1ea927de`），含 611–616 迁移与技能版本历史 | Stage 4 全量验证 + 本文迁移台账复验；首审独立实测新装/一步升级 schema 一致 |
 
 ### 冲突文件逐项裁决表
 
-与 `20261102.md` 的 94 项台账同格式。冲突集由 `git merge-tree --write-tree <第一父> <tag>` 重算：M1（`bd317ee3` × `9b1ab4f9`）114 个路径，M2（`2623fc06e` × `b1ea927de`）67 个路径，与首审独立重算一致。裁决类别按合并结果 blob 与双亲比对自动分类：`取上游` = 结果与 tag 字节一致；`保留 Fork` = 结果与第一父一致（上游改动不适用或已被 Fork 等价实现）；`合并双方` = 兼取两家（Fork 语义保留于上游新结构，含 Stage 2 先取上游、Stage 3/4 回迁 Fork 语义的路径）；`删除` = 随上游退役。55 个前端路径的逐步恢复过程另见 `upstream-sync-20261106-stage3.tsv` 与 Stage 3 章节。
+与 `20261102.md` 的 94 项台账同格式。冲突集由 `git merge-tree --write-tree <第一父> <tag>` 重算：M1（`bd317ee3` × `9b1ab4f9`）114 个路径，M2（`2623fc06e` × `b1ea927de`）67 个路径，与首审独立重算一致。裁决类别按**最终 PR head** 的结果 blob 与双亲比对自动分类（M1 若按合并提交 `537956e4c` 的树算会得到 47/40/17/10，其中 45 个「取上游」路径随后被 Stage 3/4 回迁 Fork 语义，本表按 head 口径计）：`取上游` = 结果与 tag 字节一致；`保留 Fork` = 结果与第一父一致（上游改动不适用或已被 Fork 等价实现）；`合并双方` = 兼取两家（Fork 语义保留于上游新结构，含 Stage 2 先取上游、Stage 3/4 回迁 Fork 语义的路径）；`删除` = 随上游退役。55 个前端路径的逐步恢复过程另见 `upstream-sync-20261106-stage3.tsv` 与 Stage 3 章节。
 
-#### M1 — v0.8.0 两父合并（114 路径：47 取上游、40 合并双方、17 保留 Fork、10 删除）
+#### M1 — v0.8.0 两父合并（114 路径：2 取上游、84 合并双方、18 保留 Fork、10 删除）
 
 | # | 路径 | 裁决 |
 | --- | --- | --- |
@@ -282,63 +282,63 @@ OL-1255 描述中的 `000001_000NNN_…` 并非本分支规范。实际从 `001_
 | 29 | `apps/web/public/icons/icon-512.png` | 保留 Fork（上游改动不适用） |
 | 30 | `apps/web/public/icons/icon-maskable-512.png` | 保留 Fork（上游改动不适用） |
 | 31 | `apps/web/public/icons/icon.svg` | 保留 Fork（上游改动不适用） |
-| 32 | `e2e/navigation.spec.ts` | 取上游（结果 = tag 字节） |
-| 33 | `e2e/settings.spec.ts` | 取上游（结果 = tag 字节） |
-| 34 | `packages/core/api/client.ts` | 取上游（结果 = tag 字节） |
-| 35 | `packages/core/issues/delete-cache.ts` | 取上游（结果 = tag 字节） |
-| 36 | `packages/core/issues/queries.test.ts` | 取上游（结果 = tag 字节） |
-| 37 | `packages/core/issues/queries.ts` | 取上游（结果 = tag 字节） |
-| 38 | `packages/core/issues/stores/view-store.ts` | 取上游（结果 = tag 字节） |
-| 39 | `packages/core/issues/ws-updaters.ts` | 取上游（结果 = tag 字节） |
+| 32 | `e2e/navigation.spec.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 33 | `e2e/settings.spec.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 34 | `packages/core/api/client.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 35 | `packages/core/issues/delete-cache.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 36 | `packages/core/issues/queries.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 37 | `packages/core/issues/queries.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 38 | `packages/core/issues/stores/view-store.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 39 | `packages/core/issues/ws-updaters.ts` | 合并双方（Fork 语义保留于上游新结构） |
 | 40 | `packages/core/lark/queries.test.ts` | 取上游（结果 = tag 字节） |
-| 41 | `packages/core/realtime/use-realtime-sync-ws-instance.test.tsx` | 取上游（结果 = tag 字节） |
-| 42 | `packages/core/realtime/use-realtime-sync.ts` | 取上游（结果 = tag 字节） |
-| 43 | `packages/core/types/agent.ts` | 取上游（结果 = tag 字节） |
-| 44 | `packages/core/types/lark.ts` | 取上游（结果 = tag 字节） |
-| 45 | `packages/ui/components/common/multica-icon.tsx` | 取上游（结果 = tag 字节） |
+| 41 | `packages/core/realtime/use-realtime-sync-ws-instance.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 42 | `packages/core/realtime/use-realtime-sync.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 43 | `packages/core/types/agent.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 44 | `packages/core/types/lark.ts` | 保留 Fork（上游改动不适用） |
+| 45 | `packages/ui/components/common/multica-icon.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 46 | `packages/ui/package.json` | 合并双方（Fork 语义保留于上游新结构） |
 | 47 | `packages/views/agents/components/agent-list-toolbar.tsx` | 取上游（结果 = tag 字节） |
-| 48 | `packages/views/agents/components/agent-row-actions.tsx` | 取上游（结果 = tag 字节） |
-| 49 | `packages/views/agents/components/agents-page.tsx` | 取上游（结果 = tag 字节） |
-| 50 | `packages/views/agents/components/inspector/model-change-cleanup.test.ts` | 取上游（结果 = tag 字节） |
-| 51 | `packages/views/agents/components/inspector/model-change-cleanup.ts` | 取上游（结果 = tag 字节） |
-| 52 | `packages/views/agents/components/inspector/thinking-prop-row.tsx` | 取上游（结果 = tag 字节） |
-| 53 | `packages/views/autopilots/components/autopilot-detail-page.tsx` | 取上游（结果 = tag 字节） |
-| 54 | `packages/views/chat/components/chat-message-list.tsx` | 取上游（结果 = tag 字节） |
-| 55 | `packages/views/chat/components/chat-window-messages.test.tsx` | 取上游（结果 = tag 字节） |
-| 56 | `packages/views/chat/components/chat-window-messages.tsx` | 取上游（结果 = tag 字节） |
-| 57 | `packages/views/issues/actions/issue-actions-menu-items.tsx` | 取上游（结果 = tag 字节） |
-| 58 | `packages/views/issues/components/issues-header.tsx` | 取上游（结果 = tag 字节） |
-| 59 | `packages/views/issues/components/issues-page.tsx` | 取上游（结果 = tag 字节） |
-| 60 | `packages/views/issues/components/pickers/property-picker.tsx` | 取上游（结果 = tag 字节） |
-| 61 | `packages/views/issues/components/pickers/status-picker.tsx` | 取上游（结果 = tag 字节） |
+| 48 | `packages/views/agents/components/agent-row-actions.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 49 | `packages/views/agents/components/agents-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 50 | `packages/views/agents/components/inspector/model-change-cleanup.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 51 | `packages/views/agents/components/inspector/model-change-cleanup.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 52 | `packages/views/agents/components/inspector/thinking-prop-row.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 53 | `packages/views/autopilots/components/autopilot-detail-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 54 | `packages/views/chat/components/chat-message-list.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 55 | `packages/views/chat/components/chat-window-messages.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 56 | `packages/views/chat/components/chat-window-messages.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 57 | `packages/views/issues/actions/issue-actions-menu-items.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 58 | `packages/views/issues/components/issues-header.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 59 | `packages/views/issues/components/issues-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 60 | `packages/views/issues/components/pickers/property-picker.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 61 | `packages/views/issues/components/pickers/status-picker.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 62 | `packages/views/issues/components/save-view-dialog.test.tsx` | 删除（随上游退役 Fork 已改文件） |
 | 63 | `packages/views/issues/components/save-view-dialog.tsx` | 删除（随上游退役 Fork 已改文件） |
-| 64 | `packages/views/issues/components/workspace-agent-working-chip.tsx` | 取上游（结果 = tag 字节） |
-| 65 | `packages/views/issues/surface/issue-surface.tsx` | 取上游（结果 = tag 字节） |
-| 66 | `packages/views/issues/surface/use-issue-surface-controller.ts` | 取上游（结果 = tag 字节） |
+| 64 | `packages/views/issues/components/workspace-agent-working-chip.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 65 | `packages/views/issues/surface/issue-surface.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 66 | `packages/views/issues/surface/use-issue-surface-controller.ts` | 合并双方（Fork 语义保留于上游新结构） |
 | 67 | `packages/views/layout/app-sidebar.test.tsx` | 删除（随上游退役 Fork 已改文件） |
 | 68 | `packages/views/layout/app-sidebar.tsx` | 删除（随上游退役 Fork 已改文件） |
-| 69 | `packages/views/layout/dashboard-layout.tsx` | 取上游（结果 = tag 字节） |
-| 70 | `packages/views/layout/help-launcher.tsx` | 取上游（结果 = tag 字节） |
+| 69 | `packages/views/layout/dashboard-layout.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 70 | `packages/views/layout/help-launcher.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 71 | `packages/views/layout/join-discord-card.test.tsx` | 删除（随上游退役 Fork 已改文件） |
 | 72 | `packages/views/layout/join-discord-card.tsx` | 删除（随上游退役 Fork 已改文件） |
 | 73 | `packages/views/my-issues/components/my-issues-header.tsx` | 删除（随上游退役 Fork 已改文件） |
-| 74 | `packages/views/my-issues/components/my-issues-page.tsx` | 取上游（结果 = tag 字节） |
+| 74 | `packages/views/my-issues/components/my-issues-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 75 | `packages/views/package.json` | 合并双方（Fork 语义保留于上游新结构） |
-| 76 | `packages/views/projects/components/project-detail.tsx` | 取上游（结果 = tag 字节） |
-| 77 | `packages/views/runtimes/components/runtime-detail-page.tsx` | 取上游（结果 = tag 字节） |
-| 78 | `packages/views/runtimes/components/runtime-detail.tsx` | 取上游（结果 = tag 字节） |
-| 79 | `packages/views/runtimes/components/runtime-list.tsx` | 取上游（结果 = tag 字节） |
-| 80 | `packages/views/runtimes/components/runtime-machines.test.ts` | 取上游（结果 = tag 字节） |
-| 81 | `packages/views/runtimes/components/runtimes-page.test.tsx` | 取上游（结果 = tag 字节） |
-| 82 | `packages/views/runtimes/components/runtimes-page.tsx` | 取上游（结果 = tag 字节） |
-| 83 | `packages/views/runtimes/utils.test.ts` | 取上游（结果 = tag 字节） |
-| 84 | `packages/views/settings/components/lark-tab.tsx` | 取上游（结果 = tag 字节） |
-| 85 | `packages/views/settings/components/use-settings-search-index.ts` | 取上游（结果 = tag 字节） |
-| 86 | `packages/views/skills/components/skill-list-actions.tsx` | 取上游（结果 = tag 字节） |
+| 76 | `packages/views/projects/components/project-detail.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 77 | `packages/views/runtimes/components/runtime-detail-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 78 | `packages/views/runtimes/components/runtime-detail.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 79 | `packages/views/runtimes/components/runtime-list.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 80 | `packages/views/runtimes/components/runtime-machines.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 81 | `packages/views/runtimes/components/runtimes-page.test.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 82 | `packages/views/runtimes/components/runtimes-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 83 | `packages/views/runtimes/utils.test.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 84 | `packages/views/settings/components/lark-tab.tsx` | 合并双方（Fork 语义保留于上游新结构） |
+| 85 | `packages/views/settings/components/use-settings-search-index.ts` | 合并双方（Fork 语义保留于上游新结构） |
+| 86 | `packages/views/skills/components/skill-list-actions.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 87 | `packages/views/skills/components/skill-list-toolbar.tsx` | 删除（随上游退役 Fork 已改文件） |
-| 88 | `packages/views/skills/components/skills-page.tsx` | 取上游（结果 = tag 字节） |
+| 88 | `packages/views/skills/components/skills-page.tsx` | 合并双方（Fork 语义保留于上游新结构） |
 | 89 | `pnpm-lock.yaml` | 合并双方（Fork 语义保留于上游新结构） |
 | 90 | `pnpm-workspace.yaml` | 合并双方（Fork 语义保留于上游新结构） |
 | 91 | `scripts/ci-scope.test.mjs` | 合并双方（Fork 语义保留于上游新结构） |
