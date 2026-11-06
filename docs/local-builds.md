@@ -6,6 +6,20 @@ from a registry. PostgreSQL and build/runtime base images remain external
 dependencies. The [release contract](../.github/RELEASING.md) owns the candidate
 version, source approval, artifact matrix and inactive download layout.
 
+## Repository boundary with Labrastro-runtime
+
+`AstralSolipsism/multica` owns the platform service components only: the Go
+`backend`, the Next.js `web` app, the `multica` CLI and the Electron `desktop`
+client. **Agent Runtime container images are not built or published here**;
+they live in the separate private repository `AstralSolipsism/Labrastro-runtime`
+(runtime base layers, agent CLI toolchains, the `multica` CLI seed layer and
+its build/verify scripts). The two repositories interface exclusively through
+this project's published CLI release artifacts: the
+`multica-cli-<version>-<os>-<arch>` archives (`.tar.gz`, `.zip` on Windows)
+and `cli-checksums.txt`.
+Labrastro-runtime consumes those seed binaries after SHA-256 verification;
+nothing in this repository references, builds or pins a runtime image.
+
 ## Development and candidate entries
 
 | Entry | Result | Starts services? |
@@ -14,6 +28,7 @@ version, source approval, artifact matrix and inactive download layout.
 | `make selfhost` / `make selfhost-build` | Build local backend/Web development images and start the repository example stack | Yes; backend startup runs migrations |
 | `make candidate-backend` | Verified Linux amd64 **and** arm64 archives | No |
 | `make candidate-images` | Build and verify local backend/Web images for the host architecture | Only disposable version checks, with no network or data mounts |
+| `make candidate-images ARGS='--arch amd64 --from-archives backend,web'` | Package and verify local backend/Web images from the SHA-256-verified candidate archives, without recompiling | Only disposable version checks, with no network or data mounts |
 
 Candidate tools need Node 22+, Git, Python 3, Go 1.26.9+ (the Go JSON build-info
 reader), and tar. Image building needs Docker Engine and its build support;
@@ -75,7 +90,8 @@ labrastro-backend-<version>-linux-arm64.tar.gz
 backend-build.json
 ```
 
-Every archive contains `server`, `multica`, `migrate`,
+Every archive contains `server`, `multica`, `migrate`, `maintenance`
+(no `--version` output; metadata-checked but exempt from version execution),
 `backfill_task_usage_hourly`, `backfill_codex_usage_cache`, the complete tracked
 `migrations/` directory, LICENSE, NOTICE, `build-info.json`, `checksums.txt` and
 `expected-migrations.txt` (all complete up filenames, sorted; duplicate numeric
@@ -125,6 +141,9 @@ not overwritten: use `--verify` or a separate clean checkout.
 make candidate-images ARGS='--arch amd64'
 # Separate verification, with no rebuild or application startup:
 node scripts/local-images.mjs --arch amd64 --verify
+# Package from the candidate component archives instead of recompiling
+# (requires dist/candidate/<tag>/assets/ archives plus their evidence files):
+node scripts/local-images.mjs --arch amd64 --from-archives backend,web
 ```
 
 Images are `labrastro-backend:<tag>` and `labrastro-web:<tag>`. The tool checks
@@ -135,6 +154,34 @@ It verifies the actual version and full SHA of all five backend programs,
 including both backfills built from the Git-free source snapshot, file checksums and
 source migration/notices, plus Web build metadata and the version embedded in
 compiled client JavaScript. A new label wrapped around any stale binary fails.
+
+The default path builds from a `git archive` source snapshot
+(`build_method: "local_from_source"`). `--from-archives backend,web` instead
+packages images from the candidate component archives after verifying each
+archive's SHA-256 and size against its builder evidence (`backend-build.json`
+/ `web-inventory.json`, identity-checked against the same preflight), and
+records `build_method: "local_from_archives"` with the consumed archive
+name/hash. Backend binaries inside such an image are additionally compared
+against the **verified host archive's own** checksum list (`archive-checksums.txt`
+byte-identical to the archive's `checksums.txt`, then every binary hashed
+against it), and the web image's `web-build.json` against the archive copy.
+Toolchain evidence comes from the archive's `build-info.json`. The web archive
+is linux/amd64 only, so `--arch arm64 --from-archives backend` builds web from
+source. Source builds remain available at any time as the fallback path. The
+backend archive ships `maintenance` (like the source image's `/app/maintenance`
+used by [maintenance jobs](maintenance-jobs.md)) but not `go-build-info.txt`;
+both archives' member sets are pinned by `scripts/build-backend.py`.
+
+All application images (both build paths, both components) run on Debian
+`bookworm-slim` — no Alpine anywhere. This is a hard requirement, not a
+preference: the web standalone archive is produced on glibc CI hosts and
+carries glibc native modules (sharp); an Alpine (musl) runtime cannot load
+them. Verification proves it: the web branch loads `sharp` for real inside the
+image (`--network=none --read-only`, resolved through the standalone module
+paths) and fails closed on any native-module mismatch; the result is recorded
+in `images.json` as `native_modules`. Runtime-stage base pins are read from the
+source Dockerfiles at the reviewed commit, so a security bump there flows into
+archive-packaged images automatically.
 
 `dist/candidate/<tag>/local-images/linux-<arch>/images.json` records these results,
 full local IDs, versions, toolchains and build/verification times. `images.env`

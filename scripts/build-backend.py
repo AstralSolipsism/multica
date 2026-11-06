@@ -15,7 +15,11 @@ import subprocess
 import tarfile
 import tempfile
 
-COMMANDS = ("server", "multica", "migrate", "backfill_task_usage_hourly", "backfill_codex_usage_cache")
+# maintenance has no --version output; it ships in archives/images for
+# operational use (docs/maintenance-jobs.md) and is exempt from the runtime
+# version-execution check, like the source image's copy.
+COMMANDS = ("server", "multica", "migrate", "maintenance", "backfill_task_usage_hourly", "backfill_codex_usage_cache")
+VERSION_CHECKED = ("server", "multica", "migrate", "backfill_task_usage_hourly", "backfill_codex_usage_cache")
 ARCHES = ("amd64", "arm64")
 
 
@@ -108,7 +112,7 @@ def verify_archive(archive, root, identity, arch):
         require(all(cli.get(key) == identity[key] for key in ("version", "commit", "date")), "CLI runtime identity differs")
         require(cli.get("go") == metadata["go"] and cli.get("os") == "linux" and cli.get("arch") == arch,
                 "CLI runtime toolchain/target differs")
-        for command in COMMANDS:
+        for command in VERSION_CHECKED:
             if command == "multica":
                 continue
             output = run([*runner, str(Path(temporary) / command), "--version"], root)

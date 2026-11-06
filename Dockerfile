@@ -1,7 +1,7 @@
 # --- Build stage ---
-FROM golang:1.27.3-alpine AS builder
-
-RUN apk add --no-cache git
+# Bookworm (not alpine) so builder and runtime share one libc family; official
+# golang bookworm images already include git.
+FROM golang:1.27.3-bookworm AS builder
 
 WORKDIR /src
 
@@ -23,9 +23,9 @@ RUN cd server && for command in server multica migrate maintenance backfill_task
     done && go version -m bin/* > bin/go-build-info.txt
 
 # --- Runtime stage ---
-FROM alpine:3.21
+FROM debian:bookworm-slim AS runner
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
