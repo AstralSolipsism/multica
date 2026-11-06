@@ -178,5 +178,12 @@
     "clear_filter": "清除篩選",
     "no_matches": "沒有匹配的行",
     "close": "關閉"
+  },
+  "html_action": {
+    "confirm_submit": "確認以你的身分發表以下原文？",
+    "confirm_fill": "覆蓋現有留言草稿？",
+    "post": "以我的身分發表",
+    "replace_draft": "覆蓋草稿",
+    "cancel": "取消"
   }
 }

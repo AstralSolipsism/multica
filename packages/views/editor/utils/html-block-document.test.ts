@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
   HTML_BLOCK_MAX_CONTENT_PX,
+  HTML_BLOCK_MAX_COMMENT_LENGTH,
   HTML_BLOCK_MESSAGE_KEY,
   INITIAL_HTML_BLOCK_HEIGHT,
   __HTML_BLOCK_BRIDGE__,
@@ -15,6 +16,19 @@ import {
 import { __FRAGMENT_NAV_SHIM__ } from "./iframe-fragment-nav";
 
 const THEME = { declarations: "--foreground:black;--chart-1:blue", colorScheme: "dark" as const };
+
+describe.each(["submit-comment", "fill-comment"])("HTML block action %s", (type) => {
+  it("accepts text and truncates it at the bridge boundary", () => {
+    expect(readHtmlBlockMessage({ __multicaHtmlBlock: 1, type, content: "decision" })).toEqual({ type, content: "decision" });
+    expect(readHtmlBlockMessage({ __multicaHtmlBlock: 1, type, content: "x".repeat(20_000) })).toEqual({ type, content: "x".repeat(HTML_BLOCK_MAX_COMMENT_LENGTH) });
+  });
+  it.each([undefined, null, {}, 123, "", "  "])("rejects an invalid content value: %j", (content) => {
+    expect(readHtmlBlockMessage({ __multicaHtmlBlock: 1, type, content })).toBeNull();
+  });
+  it("requires the marker", () => {
+    expect(readHtmlBlockMessage({ type, content: "decision" })).toBeNull();
+  });
+});
 
 describe("HTML block bridge", () => {
   it("repeats an unchanged height only when its parent requests a measurement", () => {
