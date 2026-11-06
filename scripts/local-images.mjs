@@ -293,6 +293,7 @@ function verifyImages(identity, arch) {
       // Next.js runtime chain: sharp is next's optionalDependency, so under the
       // pnpm layout traced into standalone it lives next to `next` itself, not
       // under /app/apps/web/node_modules — resolve next first, then fall back.
+      // sharp is a factory; resize() lives on instances it creates.
       execute("node", ["-e", `const path=require('path');
         const searchPaths=['/app/apps/web','/app'];
         try { searchPaths.unshift(path.dirname(require.resolve('next/package.json',{paths:searchPaths}))); } catch {}
@@ -300,7 +301,8 @@ function verifyImages(identity, arch) {
         try { resolved = require.resolve('sharp', { paths: searchPaths }); }
         catch { throw Error('sharp is not present in the standalone tree'); }
         const sharp = require(resolved);
-        if (typeof sharp.resize !== 'function') throw Error('sharp loaded but is not functional');`]);
+        if (typeof sharp !== 'function') throw Error('sharp module did not export its factory');
+        if (typeof sharp().resize !== 'function') throw Error('sharp loaded but instances are not functional');`]);
       if (archiveAnchored) {
         // Anchor the image's web-build.json to the verified host archive copy.
         const hostBytes = archiveMemberBytes(archivePath, `${`labrastro-web-${identity.version}-linux-amd64-node-standalone`}/web-build.json`);

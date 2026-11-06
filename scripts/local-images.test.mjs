@@ -218,6 +218,18 @@ function archiveFixture(t) {
   writeFileSync(join(webRoot, "LICENSE"), "fixture license");
   writeFileSync(join(webRoot, "NOTICE"), "fixture notice");
   writeFileSync(join(webRoot, "web-build.json"), JSON.stringify({ ...commitIdentity }) + "\n");
+  // pnpm-shaped native module tree: sharp only as next's optionalDependency
+  // sibling under .pnpm, exporting sharp's real factory API shape.
+  const pnpmNext = join(webRoot, "node_modules/.pnpm/next@16.3.8/node_modules");
+  mkdirSync(join(pnpmNext, "next"), { recursive: true });
+  writeFileSync(join(pnpmNext, "next/package.json"), JSON.stringify({ name: "next", version: "16.3.8" }));
+  mkdirSync(join(webRoot, "node_modules"), { recursive: true });
+  rmSync(join(webRoot, "node_modules/next"), { recursive: true, force: true });
+  execFileSync("ln", ["-s", ".pnpm/next@16.3.8/node_modules/next", join(webRoot, "node_modules/next")]);
+  const sharpBody = "module.exports = function sharp() { return { resize() {}, jpeg() {} }; };\n";
+  mkdirSync(join(pnpmNext, "sharp"));
+  writeFileSync(join(pnpmNext, "sharp/package.json"), JSON.stringify({ name: "sharp", version: "0.35.4", main: "index.js" }));
+  writeFileSync(join(pnpmNext, "sharp/index.js"), sharpBody);
   execFileSync("tar", ["-czf", join(assets, archiveName("web", identity.version, "amd64")), "-C", join(dir, "dist/scratch"), webTree]);
   const sha256 = path => createHash("sha256").update(readFileSync(path)).digest("hex");
   const evidence = component => ({ artifacts: [{ name: archiveName(component, identity.version, "amd64"),
@@ -284,6 +296,8 @@ function writeDockerStub(t, fixture, variant = {}) {
     const commands=${JSON.stringify(ARCHIVE_TEST_COMMANDS)};
     const binaries=${JSON.stringify(binaries)};
     const binaryHashOverride=${JSON.stringify(variant.tamperedBinary ? { maintenance: "f".repeat(64) } : null)};
+    const goBuildInfoBody=${JSON.stringify("go1.27.3\n")};
+    const archiveBuildInfoBody=${JSON.stringify(archiveBuildInfo)};
     const webBuild=fs.readFileSync(path.join(process.cwd(),'dist','stub-web-build.json'),'utf8');
     // webBuildBody is prepared outside to avoid template-escape drift.
     const imageBuildInfo=${JSON.stringify(imageBuildInfo)};
@@ -324,11 +338,9 @@ function writeDockerStub(t, fixture, variant = {}) {
       for(const flag of ['--read-only','--network=none','--pull=never',info.Id]) assert(args.includes(flag));
       const command=args[args.indexOf('--entrypoint')+1], arg=args.at(-1);
       if(command==='cat') {
-        const goBuildInfo='go1.27.3\\n';
-        const archiveBuildInfoFull=${JSON.stringify(archiveBuildInfo)};
         const catMap={'/app/checksums.txt':imageChecksums,'/app/archive-checksums.txt':archiveChecksums,
-          '/app/build-info.json':archiveBuildInfoFull,'/app/web-build.json':webBuild,
-          '/app/go-build-info.txt':goBuildInfo};
+          '/app/build-info.json':archiveBuildInfoBody,'/app/web-build.json':webBuild,
+          '/app/go-build-info.txt':goBuildInfoBody};
         if(!(arg in catMap)) throw Error('unexpected cat '+arg);
         console.log(catMap[arg]);
       }
@@ -338,10 +350,29 @@ function writeDockerStub(t, fixture, variant = {}) {
         if(arg.startsWith('require(')||arg==='-p') console.log(imageBuildInfo);
         else if(arg.includes('.next/static')) { /* compiled version check passes */ }
         else if(arg.includes("require.resolve('sharp'")) {
-          // Native probe: simulate the glibc runtime loading sharp. In the
-          // tamperedSharp variant the load fails (musl-style mismatch).
-          if(process.env.STUB_SHARP_FAIL==='1') { console.error('Could not load the "sharp" module using the linuxmusl-x64 runtime'); process.exit(1); }
-          console.log('');
+          // Native probe: EXECUTE it for real against the extracted archive
+          // tree (pure-JS sharp-shaped fixture) instead of faking success.
+          const cp=require('child_process');
+          // The build scratch is deleted before verify; re-extract the web
+          // archive fresh so the probe runs against the real module layout.
+          const assets=path.join(process.cwd(),'dist','candidate',identity.tag,'assets');
+          const archive=assets+'/'+('labrastro-web-'+identity.version+'-linux-amd64-node-standalone.tar.gz');
+          const tmp=fs.mkdtempSync(path.join(process.cwd(),'dist','probe-'));
+          cp.spawnSync('tar',['-xzf',archive,'-C',tmp,'--strip-components=1'],{stdio:'ignore'});
+          if(process.env.STUB_SHARP_FAIL==='1') {
+            // Recreate the #20 regression shape: a module that loads fine but
+            // exports no factory — the probe's functional check must reject it.
+            const broken=path.join(tmp,'node_modules/.pnpm/next@16.3.8/node_modules/sharp/index.js');
+            fs.writeFileSync(broken, 'module.exports = { resize: function() {} };\\n');
+          }
+          const context=tmp;
+          const webDir=path.join(context,'apps','web');
+          const appDir=context;
+          const script=arg.split('\\n').map(line=>line
+            .replace(/'\\/app\\/apps\\/web'/g, "'"+webDir+"'")
+            .replace(/'\\/app'/g, "'"+appDir+"'")).join('\\n');
+                    const result=cp.spawnSync(process.execPath,['-e',script],{encoding:'utf8'});
+          if(result.status!==0) { console.error(result.stderr); process.exit(result.status ?? 1); }
         }
         else console.log('');
       }
