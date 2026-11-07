@@ -75,6 +75,7 @@ function runtime(id: string, provider: string): AgentRuntime {
 }
 
 const claude = runtime("rt-claude", "claude");
+const omp = runtime("rt-omp", "omp");
 const qoder = runtime("rt-qoder", "qoder_cloud");
 
 const owner = { user_id: "user-2", name: "Ada" } as MemberWithUser;
@@ -246,5 +247,36 @@ describe("AgentPropertiesPanel", () => {
 
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.queryByText(/% success/)).not.toBeInTheDocument();
+  });
+
+  it("summarizes saved OMP collaboration strategies in the inspector", () => {
+    renderPanel(omp, {
+      agent: agentOn(omp, {
+        runtime_config: {
+          smol_model: "zai/glm-5.3-flash",
+          advisor_enabled: true,
+          slow_model: "openai-codex/gpt-6-astra",
+          advisor_review_mode: "agent-end",
+          execution_mode: "plan_yolo",
+          plan_model: "openai-codex/gpt-6.1-sol",
+          handoff_model: "zai/glm-5.3",
+        },
+      }),
+    });
+
+    expect(screen.getByText("Collaboration")).toBeInTheDocument();
+    expect(screen.getByText("Smol: glm-5.3-flash")).toBeInTheDocument();
+    expect(screen.getByText("Advisor: gpt-6-astra · Before delivery")).toBeInTheDocument();
+    expect(screen.getByText("Plan-Yolo → glm-5.3")).toBeInTheDocument();
+    expect(screen.getByText("Plan: gpt-6.1-sol")).toBeInTheDocument();
+  });
+
+  it("keeps the OMP summary empty by default and hides it for other runtimes", () => {
+    renderPanel(omp);
+    expect(screen.getByText("No collaboration strategies enabled")).toBeInTheDocument();
+
+    cleanup();
+    renderPanel(claude);
+    expect(screen.queryByText("Collaboration")).toBeNull();
   });
 });

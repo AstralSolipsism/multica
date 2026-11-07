@@ -859,6 +859,7 @@ export type AgentPermissionScope = "private" | "workspace" | "members";
  */
 export interface StoredAgentDraft {
   qoder_agent_id?: string;
+  omp_runtime_config?: Record<string, unknown>;
   name: string;
   description: string;
   instructions: string;

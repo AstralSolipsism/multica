@@ -38,6 +38,9 @@ export function ModelPicker({
   canEdit = true,
   variant = "chip",
   showLabel = true,
+  ariaLabel,
+  placeholder,
+  invalid = false,
   onChange,
 }: {
   runtimeId: string | null;
@@ -47,6 +50,9 @@ export function ModelPicker({
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
+  ariaLabel?: string;
+  placeholder?: string;
+  invalid?: boolean;
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
@@ -86,8 +92,10 @@ export function ModelPicker({
   );
   const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
-  const triggerLabel = value || t(($) => $.pickers.model_default);
-  const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
+  const triggerLabel = value || placeholder || t(($) => $.pickers.model_default);
+  const triggerTitle = ariaLabel
+    ? `${ariaLabel} · ${triggerLabel}`
+    : t(($) => $.pickers.model_tooltip, { value: triggerLabel });
 
   const select = async (id: string) => {
     setOpen(false);
@@ -170,10 +178,11 @@ export function ModelPicker({
           type="button"
           className={
             variant === "field"
-              ? `${showLabel ? "mt-1.5 " : ""}flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-3 text-left text-body transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50`
+              ? `${showLabel ? "mt-1.5 " : ""}flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-3 text-left text-body transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive`
               : CHIP_CLASS
           }
           aria-label={triggerTitle}
+          aria-invalid={invalid || undefined}
         />
       }
       trigger={

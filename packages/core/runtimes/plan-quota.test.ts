@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import type { RuntimePlanQuotaWindow } from "../types";
+import type { Agent, RuntimePlanQuotaWindow } from "../types";
 import {
   evaluatePlanQuota,
   evaluatePlanQuotaPools,
@@ -14,6 +14,7 @@ import {
   quotaTone,
   quotaWindowGroup,
   quotaWindowLabel,
+  servingAccountPoolProviders,
   windowRemainingPercent,
 } from "./plan-quota";
 
@@ -528,6 +529,77 @@ describe("fully replenished windows (OL-141 four-window shape)", () => {
   });
 });
 
+describe("servingAccountPoolProviders", () => {
+  const quotaAgent = (overrides: Partial<Agent> = {}): Agent => ({
+    id: "agent-1",
+    workspace_id: "workspace-1",
+    runtime_id: "runtime-omp",
+    runtime_config: {},
+    custom_args: [],
+    model: "",
+    archived_at: null,
+    ...overrides,
+  }) as Agent;
+
+  it("includes enabled OMP role providers alongside the effective main model", () => {
+    const providers = servingAccountPoolProviders([
+      quotaAgent({
+        model: "zai/glm-5.3",
+        custom_args: ["--model", "kimi-code/k2.5"],
+        runtime_config: {
+          smol_model: "zai/glm-5.3-flash",
+          advisor_enabled: true,
+          slow_model: "openai-codex/gpt-6-astra",
+          execution_mode: "prewalk",
+          plan_model: "anthropic/claude-opus-4.7",
+          handoff_model: "openai-codex/gpt-6.1-sol",
+        },
+      }),
+    ], "runtime-omp");
+
+    expect([...providers].sort()).toEqual([
+      "anthropic",
+      "kimi-code",
+      "openai-codex",
+      "zai",
+    ]);
+  });
+
+  it("excludes inactive Advisor and standard-mode Plan / Handoff roles", () => {
+    const providers = servingAccountPoolProviders([
+      quotaAgent({
+        runtime_config: {
+          smol_model: "zai/glm-5.3-flash",
+          advisor_enabled: false,
+          slow_model: "openai-codex/gpt-6-astra",
+          execution_mode: "standard",
+          plan_model: "anthropic/claude-opus-4.7",
+          handoff_model: "kimi-code/k2.5",
+        },
+      }),
+    ], "runtime-omp");
+
+    expect([...providers]).toEqual(["zai"]);
+  });
+
+  it("supports plan_yolo, equals-style model args, and ignores unrelated agents", () => {
+    const providers = servingAccountPoolProviders([
+      quotaAgent({
+        custom_args: ["--model=openai-codex/gpt-6.1-sol"],
+        runtime_config: {
+          execution_mode: "plan_yolo",
+          plan_model: "anthropic/claude-opus-4.7",
+          handoff_model: "kimi-code/k2.5",
+        },
+      }),
+      quotaAgent({ id: "other-runtime", runtime_id: "runtime-other", model: "zai/glm" }),
+      quotaAgent({ id: "archived", archived_at: "2026-01-01T00:00:00Z", model: "zai/glm" }),
+      quotaAgent({ id: "unprefixed", runtime_config: { smol_model: "glm-5.3" } }),
+    ], "runtime-omp");
+
+    expect([...providers].sort()).toEqual(["anthropic", "kimi-code", "openai-codex"]);
+  });
+});
 describe("multi-account provider pools (OMP)", () => {
   const account = (
     label: string,

@@ -5,6 +5,7 @@
 // used-up window blocks the rest of its pool until it resets.
 
 import type {
+  Agent,
   PlanQuotaAccountStatus,
   RuntimePlanQuota,
   RuntimePlanQuotaAccount,
@@ -17,6 +18,7 @@ import {
   RuntimePlanQuotaSchema,
   RuntimePlanQuotaWindowSchema,
 } from "../api/schemas";
+import { parseOmpRuntimeConfig } from "../agents/omp-runtime-config";
 
 export type QuotaTone = "ok" | "warning" | "destructive";
 
@@ -25,6 +27,52 @@ const COLLECTOR_QUOTA_INTERRUPTED_MS = 3600 * 1000;
 // Matches the daemon's Kimi, OMP and Antigravity quota collectors and the
 // server-side subscription quota-source poller.
 const COLLECTOR_QUOTA_PROVIDERS = ["kimi", "antigravity", "zenmux", "omp"];
+
+function modelProviderPrefix(model: string | null | undefined): string | null {
+  const value = model?.trim() ?? "";
+  const slash = value.indexOf("/");
+  if (slash <= 0) return null;
+  const provider = value.slice(0, slash).trim();
+  return provider || null;
+}
+
+function customArgsModel(args: string[]): string | null {
+  let model: string | null = null;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if ((arg === "--model" || arg === "-m") && args[index + 1]) {
+      model = args[index + 1]!;
+      index++;
+    } else if (arg.startsWith("--model=")) {
+      model = arg.slice("--model=".length);
+    }
+  }
+  return model;
+}
+
+/** Provider prefixes from unarchived agents bound to this runtime. */
+export function servingAccountPoolProviders(
+  agents: Agent[],
+  runtimeId: string,
+): Set<string> {
+  const providers = new Set<string>();
+  const addModel = (model: string | undefined) => {
+    const provider = modelProviderPrefix(model);
+    if (provider) providers.add(provider);
+  };
+  for (const agent of agents) {
+    if (agent.runtime_id !== runtimeId || agent.archived_at) continue;
+    addModel(customArgsModel(agent.custom_args ?? []) ?? agent.model ?? undefined);
+    const config = parseOmpRuntimeConfig(agent.runtime_config);
+    addModel(config.smolModel);
+    if (config.advisorEnabled) addModel(config.slowModel);
+    if (config.executionMode) {
+      addModel(config.planModel);
+      addModel(config.handoffModel);
+    }
+  }
+  return providers;
+}
 
 /**
  * Sanitize a raw `plan_quota` payload. A malformed snapshot returns null

@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   EMPTY_AGENT_DRAFT,
   isDraftDescriptionWithinLimit,
+  ompRuntimeConfigHandoffMissing,
   AGENT_CONVERSATION_STARTER_LABEL_MAX_LENGTH,
   AGENT_CONVERSATION_STARTER_MAX_LENGTH,
   type AgentDraft,
@@ -170,6 +171,8 @@ export function useCreateAgentForm(options?: {
       selectedRuntime != null &&
       isRuntimeUsableForUser(selectedRuntime, currentUserId) &&
       (selectedRuntime.provider !== "qoder_cloud" || !!draft.qoderAgentId) &&
+      (selectedRuntime.provider !== "omp" ||
+        !ompRuntimeConfigHandoffMissing(draft.ompRuntimeConfig)) &&
       isDraftDescriptionWithinLimit(draft.description) &&
       !accessInvalid &&
       !conversationStartersInvalid,

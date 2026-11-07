@@ -13,6 +13,7 @@ import {
 
 const draft = (): AgentDraft => ({
   qoderAgentId: "",
+  ompRuntimeConfig: {},
   name: "Old name",
   description: "Old description",
   instructions: "Old instructions",
@@ -375,4 +376,57 @@ it("drops settings a Qoder runtime cannot run from a draft started elsewhere", (
   const local = buildCreateAgentRequest({ draft: current, runtimeId: "runtime-1", runtimeProvider: "codex" });
   expect(local).not.toHaveProperty("runtime_config");
   expect(local.skill_ids).toEqual(["skill-1"]);
+});
+
+it("serializes OMP runtime roles only for an OMP create target", () => {
+  const current: AgentDraft = {
+    ...draft(),
+    ompRuntimeConfig: {
+      smolModel: "zai/glm-5.3-flash",
+      advisorEnabled: true,
+      advisorReviewMode: "agent-end",
+      slowModel: "openai-codex/gpt-6-astra",
+      executionMode: "prewalk",
+      planModel: "openai-codex/gpt-6.1-sol",
+      handoffModel: "kimi-code/k2.5",
+    },
+  };
+
+  expect(buildCreateAgentRequest({
+    draft: current,
+    runtimeId: "runtime-omp",
+    runtimeProvider: "omp",
+  }).runtime_config).toEqual({
+    smol_model: "zai/glm-5.3-flash",
+    advisor_enabled: true,
+    advisor_review_mode: "agent-end",
+    slow_model: "openai-codex/gpt-6-astra",
+    execution_mode: "prewalk",
+    plan_model: "openai-codex/gpt-6.1-sol",
+    handoff_model: "kimi-code/k2.5",
+  });
+  expect(buildCreateAgentRequest({
+    draft: current,
+    runtimeId: "runtime-1",
+    runtimeProvider: "codex",
+  })).not.toHaveProperty("runtime_config");
+  expect(applyDraftRuntimeChange(current, "runtime-1").ompRuntimeConfig).toEqual({});
+});
+
+it("copies OMP roles only when a duplicate keeps its OMP runtime", () => {
+  const ompRuntime = { ...CODEX_RUNTIME, provider: "omp" };
+  const source = {
+    ...sourceAgent(),
+    runtime_config: { smol_model: "zai/glm-5.3-flash", advisor_enabled: true },
+  };
+  const options = {
+    currentUserId: "user-1",
+    fallbackRuntimeId: "fallback",
+    nameSuffix: " copy",
+  };
+
+  expect(buildDuplicateDraft(source, { ...options, runtimes: [ompRuntime] }).ompRuntimeConfig)
+    .toEqual({ smolModel: "zai/glm-5.3-flash", advisorEnabled: true });
+  expect(buildDuplicateDraft(source, { ...options, runtimes: [CODEX_RUNTIME] }).ompRuntimeConfig)
+    .toEqual({});
 });

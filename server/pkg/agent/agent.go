@@ -148,6 +148,10 @@ type ExecOptions struct {
 	// `--agent <id>`, preserving the identity, workspace, sessions, and memory
 	// selected by Model. Other backends ignore this field.
 	OpenclawModelOverride string
+	// OmpRuntime carries the omp agent's decoded runtime_config knobs (role
+	// models, advisor, execution mode — see omp_runtime.go) onto the launch
+	// argv. Other backends ignore this field.
+	OmpRuntime *OmpRuntimeOpts
 	// ClaudeSettingsPath is a daemon-owned, task-local settings file passed
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
