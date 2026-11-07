@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import {
+  projectBaselineAnnotationBatchOptions,
+  projectBaselineAnnotationBatchesOptions,
   projectBaselineDiffOptions,
   projectBaselineHistoryOptions,
   projectEngineeringDecisionIssuesOptions,
@@ -59,6 +61,35 @@ describe("project engineering queries", () => {
     expect(diffOptions.queryKey).toEqual([
       ...projectKeys.engineeringHistoryAll("ws-1", "project-1"),
       "architecture", "diff", 2, 5,
+    ]);
+  });
+
+  it("keys annotation lists by filters and applies complete detail defaults", async () => {
+    const batches = { batches: [] };
+    const detail = { batch: null, reviews: [], annotations: [], sections: [] };
+    const getProjectBaselineAnnotationBatches = vi.fn().mockResolvedValue(batches);
+    const getProjectBaselineAnnotationBatch = vi.fn().mockResolvedValue(detail);
+    setApiInstance({
+      getProjectBaselineAnnotationBatches,
+      getProjectBaselineAnnotationBatch,
+    } as unknown as ApiClient);
+    const listInput = { chapter: "domain_rules", state: "all" } as const;
+    const listOptions = projectBaselineAnnotationBatchesOptions("ws-1", "project-1", listInput);
+    const detailOptions = projectBaselineAnnotationBatchOptions("ws-1", "project-1", "batch-1");
+
+    await expect(qc.fetchQuery(listOptions)).resolves.toBe(batches);
+    await expect(qc.fetchQuery(detailOptions)).resolves.toBe(detail);
+
+    expect(getProjectBaselineAnnotationBatches).toHaveBeenCalledWith("ws-1", "project-1", listInput);
+    expect(getProjectBaselineAnnotationBatch).toHaveBeenCalledWith(
+      "ws-1", "project-1", "batch-1", { state: "all", withSections: false },
+    );
+    expect(listOptions.queryKey).toEqual([
+      ...projectKeys.baselineAnnotationsAll("ws-1", "project-1"), "batches", listInput,
+    ]);
+    expect(detailOptions.queryKey).toEqual([
+      ...projectKeys.baselineAnnotationsAll("ws-1", "project-1"),
+      "batch", "batch-1", { state: "all", withSections: false },
     ]);
   });
 

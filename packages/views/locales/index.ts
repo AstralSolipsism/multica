@@ -240,6 +240,7 @@ import esUsage from "./es/usage.json";
 import esUi from "./es/ui.json";
 import esSquads from "./es/squads.json";
 import esBilling from "./es/billing.json";
+import esEngineering from "./es/engineering.json";
 
 // Single source of truth for the resource bundle. Both apps (web layout +
 // desktop App.tsx) import from here so adding a locale or namespace happens
@@ -494,6 +495,7 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: esUi,
     squads: esSquads,
     billing: esBilling,
+    engineering: esEngineering,
   },
 };
 

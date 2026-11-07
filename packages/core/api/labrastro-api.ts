@@ -1,4 +1,5 @@
 import { installLabrastroEngineeringApi, type LabrastroEngineeringApi } from "./labrastro-engineering-api";
+import { installLabrastroBaselineAnnotationApi, type LabrastroBaselineAnnotationApi } from "./labrastro-baseline-annotation-api";
 import { installLabrastroAgentFolderApi, type LabrastroAgentFolderApi } from "./labrastro-agent-folder-api";
 import type { ApiClient } from "./client";
 import { installLabrastroSkillApi, type LabrastroSkillApi } from "./labrastro-skill-api";
@@ -23,6 +24,7 @@ declare module "./client" {
   interface ApiClient extends
     LabrastroAgentFolderApi,
     LabrastroEngineeringApi,
+    LabrastroBaselineAnnotationApi,
     LabrastroSkillApi,
     LabrastroMessageDeliveryApi,
     LabrastroDependencyApi,
@@ -35,6 +37,7 @@ declare module "./client" {
 export function installLabrastroApi(target: { prototype: ApiClient }): void {
   installLabrastroAgentFolderApi(target);
   installLabrastroEngineeringApi(target);
+  installLabrastroBaselineAnnotationApi(target);
   installLabrastroSkillApi(target);
   installLabrastroMessageDeliveryApi(target);
   installLabrastroDependencyApi(target);

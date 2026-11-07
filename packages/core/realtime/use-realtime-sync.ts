@@ -1480,6 +1480,17 @@ export function useRealtimeSync(
       if (wsId && project_id) {
         qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
         qc.invalidateQueries({ queryKey: projectKeys.engineeringHistoryAll(wsId, project_id) });
+        // A new working revision changes server-side annotation location/
+        // located projections; refresh them together with the engineering data.
+        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
+      }
+    });
+
+    const unsubProjectBaselineAnnotationChanged = ws.on("project_baseline_annotation:changed", (p) => {
+      const { project_id } = p as import("../types/events").ProjectBaselineAnnotationChangedPayload;
+      const wsId = getCurrentWsId();
+      if (wsId && project_id) {
+        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
       }
     });
 
@@ -2020,6 +2031,7 @@ export function useRealtimeSync(
       unsubSubscriberRemoved();
       unsubProjectEngineeringUpdated();
       unsubProjectBaselineChanged();
+      unsubProjectBaselineAnnotationChanged();
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();

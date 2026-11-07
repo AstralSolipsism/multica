@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, History as FileClock, LoaderCircle, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
+import { AlertTriangle, ArrowLeft, CheckCircle2, History as FileClock, LoaderCircle, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -10,14 +10,13 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode, OpenIssue } from "@multica/core/api";
+import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
 import { matchLocale } from "@multica/core/i18n";
 import { paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
-import { AppLink, useNavigation } from "../../navigation";
-import { useStatusLabel } from "../../issues/utils/status-label";
+import { useNavigation } from "../../navigation";
 import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
   baselineModuleSlug,
@@ -41,9 +40,26 @@ import {
   type BaselineSectionRelations,
 } from "./engineering-baseline-markdown";
 import type { EngineeringRoadmap } from "./engineering-utils";
+import {
+  activeBaselineBatch,
+  buildBaselineAnnotationThreads,
+  reviewDraftItems,
+  type BaselineAnnotationData,
+  type BaselineComposerAnchor,
+  type BaselineReviewOutcome,
+} from "./engineering-baseline-annotation-model";
+import { BaselineSourceDiff, baselineSourceDisplaySections } from "./engineering-baseline-source-diff";
+import { BaselineReviewDialog } from "./engineering-baseline-review-dialog";
+import { BaselineBatchDialog, BaselineReviewBar, type BaselineCompareView, type BaselineReviewMode } from "./engineering-baseline-review-bar";
+import {
+  BaselineAnnotateSectionButton,
+  BaselineReadingAnnotations,
+  BaselineStandaloneThreads,
+  createBaselineTextAnchor,
+} from "./engineering-baseline-reading-annotations";
+import { useBaselineAnnotationDrafts } from "./use-baseline-annotation-drafts";
 
 type DecisionAction = "adopt" | "reject";
-type ReviewMode = "base" | "compare";
 type BaselineSaveError = "save" | "decision";
 
 const BASELINE_MODULE_PREFIX = "module:";
@@ -77,7 +93,8 @@ interface EngineeringBaselineProps {
   decisionPending: boolean;
   decisionError: boolean;
   decisionResult: BaselineDecision | null;
-  onDecision: (action: DecisionAction, revision: BaselineRevision) => void;
+  onDecision: (action: DecisionAction, revision: BaselineRevision, annotationBatchAction?: "close" | "keep") => Promise<boolean>;
+  annotations: BaselineAnnotationData;
   savePending: boolean;
   onSave: (draft: BaselineSaveDraft, adopt: boolean) => Promise<BaselineSaveResult>;
   history: BaselineHistory | null | undefined;
@@ -261,28 +278,6 @@ function BaselineModuleDialog({ chapter, chapters, canDecide, pending, onClose, 
   );
 }
 
-function OpenIssueGroup({ title, issues, workspaceId }: { title: string; issues: readonly OpenIssue[]; workspaceId: string }) {
-  const statusLabel = useStatusLabel(workspaceId);
-  return (
-    <div>
-      <h4 className="mb-1 text-caption font-medium">{title}</h4>
-      {issues.length ? <ul className="space-y-1 text-caption">{issues.map((issue) => <li key={issue.id} className="flex gap-2"><span className="text-muted-foreground">{issue.identifier}</span><span className="min-w-0 flex-1">{issue.title}</span><span className="text-muted-foreground">{statusLabel(issue.status)}</span></li>)}</ul> : <span className="text-caption text-muted-foreground">—</span>}
-    </div>
-  );
-}
-
-function DecisionOpenIssues({ result, workspaceId }: { result: BaselineDecision; workspaceId: string }) {
-  const { t } = useT("engineering");
-  return (
-    <div className="mt-3 space-y-3 rounded-lg border bg-success/5 p-3" data-open-issues>
-      <div className="flex items-center gap-2 text-caption font-medium text-success"><CheckCircle2 className="size-4" aria-hidden="true" />{t(($) => $.baseline.openIssuesTitle)}</div>
-      <OpenIssueGroup title={t(($) => $.baseline.inFlight)} issues={result.openIssues.inFlight} workspaceId={workspaceId} />
-      <OpenIssueGroup title={t(($) => $.baseline.queued)} issues={result.openIssues.queued} workspaceId={workspaceId} />
-      {result.openIssues.truncated ? <div className="text-caption text-muted-foreground">{t(($) => $.baseline.openIssuesTruncated)}</div> : null}
-    </div>
-  );
-}
-
 function BaselineHistoryList({ history, loading, error, onMore }: { history: BaselineHistory | null | undefined; loading: boolean; error: boolean; onMore: () => void }) {
   const { t } = useT("engineering");
   const { getActorName } = useActorName();
@@ -344,12 +339,14 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const chapterLabel = useEngineeringChapterLabel(props.chapters);
   const { t } = useT("engineering");
   const navigation = useNavigation();
-  const { getActorName } = useActorName();
-  const formatRelativeDate = useFormatRelativeDate();
   const articleRef = useRef<HTMLDivElement>(null);
   const readKey = `multica.engineering-baseline.read.${props.projectId}`;
   const lens = props.lens;
-  const [mode, setMode] = useState<ReviewMode>(props.reviewRequested ? "compare" : "base");
+  const [mode, setMode] = useState<BaselineReviewMode>(props.reviewRequested ? "compare" : "base");
+  const [compareView, setCompareView] = useState<BaselineCompareView>("source");
+  const [readingComposer, setReadingComposer] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor } | null>(null);
+  const [reviewDialog, setReviewDialog] = useState<{ initialOutcome: BaselineReviewOutcome | null; candidateMode: boolean } | null>(null);
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
   const [editingSection, setEditingSection] = useState<{ chapter: BaselineChapter; key: string; query: string } | null>(null);
   const [moduleEditor, setModuleEditor] = useState<{ chapter: BaselineChapter | null } | null>(null);
@@ -368,11 +365,48 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [back, setBack] = useState<{ key: string; label: string; y: number } | null>(null);
   const [changeCursor, setChangeCursor] = useState(0);
   const revision = props.revision;
+  const selectedState = props.chapters.find((chapter) => chapter.chapter === props.selectedChapter);
+  const selectedAdopted = selectedState?.adopted ?? null;
+  const selectedCandidate = selectedState?.candidate ?? null;
+  const annotationDrafts = useBaselineAnnotationDrafts({
+    projectId: props.projectId,
+    chapter: props.selectedChapter,
+    ownerId: props.annotations.actions.ownerId,
+    canDecide: props.canDecide,
+  });
+  const activeBatch = activeBaselineBatch(props.annotations.batches, props.selectedChapter);
+  const activeDetail = props.annotations.details.find((detail) => detail.batch.id === activeBatch?.id);
+  const activeRootIds = useMemo(() => new Set(activeDetail?.annotations.map((annotation) => annotation.id) ?? []), [activeDetail]);
+  const currentTargetIds = useMemo(() => {
+    if (mode === "compare" && revision?.chapter === props.selectedChapter) {
+      return new Set([revision.id, revision.baseRevisionId ?? selectedAdopted?.id].filter((id): id is string => !!id));
+    }
+    return new Set(selectedAdopted ? [selectedAdopted.id] : []);
+  }, [mode, revision, props.selectedChapter, selectedAdopted]);
+  const currentPendingItems = useMemo(
+    () => reviewDraftItems(annotationDrafts.items, currentTargetIds, activeRootIds),
+    [annotationDrafts.items, currentTargetIds, activeRootIds],
+  );
+  const annotationThreads = useMemo(
+    () => buildBaselineAnnotationThreads(props.annotations.details, currentPendingItems),
+    [props.annotations.details, currentPendingItems],
+  );
+  const resolveAnnotation = useCallback(async (annotationId: string, resolved: boolean) => {
+    try {
+      return !!(await props.annotations.actions.onResolveAnnotations([annotationId], resolved));
+    } catch {
+      return false;
+    }
+  }, [props.annotations.actions]);
 
   useEffect(() => {
     if (props.reviewRequested && revision) setMode("compare");
     else if (!revision) setMode("base");
   }, [props.reviewRequested, revision]);
+  useEffect(() => {
+    setCompareView("source");
+    setReadingComposer(null);
+  }, [revision?.id, props.selectedChapter]);
   useEffect(() => setBack(null), [lens]);
   useEffect(() => setSaveError(null), [props.selectedChapter]);
 
@@ -446,10 +480,12 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       const chapterRevision = revision?.chapter === chapter ? revision : null;
       return {
         chapter,
-        sections: mergeBaselineSections(chapter, adopted, chapterRevision, mode === "compare" && !!chapterRevision),
+        sections: chapterRevision && mode === "compare" && compareView === "source"
+          ? baselineSourceDisplaySections(chapter, adopted, chapterRevision.contentMarkdown)
+          : mergeBaselineSections(chapter, adopted, chapterRevision, mode === "compare" && !!chapterRevision),
       };
     });
-  }, [props.chapters, revision, mode]);
+  }, [props.chapters, revision, mode, compareView]);
   const sectionEditTargets = useMemo(() => {
     const targets = new Map<string, BaselineSection>();
     for (const state of props.chapters) {
@@ -564,17 +600,27 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const nextUnread = activeSections.find((section) => !readIds.includes(section.key));
   const sourceIssue = revision?.sourceIssueId ? nodes.find((node) => node.id === revision.sourceIssueId) : undefined;
   const adoptedRevision = revision ? props.chapters.find((chapter) => chapter.chapter === revision.chapter)?.adopted : null;
-  const changeCount = revision ? revision.anchorsDiff.added.length + revision.anchorsDiff.modified.length + revision.anchorsDiff.removed.length : 0;
+  const changeCount = revision
+    ? mode === "compare" && compareView === "source"
+      ? changedSections.length
+      : revision.anchorsDiff.added.length + revision.anchorsDiff.modified.length + revision.anchorsDiff.removed.length
+    : 0;
   const globalChapters = displayChapters.filter((chapter) => !chapter.chapter.startsWith("module:"));
   const moduleChapters = displayChapters.filter((chapter) => chapter.chapter.startsWith("module:"));
   const selectedChapterHasCandidate = props.chapters.some((chapter) => chapter.chapter === props.selectedChapter && chapter.candidate);
+  const dialogTargetIds = new Set(
+    reviewDialog?.candidateMode && revision
+      ? [revision.id, revision.baseRevisionId ?? selectedAdopted?.id].filter((id): id is string => !!id)
+      : selectedAdopted ? [selectedAdopted.id] : [],
+  );
+  const dialogPendingItems = reviewDraftItems(annotationDrafts.items, dialogTargetIds, activeRootIds);
   const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
     <div key={chapter.chapter} className="mb-3">
       <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
         props.onChapterChange(chapter.chapter);
         document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
       }}>{chapterLabel(chapter.chapter)}</button>
-      {chapter.sections.map((section) => (
+      {chapter.sections.filter((section) => mode !== "compare" || compareView !== "source" || revision?.chapter !== chapter.chapter || section.change !== "same").map((section) => (
         <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
           <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
           {section.change !== "same" ? <span className="size-1.5 rounded-full bg-destructive" aria-label={t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)} /> : null}
@@ -606,43 +652,35 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         {props.candidateLoading ? <Skeleton className="mt-5 h-24 w-full" /> : null}
         {!props.candidateLoading && props.candidateNotFound ? <div className="mt-5"><CollectionPageState icon={XCircle} tone="warning" title={t(($) => $.baseline.candidateMissing)} description={t(($) => $.baseline.candidateMissingDescription)} /></div> : null}
         {!props.candidateLoading && props.decisionError ? <Alert className="mt-5" variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => $.errors.decisionTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.decision)}</AlertDescription></Alert> : null}
-        {!props.candidateLoading && revision ? (
-          <section className="sticky top-0 z-20 mt-5 border-y bg-background py-3" aria-label={t(($) => $.baseline.reviewLabel)} data-baseline-revision-status={revision.status}>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-              <div className="min-w-60 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <h2 className="font-medium">{t(($) => $.baseline.revisionWaiting, { number: revision.revisionNumber })}</h2>
-                  <span className="text-caption text-muted-foreground">{getActorName(revision.createdByType, revision.createdById)} · <time dateTime={revision.createdAt}>{formatRelativeDate(revision.createdAt)}</time> · {t(($) => $.baseline.changeCount, { count: changeCount })}</span>
-                  <Badge variant={revision.status === "candidate" ? "default" : "secondary"}>{t(($) => $.status[revision.status] ?? $.status.unknown)}</Badge>
-                </div>
-                <p className="mt-1 text-body text-muted-foreground">{revision.changeSummary || t(($) => $.recent.noSummary)}</p>
-                {revision.sourceIssueId ? <AppLink className="mt-1 inline-block text-caption underline underline-offset-2" href={paths.workspace(props.workspaceSlug).issueDetail(revision.sourceIssueId)}>{sourceIssue?.identifier ?? t(($) => $.baseline.sourceIssue)}</AppLink> : null}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.baseline.reviewModeLabel)}>
-                  <button type="button" role="tab" aria-selected={mode === "base"} className={cn("rounded-sm px-3 py-1 text-caption", mode === "base" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setMode("base")}>{t(($) => $.baseline.baseMode, { number: adoptedRevision?.revisionNumber ?? 0 })}</button>
-                  <button type="button" role="tab" aria-selected={mode === "compare"} className={cn("rounded-sm px-3 py-1 text-caption", mode === "compare" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setMode("compare")}>{t(($) => $.baseline.compareMode, { number: revision.revisionNumber })}</button>
-                </div>
-                {mode === "compare" && changedSections.length ? (
-                  <div className="flex items-center gap-1 text-caption">
-                    <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.previousChange)} onClick={() => jumpChange(changeCursor - 1)}><ChevronUp aria-hidden="true" /></Button>
-                    <span className="min-w-10 text-center tabular-nums" data-change-cursor>{changeCursor + 1}/{changedSections.length}</span>
-                    <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.nextChange)} onClick={() => jumpChange(changeCursor + 1)}><ChevronDown aria-hidden="true" /></Button>
-                  </div>
-                ) : null}
-                {props.currentCandidate && props.canDecide ? (
-                  <>
-                    <Button variant="outline" size="sm" disabled={props.decisionPending} onClick={() => props.onDecision("reject", revision)}>{t(($) => $.actions.reject)}</Button>
-                    <Button size="sm" disabled={props.decisionPending} aria-busy={props.decisionPending} onClick={() => props.onDecision("adopt", revision)}>{props.decisionPending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.adopt)}</Button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-            {!props.currentCandidate ? <div className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.readOnlyRevision)}</div> : null}
-            {mode === "compare" && !changedSections.length ? <div className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.noChanges)}</div> : null}
-            {props.decisionResult ? <DecisionOpenIssues result={props.decisionResult} workspaceId={props.workspaceId} /> : null}
-          </section>
+        {!props.candidateLoading ? (
+          <BaselineReviewBar
+            workspaceSlug={props.workspaceSlug}
+            workspaceId={props.workspaceId}
+            chapters={props.chapters}
+            chapter={props.selectedChapter}
+            revision={revision}
+            adopted={adoptedRevision ?? selectedAdopted}
+            currentCandidate={props.currentCandidate}
+            canDecide={props.canDecide}
+            decisionPending={props.decisionPending}
+            decisionResult={props.decisionResult}
+            mode={mode}
+            compareView={compareView}
+            changeCount={changeCount}
+            changedCount={changedSections.length}
+            changeCursor={changeCursor}
+            pendingCount={currentPendingItems.length}
+            activeBatch={activeBatch}
+            sourceIssueIdentifier={sourceIssue?.identifier}
+            onModeChange={setMode}
+            onCompareViewChange={setCompareView}
+            onJumpChange={jumpChange}
+            onOpenReview={(initialOutcome, candidateMode) => setReviewDialog({ initialOutcome, candidateMode })}
+            onOpenBatch={() => setBatchDialogOpen(true)}
+          />
         ) : null}
+        {props.annotations.loading ? <Skeleton className="mt-3 h-10 w-full" /> : null}
+        {props.annotations.error ? <Alert className="mt-3" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
 
         <div className="mt-7 grid gap-8 lg:grid-cols-[13rem_minmax(0,1fr)] xl:gap-12">
           <aside className="top-24 max-h-none overflow-y-auto lg:sticky lg:max-h-[calc(100vh-7rem)]" aria-label={t(($) => $.wiki.tocLabel)}>
@@ -721,7 +759,25 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     onSave={saveDraft}
                   />
                 ) : null}
-                {chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
+                {mode === "compare" && compareView === "source" && revision?.chapter === chapter.chapter ? (
+                  <BaselineSourceDiff
+                    chapter={chapter.chapter}
+                    sections={chapter.sections}
+                    beforeContent={selectedAdopted?.contentMarkdown ?? ""}
+                    afterContent={revision.contentMarkdown}
+                    candidate={revision}
+                    adopted={selectedAdopted}
+                    threads={annotationThreads}
+                    pendingItems={currentPendingItems}
+                    canDecide={props.canDecide && props.currentCandidate}
+                    limitReached={annotationDrafts.limitReached}
+                    onAddAnnotation={annotationDrafts.addAnnotation}
+                    onUpdatePending={annotationDrafts.update}
+                    onDeletePending={annotationDrafts.remove}
+                    onResolve={resolveAnnotation}
+                    onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+                  />
+                ) : chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
                   <article
                     key={section.key}
                     id={sectionDomId(section.key)}
@@ -729,7 +785,12 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     data-baseline-section-title={section.title}
                     data-change={section.change !== "same" ? "" : undefined}
                     data-diff-kind={section.change !== "same" ? section.change : undefined}
-                    className={cn("mt-5 scroll-mt-32 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
+                    className={cn("group/section mt-5 scroll-mt-32 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
+                    onMouseUp={(event) => {
+                      if (!props.canDecide || mode !== "base" || props.selectedChapter !== chapter.chapter || !selectedAdopted) return;
+                      const anchor = createBaselineTextAnchor(event.currentTarget, section, selectedAdopted, t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }));
+                      if (anchor) setReadingComposer({ sectionKey: section.key, anchor });
+                    }}
                   >
                     <h3 className="flex flex-wrap items-center gap-2 text-title-sm font-medium">
                       <span className="font-mono text-caption font-normal text-muted-foreground">{section.change === "removed" ? "—" : `${chapterIndex + 1}.${sectionIndex + 1}`}</span>
@@ -740,6 +801,18 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                           const target = sectionEditTargets.get(section.key);
                           if (target) openSectionEditor(target);
                         }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
+                      ) : null}
+                      {props.canDecide && mode === "base" && props.selectedChapter === chapter.chapter && selectedAdopted && !editingChapter && !editingSection ? (
+                        <BaselineAnnotateSectionButton onClick={() => setReadingComposer({
+                          sectionKey: section.key,
+                          anchor: {
+                            anchorKind: "section",
+                            targetRevisionId: selectedAdopted.id,
+                            sectionAnchor: section.anchor,
+                            sectionTitle: section.title,
+                            targetLabel: t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }),
+                          },
+                        })} />
                       ) : null}
                     </h3>
                     {editingSection?.key === section.key ? (
@@ -781,10 +854,42 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                           </details>
                         ) : null}
                         <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
+                        {mode === "base" && props.selectedChapter === chapter.chapter && selectedAdopted ? (
+                          <BaselineReadingAnnotations
+                            section={section}
+                            adopted={selectedAdopted}
+                            candidate={selectedCandidate ?? selectedAdopted}
+                            threads={annotationThreads.filter((thread) => thread.root.sectionAnchor === section.anchor)}
+                            pendingItems={currentPendingItems.filter((item) => item.sectionAnchor === section.anchor)}
+                            composer={readingComposer?.sectionKey === section.key ? readingComposer.anchor : null}
+                            canDecide={props.canDecide}
+                            limitReached={annotationDrafts.limitReached}
+                            onAddAnnotation={annotationDrafts.addAnnotation}
+                            onCancelComposer={() => setReadingComposer(null)}
+                            onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+                            onUpdatePending={annotationDrafts.update}
+                            onDeletePending={annotationDrafts.remove}
+                            onResolve={resolveAnnotation}
+                          />
+                        ) : null}
                       </>
                     )}
                   </article>
                 )) : <p className="mt-4 text-body text-muted-foreground">{t(($) => $.wiki.emptyChapter)}</p>}
+                {mode === "base" && props.selectedChapter === chapter.chapter ? (
+                  <BaselineStandaloneThreads
+                    title={t(($) => $.annotations.outdatedThreads)}
+                    threads={annotationThreads.filter((thread) => !chapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
+                    baseRevisionId={selectedAdopted?.id ?? null}
+                    candidate={selectedCandidate ?? selectedAdopted}
+                    canDecide={props.canDecide}
+                    limitReached={annotationDrafts.limitReached}
+                    onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+                    onUpdatePending={annotationDrafts.update}
+                    onDeletePending={annotationDrafts.remove}
+                    onResolve={resolveAnnotation}
+                  />
+                ) : null}
               </section>
             ))}
 
@@ -809,6 +914,37 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             pending={props.savePending}
             onClose={closeModuleEditor}
             onSave={saveModule}
+          />
+        ) : null}
+
+        {reviewDialog ? (
+          <BaselineReviewDialog
+            key={`${reviewDialog.candidateMode}-${revision?.id ?? selectedAdopted?.id ?? props.selectedChapter}`}
+            workspaceSlug={props.workspaceSlug}
+            chapter={props.selectedChapter}
+            candidateMode={reviewDialog.candidateMode}
+            candidate={reviewDialog.candidateMode ? revision : null}
+            sourceIssueIdentifier={sourceIssue?.identifier}
+            chapterCandidate={selectedCandidate}
+            adopted={selectedAdopted}
+            batches={props.annotations.batches}
+            details={props.annotations.details}
+            pendingItems={dialogPendingItems}
+            initialOutcome={reviewDialog.initialOutcome}
+            actions={props.annotations.actions}
+            onDecision={props.onDecision}
+            onClearPending={annotationDrafts.clear}
+            onReviewCandidate={() => { setMode("compare"); setCompareView("source"); }}
+            onClose={() => setReviewDialog(null)}
+          />
+        ) : null}
+        {batchDialogOpen && activeBatch ? (
+          <BaselineBatchDialog
+            batch={activeBatch}
+            workspaceSlug={props.workspaceSlug}
+            canDecide={props.canDecide}
+            onCloseBatch={props.annotations.actions.onCloseBatch}
+            onClose={() => setBatchDialogOpen(false)}
           />
         ) : null}
 

@@ -14,8 +14,8 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { paths } from "@multica/core/paths";
-import { projectBaselineHistoryOptions, projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectKeys } from "@multica/core/projects/queries";
-import { useAdoptProjectBaseline, useProposeProjectBaseline, useRejectProjectBaseline, useUpdateProjectEngineering } from "@multica/core/projects/mutations";
+import { projectBaselineAnnotationBatchOptions, projectBaselineAnnotationBatchesOptions, projectBaselineHistoryOptions, projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectKeys } from "@multica/core/projects/queries";
+import { useAdoptProjectBaseline, useCloseProjectBaselineAnnotationBatch, useProposeProjectBaseline, useRejectProjectBaseline, useResolveProjectBaselineAnnotations, useSubmitProjectBaselineReview, useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { engineeringCandidateOptions } from "@multica/core/projects/engineering-candidate";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import type { Issue, IssueTableQuerySpec } from "@multica/core/types";
@@ -76,7 +76,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     () => config ? engineeringPermissions(userId, membersQuery.data ?? [], projectQuery.data, config) : null,
     [config, userId, membersQuery.data, projectQuery.data],
   );
-  const agentsQuery = useQuery({ ...agentListOptions(wsId), enabled: enabled && activeView === "overview" });
+  const agentsQuery = useQuery({ ...agentListOptions(wsId), enabled });
   const skillBindings = useMemo(() => strixnovaSkillBindings(agentsQuery.data ?? []), [agentsQuery.data]);
 
   useEffect(() => {
@@ -184,11 +184,28 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const chapterRevisions = useMemo<Partial<Record<BaselineChapter, readonly BaselineRevision[]>>>(() => Object.fromEntries(
     baselineChapters.map((chapter, index) => [chapter, recentQueries[index]?.data?.revisions ?? []]),
   ), [baselineChapters, recentQueries]);
+  const annotationBatchesQuery = useQuery({
+    ...projectBaselineAnnotationBatchesOptions(wsId, projectId, { chapter: selectedChapter, state: "all" }),
+    enabled: enabled && activeView === "baseline",
+  });
+  const annotationBatches = useMemo(() => annotationBatchesQuery.data?.batches ?? [], [annotationBatchesQuery.data]);
+  const annotationDetailQueries = useQueries({
+    queries: annotationBatches.map((batch) => ({
+      ...projectBaselineAnnotationBatchOptions(wsId, projectId, batch.id, { state: "all", withSections: false }),
+      enabled: enabled && activeView === "baseline",
+    })),
+  });
+  const annotationDetails = useMemo(() => annotationDetailQueries.flatMap((query) => query.data ? [query.data] : []), [annotationDetailQueries]);
+  const annotationsLoading = annotationBatchesQuery.isLoading || annotationDetailQueries.some((query) => query.isLoading);
+  const annotationsError = annotationBatchesQuery.isError || annotationBatchesQuery.data === null || annotationDetailQueries.some((query) => query.isError || query.data === null);
 
   const updateEngineering = useUpdateProjectEngineering();
   const proposeBaseline = useProposeProjectBaseline();
   const adoptBaseline = useAdoptProjectBaseline();
   const rejectBaseline = useRejectProjectBaseline();
+  const submitBaselineReview = useSubmitProjectBaselineReview();
+  const resolveBaselineAnnotations = useResolveProjectBaselineAnnotations();
+  const closeBaselineAnnotationBatch = useCloseProjectBaselineAnnotationBatch();
   const [configError, setConfigError] = useState(false);
   const saveConfig = async (data: ConfigUpdate): Promise<boolean> => {
     setConfigError(false);
@@ -202,21 +219,27 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       return false;
     }
   };
-  const decide = async (action: "adopt" | "reject", target: BaselineRevision) => {
+  const decide = async (action: "adopt" | "reject", target: BaselineRevision, annotationBatchAction?: "close" | "keep"): Promise<boolean> => {
     setDecisionError(false);
     setDecisionResult(null);
     setConflictRevision(null);
     setLocalRevision(null);
-    const input = { projectId, revisions: [{ revisionId: target.id, expectedAdoptedRevisionId: target.baseRevisionId }] };
+    const input = {
+      projectId,
+      revisions: [{ revisionId: target.id, expectedAdoptedRevisionId: target.baseRevisionId }],
+      ...(annotationBatchAction ? { annotationBatchAction } : {}),
+    };
     try {
       const result = await (action === "adopt" ? adoptBaseline.mutateAsync(input) : rejectBaseline.mutateAsync(input));
       if (!result) throw new Error("Invalid decision response");
       setLocalRevision({ ...target, status: action === "adopt" ? "adopted" : "rejected" });
       setDecisionResult(result);
       toast.success(t(($) => action === "adopt" ? $.messages.adopted : $.messages.rejected));
+      return true;
     } catch {
       setConflictRevision(target);
       setDecisionError(true);
+      return false;
     }
   };
   const saveBaseline = async (
@@ -434,6 +457,19 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             decisionError={decisionError || (showDeepLinkedRevision && candidateQuery.isError)}
             decisionResult={decisionResult}
             onDecision={decide}
+            annotations={{
+              batches: annotationBatches,
+              details: annotationDetails,
+              loading: annotationsLoading,
+              error: annotationsError,
+              actions: {
+                ownerId: userId ?? "",
+                agents: agentsQuery.data ?? [],
+                onSubmitReview: (input) => submitBaselineReview.mutateAsync({ projectId, ...input }),
+                onResolveAnnotations: (annotationIds, resolved) => resolveBaselineAnnotations.mutateAsync({ projectId, annotationIds, resolved }),
+                onCloseBatch: (batchId) => closeBaselineAnnotationBatch.mutateAsync({ projectId, batchId }),
+              },
+            }}
             savePending={proposeBaseline.isPending || adoptBaseline.isPending}
             onSave={saveBaseline}
             history={history}
