@@ -44,6 +44,7 @@ type baselineAnnotationItem struct {
 	SectionTitle         string  `json:"section_title"`
 	TargetRevisionID     string  `json:"target_revision_id"`
 	TargetRevisionNumber int32   `json:"target_revision_number"`
+	Side                 string  `json:"side"`
 	LineStart            *int32  `json:"line_start"`
 	LineEnd              *int32  `json:"line_end"`
 	Quote                string  `json:"quote"`
@@ -99,10 +100,21 @@ func baselineResolveBatch(ctx context.Context, client *cli.APIClient, project, i
 	if err := client.GetJSON(ctx, path, &listed); err != nil {
 		return "", baselineRequestError(err, false)
 	}
+	matches := []string{}
+	chapters := []string{}
 	for _, b := range listed.Batches {
 		if b.Carrier.IssueID == issue && b.State == "active" {
-			return b.ID, nil
+			matches = append(matches, b.ID)
+			chapters = append(chapters, fmt.Sprintf("%s (%s…)", b.Chapter, baselineShortID(b.ID)))
 		}
+	}
+	// One carrier issue can hold the active batch of several chapters (I3 is
+	// per chapter); refuse to silently pick one of them.
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", baselineFailure(2, "carrier %s has %d open annotation batches: %s; pass the batch UUID", trimmed, len(matches), strings.Join(chapters, ", "))
 	}
 	return "", baselineFailure(2, "no open annotation batch on carrier %s", trimmed)
 }
@@ -141,13 +153,8 @@ func baselineShortID(id string) string {
 }
 
 func baselineAnnotationLines(a baselineAnnotationItem) (int, int) {
-	if a.Located != nil && a.Located.LineStart != nil {
-		end := *a.Located.LineStart
-		if a.Located.LineEnd != nil {
-			end = *a.Located.LineEnd
-		}
-		return *a.Located.LineStart, end
-	}
+	// Target-version line numbers (line_start/line_end); relocated lines from
+	// `located` are only for the parenthetical note, never the header.
 	if a.LineStart != nil {
 		end := *a.LineStart
 		if a.LineEnd != nil {
@@ -156,6 +163,17 @@ func baselineAnnotationLines(a baselineAnnotationItem) (int, int) {
 		return int(*a.LineStart), int(end)
 	}
 	return 0, 0
+}
+
+func baselineLocatedLines(a baselineAnnotationItem) (int, int, bool) {
+	if a.Located == nil || a.Located.LineStart == nil {
+		return 0, 0, false
+	}
+	end := *a.Located.LineStart
+	if a.Located.LineEnd != nil {
+		end = *a.Located.LineEnd
+	}
+	return *a.Located.LineStart, end, true
 }
 
 func baselinePrintAnnotations(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, p baselineAnnotationsPayload) {
@@ -176,8 +194,17 @@ func baselinePrintAnnotations(ctx context.Context, cmd *cobra.Command, client *c
 		fmt.Fprintf(w, "批注批次 %s… · %s · 工作版本 %s · 未解决 %d/%d\n",
 			baselineShortID(b.ID), b.Chapter, working, b.Counts.Open, b.Counts.Open+b.Counts.Resolved)
 	}
-	if len(p.Reviews) > 0 && strings.TrimSpace(p.Reviews[0].Summary) != "" {
-		fmt.Fprintf(w, "总体说明：%s\n", p.Reviews[0].Summary)
+	// Reviews arrive oldest-first; append reviews carry their own summaries
+	// (the wake comment itself does not), so list every non-empty one.
+	for i, review := range p.Reviews {
+		if strings.TrimSpace(review.Summary) == "" {
+			continue
+		}
+		if i == 0 {
+			fmt.Fprintf(w, "总体说明：%s\n", review.Summary)
+		} else {
+			fmt.Fprintf(w, "总体说明（第 %d 次审阅）：%s\n", i+1, review.Summary)
+		}
 	}
 	if len(p.Annotations) == 0 {
 		fmt.Fprintln(w, "（无未解决批注）")
@@ -212,28 +239,26 @@ func baselinePrintAnnotations(ctx context.Context, cmd *cobra.Command, client *c
 		if a.SectionTitle != "" && a.SectionTitle != a.SectionAnchor {
 			head.WriteString(" " + a.SectionTitle)
 		}
+		// The server derives side from the target revision; a working-version
+		// match is not the criterion (design 5.3).
+		side := "改动后"
+		if a.Side == "before" {
+			side = "改动前"
+		}
 		switch a.AnchorKind {
 		case "lines":
 			start, end := baselineAnnotationLines(a)
-			side := "改动前"
-			if b.Working != nil && a.TargetRevisionID == b.Working.RevisionID {
-				side = "改动后"
-			}
 			if end > start {
 				fmt.Fprintf(&head, " · %s v%d 第 %d–%d 行", side, a.TargetRevisionNumber, start, end)
 			} else {
 				fmt.Fprintf(&head, " · %s v%d 第 %d 行", side, a.TargetRevisionNumber, start)
 			}
 			head.WriteString(" · 定位 " + a.Location)
-			if a.Location == "moved" && a.Located != nil && a.Located.LineStart != nil {
-				end := *a.Located.LineStart
-				if a.Located.LineEnd != nil {
-					end = *a.Located.LineEnd
-				}
-				if end > *a.Located.LineStart {
-					fmt.Fprintf(&head, "（已在 v%d 第 %d–%d 行重新定位）", a.Located.RevisionNumber, *a.Located.LineStart, end)
+			if relocatedStart, relocatedEnd, ok := baselineLocatedLines(a); ok {
+				if relocatedEnd > relocatedStart {
+					fmt.Fprintf(&head, "（已在 v%d 第 %d–%d 行重新定位）", a.Located.RevisionNumber, relocatedStart, relocatedEnd)
 				} else {
-					fmt.Fprintf(&head, "（已在 v%d 第 %d 行重新定位）", a.Located.RevisionNumber, *a.Located.LineStart)
+					fmt.Fprintf(&head, "（已在 v%d 第 %d 行重新定位）", a.Located.RevisionNumber, relocatedStart)
 				}
 			}
 		case "text":
@@ -244,6 +269,16 @@ func baselinePrintAnnotations(ctx context.Context, cmd *cobra.Command, client *c
 			}
 		case "section":
 			head.WriteString(" · 整节")
+			if a.Location != "exact" {
+				head.WriteString(" · 定位 " + a.Location)
+			}
+		}
+		if a.State != "open" {
+			if a.State == "archived" {
+				head.WriteString(" · 已归档")
+			} else {
+				head.WriteString(" · 已解决")
+			}
 		}
 		fmt.Fprintln(w, head.String())
 		if a.Quote != "" {
@@ -282,7 +317,6 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	}
 	seen := map[string]bool{}
 	ordinals := map[int32]string{}
-	needOrdinals := false
 	for _, e := range entries {
 		target := strings.TrimSpace(e.Annotation)
 		if !uuidRegexp.MatchString(target) {
@@ -291,7 +325,6 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 				return baselineFailure(2, "annotation reference must be \"A<ordinal>\" or a UUID")
 			}
 			ordinals[n] = ""
-			needOrdinals = true
 		}
 		n := utf8.RuneCountInString(e.Response)
 		if !utf8.ValidString(e.Response) || strings.ContainsRune(e.Response, 0) || n < 1 || n > 1000 {
@@ -299,20 +332,23 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 		}
 	}
 	batch := strings.TrimSpace(mustString(cmd, "batch"))
-	if needOrdinals {
-		var raw json.RawMessage
-		path := "/api/projects/" + project + "/baseline/annotation-batches/" + batch + "?state=all"
-		if err := client.GetJSON(ctx, path, &raw); err != nil {
-			return baselineRequestError(err, false)
-		}
-		var payload baselineAnnotationsPayload
-		if err := json.Unmarshal(raw, &payload); err != nil || payload.Batch.ID != batch {
-			return baselineFailure(1, "invalid annotation batch response")
-		}
-		for _, a := range payload.Annotations {
-			if _, wanted := ordinals[a.Ordinal]; wanted {
-				ordinals[a.Ordinal] = a.ID
-			}
+	// Always read the batch once: ordinal resolution needs it, and UUID
+	// references must be checked against this batch so a cross-batch UUID
+	// fails locally instead of being written blind.
+	var raw json.RawMessage
+	path := "/api/projects/" + project + "/baseline/annotation-batches/" + batch + "?state=all"
+	if err := client.GetJSON(ctx, path, &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	var payload baselineAnnotationsPayload
+	if err := json.Unmarshal(raw, &payload); err != nil || payload.Batch.ID != batch {
+		return baselineFailure(1, "invalid annotation batch response")
+	}
+	known := map[string]bool{}
+	for _, a := range payload.Annotations {
+		known[a.ID] = true
+		if _, wanted := ordinals[a.Ordinal]; wanted {
+			ordinals[a.Ordinal] = a.ID
 		}
 	}
 	responses := make([]map[string]string, 0, len(entries))
@@ -325,23 +361,26 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 				return baselineFailure(2, "annotation \"A%d\" is not part of batch %s", n, baselineShortID(batch))
 			}
 		}
+		if !known[id] {
+			return baselineFailure(2, "annotation %s is not part of batch %s", baselineShortID(id), baselineShortID(batch))
+		}
 		if seen[id] {
 			return baselineFailure(2, "duplicate annotation reference")
 		}
 		seen[id] = true
 		responses = append(responses, map[string]string{"annotation_id": id, "response": e.Response})
 	}
-	var raw json.RawMessage
-	if err := client.PostJSON(ctx, "/api/projects/"+project+"/baseline/annotations/responses", map[string]any{"responses": responses}, &raw); err != nil {
+	var posted json.RawMessage
+	if err := client.PostJSON(ctx, "/api/projects/"+project+"/baseline/annotations/responses", map[string]any{"responses": responses}, &posted); err != nil {
 		return baselineRequestError(err, true)
 	}
 	if mustString(cmd, "output") == "json" {
-		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+		return cli.PrintJSON(cmd.OutOrStdout(), posted)
 	}
 	var result struct {
 		Updated int `json:"updated"`
 	}
-	if json.Unmarshal(raw, &result) != nil {
+	if json.Unmarshal(posted, &result) != nil {
 		return baselineFailure(1, "invalid annotation responses result")
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "已提交 %d 条智能体回应（不唤醒任何人）。\n", result.Updated)

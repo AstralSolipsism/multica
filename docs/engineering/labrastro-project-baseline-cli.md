@@ -126,16 +126,18 @@ defaults to `open` (resolved and archived annotations stay out of context);
 live in [labrastro-baseline-annotations.md](labrastro-baseline-annotations.md).
 
 Text output leads with one batch header line (short batch ID, carrier
-identifier, chapter, working version, open/total counts) and the review summary
-when present, then one block per top-level annotation starting `[A<ordinal>]`:
-section anchor and title, side/version/lines or selected-text/whole-section
-targeting, location status (`exact`/`moved` with recomputed lines/
-`section_only`/`outdated`), quoted source, note, human replies
-(`↳ 回复（…）：…`) and the previous agent response
-(`↳ 智能体回应（上轮）：…`). `--with-sections` appends the deduped annotated
-section subtrees from the working version behind `<!-- <chapter> [<anchor>] -->`
-markers. JSON output is the server's `{batch, reviews, annotations, sections}`
-object unchanged.
+identifier, chapter, working version, open/total counts) and every non-empty
+review summary in order (append reviews carry their own summaries), then one
+block per top-level annotation starting `[A<ordinal>]`: section anchor and
+title, side/version/lines or selected-text/whole-section targeting (side comes
+from the server's `side` field; line numbers are the target version's own,
+with `moved` relocations shown in a parenthetical), location status
+(`exact`/`moved`/`section_only`/`outdated`), a resolved/archived marker under
+`--state all`, quoted source, note, human replies (`↳ 回复（…）：…`) and the
+previous agent response (`↳ 智能体回应（上轮）：…`). `--with-sections` appends
+the deduped annotated section subtrees from the working version behind
+`<!-- <chapter> [<anchor>] -->` markers. JSON output is the server's
+`{batch, reviews, annotations, sections}` object unchanged.
 
 `respond` is callable only by runs of the batch's carrier issue (the server
 rejects every other credential with 403). `--responses-file` must be a UTF-8

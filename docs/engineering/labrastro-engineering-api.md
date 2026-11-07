@@ -192,7 +192,8 @@ formats live in [labrastro-baseline-annotations.md](labrastro-baseline-annotatio
 this section records the HTTP contract.
 
 Migrations `9059_labrastro_baseline_annotations` (three tables, no foreign
-keys: batch, review, annotation) and `9060`–`9063` (four concurrent indexes:
+keys: batch, review, annotation) and `9060_labrastro_baseline_review_client_key_index`
+through `9063_labrastro_baseline_review_batch_index` (four concurrent indexes:
 unique `client_key` idempotency, unique one-active-batch-per-chapter partial
 index, unique batch ordinal, review batch ordering) store the data. Human
 replies are annotation rows with `parent_annotation_id`; anchors are `text`,

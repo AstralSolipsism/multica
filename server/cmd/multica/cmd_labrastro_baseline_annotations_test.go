@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,10 @@ func baselineAnnotationBatchResponse(working map[string]any, annotations []any, 
 			"working":  working,
 			"counts":   map[string]any{"open": 2, "resolved": 1},
 		},
-		"reviews":     []any{map[string]any{"id": "50000000-0000-4000-8000-000000000002", "summary": "统一结算口径", "created_at": "2026-11-06T00:00:00Z"}},
+		"reviews": []any{
+			map[string]any{"id": "50000000-0000-4000-8000-000000000002", "summary": "", "created_at": "2026-11-06T00:00:00Z"},
+			map[string]any{"id": "50000000-0000-4000-8000-000000000003", "summary": "统一结算口径", "created_at": "2026-11-06T01:00:00Z"},
+		},
 		"annotations": annotations,
 		"sections":    sections,
 	}
@@ -58,18 +62,40 @@ func TestLabrastroBaselineAnnotationsCommand(t *testing.T) {
 		baselineTestAnnotation("60000000-0000-4000-8000-000000000003", 3, map[string]any{
 			"anchor_kind": "section", "line_start": nil, "line_end": nil, "located": nil, "quote": "",
 			"section_anchor": "退款", "section_title": "退款", "note": "缺少部分退款规则",
-			"response": "已补充，见 v5 第 14 行",
+			"response": "已补充，见 v5 第 14 行", "state": "resolved",
 		}),
+		// Before-side lines annotation on the adopted base v4, relocated into
+		// the working candidate v5: the header keeps v4's own line numbers and
+		// the parenthetical carries the relocation (review #1/#2 scenario).
 		baselineTestAnnotation("60000000-0000-4000-8000-000000000004", 4, map[string]any{
 			"anchor_kind": "lines", "section_anchor": "RULE-3", "section_title": "结算规则",
+			"target_revision_id": baselineTestBase, "target_revision_number": 4, "side": "before",
+			"line_start": 2, "line_end": 2,
 			"quote": "T+1 日结算", "note": "人回复后的父批注",
 			"location": "moved",
-			"located":  map[string]any{"revision_number": 5, "line_start": 14, "line_end": 15},
+			"located":  map[string]any{"revision_number": 5, "line_start": 3, "line_end": 3},
 		}),
 		baselineTestAnnotation("60000000-0000-4000-8000-000000000005", 5, map[string]any{
 			"anchor_kind": "text", "parent_annotation_id": "60000000-0000-4000-8000-000000000004",
 			"line_start": nil, "line_end": nil, "located": nil, "quote": "",
 			"section_anchor": "RULE-3", "note": "参考 RULE-7 的写法",
+		}),
+		// Section annotation whose anchor no longer resolves in the working
+		// version must not render as a plain whole-section note (review #7).
+		baselineTestAnnotation("60000000-0000-4000-8000-000000000006", 6, map[string]any{
+			"anchor_kind": "section", "line_start": nil, "line_end": nil, "quote": "",
+			"section_anchor": "旧节", "section_title": "旧节", "note": "这一节去哪了",
+			"location": "outdated",
+		}),
+		// Revision-issue path (review #1 scenario 1): the reviewed candidate
+		// is not the working version (working = adopted v4), yet an
+		// after-side annotation still targets the candidate v5. The label
+		// must follow the server's side, not a working-version match.
+		baselineTestAnnotation("60000000-0000-4000-8000-000000000007", 7, map[string]any{
+			"anchor_kind": "lines", "section_anchor": "RULE-4", "section_title": "规则四",
+			"target_revision_id": "30000000-0000-4000-8000-000000000099", "target_revision_number": 5, "side": "after",
+			"line_start": 1, "line_end": 2, "quote": "新增规则", "note": "补充例子",
+			"location": "exact", "located": map[string]any{"revision_number": 5, "line_start": 1, "line_end": 2},
 		}),
 	}
 	var gotPath, gotQuery string
@@ -106,15 +132,24 @@ func TestLabrastroBaselineAnnotationsCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"批注批次 50000000…（承载 OL-1240）· domain_rules · 工作版本 candidate v5 · 未解决 2/3",
-		"总体说明：统一结算口径",
+		// The append review's summary (first review empty) must still show.
+		"总体说明（第 2 次审阅）：统一结算口径",
 		"[A1] RULE-3 结算规则 · 改动后 v5 第 13 行 · 定位 exact",
 		"  原文：T+1 日结算",
 		"  批注：补一句跨月规则",
 		"[A2] Pricing / Discount 折扣 · 正本 v5 选中文字 · 定位 moved",
-		"[A3] 退款 · 整节",
+		// Resolved annotations keep their state visible (review #8).
+		"[A3] 退款 · 整节 · 已解决",
 		"  ↳ 智能体回应（上轮）：已补充，见 v5 第 14 行",
-		"[A4] RULE-3 结算规则 · 改动后 v5 第 14–15 行 · 定位 moved（已在 v5 第 14–15 行重新定位）",
+		// Header shows the target version's own lines; the parenthetical the
+		// relocation into the working version (reviews #1/#2).
+		"[A4] RULE-3 结算规则 · 改动前 v4 第 2 行 · 定位 moved（已在 v5 第 3 行重新定位）",
 		"  ↳ 回复（Master）：参考 RULE-7 的写法",
+		// An outdated whole-section anchor must surface its location (#7).
+		"[A6] 旧节 · 整节 · 定位 outdated",
+		// Revision-issue path: side=after even though the working version is
+		// not the target revision (#1).
+		"[A7] RULE-4 规则四 · 改动后 v5 第 1–2 行 · 定位 exact",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("text output missing %q:\n%s", want, out)
@@ -166,9 +201,13 @@ func TestLabrastroBaselineAnnotationsCommand(t *testing.T) {
 		t.Fatalf("issue-identifier batch failed: %d", code)
 	}
 
-	// Reply threads render the member name.
-	out, _, _ = executeBaseline(t, "annotations", baselineTestProject, "--batch", baselineTestBatch)
-	_ = out
+	// A carrier holding active batches of several chapters must not silently
+	// pick one (review #9).
+	t.Setenv("MULTICA_SERVER_URL", batchAmbiguousServer(t))
+	_, stderr, code = executeBaseline(t, "annotations", baselineTestProject, "--batch", "OL-1240")
+	if code != 2 || !strings.Contains(stderr, "2 open annotation batches") || !strings.Contains(stderr, "domain_rules") || !strings.Contains(stderr, "architecture") {
+		t.Fatalf("ambiguous carrier batches: code=%d stderr=%s", code, stderr)
+	}
 
 	// Flag validation.
 	for _, tc := range []struct {
@@ -249,6 +288,33 @@ func TestLabrastroBaselineRespondCommand(t *testing.T) {
 			t.Fatalf("%v: code=%d stderr=%s", tc.args, code, stderr)
 		}
 	}
+
+	// Documented pre-write validation must have standing assertions (review #11):
+	// duplicate references, the 1–1000 character response limit, the 1–50
+	// entry limit. All must fail with exit 2 before any POST.
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"duplicate uuid references", `[{"annotation":"` + baselineTestAnnotationID + `","response":"a"},{"annotation":"` + baselineTestAnnotationID + `","response":"b"}]`, "duplicate annotation reference"},
+		{"response too long", `[{"annotation":"` + baselineTestAnnotationID + `","response":"` + strings.Repeat("长", 1001) + `"}]`, "1–1000 characters"},
+		{"too many entries", "[" + strings.Repeat(`{"annotation":"`+baselineTestAnnotationID+`","response":"x"},`, 50) + `{"annotation":"60000000-0000-4000-8000-000000000002","response":"y"}]`, "1–50"},
+		{"empty response", `[{"annotation":"` + baselineTestAnnotationID + `","response":""}]`, "1–1000 characters"},
+		// A UUID from another batch must be rejected locally (review #10).
+		{"cross-batch uuid", `[{"annotation":"66000000-0000-4000-8000-000000000009","response":"x"}]`, "not part of batch"},
+	} {
+		if err := os.WriteFile("edge.json", []byte(tc.body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, code := executeBaseline(t, "respond", baselineTestProject, "--batch", baselineTestBatch, "--responses-file", "./edge.json")
+		if code != 2 || !strings.Contains(stderr, tc.want) {
+			t.Fatalf("%s: code=%d stderr=%s", tc.name, code, stderr)
+		}
+	}
+	if posted != nil && len(posted["responses"].([]any)) != 2 {
+		t.Fatal("edge cases must not reach the server")
+	}
 }
 
 func TestLabrastroBaselineAnnotationsFailureRedaction(t *testing.T) {
@@ -274,4 +340,23 @@ func writeResponsesFile(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return "./responses.json"
+}
+
+func batchAmbiguousServer(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/annotation-batches") {
+			json.NewEncoder(w).Encode(map[string]any{"batches": []any{
+				map[string]any{"id": "51000000-0000-4000-8000-000000000001", "chapter": "domain_rules", "state": "active",
+					"carrier": map[string]any{"kind": "source_issue", "issue_id": baselineTestIssue, "identifier": "OL-1240"}},
+				map[string]any{"id": "51000000-0000-4000-8000-000000000002", "chapter": "architecture", "state": "active",
+					"carrier": map[string]any{"kind": "source_issue", "issue_id": baselineTestIssue, "identifier": "OL-1240"}},
+			}})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": baselineTestIssue, "identifier": "OL-1240"})
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }

@@ -28,7 +28,7 @@ func TestBaselineReviewTicketCommands(t *testing.T) {
 			// full ticket additionally pins propose and respond.
 			want = append(want,
 				"multica project baseline propose ",
-				"--section \"<anchor>\" --content-file … --source-issue <本任务> --base-current",
+				"--section \"<anchor>\" --content-file … --summary \"<变更说明>\" --source-issue <本任务> --base-current",
 				"--replaces <候选号>",
 				"multica project baseline respond ",
 				"--responses-file ./responses.json",
