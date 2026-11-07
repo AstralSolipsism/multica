@@ -958,6 +958,17 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		commentSnippetPredicate,
 	))
 
+	commentWhere := "c.workspace_id = " + wsParam
+	if projectParam != "" {
+		// EXISTS prunes comments from other projects before aggregating; repeating
+		// i.workspace_id lets PostgreSQL drive index lookups from issue.
+		commentWhere += fmt.Sprintf(
+			" AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND i.workspace_id = %s AND i.project_id = %s)",
+			wsParam,
+			projectParam,
+		)
+	}
+
 	// PostgreSQL otherwise inlines this scalar LATERAL subquery and recomputes
 	// LOWER(c.content) for every flag. OFFSET 0 is the intentional planner fence
 	// that keeps the long comment body lowercased once per row. Future indexable
@@ -972,13 +983,13 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 				SELECT LOWER(c.content) AS lowered
 				OFFSET 0
 			) lowered_comment
-			WHERE c.workspace_id = %s
+			WHERE %s
 			GROUP BY c.issue_id
 		) aggregated_comments
 		WHERE %s
 	)`,
 		strings.Join(commentFlagColumns, ",\n\t\t\t\t"),
-		wsParam,
+		commentWhere,
 		strings.Join(commentCandidateFlags, " OR "),
 	)
 	if titleDescOnly {
@@ -1188,9 +1199,12 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	// (or absent) value keeps the default all-field scope.
 	titleDescOnly := r.URL.Query().Get("scope") == searchScopeTitleDesc
 
-	// project_id filters results to one project. Malformed UUIDs return 400 —
-	// silently coercing to a zero UUID would return an empty result set and
-	// mask a client bug, matching ListIssues' filter behavior.
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+
+	// Malformed UUIDs return 400, matching ListIssues.
 	var projectFilter pgtype.UUID
 	if p := r.URL.Query().Get("project_id"); p != "" {
 		id, ok := parseUUIDOrBadRequest(w, p, "project_id")
@@ -1198,11 +1212,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		projectFilter = id
-	}
-
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
 	}
 	terms := splitSearchTerms(q)
 	queryNum, hasNum := parseQueryNumber(q)

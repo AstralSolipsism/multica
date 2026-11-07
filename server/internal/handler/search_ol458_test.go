@@ -55,14 +55,30 @@ func TestIssueSearch_ProjectFilter(t *testing.T) {
 	token := "projscope" + uuid.NewString()[:8]
 	projectID := dbfx.Project(t, "Search project "+token)
 	otherProjectID := dbfx.Project(t, "Other search project "+token)
+	emptyProjectID := dbfx.Project(t, "Empty search project "+token)
+
 	inProject := dbfx.Issue(t, token+" inside project", testutil.Cols{"project_id": projectID})
 	dbfx.Issue(t, token+" other project", testutil.Cols{"project_id": otherProjectID})
 	dbfx.Issue(t, token+" no project", testutil.Cols{"project_id": nil})
 
+	commentInProject := dbfx.Issue(t, "Unrelated title A", testutil.Cols{"project_id": projectID})
+	dbfx.Comment(t, commentInProject, "comment hit "+token)
+
+	commentOtherProject := dbfx.Issue(t, "Unrelated title B", testutil.Cols{"project_id": otherProjectID})
+	dbfx.Comment(t, commentOtherProject, "comment hit "+token)
+
+	commentNoProject := dbfx.Issue(t, "Unrelated title C", testutil.Cols{"project_id": nil})
+	dbfx.Comment(t, commentNoProject, "comment hit "+token)
+
 	payload, _ := callIssueSearch(t, "q="+url.QueryEscape(token)+"&project_id="+projectID+"&include_closed=true&limit=50")
 	got := searchIDs(t, payload)
-	if len(got) != 1 || got[0] != inProject {
-		t.Fatalf("project-filtered search = %v, want only %s", got, inProject)
+	if len(got) != 2 || got[0] != inProject || got[1] != commentInProject {
+		t.Fatalf("project-filtered search = %v, want [%s %s]", got, inProject, commentInProject)
+	}
+
+	emptyPayload, _ := callIssueSearch(t, "q="+url.QueryEscape(token)+"&project_id="+emptyProjectID+"&include_closed=true&limit=50")
+	if len(emptyPayload.Issues) != 0 {
+		t.Fatalf("empty project search = %d issues, want 0", len(emptyPayload.Issues))
 	}
 }
 
@@ -74,6 +90,15 @@ func TestIssueSearch_ProjectFilterRejectsMalformedUUID(t *testing.T) {
 	testHandler.SearchIssues(recorder, newRequest(http.MethodGet, "/api/issues/search?q=x&project_id=not-a-uuid", nil))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v (body=%q)", err, recorder.Body.String())
+	}
+	if resp.Error != "invalid project_id" {
+		t.Fatalf("error = %q, want %q", resp.Error, "invalid project_id")
 	}
 }
 

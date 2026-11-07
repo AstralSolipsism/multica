@@ -51,7 +51,8 @@ type thinkingRun struct {
 	Samples    *jevsample.Collector
 	Task       Task
 	Record     *ThinkingDecisionRecord
-	ToolCalls  int32 // run-level tool-use count, sampled with the outcome
+	Candidates []agent.ThinkingLevel // validated once for both run and step decisions
+	ToolCalls  int32                 // run-level tool-use count, sampled with the outcome
 	seenFirst  bool
 	lastFirst  bool // first-of-request as computed by the last tag() call
 	requestIDs map[string]bool
@@ -77,6 +78,7 @@ func resolveAdaptiveThinking(ctx context.Context, provider, model string, loadCa
 			candidates = agent.ModelAdaptThinkingCandidates(catalog, provider, model)
 		}
 	}
+	run.Candidates = candidates
 	if len(candidates) < 2 {
 		log.Info("thinking_level: no adaptive candidates; following CLI config", "provider", provider, "model", model)
 		return ""

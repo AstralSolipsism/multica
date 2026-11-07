@@ -6245,6 +6245,51 @@ func TestRunIssueSearchResolvesProjectPrefix(t *testing.T) {
 	}
 }
 
+func TestRunIssueSearchProjectFilterErrors(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+
+	t.Run("malformed project prefix wraps resolve project once", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("unexpected server call for malformed prefix: %s", r.URL.Path)
+		}))
+		defer srv.Close()
+
+		setCLITestServerEnv(t, srv.URL)
+		t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+		cmd := newIssueSearchTestCmd()
+		_ = cmd.Flags().Set("project", "not-a-hex-prefix!")
+		err := runIssueSearch(cmd, []string{"needle"})
+		if err == nil {
+			t.Fatal("expected error for malformed project prefix, got nil")
+		}
+		if got := strings.Count(err.Error(), "resolve project:"); got != 1 {
+			t.Fatalf("error = %q, want single 'resolve project:' prefix (count=%d)", err.Error(), got)
+		}
+	})
+
+	t.Run("missing workspace ID fails before resolving project", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("unexpected server call when workspace ID is missing: %s", r.URL.Path)
+		}))
+		defer srv.Close()
+
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+		t.Setenv("MULTICA_WORKSPACE_ID", "")
+		t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+		cmd := newIssueSearchTestCmd()
+		_ = cmd.Flags().Set("project", "44444444")
+		err := runIssueSearch(cmd, []string{"needle"})
+		if err == nil {
+			t.Fatal("expected error when workspace ID is missing, got nil")
+		}
+		if !strings.Contains(err.Error(), "workspace_id is required") || strings.Contains(err.Error(), "resolve project:") {
+			t.Fatalf("error = %q, want requireWorkspaceID error without 'resolve project:' prefix", err.Error())
+		}
+	})
+}
+
 func TestIssueSearchCommandRegistration(t *testing.T) {
 	cmd, _, err := issueCmd.Find([]string{"search"})
 	if err != nil {
@@ -6257,6 +6302,9 @@ func TestIssueSearchCommandRegistration(t *testing.T) {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("issue search missing --%s", name)
 		}
+	}
+	if flag := cmd.Flags().Lookup("project"); flag != nil && flag.Usage != "Filter by project ID" {
+		t.Errorf("--project usage = %q, want %q", flag.Usage, "Filter by project ID")
 	}
 	if def, _ := cmd.Flags().GetBool("include-closed"); !def {
 		t.Errorf("--include-closed default = false, want true (done issues searchable by default)")

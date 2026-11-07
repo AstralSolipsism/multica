@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -546,29 +547,87 @@ func buildSearchQueryForTest(t *testing.T, phrase string, terms []string, num in
 }
 
 func TestBuildSearchQuery_ProjectFilter(t *testing.T) {
-	projectID := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true}
-	query, args := buildSearchQuery("proj", []string{"proj"}, 0, false, false, nil, projectID, false)
+	var projectID pgtype.UUID
+	if err := projectID.Scan("11111111-1111-1111-1111-111111111111"); err != nil {
+		t.Fatalf("scan project UUID: %v", err)
+	}
 
-	if !strings.Contains(query, "AND i.project_id = ") {
-		t.Fatalf("query does not filter by project:\n%s", query)
+	cases := []struct {
+		name           string
+		phrase         string
+		terms          []string
+		num            int
+		hasNum         bool
+		includeClosed  bool
+		terminalKeys   []string
+		wantProjectIdx int
+	}{
+		{
+			name:           "single term open only",
+			phrase:         "alpha",
+			terms:          []string{"alpha"},
+			num:            0,
+			hasNum:         false,
+			includeClosed:  false,
+			terminalKeys:   []string{"done", "cancelled"},
+			wantProjectIdx: 6,
+		},
+		{
+			name:           "multi term with number and closed included",
+			phrase:         "MUL-42 beta",
+			terms:          []string{"MUL-42", "beta"},
+			num:            42,
+			hasNum:         true,
+			includeClosed:  true,
+			terminalKeys:   nil,
+			wantProjectIdx: 8,
+		},
 	}
-	if !projectIDValid(args, projectID) {
-		t.Fatalf("project filter argument missing from args: %#v", args)
-	}
-	// No filter without a project.
-	unfiltered, _ := buildSearchQuery("proj", []string{"proj"}, 0, false, false, nil, pgtype.UUID{}, false)
-	if strings.Contains(unfiltered, "AND i.project_id =") {
-		t.Fatalf("query filters by project without a project filter:\n%s", unfiltered)
-	}
-}
 
-func projectIDValid(args []any, want pgtype.UUID) bool {
-	for _, a := range args {
-		if got, ok := a.(pgtype.UUID); ok && got == want {
-			return true
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unfilteredQuery, unfilteredArgs := buildSearchQuery(
+				tc.phrase, append([]string(nil), tc.terms...), tc.num, tc.hasNum, tc.includeClosed, tc.terminalKeys, pgtype.UUID{}, false,
+			)
+			if strings.Contains(unfilteredQuery, "i.project_id =") || strings.Contains(unfilteredQuery, "EXISTS (SELECT 1 FROM issue") {
+				t.Fatalf("unfiltered query must not filter by project_id:\n%s", unfilteredQuery)
+			}
+
+			filteredQuery, filteredArgs := buildSearchQuery(
+				tc.phrase, append([]string(nil), tc.terms...), tc.num, tc.hasNum, tc.includeClosed, tc.terminalKeys, projectID, false,
+			)
+			if len(filteredArgs) != len(unfilteredArgs)+1 {
+				t.Fatalf("filtered args len = %d, want %d", len(filteredArgs), len(unfilteredArgs)+1)
+			}
+			// projectID is bound right before the two trailing limit/offset slots.
+			if got := filteredArgs[len(filteredArgs)-3]; got != projectID {
+				t.Fatalf("projectID arg = %v, want %v", got, projectID)
+			}
+
+			commentCTEStart := strings.Index(filteredQuery, "comment_matches AS MATERIALIZED")
+			if commentCTEStart < 0 {
+				t.Fatalf("filtered query missing comment_matches CTE:\n%s", filteredQuery)
+			}
+			issueMatchesSection := filteredQuery[:commentCTEStart]
+			wantIssueWhere := fmt.Sprintf("WHERE i.workspace_id = $4 AND i.project_id = $%d", tc.wantProjectIdx)
+			if !strings.Contains(issueMatchesSection, wantIssueWhere) {
+				t.Fatalf("issue_matches CTE missing %q:\n%s", wantIssueWhere, issueMatchesSection)
+			}
+
+			wantCommentExists := fmt.Sprintf(
+				"AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND i.workspace_id = $4 AND i.project_id = $%d)",
+				tc.wantProjectIdx,
+			)
+			if !strings.Contains(filteredQuery[commentCTEStart:], wantCommentExists) {
+				t.Fatalf("comment_matches CTE missing %q:\n%s", wantCommentExists, filteredQuery[commentCTEStart:])
+			}
+
+			wantLimitOffset := fmt.Sprintf("LIMIT $%d OFFSET $%d", tc.wantProjectIdx+1, tc.wantProjectIdx+2)
+			if !strings.Contains(filteredQuery, wantLimitOffset) {
+				t.Fatalf("page_candidates CTE missing %q:\n%s", wantLimitOffset, filteredQuery)
+			}
+		})
 	}
-	return false
 }
 
 func TestBuildSearchQuery_TitleDescScopeDropsComments(t *testing.T) {
