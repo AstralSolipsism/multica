@@ -30,8 +30,9 @@ const FORK_STALE_STEPS = 30
  *
  * Heads-up checks start dense and back off (OL-1270): most issues worth a
  * heads-up show early, so the first checks keep `checkEverySteps`, then the
- * gap doubles each round up to 4x — one 120-step run asks at most 8 times
- * instead of 20. A found heads-up still stops the checks for good.
+ * gap doubles each round up to 4x — with checkEverySteps=6, one 120-step run
+ * asks at most 7 times (1 light + 6 heads-up) instead of 20. A found heads-up
+ * still stops the checks for good.
  */
 const BACKOFF_FACTOR = 4
 

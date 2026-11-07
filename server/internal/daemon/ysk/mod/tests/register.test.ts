@@ -248,12 +248,16 @@ describe('labrastro-ysk hooks', () => {
       return { isAnswered: true, text, usage: USAGE }
     }
     await start($)
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 40; i++) {
       await step($, i)
       await world.settle()
+      if (i >= 11) {
+        expect(world.forks).toHaveLength(3)
+        expect(headsUpChecks).toBe(2)
+      }
     }
     // Light at step 2, then checks at 5 (gap 3) and 11 (gap doubled to 6);
-    // the one at 11 finds a heads-up.
+    // the one at 11 finds a heads-up, preventing later checks at 23 and 35.
     expect(world.forks.map((prompt) => (prompt.includes('Up to 3 tips') ? 'light' : 'heads_up'))).toEqual(['light', 'heads_up', 'heads_up'])
     expect(kinds(world.logs)).toEqual(['heads_up'])
     expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'heads_up', step: 11, overturned: [], tips: [{ tag: 'heads_up', title: 'Cost' }] })
