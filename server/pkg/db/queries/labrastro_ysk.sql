@@ -3,9 +3,12 @@ SELECT COALESCE(settings->'you_should_know_enabled' = 'true'::jsonb, false)::boo
 FROM workspace WHERE id = $1;
 
 -- name: LabrastroYSKExistingTips :many
+-- Most recent valid tips only: every light/heads-up fork prompt embeds this
+-- list for dedup, so an unbounded issue history would grow each fork's input
+-- linearly (OL-1270).
 SELECT id, tag, line FROM labrastro_issue_tip
 WHERE workspace_id = $1 AND issue_id = $2 AND status = 'valid'
-ORDER BY created_at, id;
+ORDER BY created_at DESC, id DESC LIMIT 50;
 
 -- name: LabrastroYSKLatestHumanComment :one
 SELECT left(content, 500)::text AS content FROM comment
