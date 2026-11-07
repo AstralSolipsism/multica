@@ -125,7 +125,7 @@ func (q *Queries) LabrastroYSKDeleteWorkspace(ctx context.Context, workspaceID p
 const labrastroYSKExistingTips = `-- name: LabrastroYSKExistingTips :many
 SELECT id, tag, line FROM labrastro_issue_tip
 WHERE workspace_id = $1 AND issue_id = $2 AND status = 'valid'
-ORDER BY created_at, id
+ORDER BY created_at DESC, id DESC LIMIT 50
 `
 
 type LabrastroYSKExistingTipsParams struct {
@@ -139,6 +139,9 @@ type LabrastroYSKExistingTipsRow struct {
 	Line string      `json:"line"`
 }
 
+// Most recent valid tips only: every light/heads-up fork prompt embeds this
+// list for dedup, so an unbounded issue history would grow each fork's input
+// linearly (OL-1270).
 func (q *Queries) LabrastroYSKExistingTips(ctx context.Context, arg LabrastroYSKExistingTipsParams) ([]LabrastroYSKExistingTipsRow, error) {
 	rows, err := q.db.Query(ctx, labrastroYSKExistingTips, arg.WorkspaceID, arg.IssueID)
 	if err != nil {

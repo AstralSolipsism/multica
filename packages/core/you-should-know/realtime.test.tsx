@@ -102,28 +102,72 @@ describe("useYouShouldKnowRealtimeSync", () => {
     );
   });
 
-  it("issue_tip:created with an issue_id invalidates only that issue's lists and active", () => {
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    renderHook(() => useYouShouldKnowRealtimeSync(ws as unknown as WSClient), {
-      wrapper: Wrapper,
-    });
-    act(() => {
-      ws.emit("issue_tip:created", { tip: makeTip("t3", { issue_id: "i1" }) });
-    });
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: youShouldKnowKeys.issueAnyStatus(WS, "i1") }),
-    );
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: youShouldKnowKeys.active(WS) }),
-    );
-    // other issues' lists are not invalidated
-    expect(spy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: youShouldKnowKeys.issueAnyStatus(WS, "i2") }),
-    );
-    expect(spy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: youShouldKnowKeys.all(WS) }),
-    );
+  it("issue_tip:created with an issue_id invalidates only that issue's lists; active debounced", () => {
+    vi.useFakeTimers();
+    try {
+      const spy = vi.spyOn(qc, "invalidateQueries");
+      renderHook(() => useYouShouldKnowRealtimeSync(ws as unknown as WSClient), {
+        wrapper: Wrapper,
+      });
+      act(() => {
+        ws.emit("issue_tip:created", { tip: makeTip("t3", { issue_id: "i1" }) });
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.issueAnyStatus(WS, "i1") }),
+      );
+      // the active list is invalidated once the debounce settles, not inline
+      expect(spy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.active(WS) }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(800);
+      });
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.active(WS) }),
+      );
+      // other issues' lists are not invalidated
+      expect(spy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.issueAnyStatus(WS, "i2") }),
+      );
+      expect(spy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.all(WS) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a report's N tip events trigger exactly one active-list invalidation", () => {
+    vi.useFakeTimers();
+    try {
+      const spy = vi.spyOn(qc, "invalidateQueries");
+      renderHook(() => useYouShouldKnowRealtimeSync(ws as unknown as WSClient), {
+        wrapper: Wrapper,
+      });
+      // One report creating 3 tips and overturning 2: five events, one burst.
+      act(() => {
+        ws.emit("issue_tip:created", { tip: makeTip("t3", { issue_id: "i1" }) });
+        ws.emit("issue_tip:created", { tip: makeTip("t4", { issue_id: "i1" }) });
+        ws.emit("issue_tip:created", { tip: makeTip("t5", { issue_id: "i1" }) });
+        ws.emit("issue_tip:updated", { tip: makeTip("t6", { issue_id: "i1" }) });
+        ws.emit("issue_tip:updated", { tip: makeTip("t7", { issue_id: "i1" }) });
+      });
+      // issue-scoped lists invalidated per event; active not yet
+      expect(spy).toHaveBeenCalledTimes(5);
+      expect(spy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: youShouldKnowKeys.active(WS) }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(800);
+      });
+      const activeCalls = spy.mock.calls.filter(([predicate]) =>
+        JSON.stringify((predicate as { queryKey?: unknown }).queryKey)?.includes("active"),
+      );
+      expect(activeCalls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("issue_tip:updated without a usable tip payload invalidates all YSK queries", () => {
