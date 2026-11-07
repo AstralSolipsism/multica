@@ -163,8 +163,9 @@ describe("SkillPickerList tree mode", () => {
 
   it("prunes folders whose skills the caller filtered out (attached items)", async () => {
     // Caller passes only "c": a/b disappear, and "Frontend" — holding only
-    // those filtered skills — goes with them. "Engineering" survives on its
-    // gray (not-yet-imported) candidate, never on attached skills.
+    // those filtered skills — goes with them. "Engineering" goes too: its
+    // not-yet-imported package candidate cannot be bound, so it is not a
+    // reason to keep the folder (OL-1267).
     renderPicker(
       <SkillPickerList
         tree
@@ -178,30 +179,24 @@ describe("SkillPickerList tree mode", () => {
     expect(screen.queryByText("alpha")).toBeNull();
     expect(screen.queryByText("beta")).toBeNull();
     expect(screen.queryByText("Frontend")).toBeNull();
-    // "Engineering" survives on its gray candidate, collapsed by default
-    // (no selectable skills inside); expanding reveals the gray row.
+    expect(screen.queryByText("Engineering")).toBeNull();
     expect(screen.queryByText("gray-skill")).toBeNull();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Expand Engineering" }),
-    );
-    expect(await screen.findByText("gray-skill")).toBeTruthy();
   });
 
-  it("shows not-imported candidates as gray rows that cannot be toggled", async () => {
-    const onToggle = vi.fn();
+  it("does not list not-imported package candidates", async () => {
     const onToggleMany = vi.fn();
     renderPicker(
       <SkillPickerList
         tree
         skills={skills}
         selectedIds={new Set()}
-        onToggle={onToggle}
+        onToggle={vi.fn()}
         onToggleMany={onToggleMany}
       />,
     );
-    const gray = await screen.findByText("gray-skill");
-    expect(gray.closest("[aria-disabled]")).toBeTruthy();
-    // The folder tri-state never includes gray candidates.
+    expect(await screen.findByText("alpha")).toBeTruthy();
+    expect(screen.queryByText("gray-skill")).toBeNull();
+    expect(screen.queryByText("Not imported")).toBeNull();
     await userEvent.click(
       await screen.findByRole("checkbox", { name: "Select all in Engineering" }),
     );
@@ -209,7 +204,6 @@ describe("SkillPickerList tree mode", () => {
       expect.not.arrayContaining([expect.objectContaining({ name: "gray-skill" })]),
       true,
     );
-    expect(onToggle).not.toHaveBeenCalled();
   });
 
   it("flattens search results with folder paths", async () => {
@@ -225,10 +219,11 @@ describe("SkillPickerList tree mode", () => {
     await userEvent.type(await screen.findByPlaceholderText("Search skills…"), "alpha");
     expect(await screen.findByText("Engineering / Frontend")).toBeTruthy();
     expect(screen.queryByText("beta")).toBeNull();
-    // Gray candidates surface in search too, still disabled.
+    // Not-imported candidates never match: only bindable skills are listed.
     await userEvent.clear(screen.getByPlaceholderText("Search skills…"));
     await userEvent.type(screen.getByPlaceholderText("Search skills…"), "gray");
-    expect(await screen.findByText("gray-skill")).toBeTruthy();
+    expect(await screen.findByText("No skills match.")).toBeTruthy();
+    expect(screen.queryByText("gray-skill")).toBeNull();
   });
 
   it("rebinds the tree when the workspace changes", async () => {

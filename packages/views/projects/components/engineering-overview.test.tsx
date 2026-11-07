@@ -788,8 +788,9 @@ describe("EngineeringOverview baseline editing", () => {
     await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
     const article = document.querySelector('[data-baseline-section-key="domain_rules:Rules"]') as HTMLElement;
     await user.click(within(article).getByRole("button", { name: "Annotate section" }));
-    await user.type(within(article).getByRole("textbox", { name: "Write a change request" }), "Clarify the rule");
-    await user.click(within(article).getByRole("button", { name: "Add to review" }));
+    const rail = document.querySelector("[data-reading-rail]") as HTMLElement;
+    await user.type(within(rail).getByRole("textbox", { name: "Write a change request" }), "Clarify the rule");
+    await user.click(within(rail).getByRole("button", { name: "Add to review" }));
     expect(submitProjectBaselineReview).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Finish review" }));
     const dialog = screen.getByRole("dialog");

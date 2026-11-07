@@ -1,8 +1,6 @@
 import { MessageSquarePlus } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import type { BaselineRevision } from "@multica/core/api";
-import { BASELINE_ANNOTATION_QUOTE_LIMIT } from "@multica/core/projects/baseline-annotation-draft-store";
-import { indexCommentText } from "../../issues/components/comment-annotation-selection";
 import { useT } from "../../i18n";
 import type { BaselineDisplaySection } from "./engineering-baseline-utils";
 import type {
@@ -10,16 +8,38 @@ import type {
   BaselineComposerAnchor,
 } from "./engineering-baseline-annotation-model";
 import type { BaselineAnnotationDraftItem } from "@multica/core/projects/baseline-annotation-draft-store";
-import { isBaselineAnnotationReply, anchorOutdated, anchorPlacement } from "./engineering-baseline-annotation-model";
-import {
-  BaselineAnnotationComposer,
-  BaselineSubmittedThread,
-  PendingBaselineAnnotationCard,
-} from "./engineering-baseline-annotation-card";
+import { anchorOutdated, anchorPlacement } from "./engineering-baseline-annotation-model";
+import { captureBaselineTextRange } from "./engineering-baseline-text-annotations";
+import { BaselineSubmittedThread } from "./engineering-baseline-annotation-card";
+import { baselineReadingEntries } from "./engineering-baseline-reading-card";
+import { BaselineInlineReadingEntry } from "./engineering-baseline-reading-inline";
 
 export function BaselineAnnotateSectionButton({ onClick }: { onClick: () => void }) {
   const { t } = useT("engineering");
   return <Button type="button" size="xs" variant="ghost" className="opacity-100 lg:opacity-0 lg:focus-visible:opacity-100 lg:group-hover/section:opacity-100 [@media(hover:none)]:opacity-100" onClick={onClick}><MessageSquarePlus aria-hidden="true" />{t(($) => $.annotations.annotateSection)}</Button>;
+}
+
+export function captureBaselineTextAnchor(
+  article: HTMLElement,
+  section: BaselineDisplaySection,
+  adopted: BaselineRevision,
+  targetLabel: string,
+): { anchor: BaselineComposerAnchor; range: Range; root: HTMLElement } | null {
+  const captured = captureBaselineTextRange(article, window.getSelection());
+  if (!captured) return null;
+  const { range, root, ...fields } = captured;
+  return {
+    anchor: {
+      anchorKind: "text",
+      targetRevisionId: adopted.id,
+      sectionAnchor: section.anchor,
+      sectionTitle: section.title,
+      ...fields,
+      targetLabel,
+    },
+    range,
+    root,
+  };
 }
 
 export function createBaselineTextAnchor(
@@ -28,33 +48,7 @@ export function createBaselineTextAnchor(
   adopted: BaselineRevision,
   targetLabel: string,
 ): BaselineComposerAnchor | null {
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
-  const root = article.querySelector<HTMLElement>("[data-baseline-markdown]");
-  if (!root) return null;
-  const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-  const { text, nodes } = indexCommentText(root);
-  const selected = nodes.filter(({ node }) => range.intersectsNode(node));
-  const first = selected[0];
-  const last = selected.at(-1);
-  if (!first || !last) return null;
-  const start = first.start + (range.startContainer === first.node ? range.startOffset : 0);
-  const rawEnd = last.start + (range.endContainer === last.node ? range.endOffset : last.node.length);
-  const end = Math.min(rawEnd, start + BASELINE_ANNOTATION_QUOTE_LIMIT);
-  const quote = text.slice(start, end);
-  if (!quote.trim()) return null;
-  return {
-    anchorKind: "text",
-    targetRevisionId: adopted.id,
-    sectionAnchor: section.anchor,
-    sectionTitle: section.title,
-    quote,
-    start,
-    prefix: text.slice(Math.max(0, start - 64), start),
-    suffix: text.slice(end, end + 64),
-    targetLabel,
-  };
+  return captureBaselineTextAnchor(article, section, adopted, targetLabel)?.anchor ?? null;
 }
 
 interface ReadingAnnotationsProps {
@@ -67,6 +61,8 @@ interface ReadingAnnotationsProps {
   composer: BaselineComposerAnchor | null;
   canDecide: boolean;
   limitReached: boolean;
+  hoveredId: string | null;
+  onHover: (id: string | null) => void;
   onAddAnnotation: (anchor: BaselineComposerAnchor, note: string) => boolean;
   onCancelComposer: () => void;
   onAddReply: (thread: BaselineAnnotationThread, note: string) => boolean;
@@ -76,34 +72,27 @@ interface ReadingAnnotationsProps {
 }
 
 export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
-  const { t } = useT("engineering");
-  const pending = props.pendingItems.filter((item) => !isBaselineAnnotationReply(item));
-  if (!props.threads.length && !pending.length && !props.composer) return null;
-  // Reading mode renders the adopted baseline, but server location verdicts
-  // are computed against the working candidate — anchor placement must compare
-  // against that candidate, not the adopted revision being displayed.
-  const placement = (root: BaselineAnnotationThread["root"]) => anchorPlacement(root, props.adopted.id, props.candidate);
-  const outdated = (root: BaselineAnnotationThread["root"]) => anchorOutdated(root, props.adopted.id, props.candidate);
-  return (
-    <div className="mt-3 space-y-2 border-l-2 border-brand/30 pl-3" data-reading-annotations={props.section.anchor}>
-      {props.threads.map((thread) => (
-        <BaselineSubmittedThread
-          key={thread.root.id}
-          thread={thread}
-          canDecide={props.canDecide}
-          limitReached={props.limitReached}
-          placement={placement(thread.root)}
-          outdated={outdated(thread.root)}
-          onAddReply={(note) => props.onAddReply(thread, note)}
-          onUpdatePending={props.onUpdatePending}
-          onDeletePending={props.onDeletePending}
-          onResolve={(resolved) => props.onResolve(thread.root.id, resolved)}
-        />
-      ))}
-      {pending.map((item) => <PendingBaselineAnnotationCard key={item.id} item={item} targetLabel={t(($) => $.baseline.baseMode, { number: props.adopted.revisionNumber })} onUpdate={props.onUpdatePending} onDelete={props.onDeletePending} />)}
-      {props.composer ? <BaselineAnnotationComposer anchor={props.composer} limitReached={props.limitReached} onAdd={(note) => props.onAddAnnotation(props.composer!, note)} onCancel={props.onCancelComposer} /> : null}
-    </div>
-  );
+  const entries = baselineReadingEntries(props.threads, props.pendingItems, props.composer);
+  if (!entries.length) return null;
+  return entries.map((entry) => (
+    <BaselineInlineReadingEntry
+      key={entry.id}
+      section={props.section}
+      entry={entry}
+      adopted={props.adopted}
+      candidate={props.candidate}
+      canDecide={props.canDecide}
+      limitReached={props.limitReached}
+      hoveredId={props.hoveredId}
+      onHover={props.onHover}
+      onAddAnnotation={props.onAddAnnotation}
+      onCancelComposer={props.onCancelComposer}
+      onAddReply={props.onAddReply}
+      onUpdatePending={props.onUpdatePending}
+      onDeletePending={props.onDeletePending}
+      onResolve={props.onResolve}
+    />
+  ));
 }
 
 export function BaselineStandaloneThreads({ title, threads, baseRevisionId, candidate, forceOutdatedBadge, canDecide, limitReached, onAddReply, onUpdatePending, onDeletePending, onResolve }: {

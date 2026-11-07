@@ -1,6 +1,7 @@
 "use client";
 
 import { invalidateAgentFolderQueries } from "../agents/folder-queries";
+import { skillPackageKeys } from "../skills/package-queries";
 
 import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
 import { useEffect, useRef } from "react";
@@ -889,7 +890,12 @@ export function useRealtimeSync(
       },
       skill: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+          // Labrastro fork: package writes create, adopt and delete skills
+          // without a folder event; keep the folder tree in step.
+          qc.invalidateQueries({ queryKey: skillPackageKeys.tree(wsId) });
+        }
       },
       project: () => {
         const wsId = getCurrentWsId();

@@ -28,6 +28,8 @@ interface BadgeProps {
   className?: string;
   /** Rendered in front of the chip when the badge is visible (e.g. a " · "). */
   leading?: ReactNode;
+  /** Disable when the badge sits inside an already focusable control. */
+  focusable?: boolean;
 }
 
 function useFallbackReason(fallback: TaskMessageThinkingMetadata["fallback"]): string {
@@ -58,11 +60,13 @@ function BadgeShell({
   tooltip,
   leading,
   className,
+  focusable = true,
   children,
 }: {
   tooltip: ReactNode;
   leading?: ReactNode;
   className?: string;
+  focusable?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -72,6 +76,7 @@ function BadgeShell({
         <TooltipTrigger
           render={
             <span
+              tabIndex={focusable ? 0 : undefined}
               className={cn(
                 "inline-flex shrink-0 cursor-default items-center gap-0.5 rounded-full border bg-muted/60 px-1.5 py-px font-mono text-micro leading-4 text-muted-foreground",
                 className,
@@ -168,7 +173,7 @@ function CurrentChip({
 }
 
 /** The run's current level, shown for the whole run — tool calls included. */
-export function ThinkingLevelBadge({ messages, className, leading }: BadgeProps) {
+export function ThinkingLevelBadge({ messages, className, leading, focusable }: BadgeProps) {
   const { t } = useT("thinking");
   const state = useMemo(() => currentThinkingLevel(messages), [messages]);
   if (!state) return null;
@@ -186,7 +191,7 @@ export function ThinkingLevelBadge({ messages, className, leading }: BadgeProps)
     <AdaptTooltipContent metadata={metadata} />
   );
   return (
-    <BadgeShell tooltip={tooltip} leading={leading} className={className}>
+    <BadgeShell tooltip={tooltip} leading={leading} className={className} focusable={focusable}>
       <CurrentChip current={state.current} trend={state.trend} />
     </BadgeShell>
   );
@@ -248,11 +253,11 @@ function SummaryTooltipContent({ summary }: { summary: ThinkingRunSummary }) {
 }
 
 /** The post-run rollup kept in the transcript dialog header. */
-export function ThinkingRunSummaryBadge({ messages, className, leading }: BadgeProps) {
+export function ThinkingRunSummaryBadge({ messages, className, leading, focusable }: BadgeProps) {
   const summary = useMemo(() => summarizeThinkingRun(messages), [messages]);
   if (!summary) return null;
   return (
-    <BadgeShell tooltip={<SummaryTooltipContent summary={summary} />} leading={leading} className={className}>
+    <BadgeShell tooltip={<SummaryTooltipContent summary={summary} />} leading={leading} className={className} focusable={focusable}>
       <SummaryChipLabel summary={summary} />
     </BadgeShell>
   );

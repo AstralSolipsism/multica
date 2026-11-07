@@ -247,6 +247,24 @@ describe("InlineCommentRun", () => {
     expect(api.getIssue).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a thinking-level badge presentational inside the activity disclosure", async () => {
+    vi.mocked(api.listTaskMessages).mockResolvedValue([{
+      task_id: id,
+      issue_id: "issue",
+      seq: 1,
+      type: "thinking",
+      content: "Checking the runtime",
+      metadata: { thinking: { level: "high", mode: "fixed" } },
+    }]);
+    setup(task());
+    const badge = await screen.findByText("high");
+    const toggle = screen.getByRole("button", { name: /View activity/ });
+    expect(toggle).toContainElement(badge);
+    expect(toggle.querySelectorAll("[tabindex]")).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
   it.each(["completed", "queued"] as const)("keeps the same focused disclosure button for a %s run", async (status) => {
     vi.mocked(api.listTaskMessages).mockResolvedValue(messages);
     setup(task({ status }));

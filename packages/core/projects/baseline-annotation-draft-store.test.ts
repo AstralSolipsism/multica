@@ -50,11 +50,13 @@ describe("baseline annotation draft normalization", () => {
     expect(normalizeBaselineAnnotationDraft(annotation({ note: " \n " }))).toBeNull();
   });
 
-  it("accepts a 50-line selection and rejects invalid ranges or lines on other anchor kinds", () => {
+  it("accepts valid Diff ranges and text block lines while rejecting malformed or section lines", () => {
     expect(normalizeBaselineAnnotationDraft(annotation({ lineStart: 1, lineEnd: 50 }))).not.toBeNull();
     expect(normalizeBaselineAnnotationDraft(annotation({ lineStart: 1, lineEnd: 51 }))).toBeNull();
     expect(normalizeBaselineAnnotationDraft(annotation({ lineStart: 0, lineEnd: 1 }))).toBeNull();
     expect(normalizeBaselineAnnotationDraft(annotation({ lineStart: 3, lineEnd: 2 }))).toBeNull();
+    expect(normalizeBaselineAnnotationDraft(annotation({ anchorKind: "text", lineStart: 2, lineEnd: 4 }))).toMatchObject({ lineStart: 2, lineEnd: 4 });
+    expect(normalizeBaselineAnnotationDraft(annotation({ anchorKind: "text", lineEnd: undefined }))).toBeNull();
     expect(normalizeBaselineAnnotationDraft(annotation({ anchorKind: "section" }))).toBeNull();
     expect(normalizeBaselineAnnotationDraft(annotation({ anchorKind: "section", lineStart: undefined, lineEnd: undefined }))).not.toBeNull();
   });

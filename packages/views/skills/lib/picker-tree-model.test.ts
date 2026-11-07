@@ -5,7 +5,6 @@ import type { SkillSummary } from "@multica/core/types";
 import type { SkillFolderTree } from "@multica/core/api/schemas";
 import {
   buildPickerModel,
-  defaultCollapsedFolderIds,
   PICKER_UNCATEGORIZED_ID,
   searchPickerModel,
 } from "./picker-tree-model";
@@ -97,7 +96,7 @@ describe("buildPickerModel", () => {
   it("nests caller skills under their folders and prunes empty folders", () => {
     const model = buildPickerModel(tree, allSkills, new Set());
     const folders = model.rows.filter((r) => r.kind === "folder");
-    // "Empty" has no visible skills and no gray rows: pruned.
+    // "Empty" has no visible skills: pruned.
     expect(folders.map((r) => r.kind === "folder" && r.folderId)).not.toContain("empty-custom");
     const skillsUnderRoot = model.rows
       .filter((r) => r.kind === "skill")
@@ -105,10 +104,9 @@ describe("buildPickerModel", () => {
     expect(skillsUnderRoot).toContain("s1");
     expect(skillsUnderRoot).toContain("s2");
     expect(skillsUnderRoot).toContain("s3");
-    // Gray candidate appears under "sub".
-    const grayRows = model.rows.filter((r) => r.kind === "gray");
-    expect(grayRows).toHaveLength(1);
-    expect(grayRows[0]?.kind === "gray" && grayRows[0].candidate.name).toBe("gray-one");
+    // Not-imported package candidates are never listed (OL-1267).
+    expect(model.rows.every((r) => r.kind === "folder" || r.kind === "skill")).toBe(true);
+    expect(JSON.stringify(model.rows)).not.toContain("gray-one");
     // Uncategorized skills group under the synthetic node.
     const loose = model.rows.find((r) => r.kind === "skill" && r.skill.id === "loose");
     expect(loose?.kind === "skill" && loose.depth).toBe(1);
@@ -120,8 +118,9 @@ describe("buildPickerModel", () => {
     const folderIds = model.rows.map((r) => r.kind === "folder" && r.folderId);
     expect(folderIds).not.toContain("custom");
     expect(folderIds).not.toContain(PICKER_UNCATEGORIZED_ID);
-    // "sub" survives: it holds the gray candidate.
-    expect(folderIds).toContain("sub");
+    // "sub" holds only the filtered s2 and a not-imported candidate: pruned.
+    expect(folderIds).not.toContain("sub");
+    expect(folderIds).toContain("root");
     const skillIds = model.rows.map((r) => r.kind === "skill" && r.skill.id).filter(Boolean);
     expect(skillIds).toEqual(["s1"]);
   });
@@ -145,31 +144,20 @@ describe("buildPickerModel", () => {
   });
 });
 
-describe("defaultCollapsedFolderIds", () => {
-  it("collapses only folders without selectable skills (gray-only)", () => {
-    const collapsed = defaultCollapsedFolderIds(tree, [skill("s1")]);
-    expect(collapsed.has("sub")).toBe(true);
-    expect(collapsed.has("root")).toBe(false);
-  });
-});
-
 describe("searchPickerModel", () => {
   it("flattens matches with their folder paths", () => {
     const result = searchPickerModel(tree, allSkills, "s2", "Uncategorized");
-    expect(result.skills).toHaveLength(1);
-    expect(result.skills[0]?.path).toBe("o/r / deep");
+    expect(result).toHaveLength(1);
+    expect(result[0]?.path).toBe("o/r / deep");
   });
 
-  it("labels uncategorized matches and matches gray candidates by name", () => {
+  it("labels uncategorized matches and never matches not-imported candidates", () => {
     const loose = searchPickerModel(tree, allSkills, "loose", "Uncategorized");
-    expect(loose.skills[0]?.path).toBe("Uncategorized");
-    const gray = searchPickerModel(tree, allSkills, "gray", "Uncategorized");
-    expect(gray.skills).toHaveLength(0);
-    expect(gray.gray).toHaveLength(1);
-    expect(gray.gray[0]?.path).toBe("o/r / deep");
+    expect(loose[0]?.path).toBe("Uncategorized");
+    expect(searchPickerModel(tree, allSkills, "gray", "Uncategorized")).toEqual([]);
   });
 
   it("returns nothing for an empty query", () => {
-    expect(searchPickerModel(tree, allSkills, "  ", "x")).toEqual({ skills: [], gray: [] });
+    expect(searchPickerModel(tree, allSkills, "  ", "x")).toEqual([]);
   });
 });

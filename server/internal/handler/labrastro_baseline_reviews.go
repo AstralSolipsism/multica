@@ -388,14 +388,17 @@ func (h *Handler) LabrastroSubmitBaselineReview(w http.ResponseWriter, r *http.R
 				p.Suffix = input.Suffix
 				p.Start = input.Start
 				switch input.AnchorKind {
-				case "lines":
-					if input.LineStart == nil || input.LineEnd == nil || *input.LineStart < 1 || *input.LineEnd < *input.LineStart || *input.LineEnd-*input.LineStart >= 50 || int(*input.LineEnd) > len(engineering.SourceLines(section.OwnMarkdown)) {
-						writeEngineeringError(w, baselineError(400, "invalid_annotation_lines"))
-						return
+				case "lines", "text":
+					hasLines := input.LineStart != nil || input.LineEnd != nil
+					if input.AnchorKind == "lines" || hasLines {
+						if input.LineStart == nil || input.LineEnd == nil || *input.LineStart < 1 || *input.LineEnd < *input.LineStart || (input.AnchorKind == "lines" && *input.LineEnd-*input.LineStart >= 50) || int(*input.LineEnd) > len(engineering.SourceLines(section.OwnMarkdown)) {
+							writeEngineeringError(w, baselineError(400, "invalid_annotation_lines"))
+							return
+						}
+						p.LineStart = pgtype.Int4{Int32: *input.LineStart, Valid: true}
+						p.LineEnd = pgtype.Int4{Int32: *input.LineEnd, Valid: true}
 					}
-					p.LineStart = pgtype.Int4{Int32: *input.LineStart, Valid: true}
-					p.LineEnd = pgtype.Int4{Int32: *input.LineEnd, Valid: true}
-				case "text", "section":
+				case "section":
 					if input.LineStart != nil || input.LineEnd != nil {
 						writeEngineeringError(w, baselineError(400, "invalid_annotation_lines"))
 						return

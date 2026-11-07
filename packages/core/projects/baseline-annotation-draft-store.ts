@@ -86,15 +86,13 @@ function normalizeAnchor(value: Record<string, unknown>): BaselineAnnotationDraf
 
   const hasLineStart = value.lineStart !== undefined && value.lineStart !== null;
   const hasLineEnd = value.lineEnd !== undefined && value.lineEnd !== null;
+  const validLineRange = hasLineStart && hasLineEnd &&
+    typeof value.lineStart === "number" && Number.isInteger(value.lineStart) && value.lineStart >= 1 &&
+    typeof value.lineEnd === "number" && Number.isInteger(value.lineEnd) && value.lineEnd >= value.lineStart;
+  if (hasLineStart !== hasLineEnd || ((hasLineStart || hasLineEnd) && !validLineRange)) return null;
   if (value.anchorKind === "lines") {
-    if (
-      !hasLineStart || !hasLineEnd ||
-      typeof value.lineStart !== "number" || !Number.isInteger(value.lineStart) || value.lineStart < 1 ||
-      typeof value.lineEnd !== "number" || !Number.isInteger(value.lineEnd) ||
-      value.lineEnd < value.lineStart ||
-      value.lineEnd - value.lineStart >= BASELINE_ANNOTATION_LINE_LIMIT
-    ) return null;
-  } else if (hasLineStart || hasLineEnd) return null;
+    if (!validLineRange || (value.lineEnd as number) - (value.lineStart as number) >= BASELINE_ANNOTATION_LINE_LIMIT) return null;
+  } else if (value.anchorKind === "section" && (hasLineStart || hasLineEnd)) return null;
 
   return {
     anchorKind: value.anchorKind,
