@@ -22,7 +22,7 @@ import (
 
 func newLabrastroProjectBaselineCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "baseline", Short: "Read, propose, compare, adopt and export project baselines"}
-	for _, action := range []string{"get", "propose", "diff", "adopt", "export"} {
+	for _, action := range []string{"get", "propose", "diff", "adopt", "export", "annotations", "respond"} {
 		sub := &cobra.Command{Use: action + " <project-id>", Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return baselineFailure(2, "exactly one project ID is required")
@@ -68,6 +68,15 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 			sub.Short = "Export adopted chapters as read-only Markdown snapshots"
 			sub.Flags().String("dir", "./docs/baseline", "Directory for numbered chapter files")
 			sub.Flags().String("single-file", "", "Write all chapters to one Markdown file instead of --dir")
+		case "annotations":
+			sub.Short = "Read one annotation batch for a carrier issue run"
+			sub.Flags().String("batch", "", "Batch UUID or carrier issue identifier (required)")
+			sub.Flags().String("state", "open", "Include only unresolved annotations, or all")
+			sub.Flags().Bool("with-sections", false, "Append the annotated sections' subtrees from the working version")
+		case "respond":
+			sub.Short = "Write agent responses for one annotation batch (carrier issue runs only)"
+			sub.Flags().String("batch", "", "Batch UUID (required)")
+			sub.Flags().String("responses-file", "", "JSON file inside the current directory (required)")
 		}
 		if action == "get" || action == "propose" || action == "diff" {
 			sub.Flags().String("chapter", "", "Chapter: overview, domain_rules, architecture, exclusions_and_risks or module:<slug>")
@@ -261,6 +270,20 @@ func baselineValidate(cmd *cobra.Command) error {
 		if mustString(cmd, "dir") == "" {
 			return baselineFailure(2, "--dir must not be empty")
 		}
+	case "annotations":
+		if strings.TrimSpace(mustString(cmd, "batch")) == "" {
+			return baselineFailure(2, "--batch is required; pass the batch UUID or the carrier issue identifier")
+		}
+		if state := mustString(cmd, "state"); state != "open" && state != "all" {
+			return baselineFailure(2, "--state must be open or all")
+		}
+	case "respond":
+		if strings.TrimSpace(mustString(cmd, "batch")) == "" || mustString(cmd, "responses-file") == "" {
+			return baselineFailure(2, "--batch and --responses-file are required")
+		}
+		if !uuidRegexp.MatchString(strings.TrimSpace(mustString(cmd, "batch"))) {
+			return baselineFailure(2, "--batch must be the batch UUID for respond")
+		}
 	}
 	return nil
 }
@@ -298,6 +321,12 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		return baselineFailure(2, "%s", err)
 	}
 	path := "/api/projects/" + project.ID
+	if cmd.Name() == "annotations" {
+		return baselineAnnotations(ctx, cmd, client, project.ID)
+	}
+	if cmd.Name() == "respond" {
+		return baselineRespond(ctx, cmd, client, project.ID)
+	}
 	if cmd.Name() == "diff" && mustString(cmd, "from") != "" {
 		query := url.Values{"chapter": {mustString(cmd, "chapter")}, "diff_from": {mustString(cmd, "from")}, "diff_to": {mustString(cmd, "to")}}
 		var raw json.RawMessage
