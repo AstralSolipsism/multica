@@ -265,10 +265,15 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 				continue
 			}
 			// The account recovers only after its LATEST exhausted-window
-			// reset (serial windows inside one account).
+			// reset (serial windows inside one account) — a healthy window's
+			// reset is irrelevant, mirroring TS accountRecovery.
 			latest := int64(-1)
 			for k := range acc.Windows {
-				if r := acc.Windows[k].ResetsAt; r != nil && *r > observedAt.Unix() && *r > latest {
+				w := acc.Windows[k]
+				if w.UsedPercent == nil || *w.UsedPercent < 100 {
+					continue
+				}
+				if r := w.ResetsAt; r != nil && *r > observedAt.Unix() && *r > latest {
 					latest = *r
 				}
 			}

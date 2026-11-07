@@ -390,3 +390,43 @@ func TestOmpUsageToPlanQuota_RuntimeStatusORsAcrossPools(t *testing.T) {
 		t.Fatalf("all-dead runtime status = %q, want limited", quotaAll.Status)
 	}
 }
+
+// #18/#19: the issue's scenario-2 PRIMARY example — 5h exhausted, 7d still
+// healthy. Recovery must be the earliest 5h reset (the exhausted window),
+// not the latest reset across ALL windows (which would point at the healthy
+// 7d reset days out). Failed before the fix: Go reported the 7d reset.
+func TestOmpUsageToPlanQuota_RecoveryIgnoresHealthyWindows(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	reset5hA := float64((now.Unix() + 4320) * 1000)    // 1h12m
+	reset5hB := float64((now.Unix() + 7200) * 1000)    // 2h
+	reset7dA := float64((now.Unix() + 5*86400) * 1000) // 5d
+	reset7dB := float64((now.Unix() + 6*86400) * 1000) // 6d
+	account := func(label string, reset5h, reset7d float64) map[string]any {
+		return map[string]any{
+			"provider": "kimi-code",
+			"limits": []any{
+				// 5h used up (0% remaining) — the binding exhaustion.
+				ompLimitJSON("kimi-5h", "5h", 18_000_000, reset5h, 1.0, "exhausted"),
+				// 7d still has headroom.
+				ompLimitJSON("kimi-7d", "7d", 604_800_000, reset7d, 0.35, "ok"),
+			},
+			"metadata": map[string]any{"email": label},
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"generatedAt": now.UnixMilli(),
+		"reports":     []any{account("19*", reset5hA, reset7dA), account("as*", reset5hB, reset7dB)},
+	})
+	quota, err := ompUsageToPlanQuota(raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := quota.AccountPools[0]
+	if pool.Status != protocol.PlanQuotaStatusLimited || pool.AvailableAccounts != 0 {
+		t.Fatalf("pool = %+v", pool)
+	}
+	want := now.Unix() + 4320 // account #1's 5h reset — the earliest exhausted-window recovery
+	if pool.ResumesAt == nil || *pool.ResumesAt != want {
+		t.Fatalf("resumes_at = %v, want %d (+1h12m, the exhausted 5h reset of account #1)", pool.ResumesAt, want)
+	}
+}

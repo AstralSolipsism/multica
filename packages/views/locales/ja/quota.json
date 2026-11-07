@@ -44,7 +44,6 @@
     "relogin_hint": "OAuth 認証情報が無効です。ホストの OMP で /login を再実行してください。",
     "pool_needs_relogin": "再ログインが必要",
     "pool_all_unavailable": "このプロバイダープールの全アカウントが利用不可です。そのモデルを使うエージェントのタスクはレート制限されます。",
-
     "idle_count_other": "+{{count}} 個のアイドルプール",
     "idle_title": "アイドルプロバイダープール",
     "idle_description": "ログイン済みですが、このワークスペースのエージェントは使用していません。",

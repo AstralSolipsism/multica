@@ -910,4 +910,36 @@ describe("multi-account provider pools (review regressions)", () => {
     expect(pools.pools[0]!.availableAccounts).toBe(1);
     expect(pools.pools[0]!.exhausted).toBe(false);
   });
+
+// #18/#19 (scenario-2 primary example): 5h exhausted, 7d healthy — recovery
+// is the earliest 5h (exhausted-window) reset, never the healthy 7d reset.
+it("recovery ignores healthy windows (scenario-2 primary example)", () => {
+  const pools = evaluatePlanQuotaPools(quotaOf([
+    pool([
+      {
+        label: "19*",
+        status: "exhausted",
+        windows: [
+          { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 4320 },
+          { name: "7d", used_percent: 35, window_minutes: 10080, resets_at: NOW_SEC + 5 * 24 * 3600 },
+        ],
+        note: null,
+      },
+      {
+        label: "as*",
+        status: "exhausted",
+        windows: [
+          { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 7200 },
+          { name: "7d", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 6 * 24 * 3600 },
+        ],
+        note: null,
+      },
+    ]),
+  ]), NOW_MS)!;
+  const p = pools.pools[0]!;
+  expect(p.exhausted).toBe(true);
+  // Account #1's 5h reset (1h12m), not either 7d reset (5–6 days out).
+  expect(p.resumesAt).toBe(NOW_SEC + 4320);
+  expect(p.resumesAccountIndex).toBe(0);
+});
 });

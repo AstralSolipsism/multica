@@ -44,7 +44,6 @@
     "relogin_hint": "OAuth 凭证失效，请在宿主机 OMP 中重新执行 /login。",
     "pool_needs_relogin": "需重登",
     "pool_all_unavailable": "该厂商池内所有账号均不可用，使用此厂商模型的智能体任务将被限流。",
-
     "idle_count_other": "+{{count}} 个闲置池",
     "idle_title": "闲置厂商池",
     "idle_description": "已登录，但当前工作区没有智能体使用。",
