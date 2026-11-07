@@ -20,48 +20,6 @@ func (q *Queries) DeleteLabrastroFeedbackByWorkspace(ctx context.Context, worksp
 	return err
 }
 
-const getLabrastroFeedback = `-- name: GetLabrastroFeedback :one
-SELECT installation_id, inbound_message_id, workspace_id, delivery_id, quoted_message_id, sender_id, user_id, installation_agent_id, chat_id, thread_id, content, kind, issue_id, parent_comment_id, comment_id, issue_revision, chat_session_id, status, notice, ack_uuid, acknowledged_at, next_attempt_at, created_at, updated_at FROM labrastro_message_feedback
-WHERE installation_id = $1 AND inbound_message_id = $2
-`
-
-type GetLabrastroFeedbackParams struct {
-	InstallationID   pgtype.UUID `json:"installation_id"`
-	InboundMessageID string      `json:"inbound_message_id"`
-}
-
-func (q *Queries) GetLabrastroFeedback(ctx context.Context, arg GetLabrastroFeedbackParams) (LabrastroMessageFeedback, error) {
-	row := q.db.QueryRow(ctx, getLabrastroFeedback, arg.InstallationID, arg.InboundMessageID)
-	var i LabrastroMessageFeedback
-	err := row.Scan(
-		&i.InstallationID,
-		&i.InboundMessageID,
-		&i.WorkspaceID,
-		&i.DeliveryID,
-		&i.QuotedMessageID,
-		&i.SenderID,
-		&i.UserID,
-		&i.InstallationAgentID,
-		&i.ChatID,
-		&i.ThreadID,
-		&i.Content,
-		&i.Kind,
-		&i.IssueID,
-		&i.ParentCommentID,
-		&i.CommentID,
-		&i.IssueRevision,
-		&i.ChatSessionID,
-		&i.Status,
-		&i.Notice,
-		&i.AckUuid,
-		&i.AcknowledgedAt,
-		&i.NextAttemptAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getLabrastroFeedbackReceipt = `-- name: GetLabrastroFeedbackReceipt :one
 SELECT id, delivery_id, workspace_id, installation_id, shard_index, shard_total, send_uuid, external_message_id, created_at, updated_at FROM labrastro_message_receipt
 WHERE installation_id = $1 AND external_message_id = $2 AND workspace_id = $3

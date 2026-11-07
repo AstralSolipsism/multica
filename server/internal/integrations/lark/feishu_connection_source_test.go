@@ -7,18 +7,19 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
 
-type privateChatSourceConnector struct{ message InboundMessage }
+type connectionSourceConnector struct{ message InboundMessage }
 
-func (c privateChatSourceConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
+func (c connectionSourceConnector) Run(ctx context.Context, inst Installation, emit EventEmitter) error {
 	_, err := emit(ctx, c.message)
 	return err
 }
 
-func TestPrivateChatConnectionAuthenticatesSource(t *testing.T) {
+// A connection only emits events for its own app/tenant, stamped with its
+// installation, so a delayed connection cannot follow an app rebind.
+func TestFeishuConnectionAuthenticatesSource(t *testing.T) {
 	inst := Installation{ID: dbid.NewV7(), AppID: "cli_bot", TenantKey: pgtype.Text{String: "tenant_bot", Valid: true}}
 	for _, tc := range []struct {
 		app, tenant string
@@ -29,7 +30,7 @@ func TestPrivateChatConnectionAuthenticatesSource(t *testing.T) {
 		t.Run(tc.app+"/"+tc.tenant, func(t *testing.T) {
 			calls := 0
 			fc := &feishuChannel{inst: inst,
-				conn: privateChatSourceConnector{message: InboundMessage{AppID: tc.app, TenantKey: tc.tenant, InstallationID: dbid.NewV7(), SenderType: "user"}},
+				conn: connectionSourceConnector{message: InboundMessage{AppID: tc.app, TenantKey: tc.tenant, InstallationID: dbid.NewV7(), SenderType: "user"}},
 				handler: func(_ context.Context, msg channel.InboundMessage) error {
 					calls++
 					var raw InboundMessage
@@ -49,18 +50,5 @@ func TestPrivateChatConnectionAuthenticatesSource(t *testing.T) {
 				t.Fatalf("emitted %d messages, want %d", calls, tc.want)
 			}
 		})
-	}
-}
-
-func TestPrivateChatObservationsDoNotReconnectBot(t *testing.T) {
-	row := db.ChannelInstallation{ChannelType: "feishu", Config: []byte(`{"app_id":"cli_bot","app_secret_encrypted":"ciphertext","region":"feishu"}`)}
-	initial := rowFingerprint(row)
-	row.Config = []byte(`{"private_chat_candidates":[{"id":"candidate"}], "region":"feishu", "app_id":"cli_bot", "app_secret_encrypted":"ciphertext"}`)
-	if got := rowFingerprint(row); got != initial {
-		t.Fatal("candidate arrival restarted the connection")
-	}
-	row.Config = []byte(`{"app_id":"cli_bot","app_secret_encrypted":"rotated","region":"feishu"}`)
-	if got := rowFingerprint(row); got == initial {
-		t.Fatal("credential rotation did not restart the connection")
 	}
 }

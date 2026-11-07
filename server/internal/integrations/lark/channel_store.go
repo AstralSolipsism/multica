@@ -20,7 +20,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -188,14 +187,13 @@ func (s *ChannelStore) SetLarkInstallationStatus(ctx context.Context, arg SetIns
 	})
 }
 
-// SetLarkInstallationBotUnionID patches only the bot identity field. A stale
-// whole-config write could restore a concurrently revoked conversation grant or
-// overwrite a concurrent inbound receipt / rebind generation.
+// SetLarkInstallationBotUnionID patches only identity metadata so a concurrent
+// inbound receipt or rebind cannot be overwritten with a stale config snapshot.
 func (s *ChannelStore) SetLarkInstallationBotUnionID(ctx context.Context, arg SetInstallationBotUnionIDParams) error {
-	_, err := s.Queries.SetLarkInstallationBotUnionID(ctx, db.SetLarkInstallationBotUnionIDParams{
-		ID: arg.ID, BotUnionID: arg.BotUnionID,
+	return s.Queries.SetFeishuInstallationBotUnionID(ctx, db.SetFeishuInstallationBotUnionIDParams{
+		ID:         arg.ID,
+		BotUnionID: arg.BotUnionID.String,
 	})
-	return err
 }
 
 func (s *ChannelStore) BackfillLarkInstallationRegionToLark(ctx context.Context) (int64, error) {
@@ -411,14 +409,4 @@ func installationsFromRows(rows []db.ChannelInstallation) ([]Installation, error
 		out[i] = inst
 	}
 	return out, nil
-}
-
-// AuthorizeConversationTask is the live consent check used by the reply patcher.
-func (s *ChannelStore) AuthorizeConversationTask(ctx context.Context, taskID, workspaceID pgtype.UUID) error {
-	task, err := s.Queries.GetAgentTask(ctx, taskID)
-	if err != nil {
-		return err
-	}
-	_, err = channel.AuthorizeConversationTask(ctx, s.Queries, task, workspaceID)
-	return err
 }

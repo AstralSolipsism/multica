@@ -16,8 +16,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/attribution"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -1440,14 +1438,6 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 	return out
 }
 
-type UpdateCommentRequest struct {
-	Content          string    `json:"content"`
-	ContentBase      *string   `json:"content_base,omitempty"`
-	AttachmentIDs    *[]string `json:"attachment_ids"`
-	SuppressAgentIDs []string  `json:"suppress_agent_ids"`
-	ExpectedRevision *int64    `json:"expected_revision,omitempty"`
-}
-
 type CreateCommentRequest struct {
 	Content          string   `json:"content"`
 	Type             string   `json:"type"`
@@ -1736,11 +1726,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	suppressAgentIDs, ok := parseUUIDSliceOrBadRequest(w, req.SuppressAgentIDs, "suppress_agent_ids")
 	if !ok {
 		return
-	}
-	// External conversation grants authorize follow-up runs, not steering
-	// an independently authorized running turn.
-	if _, external := channel.ConversationTaskFromContext(r.Context()); external {
-		req.Steer, req.SteerTaskIDs = false, nil
 	}
 	steerTaskIDs, ok := parseUUIDSliceOrBadRequest(w, req.SteerTaskIDs, "steer_task_ids")
 	if !ok {
@@ -2208,7 +2193,7 @@ func (h *Handler) resolveCommentTriggerEnqueue(ctx context.Context, issue db.Iss
 				// CLAIM-RECEIPT task (dispatched/running/waiting; queued is excluded
 				// — it must fold through the atomic merge above), turning the drop
 				// into a bounded follow-up (#5914, Elon round 2).
-				registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent, triggerCommentID, getHeadSha())
+				registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent.ID, triggerCommentID, getHeadSha())
 				if err != nil {
 					slog.Warn("register planned comment failed",
 						"issue_id", uuidToString(issue.ID), "agent_id", uuidToString(trigger.Agent.ID), "error", err)
@@ -2436,7 +2421,7 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 	// issue-assignee reaction is comment_source; a mention / thread-parent /
 	// conversation hop is delegation.
 	isMention := trigger.Source != commentTriggerSourceIssueAssignee
-	attr, root, err := h.commentMergeAuthority(ctx, issue, trigger.Agent, newTriggerCommentID, isMention)
+	attr, err := h.TaskService.AttributionForMergedComment(ctx, issue.WorkspaceID, newTriggerCommentID, isMention, trigger.Agent)
 	if err != nil {
 		// The new comment cannot be re-attributed. REFUSE the merge — keep the
 		// existing queued task on its original (precise) snapshot rather than
@@ -2455,21 +2440,20 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 	}
 	overlay, connectedApps := h.TaskService.BuildRuntimeMCPOverlayForMerge(ctx, attr.UserID, trigger.Agent)
 	row, err := h.Queries.MergeCommentIntoPendingTask(ctx, db.MergeCommentIntoPendingTaskParams{
-		IssueID:                        issue.ID,
-		AgentID:                        trigger.Agent.ID,
-		NewTriggerCommentID:            newTriggerCommentID,
-		NewOriginatorUserID:            attr.UserID,
-		ExpectedConversationRootTaskID: root,
-		NewAccountableUserID:           attr.AccountableUserID,
-		NewOriginatorSource:            pgtype.Text{String: attr.Source.String(), Valid: true},
-		NewDelegatedFromTaskID:         attr.DelegatedFromTaskID,
-		NewRuleVersionID:               attr.RuleVersionID,
-		NewTriggerEvidenceKind:         pgtype.Text{String: string(attr.EvidenceKind), Valid: attr.EvidenceKind != ""},
-		NewTriggerEvidenceRefID:        attr.EvidenceRefID,
-		NewTriggerSummary:              h.TaskService.BuildCommentTriggerSummary(ctx, issue.WorkspaceID, newTriggerCommentID),
-		NewRuntimeMcpOverlay:           overlay,
-		NewRuntimeConnectedApps:        connectedApps,
-		HeadSha:                        headSha,
+		IssueID:                 issue.ID,
+		AgentID:                 trigger.Agent.ID,
+		NewTriggerCommentID:     newTriggerCommentID,
+		NewOriginatorUserID:     attr.UserID,
+		NewAccountableUserID:    attr.AccountableUserID,
+		NewOriginatorSource:     pgtype.Text{String: attr.Source.String(), Valid: true},
+		NewDelegatedFromTaskID:  attr.DelegatedFromTaskID,
+		NewRuleVersionID:        attr.RuleVersionID,
+		NewTriggerEvidenceKind:  pgtype.Text{String: string(attr.EvidenceKind), Valid: attr.EvidenceKind != ""},
+		NewTriggerEvidenceRefID: attr.EvidenceRefID,
+		NewTriggerSummary:       h.TaskService.BuildCommentTriggerSummary(ctx, issue.WorkspaceID, newTriggerCommentID),
+		NewRuntimeMcpOverlay:    overlay,
+		NewRuntimeConnectedApps: connectedApps,
+		HeadSha:                 headSha,
 	})
 	if err != nil {
 		if isNotFound(err) {
@@ -2502,29 +2486,6 @@ func (h *Handler) mergeCommentIntoPendingTask(ctx context.Context, issue db.Issu
 	return commentMergeSucceeded
 }
 
-// Resolve persisted source authority before either re-attribution or planned
-// replay. A missing source cannot turn an external comment into member work.
-func (h *Handler) commentMergeAuthority(ctx context.Context, issue db.Issue, agent db.Agent, commentID pgtype.UUID, isMention bool) (attribution.Result, pgtype.UUID, error) {
-	attr, err := h.TaskService.AttributionForMergedComment(ctx, issue.WorkspaceID, commentID, isMention, agent)
-	var root pgtype.UUID
-	if err != nil || !attr.DelegatedFromTaskID.Valid {
-		return attr, root, err
-	}
-	parent, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: attr.DelegatedFromTaskID, WorkspaceID: issue.WorkspaceID})
-	if err != nil {
-		return attr, root, err
-	}
-	if channel.IsConversationTask(parent) {
-		root = parent.ConversationRootTaskID
-		candidate := db.AgentTaskQueue{AgentID: agent.ID, OriginatorUserID: attr.UserID,
-			ConversationRootTaskID: root, OriginatorSource: parent.OriginatorSource}
-		if _, err := channel.AuthorizeConversationTask(ctx, h.Queries, candidate, issue.WorkspaceID); err != nil {
-			return attr, root, err
-		}
-	}
-	return attr, root, nil
-}
-
 // registerPlannedCommentForActiveTask durably folds an accepted comment into the
 // same-head active task's planned (coalesced) set when the queued merge could no
 // longer target it (the winner was already claimed → dispatched/running). It
@@ -2533,18 +2494,12 @@ func (h *Handler) commentMergeAuthority(ctx context.Context, issue db.Issue, age
 // the task just terminated), so the caller falls back to the active-task
 // decision. Delivered ids are untouched, so completion reconcile replays the
 // comment as a single bounded follow-up (#5914). See the query doc.
-func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue db.Issue, agent db.Agent, commentID pgtype.UUID, headSha pgtype.Text) (bool, error) {
-	attr, root, err := h.commentMergeAuthority(ctx, issue, agent, commentID, true)
-	if err != nil {
-		return false, err
-	}
+func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue db.Issue, agentID, commentID pgtype.UUID, headSha pgtype.Text) (bool, error) {
 	row, err := h.Queries.RegisterPlannedCommentForActiveTask(ctx, db.RegisterPlannedCommentForActiveTaskParams{
-		CommentID:                      commentID,
-		IssueID:                        issue.ID,
-		AgentID:                        agent.ID,
-		ExpectedConversationRootTaskID: root,
-		ExpectedOriginatorUserID:       attr.UserID,
-		HeadSha:                        headSha,
+		CommentID: commentID,
+		IssueID:   issue.ID,
+		AgentID:   agentID,
+		HeadSha:   headSha,
 	})
 	if err != nil {
 		if isNotFound(err) {
@@ -2555,7 +2510,7 @@ func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue
 	slog.Info("registered comment as planned follow-up input",
 		"task_id", uuidToString(row.ID),
 		"issue_id", uuidToString(issue.ID),
-		"agent_id", uuidToString(agent.ID),
+		"agent_id", uuidToString(agentID),
 		"comment_id", uuidToString(commentID),
 		"coalesced_count", len(row.CoalescedCommentIds))
 	return true, nil
@@ -2599,7 +2554,7 @@ func (h *Handler) registerPlannedCommentForActiveTask(ctx context.Context, issue
 func (h *Handler) propagateUncoveredCommentObligation(ctx context.Context, issue db.Issue, trigger commentAgentTrigger, commentID pgtype.UUID, headSha pgtype.Text) bool {
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent, commentID, pgtype.Text{})
+		registered, err := h.registerPlannedCommentForActiveTask(ctx, issue, trigger.Agent.ID, commentID, pgtype.Text{})
 		if err != nil {
 			slog.Warn("propagate comment obligation: register on active task failed",
 				"issue_id", uuidToString(issue.ID), "agent_id", uuidToString(trigger.Agent.ID),
@@ -3412,22 +3367,19 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	isAuthor := existing.AuthorType == actorType && uuidToString(existing.AuthorID) == actorID
-	// An external conversation task executes as its frozen grantor, so a
-	// grantor holding the admin role would pass the check below. The edit
-	// would then clear source_task_id and enqueue the derived run outside
-	// the conversation root (OL-1092). External conversations may edit only
-	// their own comments.
-	if _, external := channel.ConversationTaskFromContext(r.Context()); external && !isAuthor {
-		writeErrorCode(w, http.StatusForbidden, "external_conversation_forbidden", "external conversations may only edit their own comments")
-		return
-	}
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
 	if !isAuthor && !isAdmin {
 		writeError(w, http.StatusForbidden, "only comment author or admin can edit")
 		return
 	}
 
-	var req UpdateCommentRequest
+	var req struct {
+		Content          string    `json:"content"`
+		ContentBase      *string   `json:"content_base,omitempty"`
+		AttachmentIDs    *[]string `json:"attachment_ids"`
+		SuppressAgentIDs []string  `json:"suppress_agent_ids"`
+		ExpectedRevision *int64    `json:"expected_revision,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

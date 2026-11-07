@@ -1,11 +1,8 @@
 # Labrastro Message Delivery — Backend Contract (OL-25 + OL-27 + OL-29)
 
-Feishu participants without platform membership converse with the designated
-agent under explicit integration consent. Bound workspace members use the
-upstream member flow and their own identity. The agent uses normal
-tools to summarize feedback under its own identity. Authorization, recovery and
-legacy-feedback retirement are defined in [FEEDBACK-CONTRACT.md](FEEDBACK-CONTRACT.md).
-Upstream sync points are listed in [UPSTREAM-ADAPTATION.md](UPSTREAM-ADAPTATION.md).
+Feishu chat with the agent uses the upstream member-binding flow; this module
+only delivers outbound notifications. Upstream sync points are listed in
+[UPSTREAM-ADAPTATION.md](UPSTREAM-ADAPTATION.md).
 Group and message-anchor picker APIs are defined in [TARGET-DISCOVERY-CONTRACT.md](TARGET-DISCOVERY-CONTRACT.md).
 
 This is the API/contract reference for the standalone result-delivery module
@@ -921,5 +918,3 @@ downgrade, successful retry, receipt cleanup and re-upgrade.
   tests with fake senders/verifiers plus HTTP-contract tests on the real
   client.
 - The frontend configuration UI remains a later stage of the parent plan.
-- Verified `source_ref` and receipt/report context now feed the designated
-  agent conversation; they do not directly insert a member-authored comment.

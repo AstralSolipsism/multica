@@ -34,9 +34,8 @@ import (
 // implementation). Adding a platform is "register a ResolverSet", not "edit
 // the Router".
 type Router struct {
-	mu           sync.RWMutex
-	sets         map[channel.Type]ResolverSet
-	conversation ConversationHandler
+	mu   sync.RWMutex
+	sets map[channel.Type]ResolverSet
 
 	issues    IssueCreator
 	tasks     TaskEnqueuer
@@ -371,32 +370,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	//    re-verify workspace membership (no binding->member FK; MUL-3515 §4).
 	identity, err := set.Identity.ResolveSender(ctx, inst, msg)
 	if err != nil {
-		if errors.Is(err, ErrSenderUnbound) || errors.Is(err, ErrSenderNotMember) {
-			r.mu.RLock()
-			conversation := r.conversation
-			r.mu.RUnlock()
-			if conversation != nil {
-				mediaSeconds := 0.0
-				if set.Media != nil && set.Media.HasMedia(msg) {
-					mediaSeconds = r.mediaTimeout.Seconds()
-				}
-				deadline := time.Now().Add(r.mediaTimeout)
-				res, handled, err := conversation(ctx, inst, msg, claimToken, bareFresh, startChat, mediaSeconds)
-				if err != nil {
-					return Result{}, finalizeRelease, err
-				}
-				if handled {
-					res.InstallationID, res.Sender = inst.ID, msg.Source.SenderID
-					res.runScheduled = res.Outcome == OutcomeIngested
-					if mediaSeconds > 0 && res.ConversationMessageID.Valid {
-						msg.Text = res.ConversationBody
-						r.enqueueMedia(set, inst, ResolvedIdentity{UserID: res.ConversationUserID}, res.ConversationMessageID, msg, res.ChatSessionID, db.Issue{}, pgtype.Text{}, "", pgtype.UUID{}, deadline)
-					}
-					return res, finalizeMark, nil
-				}
-			}
-
-		}
 		switch {
 		case errors.Is(err, ErrSenderUnbound):
 			_ = set.Audit.RecordDrop(ctx, inst.ID, msg, DropReasonUnboundUser)

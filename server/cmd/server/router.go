@@ -557,7 +557,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// into one agent run instead of one per message (MUL-2968).
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)
 	h.ChannelRouter = channelRouter
-	channelRouter.SetConversationHandler(h.HandleChannelConversation)
 	// Media intent-ledger reconciler: settles uploaded-but-unbound objects.
 	// Built ONLY when a storage backend exists — store is nil when S3 is not
 	// configured and the local upload dir failed to initialize, and a
@@ -1957,12 +1956,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/lark/installations", h.ListLarkInstallations)
 					r.Get("/lark/installations/{installationId}/target-capabilities", h.GetLarkTargetCapabilities)
-					r.Get("/lark/installations/{installationId}/private-chat-candidates", h.ListLarkPrivateChatCandidates)
-					r.Post("/lark/installations/{installationId}/private-chat-candidates/confirm", h.ConfirmLarkPrivateChatCandidates)
 					r.Get("/lark/installations/{installationId}/chats", h.ListLarkTargetChats)
 					r.Get("/lark/installations/{installationId}/chats/{chatId}/message-anchors", h.ListLarkMessageAnchors)
 					r.Delete("/lark/installations/{installationId}", h.RevokeLarkInstallation)
-					r.Put("/lark/installations/{installationId}/conversation", h.SetLarkConversationGrant)
 					// Device-flow scan-to-install. Begin opens a new
 					// registration session against Lark and returns
 					// the QR-code URL; the frontend dialog then polls

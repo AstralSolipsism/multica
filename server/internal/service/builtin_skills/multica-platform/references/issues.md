@@ -7,7 +7,6 @@ Product contracts the runtime brief does not fully encode.
 - [Status changes have server side effects](#status-changes-have-server-side-effects)
 - [Who else is running right now](#who-else-is-running-right-now)
 - [Sub-issues and stages](#sub-issues-and-stages)
-- [External Feishu conversations](#external-feishu-conversations)
 - [Charts and files in a comment](#charts-and-files-in-a-comment)
 
 To attach a local file to an existing issue description, use `multica issue update <id> --attachment <local-path>`. The CLI appends the file's Markdown reference to the end of the description; to replace an image, also use `--description-file` to remove the old reference. Do not put local filesystem paths in the description.
@@ -245,22 +244,6 @@ to coordinate with.
 Whether to split an issue at all, `todo` vs `backlog` children, serial chains,
 stages and their parent wakeups live in `references/sub-issues.md`. Read it
 before creating a sub-issue.
-
-## External Feishu conversations
-
-An explicitly authorized external conversation runs under its recorded grantor's
-live agent invocation rights. The external speaker's name and channel ID are
-source evidence, not workspace membership. Preserve that provenance in issues
-and comments; do not attribute the speaker's approval to a platform member.
-A bound member uses their own invocation rights and cannot borrow the
-conversation grant. Revoking or replacing consent invalidates its old runs.
-
-External conversations and their descendants use a restricted platform API:
-read collaboration content, create or update issues, and work with comments and
-attachments. All other endpoints are denied by default, including wakeups,
-Autopilots, credentials, membership, integrations and configuration. A read
-request does not bypass this restriction. Ask a workspace member to perform
-administrative or automation work directly; do not try another identity or API.
 
 ## Charts and files in a comment
 

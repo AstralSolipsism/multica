@@ -140,7 +140,6 @@ func channelMessageFromLark(lm InboundMessage) channel.InboundMessage {
 		Type:               channelMsgType(lm.MessageType),
 		Text:               lm.Body,
 		CommandText:        lm.CommandBody,
-		CommandTextSet:     true,
 		HasSelectedContext: lm.HasSelectedContext,
 		ReplyTo:            reply,
 		AddressedToBot:     lm.AddressedToBot,
@@ -320,19 +319,12 @@ var _ engine.LeaseStore = (*channelInstallationStore)(nil)
 
 // rowFingerprint condenses the credential-bearing config of a
 // channel_installation row into an opaque string. Any change to the platform
-// connection config (Feishu rotates credentials on re-install) flips the
+// config (Feishu rotates app_id / app_secret / region on re-install) flips the
 // fingerprint and the Supervisor restarts the connection. The config JSONB
-// carries only the secret ciphertext (never plaintext), so it is safe to hash.
-// Feishu candidate observations and receipt evidence are excluded because they
-// do not change credentials or routing, so they never restart a connection.
+// carries only the secret ciphertext (never plaintext). Feishu receipt
+// evidence is excluded because it does not change
+// credentials or routing.
 func rowFingerprint(row db.ChannelInstallation) string {
-	if row.ChannelType == channelTypeFeishu {
-		var config map[string]json.RawMessage
-		if json.Unmarshal(row.Config, &config) == nil {
-			delete(config, "private_chat_candidates")
-			row.Config, _ = json.Marshal(config)
-		}
-	}
 	h := sha256.New()
 	_, _ = h.Write([]byte(row.ChannelType))
 	_, _ = h.Write([]byte{0})

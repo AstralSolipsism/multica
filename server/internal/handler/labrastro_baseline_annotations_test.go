@@ -460,7 +460,7 @@ func TestBaselineAnnotationsAtomicWakeFailureRecovery(t *testing.T) {
 				}
 				body := reviewBody(f, revision)
 				h := *testHandler
-				failure := &feedbackFaultStarter{txStarter: h.TxStarter, query: fault, commit: fault == "commit"}
+				failure := &sqlFaultStarter{txStarter: h.TxStarter, query: fault, commit: fault == "commit"}
 				if route == "revision" {
 					svc := *h.IssueService
 					svc.TxStarter = failure

@@ -42,9 +42,6 @@ const (
 	// mention, assign, promote, manual trigger, rerun). The member IS the
 	// accountable human.
 	SourceDirectHuman Source = "direct_human"
-	// SourceChannelIntegration names the member who explicitly authorized an
-	// external conversation to use an agent. It never identifies its speaker.
-	SourceChannelIntegration Source = "channel_integration"
 	// SourceDelegation — an agent running on behalf of a human caused the
 	// enqueue (agent @-mentions another agent, agent creates a sub-issue,
 	// stage-completion wakeup). The parent task's accountable human is COPIED,
@@ -88,7 +85,7 @@ const (
 // attribution-coverage health metric (MUL-4302 §9).
 func (src Source) Precise() bool {
 	switch src {
-	case SourceDirectHuman, SourceDelegation, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner, SourceChannelIntegration:
+	case SourceDirectHuman, SourceDelegation, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner:
 		return true
 	default:
 		return false

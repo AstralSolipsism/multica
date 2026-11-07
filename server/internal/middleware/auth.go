@@ -9,10 +9,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -122,26 +120,6 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					return
 				}
 				userID := uuidToString(tt.UserID)
-				task, taskErr := queries.GetAgentTask(r.Context(), tt.TaskID)
-				if taskErr == nil {
-					userID, taskErr = conversationTaskUser(r.Context(), queries, task, tt.WorkspaceID, userID)
-				}
-				if taskErr != nil {
-					status := http.StatusServiceUnavailable
-					if errors.Is(taskErr, pgx.ErrNoRows) {
-						status = http.StatusUnauthorized
-					} else if errors.Is(taskErr, channel.ErrConversationDenied) {
-						status = http.StatusForbidden
-					}
-					http.Error(w, `{"error":"task authorization unavailable"}`, status)
-					return
-				}
-				if channel.IsConversationTask(task) && !allowExternalConversationRequest(r) {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusForbidden)
-					w.Write([]byte(`{"error":"external conversations may only use issue collaboration endpoints","code":"external_conversation_forbidden"}`))
-					return
-				}
 				if rejectTemporarilyDisabledUser(w, r, userID, "", "task_token") {
 					return
 				}
@@ -164,7 +142,6 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// this header is allowed to carry — strip anything else a
 				// client tried to send.
 				r.Header.Set("X-Actor-Source", "task_token")
-				r = r.WithContext(channel.WithConversationTask(r.Context(), task))
 				r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{
 					UserID: userID, AgentID: uuidToString(tt.AgentID), TaskID: uuidToString(tt.TaskID),
 					WorkspaceID: uuidToString(tt.WorkspaceID), CredentialKind: "task", CredentialHash: hash, ExpiresAt: tt.ExpiresAt.Time,

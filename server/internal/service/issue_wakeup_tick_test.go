@@ -281,7 +281,7 @@ func TestPendingWakeupInputsSystemRuleHeldOnlyByItsTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAs, err := s.wakeupRunAuthority(ctx, f.q, issueRow, targetAgent, rule, nil)
+	runAs, err := s.childDoneRunAs(ctx, issueRow, targetAgent)
 	if err != nil || !runAs.UserID.Valid {
 		t.Fatalf("run-as for the target: %+v %v", runAs, err)
 	}
