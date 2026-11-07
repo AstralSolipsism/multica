@@ -8,10 +8,10 @@ package main
 // the catalog against every concurrent CREATE INDEX statement.
 func init() {
 	for version, index := range map[string]string{
-		"9055_labrastro_baseline_review_client_key_index":  "idx_baseline_review_client_key",
-		"9056_labrastro_baseline_annotation_active_index":  "idx_baseline_annotation_active",
-		"9057_labrastro_baseline_annotation_ordinal_index": "idx_baseline_annotation_ordinal",
-		"9058_labrastro_baseline_review_batch_index":       "idx_baseline_review_batch",
+		"9060_labrastro_baseline_review_client_key_index":  "idx_baseline_review_client_key",
+		"9061_labrastro_baseline_annotation_active_index":  "idx_baseline_annotation_active",
+		"9062_labrastro_baseline_annotation_ordinal_index": "idx_baseline_annotation_ordinal",
+		"9063_labrastro_baseline_review_batch_index":       "idx_baseline_review_batch",
 
 		"9040_labrastro_engineering_config_identity_index":   "idx_project_engineering_identity",
 		"9041_labrastro_engineering_doc_identity_index":      "idx_project_baseline_doc_id",
