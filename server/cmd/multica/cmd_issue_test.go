@@ -6284,8 +6284,8 @@ func TestRunIssueSearchProjectFilterErrors(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error when workspace ID is missing, got nil")
 		}
-		if !strings.Contains(err.Error(), "workspace_id is required") {
-			t.Fatalf("error = %q, want workspace_id is required", err.Error())
+		if !strings.Contains(err.Error(), "workspace_id is required") || strings.Contains(err.Error(), "resolve project:") {
+			t.Fatalf("error = %q, want requireWorkspaceID error without 'resolve project:' prefix", err.Error())
 		}
 	})
 }
