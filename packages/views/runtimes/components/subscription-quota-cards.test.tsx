@@ -57,7 +57,7 @@ describe("SubscriptionQuotaCards", () => {
     expect(screen.getByText("Zhipu GLM Coding Plan")).toBeInTheDocument();
     expect(screen.getByText("Private")).toBeInTheDocument();
     expect(screen.getByText("5-hour tokens")).toBeInTheDocument();
-    expect(screen.getByText("Weekly tokens")).toBeInTheDocument();
+    expect(screen.getByText("7d tokens")).toBeInTheDocument();
     expect(screen.getByText("Monthly tool credits")).toBeInTheDocument();
     expect(screen.getByText("70% left")).toBeInTheDocument();
     expect(screen.getByText("40% left")).toBeInTheDocument();
@@ -87,7 +87,7 @@ describe("SubscriptionQuotaCards", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[creditSource]} now={NOW} />);
 
     expect(screen.getByText("5-hour credits")).toBeInTheDocument();
-    expect(screen.getByText("Weekly credits")).toBeInTheDocument();
+    expect(screen.getByText("7d credits")).toBeInTheDocument();
     expect(screen.getAllByText("5-hour credits")).toHaveLength(1);
     expect(screen.queryByText("Credit window")).not.toBeInTheDocument();
   });
@@ -118,7 +118,7 @@ describe("SubscriptionQuotaCards", () => {
     });
     const { container } = renderWithI18n(<SubscriptionQuotaCards sources={[custom]} now={NOW} />);
     const triggers = container.querySelectorAll('[data-slot="tooltip-trigger"]');
-    expect(triggers[0]).toHaveTextContent("Weekly tokens40% left");
+    expect(triggers[0]).toHaveTextContent("7d tokens40% left");
     expect(screen.getByText("100% left")).toBeInTheDocument();
   });
 
@@ -143,7 +143,7 @@ describe("SubscriptionQuotaCards", () => {
 
     expect(screen.getByText("Shared")).toBeInTheDocument();
     expect(screen.getByText("5h subscription")).toBeInTheDocument();
-    expect(screen.getByText("wk subscription")).toBeInTheDocument();
+    expect(screen.getByText("7d subscription")).toBeInTheDocument();
     expect(screen.getByText(/The provider rejected this credential/)).toBeInTheDocument();
   });
 

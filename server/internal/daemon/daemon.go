@@ -2361,6 +2361,9 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// Antigravity polls Google's remote API using the CLI-managed OAuth
 	// token; it no longer needs a running task or a local language server.
 	go d.antigravityPlanQuotaLoop(ctx)
+	// OMP shells out to the host's `omp usage --json --redact` for its
+	// multi-vendor account pools.
+	go d.ompPlanQuotaLoop(ctx)
 	mediaDone := make(chan struct{})
 	go func() { defer close(mediaDone); d.mediaLoop(ctx) }()
 	defer func() { cancel(); <-mediaDone }()

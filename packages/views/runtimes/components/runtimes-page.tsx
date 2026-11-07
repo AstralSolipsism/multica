@@ -398,7 +398,7 @@ export function RuntimesPage({
         width: 224,
         cell: (row) =>
           row.kind === "machine" ? (
-            <MachineQuotaChips machine={row.machine} now={now} />
+            <MachineQuotaChips machine={row.machine} now={now} agents={agents} />
           ) : row.kind === "qoder" ? (
             <CollectionEmptyValue />
           ) : null,
@@ -431,7 +431,7 @@ export function RuntimesPage({
         cell: (row) => <RuntimeStatusCell row={row} bootstrapping={bootstrapping} />,
       },
     ],
-    [t, tForkUi, currentUserId, members, bootstrapping, now],
+    [t, tForkUi, currentUserId, members, bootstrapping, now, agents],
   );
 
   const machineRows: RuntimeRow[] = visibleMachines.map((machine) => ({

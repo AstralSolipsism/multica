@@ -47,22 +47,110 @@ func ValidateRuntimePlanQuota(q *RuntimePlanQuota, now time.Time) error {
 		return fmt.Errorf("plan quota: at most %d windows allowed", PlanQuotaMaxWindows)
 	}
 	for i := range q.Windows {
-		w := &q.Windows[i]
-		if w.Name == "" && strings.TrimSpace(w.Group) == "" {
-			return fmt.Errorf("plan quota: window %d name or group is required", i)
+		if err := validatePlanQuotaWindow(&q.Windows[i]); err != nil {
+			return err
 		}
-		if len(w.Name) > PlanQuotaMaxWindowName {
-			return fmt.Errorf("plan quota: window %d name must be at most %d chars", i, PlanQuotaMaxWindowName)
+	}
+	if err := validatePlanQuotaAccountPools(q.AccountPools); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePlanQuotaWindow validates one window in place. Shared by the
+// top-level list and the per-account window lists of provider pools.
+func validatePlanQuotaWindow(w *RuntimePlanQuotaWindow) error {
+	if w.Name == "" && strings.TrimSpace(w.Group) == "" {
+		return errors.New("plan quota: window name or group is required")
+	}
+	if len(w.Name) > PlanQuotaMaxWindowName {
+		return fmt.Errorf("plan quota: window %q name must be at most %d chars", w.Name, PlanQuotaMaxWindowName)
+	}
+	if w.WindowMinutes != nil && (*w.WindowMinutes <= 0 || *w.WindowMinutes > PlanQuotaMaxWindowMinutes) {
+		return fmt.Errorf("plan quota: window %q window_minutes out of range", w.Name)
+	}
+	if w.UsedPercent != nil && (math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 || *w.UsedPercent > PlanQuotaMaxUsedPercent) {
+		return fmt.Errorf("plan quota: window %q used_percent out of range", w.Name)
+	}
+	if len(w.Group) > PlanQuotaMaxGroupName {
+		return fmt.Errorf("plan quota: window %q group must be at most %d chars", w.Name, PlanQuotaMaxGroupName)
+	}
+	return nil
+}
+
+// validatePlanQuotaAccountPools validates the multi-account provider pools.
+// The privacy red line: an account Label/Note carrying "@" is rejected —
+// pool labels are redacted identifiers, never emails or ids.
+func validatePlanQuotaAccountPools(pools []RuntimePlanQuotaAccountPool) error {
+	if len(pools) > PlanQuotaMaxAccountPools {
+		return fmt.Errorf("plan quota: at most %d account pools allowed", PlanQuotaMaxAccountPools)
+	}
+	for i := range pools {
+		p := &pools[i]
+		if p.ID == "" {
+			return fmt.Errorf("plan quota: account pool %d id is required", i)
 		}
-		if w.WindowMinutes != nil && (*w.WindowMinutes <= 0 || *w.WindowMinutes > PlanQuotaMaxWindowMinutes) {
-			return fmt.Errorf("plan quota: window %q window_minutes out of range", w.Name)
+		if len(p.ID) > PlanQuotaMaxGroupName {
+			return fmt.Errorf("plan quota: account pool %q id must be at most %d chars", p.ID, PlanQuotaMaxGroupName)
 		}
-		if w.UsedPercent != nil && (math.IsNaN(*w.UsedPercent) || math.IsInf(*w.UsedPercent, 0) || *w.UsedPercent < 0 || *w.UsedPercent > PlanQuotaMaxUsedPercent) {
-			return fmt.Errorf("plan quota: window %q used_percent out of range", w.Name)
+		if p.TotalAccounts <= 0 {
+			return fmt.Errorf("plan quota: account pool %q total_accounts must be positive", p.ID)
 		}
-		if len(w.Group) > PlanQuotaMaxGroupName {
-			return fmt.Errorf("plan quota: window %q group must be at most %d chars", w.Name, PlanQuotaMaxGroupName)
+		if p.AvailableAccounts < 0 || p.AvailableAccounts > p.TotalAccounts {
+			return fmt.Errorf("plan quota: account pool %q available_accounts out of range", p.ID)
+		}
+		if p.DisabledAccounts < 0 || p.DisabledAccounts > p.TotalAccounts {
+			return fmt.Errorf("plan quota: account pool %q disabled_accounts out of range", p.ID)
+		}
+		switch p.Status {
+		case "":
+			p.Status = poolStatusForCounts(*p)
+		case PlanQuotaStatusOK, PlanQuotaStatusLimited:
+		default:
+			return fmt.Errorf("plan quota: account pool %q unsupported status %q", p.ID, p.Status)
+		}
+		if len(p.Accounts) > PlanQuotaMaxAccountsPerPool {
+			return fmt.Errorf("plan quota: account pool %q allows at most %d accounts", p.ID, PlanQuotaMaxAccountsPerPool)
+		}
+		for j := range p.Accounts {
+			a := &p.Accounts[j]
+			if a.Label == "" {
+				return fmt.Errorf("plan quota: account pool %q account %d label is required", p.ID, j)
+			}
+			if len(a.Label) > PlanQuotaMaxAccountLabel {
+				return fmt.Errorf("plan quota: account pool %q account %q label must be at most %d chars", p.ID, a.Label, PlanQuotaMaxAccountLabel)
+			}
+			if strings.Contains(a.Label, "@") || strings.Contains(a.Note, "@") {
+				return fmt.Errorf("plan quota: account pool %q account %q must not carry identity strings", p.ID, a.Label)
+			}
+			switch a.Status {
+			case "":
+				a.Status = PlanQuotaAccountUnknown
+			case PlanQuotaAccountOK, PlanQuotaAccountWarning, PlanQuotaAccountExhausted, PlanQuotaAccountReserve, PlanQuotaAccountDisabled, PlanQuotaAccountUnknown:
+			default:
+				return fmt.Errorf("plan quota: account pool %q account %q unsupported status %q", p.ID, a.Label, a.Status)
+			}
+			if len(a.Note) > PlanQuotaMaxAccountNote {
+				return fmt.Errorf("plan quota: account pool %q account %q note must be at most %d chars", p.ID, a.Label, PlanQuotaMaxAccountNote)
+			}
+			if len(a.Windows) > PlanQuotaMaxWindows {
+				return fmt.Errorf("plan quota: account pool %q account %q allows at most %d windows", p.ID, a.Label, PlanQuotaMaxWindows)
+			}
+			for k := range a.Windows {
+				if err := validatePlanQuotaWindow(&a.Windows[k]); err != nil {
+					return fmt.Errorf("plan quota: account pool %q account %q: %w", p.ID, a.Label, err)
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// poolStatusForCounts derives a pool's OR status from its counts: OK while
+// at least one account is available, limited only when none is.
+func poolStatusForCounts(p RuntimePlanQuotaAccountPool) string {
+	if p.AvailableAccounts > 0 {
+		return PlanQuotaStatusOK
+	}
+	return PlanQuotaStatusLimited
 }

@@ -232,7 +232,7 @@ export function RuntimeDetail({
             />
           </ObjectSection>
 
-          {canReadRuntime && <RuntimeQuotaCard runtime={runtime} now={now} />}
+          {canReadRuntime && <RuntimeQuotaCard runtime={runtime} now={now} agents={agents} />}
 
           {canReadRuntime && (
             <ObjectSection title={t(($) => $.detail.usage_title)}>

@@ -688,7 +688,7 @@ export function RuntimeList({
         isPendingCustomRuntime(row.runtime) ? (
           <CollectionEmptyValue />
         ) : (
-          <RuntimeQuotaCell runtime={row.runtime} now={now} />
+          <RuntimeQuotaCell runtime={row.runtime} now={now} agents={agents} />
         ),
     },
     {

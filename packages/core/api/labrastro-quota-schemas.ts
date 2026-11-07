@@ -59,6 +59,37 @@ export const RuntimePlanQuotaWindowSchema = z.object({
   group: z.string().nullish().default(null),
 }).loose();
 
+// One redacted account inside a gateway provider pool (OMP). The label is
+// the reporter's masked identifier ("19*"); a label or note containing "@"
+// is rejected so plaintext identities cannot cross the boundary.
+const ACCOUNT_STATUSES = ["ok", "warning", "exhausted", "reserve", "disabled", "unknown"] as const;
+
+export const RuntimePlanQuotaAccountSchema = z.object({
+  label: z.string(),
+  status: z.enum(ACCOUNT_STATUSES).catch("unknown"),
+  windows: z.array(z.unknown()).catch([]),
+  note: z.string().nullish().default(null),
+  // A snapshot carrying an identity string is unusable, not partially usable.
+}).loose().superRefine((account: { label: string; note: string | null }, ctx: z.RefinementCtx) => {
+  if (account.label.includes("@") || (account.note ?? "").includes("@")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "identity string in account label/note" });
+  }
+});
+
+// One vendor's account pool: all logged-in (redacted) accounts plus counts.
+// `accounts` stays `unknown[]` (an element-level `.catch` would swallow the
+// WHOLE array when one account fails): parseAccountPools re-parses each
+// account and drops only the offending ones.
+export const RuntimePlanQuotaAccountPoolSchema = z.object({
+  id: z.string().min(1),
+  total_accounts: z.number().int().nonnegative().default(0),
+  available_accounts: z.number().int().nonnegative().default(0),
+  disabled_accounts: z.number().int().nonnegative().default(0),
+  status: z.string().default("ok"),
+  resumes_at: z.number().nullable().default(null),
+  accounts: z.array(z.unknown()).catch([]),
+}).loose();
+
 // `windows` stays `unknown[]` here on purpose: the sanitizer re-parses each
 // window with RuntimePlanQuotaWindowSchema and drops the malformed ones
 // instead of failing the whole snapshot.
@@ -68,6 +99,8 @@ export const RuntimePlanQuotaSchema = z.object({
   windows: z.array(z.unknown()).default([]),
   observed_at: z.number().default(0),
   source: z.string().default(""),
+  // Multi-account provider pools (OMP gateways). Older backends omit them.
+  account_pools: z.array(z.unknown()).catch([]).optional(),
 }).loose();
 
 export type QuotaSourceKind = "glm" | "zenmux";
