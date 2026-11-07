@@ -215,6 +215,31 @@ import frUsage from "./fr/usage.json";
 import frUi from "./fr/ui.json";
 import frSquads from "./fr/squads.json";
 import frBilling from "./fr/billing.json";
+import esCommon from "./es/common.json";
+import esAuth from "./es/auth.json";
+import esSettings from "./es/settings.json";
+import esIssues from "./es/issues.json";
+import esAgents from "./es/agents.json";
+import esEditor from "./es/editor.json";
+import esOnboarding from "./es/onboarding.json";
+import esInvite from "./es/invite.json";
+import esLabels from "./es/labels.json";
+import esMembers from "./es/members.json";
+import esMyIssues from "./es/my-issues.json";
+import esSearch from "./es/search.json";
+import esInbox from "./es/inbox.json";
+import esWorkspace from "./es/workspace.json";
+import esProjects from "./es/projects.json";
+import esAutopilots from "./es/autopilots.json";
+import esSkills from "./es/skills.json";
+import esChat from "./es/chat.json";
+import esModals from "./es/modals.json";
+import esRuntimes from "./es/runtimes.json";
+import esLayout from "./es/layout.json";
+import esUsage from "./es/usage.json";
+import esUi from "./es/ui.json";
+import esSquads from "./es/squads.json";
+import esBilling from "./es/billing.json";
 
 // Single source of truth for the resource bundle. Both apps (web layout +
 // desktop App.tsx) import from here so adding a locale or namespace happens
@@ -443,17 +468,46 @@ export const UPSTREAM_RESOURCES: Record<SupportedLocale, LocaleResources> = {
     "you-should-know": frYouShouldKnow,
     engineering: frEngineering,
   },
+  es: {
+    common: esCommon,
+    auth: esAuth,
+    settings: esSettings,
+    issues: esIssues,
+    agents: esAgents,
+    editor: esEditor,
+    onboarding: esOnboarding,
+    invite: esInvite,
+    labels: esLabels,
+    members: esMembers,
+    "my-issues": esMyIssues,
+    search: esSearch,
+    inbox: esInbox,
+    workspace: esWorkspace,
+    projects: esProjects,
+    autopilots: esAutopilots,
+    skills: esSkills,
+    chat: esChat,
+    modals: esModals,
+    runtimes: esRuntimes,
+    layout: esLayout,
+    usage: esUsage,
+    ui: esUi,
+    squads: esSquads,
+    billing: esBilling,
+  },
 };
 
 const BRANDED_RESOURCES = applyBrandOverrides(UPSTREAM_RESOURCES);
 
 // Web SSR, hydration, desktop and hot resource reloads all consume this same
-// effective bundle. Materialize the branded zh-Hans fallback so single-locale
-// entry points receive namespaces that have no zh-Hant translation files.
+// effective bundle. Materialize fallbacks so single-locale entry points also
+// receive fork namespaces: zh-Hant uses zh-Hans, and the new Spanish locale
+// uses branded English for fork copy that has not been translated yet.
 export const RESOURCES = {
   ...BRANDED_RESOURCES,
   "zh-Hant": mergeResources(
     BRANDED_RESOURCES["zh-Hans"],
     BRANDED_RESOURCES["zh-Hant"],
   ),
+  es: mergeResources(BRANDED_RESOURCES.en, BRANDED_RESOURCES.es),
 };

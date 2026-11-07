@@ -1007,6 +1007,12 @@ jobs:
           node scripts/generate-attachment-text-preview.mjs
           git diff --exit-code -- packages/views/editor/utils/text-preview-whitelist.generated.ts
 
+      - name: Verify retained Labrastro brand assets
+        # Fork assets are independently authored; upstream generation must not replace them.
+        run: |
+          node scripts/brand/sync.mjs --check
+          node --test scripts/brand/sync.test.mjs
+
       - name: Setup Helm
         uses: azure/setup-helm@v4
 

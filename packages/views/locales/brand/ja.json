@@ -89,6 +89,16 @@
       "add_agent_description": "既存の Qoder Cloud Agents エージェントに関連付ける Labrastro エージェントを作成します。Qoder クラウドに設定した環境と認証情報を使用します。",
       "data_disclosure_title": "Labrastro が Qoder に送信する内容",
       "connect_description": "Labrastro は Qoder のサンドボックスでタスクを実行します。"
+    },
+    "intro": {
+      "slides": {
+        "cloud": {
+          "description": "マシンを自分で管理したくないなら、Labrastro がホストするクラウドノードを作成できます。"
+        }
+      },
+      "art": {
+        "connected": "{{name}} が Labrastro に接続されました"
+      }
     }
   },
   "workspace": {
@@ -105,6 +115,15 @@
     },
     "dialog": {
       "webhook_help_create": "このオートパイロットを作成すると、Labrastro が Webhook URL を生成します。その URL に任意の JSON を POST すると実行されます。"
+    },
+    "wakeups": {
+      "intro": {
+        "slides": {
+          "event": {
+            "description": "エージェントを空回りさせて待たせる必要はありません。条件がそろうと、Labrastro が自動で呼び戻します。"
+          }
+        }
+      }
     }
   },
   "issues": {

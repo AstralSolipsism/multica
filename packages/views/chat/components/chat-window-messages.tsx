@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { motion, useIsPresent } from "motion/react";
 import type { AgentAvailability } from "@multica/core/agents";
@@ -20,6 +20,7 @@ export function ChatWindowMessages({
   quickActionsDisabled,
   quickActionsPendingMessageId,
   resumeFollowNonce,
+  onReady,
   children,
 }: {
   sessionId: string | null;
@@ -30,6 +31,8 @@ export function ChatWindowMessages({
   quickActionsDisabled: boolean;
   quickActionsPendingMessageId: string | null;
   resumeFollowNonce?: number;
+  /** This area has something to show — the window can fade in around it. */
+  onReady?: () => void;
   children: ReactNode;
 }) {
   const isPresent = useIsPresent();
@@ -46,6 +49,14 @@ export function ChatWindowMessages({
     [...pages].reverse().flatMap((page) => page.messages),
     pendingTask ?? undefined,
   );
+  const showSkeleton = !!sessionId && (isLoading || pendingTaskLoading);
+  const showList = !showSkeleton && (messages.length > 0 || !!pendingTask?.task_id);
+
+  // The skeleton and the empty state are right on their first frame; the list
+  // is hidden until it lands, so it reports through `onRevealed` instead.
+  useEffect(() => {
+    if (isPresent && !showList) onReady?.();
+  }, [isPresent, showList, onReady]);
 
   return (
     <motion.div
@@ -55,12 +66,14 @@ export function ChatWindowMessages({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
     >
-      {sessionId && (isLoading || pendingTaskLoading) ? (
+      {showSkeleton ? (
         <ChatMessageSkeleton />
-      ) : messages.length > 0 || pendingTask?.task_id ? (
+      ) : showList ? (
         <ChatMessageList
           key={sessionId}
           active={isPresent}
+          revealKey={sessionId}
+          onRevealed={onReady}
           messages={messages}
           pendingTask={pendingTask}
           availability={availability}

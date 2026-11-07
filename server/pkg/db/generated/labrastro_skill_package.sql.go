@@ -554,7 +554,7 @@ func (q *Queries) LabrastroLockSkill(ctx context.Context, arg LabrastroLockSkill
 }
 
 const labrastroLockSkillMember = `-- name: LabrastroLockSkillMember :one
-SELECT id, workspace_id, user_id, role, created_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
+SELECT id, workspace_id, user_id, role, created_at, pinned_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
 `
 
 type LabrastroLockSkillMemberParams struct {
@@ -571,6 +571,7 @@ func (q *Queries) LabrastroLockSkillMember(ctx context.Context, arg LabrastroLoc
 		&i.UserID,
 		&i.Role,
 		&i.CreatedAt,
+		&i.PinnedAt,
 	)
 	return i, err
 }

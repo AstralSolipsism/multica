@@ -22,8 +22,8 @@
  * never clear a different draft opened while the request was in flight.
  *
  * It also owns the post-send FOCUS decision (`afterAccepted`). Where the caret
- * lands after a send is a per-surface product call — a reply box the user keeps
- * writing in refocuses, a top-level comment ends the turn and drops the caret —
+ * lands after a send is a per-surface product call — chat refocuses so the user
+ * keeps writing, an issue comment or thread reply drops the caret —
  * but the mechanics are identical everywhere and easy to get wrong (must run
  * after the clear, must survive a dialog focus trap, must not steal focus the
  * user moved elsewhere mid-flight). Those live here once.

@@ -132,6 +132,7 @@ vi.mock("@multica/core/paths", () => ({
     newAgentManual: () => "/acme/agents/new/manual",
     agentDetail: (id: string) => `/acme/agents/${id}`,
     squadDetail: (id: string) => `/acme/squads/${id}`,
+    runtimes: () => "/acme/runtimes",
   }),
 }));
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -196,37 +197,25 @@ vi.mock("../presence", () => ({ availabilityConfig: {} }));
 vi.mock("./agent-list-toolbar", () => ({
   countActiveFilterDimensions: (filters: Record<string, string[]>) =>
     Object.values(filters).filter((values) => values.length > 0).length,
-  AgentListToolbar: ({
-    scope,
-    onScopeChange,
-    search,
-    onSearchChange,
-    folderActions,
+  AgentListFilterMenu: () => null,
+}));
+
+vi.mock("../../layout/collection-page", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../layout/collection-page")>()),
+  CollectionSearch: ({
+    value,
+    onChange,
+    label,
   }: {
-    scope: string;
-    onScopeChange: (scope: string) => void;
-    search: string;
-    onSearchChange: (value: string) => void;
-    folderActions?: React.ReactNode;
+    value: string;
+    onChange: (value: string) => void;
+    label: string;
   }) => (
-    <div>
-      <input
-        aria-label="Search agents"
-        value={search}
-        onChange={(event) => onSearchChange(event.target.value)}
-      />
-      {["mine", "all", "archived"].map((value) => (
-        <button
-          key={value}
-          type="button"
-          aria-pressed={scope === value}
-          onClick={() => onScopeChange(value)}
-        >
-          {value === "mine" ? "Mine" : value === "all" ? "All" : "Archived"}
-        </button>
-      ))}
-      {folderActions}
-    </div>
+    <input
+      aria-label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   ),
 }));
 
@@ -462,10 +451,11 @@ describe("AgentsPage folder hierarchy", () => {
     expect(squadToggle.textContent).toContain("Squad");
     expect(squadToggle.textContent).toContain("3 agents");
     expect(within(squadToggle).getAllByTestId("folder-avatar")[0]).toBeTruthy();
-    expect(mocks.rowSizes.slice(0, 5)).toEqual([56, 56, 56, 56, 56]);
-    expect(mocks.rowSizes.slice(5)).toEqual([64, 64]);
+    for (const row of screen.getAllByRole("row").slice(1)) {
+      expect(row.className).toContain("h-9");
+    }
     const directory = squadToggle.closest('[role="row"]') as HTMLElement;
-    expect(within(directory).getAllByRole("cell")).toHaveLength(11);
+    expect(within(directory).getAllByRole("gridcell")).toHaveLength(11);
     expect([...squadToggle.querySelectorAll("[title]")].map((node) => node.getAttribute("title")))
       .toEqual(["squad-leader", "squad-member", "dual-agent"]);
     expect(screen.getByRole("button", { name: "Expand Ops" }).textContent).toContain("0 agents");
@@ -488,8 +478,8 @@ describe("AgentsPage folder hierarchy", () => {
       folderRow.compareDocumentPosition(agentRow) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    const folderCells = within(folderRow).getAllByRole("cell");
-    const agentCells = within(agentRow).getAllByRole("cell");
+    const folderCells = within(folderRow).getAllByRole("gridcell");
+    const agentCells = within(agentRow).getAllByRole("gridcell");
     expect(folderCells).toHaveLength(agentCells.length);
     expect(folderCells[0]!.className).toBe(agentCells[0]!.className);
   });
@@ -534,12 +524,10 @@ describe("AgentsPage folder hierarchy", () => {
 
     await expandFolder("Game design");
     expect(screen.getAllByText("dual-agent")).toHaveLength(2);
-    expect(mocks.virtualizerKeys).toEqual(expect.arrayContaining([
-      "agent-sq-game-a-both",
-      "agent-sq-growth-a-both",
-    ]));
+    expect(document.querySelector('[data-row-id="agent-sq-game-a-both"]')).not.toBeNull();
+    expect(document.querySelector('[data-row-id="agent-sq-growth-a-both"]')).not.toBeNull();
     const header = screen.getAllByRole("row")[0]!;
-    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    await userEvent.click(within(header).getByRole("checkbox", { name: "Select all" }));
     expect(await screen.findByText("5 selected")).toBeTruthy();
   });
 
@@ -844,9 +832,9 @@ describe("AgentsPage move agents", () => {
   it("batch-moves selected agents and reports partial failures", async () => {
     renderPage();
     const looseRow = (await screen.findByText("loose-agent")).closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(looseRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(looseRow).getByRole("checkbox", { name: "Select row" }));
     const otherRow = screen.getByText("other-agent").closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(otherRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(otherRow).getByRole("checkbox", { name: "Select row" }));
 
     // other-agent is owned by user-2: the batch move is disabled with a reason.
     const moveButton = screen.getByRole("button", { name: "Move to folder" });
@@ -856,7 +844,7 @@ describe("AgentsPage move agents", () => {
     ).toBeTruthy();
 
     // Deselect the unmanageable agent, then move the rest.
-    await userEvent.click(within(otherRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(otherRow).getByRole("checkbox", { name: "Select row" }));
     await userEvent.click(screen.getByRole("button", { name: "Move to folder" }));
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
@@ -876,7 +864,7 @@ describe("AgentsPage move agents", () => {
     renderPage();
     for (const name of ["loose-agent", "other-agent"]) {
       const row = (await screen.findByText(name)).closest("[role='row']") as HTMLElement;
-      await userEvent.click(within(row).getAllByRole("button")[0]!);
+      await userEvent.click(within(row).getByRole("checkbox", { name: "Select row" }));
     }
     await userEvent.click(screen.getByRole("button", { name: "Move to folder" }));
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
@@ -893,9 +881,9 @@ describe("AgentsPage move/place wording", () => {
     renderPage();
     await expandFolder("Game design");
     const leaderRow = (await screen.findByText("squad-leader")).closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(leaderRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(leaderRow).getByRole("checkbox", { name: "Select row" }));
     const bothRow = screen.getByText("dual-agent").closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(bothRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(bothRow).getByRole("checkbox", { name: "Select row" }));
 
     const button = screen.getByRole("button", { name: "Move to folder" });
     expect(button).toBeTruthy();
@@ -961,7 +949,7 @@ describe("AgentsPage unreadable write responses", () => {
     renderPage();
     for (const name of ["loose-agent", "other-agent"]) {
       const row = (await screen.findByText(name)).closest("[role='row']") as HTMLElement;
-      await userEvent.click(within(row).getAllByRole("button")[0]!);
+      await userEvent.click(within(row).getByRole("checkbox", { name: "Select row" }));
     }
     await userEvent.click(screen.getByRole("button", { name: "Move to folder" }));
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
@@ -979,7 +967,10 @@ describe("AgentsPage unreadable write responses", () => {
 describe("AgentsPage flat view", () => {
   it("uses a flat list with paths for the archived scope", async () => {
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Archived" }));
+    await userEvent.click(await screen.findByRole("button", { name: "All agents" }));
+    await userEvent.click(
+      await screen.findByRole("menuitemradio", { name: /Archived agents/ }),
+    );
     expect(await screen.findByText("archived-agent")).toBeTruthy();
     expect(screen.getByText("Design")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Expand Design" })).toBeNull();
@@ -1092,18 +1083,50 @@ describe("AgentsPage folder regressions", () => {
     mocks.agents = [];
     mocks.folderTree = { folders: [], placements: [], squads: [] };
     renderPage();
-    expect(await screen.findByText("No agents yet")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Hire your first AI teammate" })).toBeTruthy();
   });
 
   it("limits selection and select-all to visible agent rows", async () => {
     renderPage();
     await expandFolder("Game design");
     const header = screen.getAllByRole("row")[0]!;
-    await userEvent.click(within(header).getAllByRole("button")[0]!);
+    await userEvent.click(within(header).getByRole("checkbox", { name: "Select all" }));
     expect(await screen.findByText("5 selected")).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: "Collapse Game design" }));
     expect(await screen.findByText("2 selected")).toBeTruthy();
+  });
+
+  it("keeps entity selection across tree and flat search views", async () => {
+    renderPage();
+    await expandFolder("Game design");
+    await expandFolder("Design");
+    await expandFolder("Research");
+    const treeRow = document.querySelector(
+      '[data-row-id="agent-sq-game-a-both"]',
+    ) as HTMLElement;
+    expect(treeRow).not.toBeNull();
+    await userEvent.click(within(treeRow).getByRole("checkbox", { name: "Select row" }));
+    expect(await screen.findByText("1 selected")).toBeTruthy();
+
+    const search = screen.getByRole("textbox", { name: "Search agents" });
+    await userEvent.type(search, "dual");
+    const flatRow = (await screen.findByText("dual-agent")).closest("[role='row']") as HTMLElement;
+    expect(flatRow.getAttribute("data-row-id")).toBe("agent-root-a-both");
+    expect(within(flatRow).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
+    await userEvent.clear(search);
+    const dualRows = (await screen.findAllByText("dual-agent")).map(
+      (name) => name.closest("[role='row']") as HTMLElement,
+    );
+    expect(dualRows).toHaveLength(2);
+    for (const row of dualRows) {
+      expect(within(row).getByRole("checkbox", { name: "Select row" })).toBeChecked();
+    }
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    const leaderRow = screen.getByText("squad-leader").closest("[role='row']") as HTMLElement;
+    expect(within(leaderRow).getByRole("checkbox", { name: "Select row" })).not.toBeChecked();
   });
 });
 
@@ -1158,9 +1181,9 @@ describe("AgentsPage move-variant result toasts", () => {
     renderPage();
     await expandFolder("Game design");
     const leaderRow = (await screen.findByText("squad-leader")).closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(leaderRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(leaderRow).getByRole("checkbox", { name: "Select row" }));
     const bothRow = screen.getByText("dual-agent").closest("[role='row']") as HTMLElement;
-    await userEvent.click(within(bothRow).getAllByRole("button")[0]!);
+    await userEvent.click(within(bothRow).getByRole("checkbox", { name: "Select row" }));
     await userEvent.click(screen.getByRole("button", { name: "Move to folder" }));
     await userEvent.click(await screen.findByRole("button", { name: "Design" }));
   }

@@ -1,0 +1,33 @@
+{
+  "assets": {
+    "apps/desktop/build/icon.icns": "517e340eeaab29d60ae26f4ae8a084d43022b62be769fb2cbd945d342e18911c",
+    "apps/desktop/build/icon.ico": "89fbdd1aa1cb752a0c44e9adae6937258e36741aa69bb37599da100b8d23a15b",
+    "apps/desktop/build/icon.png": "e07a430c8a5f1ce0aced65a6a578ccf1c9376b64780df99a3dbcd4ff59013595",
+    "apps/desktop/build/icons/128x128.png": "b85e12fdbb55b6e6e1cff70fe000fa44715eb641020125fcf95ba0e4858e82d0",
+    "apps/desktop/build/icons/16x16.png": "768474b76089cd8839b21551c422c97c5e3187b30d2bb1986b76e05885e2ce4d",
+    "apps/desktop/build/icons/24x24.png": "f017c32944de39a3f8b1ecdd1968d8240018f7ba133810584a56c8bf36d838ca",
+    "apps/desktop/build/icons/256x256.png": "2b6d729cfadd88abf06e09078a62598a2881be1338d1d3f47b21413dd1821fb2",
+    "apps/desktop/build/icons/32x32.png": "aadba70f2083c2bfdb97082e8eb6e86e7e3affb9a2231e22b04065a6e3af43af",
+    "apps/desktop/build/icons/48x48.png": "7f7f1122d6c3f3de934ad4f6ec389a8fca5166a0f868d444b04d8cdb5eee23be",
+    "apps/desktop/build/icons/512x512.png": "e07a430c8a5f1ce0aced65a6a578ccf1c9376b64780df99a3dbcd4ff59013595",
+    "apps/desktop/build/icons/64x64.png": "f113e7ed2d378359665dc7eb37c1058badb9edaad03a9416db22bb5cd7bdedd5",
+    "apps/desktop/resources/icon.png": "e07a430c8a5f1ce0aced65a6a578ccf1c9376b64780df99a3dbcd4ff59013595",
+    "apps/docs/app/icon.svg": "1241129e47e3cb7921a6068e78679c99d9273dc90f214fe1bab5c84457e2e96e",
+    "apps/mobile/assets/icon.png": "2531351e19e5212afc1f3e724072cf9acf95f637e91564c68e256013d5b35e94",
+    "apps/mobile/components/brand/multica-logo.tsx": "90405df477ebe202dfdec80876cef9506ced9c04f6b71414ac1c4a17c6b196c4",
+    "apps/web/app/opengraph-image.png": "9aac3a5844ff9a648062c3f6097833661f45f1c0878ef0b828e591c944f3c3e7",
+    "apps/web/public/favicon.svg": "1241129e47e3cb7921a6068e78679c99d9273dc90f214fe1bab5c84457e2e96e",
+    "apps/web/public/icons/apple-touch-icon.png": "fad6701f4d21642e973aa4c465d68276489750040b330913278e6a752fea293b",
+    "apps/web/public/icons/icon-192.png": "40e3b87ac2fb57d09c9bba699454157adb21d0e491da6d2bf009d1f38e298ef9",
+    "apps/web/public/icons/icon-512.png": "e07a430c8a5f1ce0aced65a6a578ccf1c9376b64780df99a3dbcd4ff59013595",
+    "apps/web/public/icons/icon-maskable-512.png": "e07a430c8a5f1ce0aced65a6a578ccf1c9376b64780df99a3dbcd4ff59013595",
+    "apps/web/public/icons/icon.svg": "b91ae8bac04c5f64f8de5733c71f47a50988381c31a25200fea0814905b6cfd6",
+    "docs/assets/logo-dark.gif": "893e397c02ad5f1c9f1752c5871f88930f5b5ef5a4b725c75855415dd184b426",
+    "docs/assets/logo-dark.svg": "8358a962c3f36b5322daef22e2efc3c72e7035fab6ac3e68de1db9df767eb286",
+    "docs/assets/logo-light.gif": "98a124e417a793752fbf6d1b05273c701b64c7253c04e82f87622fdff7cdf756",
+    "docs/assets/logo-light.svg": "79dace36a386e97d425e688e05e760b96951f646373261a673bde4f3cc9e1efa",
+    "packages/ui/components/common/multica-icon.tsx": "d84ade9f9336bad0b426e92901c92c4a41eb5917680a49b480fd9d41ef8379bc",
+    "packages/ui/components/common/multica-wordmark.tsx": "b8dceb0910c12931c462e7845acc5de1362f71f06b4425949ad9267fc75b06b5"
+  },
+  "cliBrand": "<div class=\"brand\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\" width=\"24\" height=\"24\" fill=\"currentColor\" aria-hidden=\"true\">      <ellipse cx=\"18.5\" cy=\"42\" rx=\"10.5\" ry=\"14\" transform=\"rotate(-24 18.5 42)\" />      <ellipse cx=\"38.5\" cy=\"27\" rx=\"10.5\" ry=\"14\" transform=\"rotate(-8 38.5 27)\" />      <ellipse cx=\"61.5\" cy=\"27\" rx=\"10.5\" ry=\"14\" transform=\"rotate(8 61.5 27)\" />      <ellipse cx=\"81.5\" cy=\"42\" rx=\"10.5\" ry=\"14\" transform=\"rotate(24 81.5 42)\" />      <ellipse cx=\"50\" cy=\"70\" rx=\"24\" ry=\"19\" /></svg><span>Labrastro</span></div>"
+}

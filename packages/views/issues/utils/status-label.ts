@@ -22,9 +22,9 @@ import { useT } from "../../i18n";
  * A key the catalog has never heard of (created seconds ago elsewhere, or a
  * fetch still in flight) falls back to the raw key rather than rendering blank.
  */
-export function useStatusLabel(wsId: string) {
+export function useStatusLabel(wsId: string, enabled = true) {
   const { t } = useT("issues");
-  const { entryOf } = useIssueStatuses(wsId);
+  const { entryOf } = useIssueStatuses(wsId, enabled);
 
   return useCallback(
     (statusKey: string): string => {

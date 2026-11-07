@@ -9,6 +9,7 @@ import zhHant from "./brand/zh-Hant.json";
 import ko from "./brand/ko.json";
 import ja from "./brand/ja.json";
 import fr from "./brand/fr.json";
+import es from "./brand/es.json";
 
 export const BRAND_OVERRIDES: Record<SupportedLocale, LocaleResources> = {
   en,
@@ -17,6 +18,7 @@ export const BRAND_OVERRIDES: Record<SupportedLocale, LocaleResources> = {
   ko,
   ja,
   fr,
+  es,
 };
 
 export function applyBrandOverrides(

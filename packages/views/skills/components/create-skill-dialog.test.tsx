@@ -41,7 +41,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { CreateSkillDialog } from "./create-skill-dialog";
+import { CreateSkillDialog, type CreateSkillMethod } from "./create-skill-dialog";
 
 const ARCHIVE_FILE = new File(["pk"], "review-helper.skill", {
   type: "application/zip",
@@ -89,7 +89,11 @@ function installLiveFileList(input: HTMLInputElement, files: File[]) {
   });
 }
 
-function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
+function renderDialog(
+  onCreated = vi.fn(),
+  onClose = vi.fn(),
+  initialMethod?: CreateSkillMethod,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -99,7 +103,11 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
     ...render(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <QueryClientProvider client={queryClient}>
-          <CreateSkillDialog onClose={onClose} onCreated={onCreated} />
+          <CreateSkillDialog
+            onClose={onClose}
+            onCreated={onCreated}
+            initialMethod={initialMethod}
+          />
         </QueryClientProvider>
       </I18nProvider>,
     ),
@@ -351,5 +359,25 @@ describe("CreateSkillDialog imports", () => {
     expect(
       screen.queryByText(/a skill with this name already exists/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("CreateSkillDialog opened on a method", () => {
+  it("skips the chooser, and Cancel leaves the dialog", () => {
+    const { onClose } = renderDialog(vi.fn(), vi.fn(), "manual");
+    expect(screen.getByText(enSkills.create.manual.name_label)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Import from URL/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: enSkills.create.manual.cancel }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("still steps back to the chooser when the user came through it", () => {
+    const { onClose } = renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: /Create manually/i }));
+    fireEvent.click(screen.getByRole("button", { name: enSkills.create.manual.cancel }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Import from URL/i })).toBeInTheDocument();
   });
 });

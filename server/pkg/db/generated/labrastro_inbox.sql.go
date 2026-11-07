@@ -31,7 +31,7 @@ WITH active AS MATERIALIZED (
     UNION
     SELECT id FROM anchors
 )
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, iss.status AS issue_status, iss.priority AS issue_priority
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section, iss.status AS issue_status, iss.priority AS issue_priority
 FROM inbox_item i
 JOIN selected ON selected.id = i.id
 LEFT JOIN issue iss ON iss.id = i.issue_id
@@ -60,6 +60,7 @@ type ListGroupedInboxItemsRow struct {
 	ActorType     pgtype.Text        `json:"actor_type"`
 	ActorID       pgtype.UUID        `json:"actor_id"`
 	Details       []byte             `json:"details"`
+	Section       pgtype.Text        `json:"section"`
 	IssueStatus   pgtype.Text        `json:"issue_status"`
 	IssuePriority pgtype.Text        `json:"issue_priority"`
 }
@@ -92,6 +93,7 @@ func (q *Queries) ListGroupedInboxItems(ctx context.Context, arg ListGroupedInbo
 			&i.ActorType,
 			&i.ActorID,
 			&i.Details,
+			&i.Section,
 			&i.IssueStatus,
 			&i.IssuePriority,
 		); err != nil {

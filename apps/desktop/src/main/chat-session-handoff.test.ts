@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OPEN_CHAT_SESSION_CHANNEL } from "../shared/chat-session-handoff";
 import { MainRendererMessageQueue } from "../shared/main-renderer-messages";
 import { AuthSessionCoordinator } from "./auth-session-coordinator";
+import { MainWindowRegistry } from "./main-window-registry";
 import { createChatSessionHandoff } from "./chat-session-handoff";
 
 const SESSION = "0199a4b2-1c3d-7e4f-8a5b-6c7d8e9f0a1b";
@@ -17,41 +18,58 @@ type FakeWindow = { name: string };
  */
 function setup() {
   const issueWindows = new Set<FakeWindow>();
+  const mainWindows = new MainWindowRegistry<FakeWindow>();
+  const known = new Set<FakeWindow>();
   const closeIssueWindow = (window: FakeWindow) => issueWindows.delete(window);
   const accounts = new AuthSessionCoordinator<FakeWindow>((window) => {
     issueWindows.delete(window);
+    mainWindows.remove(window);
   });
-  const queue = new MainRendererMessageQueue();
   const send = vi.fn();
-  const known = new Set<FakeWindow>();
+  const focus = vi.fn();
+  const queue = new MainRendererMessageQueue<FakeWindow>(send, (w) => mainWindows.has(w));
+  const openMainWindow = vi.fn((slug: string) => {
+    const window = { name: slug };
+    mainWindows.add(window, slug);
+    accounts.registerMainWindow(window);
+    known.add(window);
+    return window;
+  });
+  const mainWindow = openMainWindow("acme");
+  openMainWindow.mockClear();
   const handoff = createChatSessionHandoff<FakeWindow, FakeWindow>({
     windowOf: (sender) => (known.has(sender) ? sender : null),
     issueWindows,
     accounts,
     queue,
-    dispatch: (session) => queue.enqueue(OPEN_CHAT_SESSION_CHANNEL, session, send),
+    resolveTargetMainWindow: (slug) => mainWindows.findByWorkspace(slug) ?? openMainWindow(slug),
+    focusMainWindow: focus,
   });
-  const mainWindow: FakeWindow = { name: "main" };
-  known.add(mainWindow);
   const openIssueWindow = (name: string) => {
-    const window: FakeWindow = { name };
+    const window = { name };
     known.add(window);
     issueWindows.add(window);
     accounts.registerIssueWindow(window);
     return window;
   };
-  /** Delivered sessions once the main renderer's listener is ready. */
   const delivered = () => {
-    queue.setReady(OPEN_CHAT_SESSION_CHANNEL, true, send);
-    return send.mock.calls.map(([, payload]) => payload);
+    queue.setReady(mainWindow, OPEN_CHAT_SESSION_CHANNEL, true);
+    return send.mock.calls.map(([, , payload]) => payload);
   };
-  return { accounts, handoff, mainWindow, openIssueWindow, closeIssueWindow, delivered };
+  const closeMainWindow = (window: FakeWindow) => {
+    handoff.forgetWindow(window);
+    mainWindows.remove(window);
+    accounts.unregisterMainWindow(window);
+    queue.release(window, mainWindows.mostRecent());
+  };
+  return { accounts, handoff, mainWindow, mainWindows, queue, send, focus,
+    openMainWindow, openIssueWindow, closeIssueWindow, closeMainWindow, delivered };
 }
 
 describe("createChatSessionHandoff", () => {
   it("takes a session from an issue window of the main window's account", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
     accounts.reportIssue(issue, "user-1");
 
@@ -60,8 +78,8 @@ describe("createChatSessionHandoff", () => {
   });
 
   it("refuses an issue window that has not confirmed its account yet", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
 
     expect(handoff.handleRequest({ sender: issue }, request)).toEqual({
@@ -81,8 +99,8 @@ describe("createChatSessionHandoff", () => {
   });
 
   it("refuses an issue window of another account", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const stale = openIssueWindow("OL-1");
     accounts.reportIssue(stale, "user-2");
 
@@ -91,19 +109,19 @@ describe("createChatSessionHandoff", () => {
   });
 
   it("refuses an issue window left over after the main window switched accounts", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
     accounts.reportIssue(issue, "user-1");
-    accounts.reportMain("user-2");
+    accounts.reportMain(mainWindow, "user-2");
 
     expect(handoff.handleRequest({ sender: issue }, request).ok).toBe(false);
     expect(delivered()).toEqual([]);
   });
 
   it("refuses an issue window that is no longer open", () => {
-    const { accounts, handoff, openIssueWindow, closeIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, closeIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
     accounts.reportIssue(issue, "user-1");
     // Closing drops it from the open set before its account entry goes.
@@ -115,7 +133,7 @@ describe("createChatSessionHandoff", () => {
 
   it("refuses the main window itself and senders that are no window", () => {
     const { accounts, handoff, mainWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    accounts.reportMain(mainWindow, "user-1");
 
     expect(handoff.handleRequest({ sender: mainWindow }, request).ok).toBe(false);
     expect(handoff.handleRequest({ sender: { name: "devtools" } }, request).ok).toBe(false);
@@ -123,8 +141,8 @@ describe("createChatSessionHandoff", () => {
   });
 
   it("refuses a malformed request from a trusted window", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
     accounts.reportIssue(issue, "user-1");
 
@@ -135,8 +153,8 @@ describe("createChatSessionHandoff", () => {
   });
 
   it("drops a waiting session when the main window's account changes", () => {
-    const { accounts, handoff, openIssueWindow, delivered } = setup();
-    accounts.reportMain("user-1");
+    const { accounts, handoff, mainWindow, openIssueWindow, delivered } = setup();
+    accounts.reportMain(mainWindow, "user-1");
     const issue = openIssueWindow("OL-1");
     accounts.reportIssue(issue, "user-1");
     // Queued: the main renderer's listener is not ready yet.
@@ -145,5 +163,71 @@ describe("createChatSessionHandoff", () => {
     handoff.dropForAccountChange();
 
     expect(delivered()).toEqual([]);
+  });
+});
+
+
+describe("workspace isolation", () => {
+  function trusted() {
+    const f = setup();
+    f.accounts.reportMain(f.mainWindow, "user-1");
+    const issue = f.openIssueWindow("OL-1");
+    f.accounts.reportIssue(issue, "user-1");
+    return { ...f, issue };
+  }
+
+  it("delivers only to the requested workspace even when another was focused last", () => {
+    const f = trusted();
+    const other = f.openMainWindow("butter");
+    f.queue.setReady(other, OPEN_CHAT_SESSION_CHANNEL, true);
+    f.queue.setReady(f.mainWindow, OPEN_CHAT_SESSION_CHANNEL, true);
+    expect(f.handoff.handleRequest({ sender: f.issue }, request)).toEqual({ ok: true });
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(f.mainWindow, OPEN_CHAT_SESSION_CHANNEL, request);
+    expect(f.focus).toHaveBeenCalledExactlyOnceWith(f.mainWindow);
+  });
+
+  it("creates one target for two requests and waits for its renderer", () => {
+    const f = trusted();
+    f.queue.setReady(f.mainWindow, OPEN_CHAT_SESSION_CHANNEL, true);
+    const targetRequest = { ...request, workspaceSlug: "butter" };
+    f.handoff.handleRequest({ sender: f.issue }, targetRequest);
+    f.handoff.handleRequest({ sender: f.issue }, targetRequest);
+    expect(f.openMainWindow).toHaveBeenCalledExactlyOnceWith("butter");
+    expect(f.send).not.toHaveBeenCalled();
+    const target = f.mainWindows.findByWorkspace("butter")!;
+    f.queue.setReady(target, OPEN_CHAT_SESSION_CHANNEL, true);
+    expect(f.send.mock.calls).toEqual([
+      [target, OPEN_CHAT_SESSION_CHANNEL, targetRequest],
+      [target, OPEN_CHAT_SESSION_CHANNEL, targetRequest],
+    ]);
+  });
+
+  it("discards a closed target's pending sessions before releasing to a successor", () => {
+    const f = trusted();
+    const other = f.openMainWindow("butter");
+    f.queue.setReady(other, OPEN_CHAT_SESSION_CHANNEL, true);
+    f.handoff.handleRequest({ sender: f.issue }, request);
+    f.closeMainWindow(f.mainWindow);
+    f.queue.setReady(other, OPEN_CHAT_SESSION_CHANNEL, true);
+    expect(f.send).not.toHaveBeenCalled();
+  });
+
+  it("clears every window's waiting sessions on account change", () => {
+    const f = trusted();
+    f.handoff.handleRequest({ sender: f.issue }, request);
+    f.handoff.handleRequest({ sender: f.issue }, { ...request, workspaceSlug: "butter" });
+    f.handoff.dropForAccountChange();
+    for (const window of f.mainWindows.all()) f.queue.setReady(window, OPEN_CHAT_SESSION_CHANNEL, true);
+    expect(f.send).not.toHaveBeenCalled();
+  });
+
+  it("recreates the requested workspace after all main windows close", () => {
+    const f = trusted();
+    f.closeMainWindow(f.mainWindow);
+    expect(f.handoff.handleRequest({ sender: f.issue }, request)).toEqual({ ok: true });
+    const target = f.mainWindows.findByWorkspace("acme")!;
+    expect(target).not.toBe(f.mainWindow);
+    f.queue.setReady(target, OPEN_CHAT_SESSION_CHANNEL, true);
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(target, OPEN_CHAT_SESSION_CHANNEL, request);
   });
 });

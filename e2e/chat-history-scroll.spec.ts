@@ -11,12 +11,12 @@ test.use({ launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXEC
 let server: ViteDevServer;
 let origin: string;
 test.beforeAll(async () => {
-  const labRequire = createRequire(new URL("../apps/ui-lab/package.json", import.meta.url));
-  const react = (await import(labRequire.resolve("@vitejs/plugin-react"))).default;
-  const tailwind = (await import(labRequire.resolve("@tailwindcss/vite"))).default;
+  const fixtureRequire = createRequire(new URL("../apps/desktop/package.json", import.meta.url));
+  const react = (await import(fixtureRequire.resolve("@vitejs/plugin-react"))).default;
+  const tailwind = (await import(fixtureRequire.resolve("@tailwindcss/vite"))).default;
   server = await createServer({
     configFile: false,
-    root: fileURLToPath(new URL("../apps/ui-lab", import.meta.url)),
+    root: fileURLToPath(new URL("../e2e", import.meta.url)),
     plugins: [react(), tailwind()],
     server: { host: "127.0.0.1", port: 0 },
   });
@@ -31,7 +31,7 @@ test("history retains its reading line through delayed media growth and older-pa
     transcriptRequests++;
     return route.fulfill({ json: [] });
   });
-  await page.goto(`${origin}test/chat-history-browser.html`);
+  await page.goto(`${origin}fixtures/chat-history-browser.html`);
   const root = page.locator("[data-tab-scroll-root]");
   await expect(root).not.toHaveClass(/invisible/);
   await expect(page.locator("#message-count")).toHaveText("50");
@@ -116,7 +116,7 @@ for (const top of [4, 40]) {
         input: { command: `history-step-${seq}` },
       })) });
     });
-    await page.goto(`${origin}test/chat-history-browser.html`);
+    await page.goto(`${origin}fixtures/chat-history-browser.html`);
     const root = page.locator("[data-tab-scroll-root]");
     await expect(root).not.toHaveClass(/invisible/);
     await root.hover();

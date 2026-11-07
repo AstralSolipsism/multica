@@ -89,6 +89,16 @@
       "add_agent_description": "Create a Labrastro agent linked to an existing agent in Qoder Cloud Agents. It will use the environment and credentials configured for Qoder Cloud.",
       "data_disclosure_title": "What Labrastro sends to Qoder",
       "connect_description": "Labrastro runs tasks in Qoder's sandboxes."
+    },
+    "intro": {
+      "slides": {
+        "cloud": {
+          "description": "Rather not manage machines? Create a cloud node hosted by Labrastro."
+        }
+      },
+      "art": {
+        "connected": "{{name}} connected to Labrastro"
+      }
     }
   },
   "workspace": {
@@ -105,6 +115,18 @@
     },
     "dialog": {
       "webhook_help_create": "Labrastro will generate a webhook URL after this autopilot is created. POST any JSON to that URL to fire it."
+    },
+    "wakeups": {
+      "intro": {
+        "slides": {
+          "event": {
+            "description": "No need to keep an agent spinning while it waits. When the condition is met, Labrastro wakes it up."
+          }
+        }
+      }
+    },
+    "intro": {
+      "description": "Set a schedule or a webhook. Each time it fires, Labrastro creates an issue for an agent, or runs the agent directly. Pick a template and adjust it."
     }
   },
   "issues": {

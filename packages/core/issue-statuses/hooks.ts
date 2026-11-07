@@ -9,10 +9,10 @@ import { buildIssueStatusCatalog, issueStatusListOptions, type IssueStatusCatalo
  * state rules — the catalog is per-workspace, and switching workspaces does not
  * remount the app, so a module-level snapshot would go stale.
  */
-export function useIssueStatuses(wsId: string): IssueStatusCatalog {
+export function useIssueStatuses(wsId: string, enabled = true): IssueStatusCatalog {
   const { data, isPending, isError, refetch } = useQuery({
     ...issueStatusListOptions(wsId),
-    enabled: Boolean(wsId),
+    enabled: enabled && Boolean(wsId),
   });
   // `refetch` travels with the catalog, not just its failure flag: a surface
   // that blocks on a failed catalog needs something to offer the user, and

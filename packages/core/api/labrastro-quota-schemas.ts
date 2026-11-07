@@ -226,6 +226,7 @@ export const RuntimeThinkingAdaptSchema = z.object({
 // down the rest of the list. A wholly malformed response falls back to [].
 export const RuntimeListItemSchema = z.object({
   shared_with: z.array(z.string().uuid()).catch([]),
+  max_concurrent_tasks: z.number().int().nullable().catch(null),
   system_stats: RuntimeSystemStatsSchema.nullable().catch(null),
   thinking_adapt: RuntimeThinkingAdaptSchema.nullable().catch(null),
 }).loose();

@@ -85,17 +85,93 @@ export function PropertyPicker({
    */
   footer?: React.ReactNode;
 }) {
+  const [tooltipHover, setTooltipHover] = useState(false);
+  // Show the tooltip only while the trigger is hovered AND the popover is
+  // closed — avoids the awkward state where the tooltip floats next to (or
+  // on top of) the popover that just opened on click.
+  const tooltipOpen = !!tooltip && tooltipHover && !open;
+
+  // Base UI's trigger expects a real <button> in `render` unless
+  // `nativeButton={false}` opts into the non-native path (role="button" +
+  // synthesized Enter/Space). Some `triggerRender` callers pass a plain host
+  // element instead — the DAG selection node and the shared context menu
+  // anchor their menu-opened pickers on invisible spans, and the label
+  // picker wraps its chips in a div — so any host element other than
+  // <button> takes the non-native path. Component triggers (PillButton,
+  // Button, ClearablePillButton) forward the merged props onto a real
+  // <button> and keep the default.
+  const nativeButton = nativeButtonProp ?? (
+    typeof triggerRender?.type === "string" && triggerRender.type !== "button"
+      ? false
+      : true
+  );
+  const popoverTrigger = (
+    <PopoverTrigger
+      nativeButton={nativeButton}
+      className={triggerRender ? undefined : PICKER_TRIGGER_CLASS}
+      render={triggerRender}
+    >
+      {trigger}
+    </PopoverTrigger>
+  );
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      {tooltip ? (
+        <Tooltip open={tooltipOpen} onOpenChange={setTooltipHover}>
+          <TooltipTrigger render={popoverTrigger} />
+          <TooltipContent side="top">{tooltip}</TooltipContent>
+        </Tooltip>
+      ) : (
+        popoverTrigger
+      )}
+      <PopoverContent align={align} side={side} className={`${width} gap-0 p-0`}>
+        <PickerPanel
+          open={open}
+          searchable={searchable}
+          searchPlaceholder={searchPlaceholder}
+          onSearchChange={onSearchChange}
+          header={header}
+          footer={footer}
+        >
+          {children}
+        </PickerPanel>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// PickerPanel — a picker's search box and keyboard-navigable list, without
+// the popover. PropertyPicker wraps it; menus host it in a submenu.
+
+export function PickerPanel({
+  open = true,
+  searchable = false,
+  searchPlaceholder,
+  onSearchChange,
+  autoFocusSearch = false,
+  header,
+  children,
+  footer,
+}: {
+  /** The surrounding surface's open state; closing it resets the search. */
+  open?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string | undefined;
+  onSearchChange?: (query: string) => void;
+  /** Focus the search box on mount. A popover moves focus in by itself; a
+   *  submenu does not. */
+  autoFocusSearch?: boolean;
+  header?: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
   const { t } = useT("issues");
   const placeholder = searchPlaceholder ?? t(($) => $.filters.placeholder);
   const filterAria = t(($) => $.pickers.filter_options_aria);
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
-  const [tooltipHover, setTooltipHover] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  // Show the tooltip only while the trigger is hovered AND the popover is
-  // closed — avoids the awkward state where the tooltip floats next to (or
-  // on top of) the popover that just opened on click.
-  const tooltipOpen = !!tooltip && tooltipHover && !open;
 
   const getItems = useCallback(() => {
     if (!listRef.current) return [];
@@ -182,63 +258,30 @@ export function PropertyPicker({
     [getItems, highlightedIndex],
   );
 
-  // Base UI's trigger expects a real <button> in `render` unless
-  // `nativeButton={false}` opts into the non-native path (role="button" +
-  // synthesized Enter/Space). Some `triggerRender` callers pass a plain host
-  // element instead — the DAG selection node and the shared context menu
-  // anchor their menu-opened pickers on invisible spans, and the label
-  // picker wraps its chips in a div — so any host element other than
-  // <button> takes the non-native path. Component triggers (PillButton,
-  // Button, ClearablePillButton) forward the merged props onto a real
-  // <button> and keep the default.
-  const nativeButton = nativeButtonProp ?? (
-    typeof triggerRender?.type === "string" && triggerRender.type !== "button"
-      ? false
-      : true
-  );
-  const popoverTrigger = (
-    <PopoverTrigger
-      nativeButton={nativeButton}
-      className={triggerRender ? undefined : PICKER_TRIGGER_CLASS}
-      render={triggerRender}
-    >
-      {trigger}
-    </PopoverTrigger>
-  );
-
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      {tooltip ? (
-        <Tooltip open={tooltipOpen} onOpenChange={setTooltipHover}>
-          <TooltipTrigger render={popoverTrigger} />
-          <TooltipContent side="top">{tooltip}</TooltipContent>
-        </Tooltip>
-      ) : (
-        popoverTrigger
+    <>
+      {searchable && (
+        <div className="px-2 py-1.5 border-b">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              pendingSearchHighlight.current = true;
+              onSearchChange?.(e.target.value);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            aria-label={filterAria}
+            autoFocus={autoFocusSearch}
+            className="w-full bg-transparent text-body placeholder:text-muted-foreground outline-none"
+          />
+        </div>
       )}
-      <PopoverContent align={align} side={side} className={`${width} gap-0 p-0`}>
-        {searchable && (
-          <div className="px-2 py-1.5 border-b">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                pendingSearchHighlight.current = true;
-                onSearchChange?.(e.target.value);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              aria-label={filterAria}
-              className="w-full bg-transparent text-body placeholder:text-muted-foreground outline-none"
-            />
-          </div>
-        )}
-        {header && <div className="border-b">{header}</div>}
-        <div ref={listRef} className="p-1 max-h-72 overflow-y-auto">{children}</div>
-        {footer && <div className="border-t p-1">{footer}</div>}
-      </PopoverContent>
-    </Popover>
+      {header && <div className="border-b">{header}</div>}
+      <div ref={listRef} className="p-1 max-h-72 overflow-y-auto">{children}</div>
+      {footer && <div className="border-t p-1">{footer}</div>}
+    </>
   );
 }
 

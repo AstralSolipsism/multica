@@ -199,6 +199,7 @@ POST	/api/inbox/archive-completed	user-auth	deny
 GET	/api/inbox/archived	user-auth	deny
 GET	/api/inbox/archived/facets	user-auth	deny
 GET	/api/inbox/archived/page	user-auth	deny
+POST	/api/inbox/issues/{issueId}/read	user-auth	deny
 POST	/api/inbox/mark-all-read	user-auth	deny
 GET	/api/inbox/unread-count	user-auth	deny
 GET	/api/inbox/unread-summary	user-auth	deny
@@ -227,6 +228,7 @@ POST	/api/issue-views/	user-auth	deny
 DELETE	/api/issue-views/{id}/	user-auth	deny
 GET	/api/issue-views/{id}/	user-auth	deny
 PATCH	/api/issue-views/{id}/	user-auth	deny
+GET	/api/issue-views/{id}/issues	user-auth	deny
 GET	/api/issue-wakeup-paused	user-auth	deny
 GET	/api/issue-wakeup-summaries	user-auth	deny
 GET	/api/issue-wakeups	user-auth	deny
@@ -249,9 +251,11 @@ POST	/api/issues/preview-trigger	user-auth	deny
 POST	/api/issues/query	user-auth	allow
 POST	/api/issues/quick-create	user-auth	deny
 GET	/api/issues/search	user-auth	allow
+GET	/api/issues/subscribed	user-auth	deny
 POST	/api/issues/table/facets	user-auth	deny
 POST	/api/issues/table/groups	user-auth	deny
 POST	/api/issues/table/rows	user-auth	deny
+GET	/api/issues/unread	user-auth	deny
 GET	/api/issues/usage-summary	user-auth	deny
 POST	/api/issues/with-dependencies	user-auth	allow
 DELETE	/api/issues/{id}/	user-auth	deny
@@ -282,6 +286,7 @@ POST	/api/issues/{id}/quick-actions/{quickActionId}/render	user-auth	deny
 POST	/api/issues/{id}/quick-actions/{quickActionId}/run	user-auth	deny
 DELETE	/api/issues/{id}/reactions	user-auth	allow
 POST	/api/issues/{id}/reactions	user-auth	allow
+POST	/api/issues/{id}/read	user-auth	deny
 POST	/api/issues/{id}/rerun	user-auth	deny
 POST	/api/issues/{id}/squad-evaluated	user-auth	deny
 POST	/api/issues/{id}/subscribe	user-auth	deny
@@ -294,6 +299,7 @@ POST	/api/issues/{id}/tasks/{taskId}/supplements	user-auth	deny
 POST	/api/issues/{id}/tasks/{taskId}/supplements/{commentId}/retry	user-auth	deny
 GET	/api/issues/{id}/timeline	user-auth	allow
 GET	/api/issues/{id}/tips	user-auth	deny
+POST	/api/issues/{id}/unread	user-auth	deny
 POST	/api/issues/{id}/unsubscribe	user-auth	deny
 POST	/api/issues/{id}/unsubscribe/subtree	user-auth	deny
 GET	/api/issues/{id}/usage	user-auth	deny
@@ -325,6 +331,7 @@ POST	/api/me/quota-sources/	user-auth	deny
 DELETE	/api/me/quota-sources/{id}/	user-auth	deny
 PATCH	/api/me/quota-sources/{id}/	user-auth	deny
 POST	/api/me/quota-sources/{id}/refresh	user-auth	deny
+POST	/api/me/whats-new/seen	user-auth	deny
 POST	/api/media/jobs	user-auth	deny
 GET	/api/media/jobs/{id}	user-auth	deny
 POST	/api/media/jobs/{id}/cancel	user-auth	deny
@@ -361,6 +368,7 @@ GET	/api/plugin-bridge/v1/storage/{scope}	user-auth	deny
 DELETE	/api/plugin-bridge/v1/storage/{scope}/{key}	user-auth	deny
 GET	/api/plugin-bridge/v1/storage/{scope}/{key}	user-auth	deny
 PUT	/api/plugin-bridge/v1/storage/{scope}/{key}	user-auth	deny
+GET	/api/plugin-bridge/v1/tasks/{task_id}/messages	user-auth	deny
 GET	/api/projects/	user-auth	allow
 POST	/api/projects/	user-auth	deny
 GET	/api/projects/search	user-auth	allow
@@ -438,6 +446,9 @@ GET	/api/skills/{id}/labels	user-auth	deny
 POST	/api/skills/{id}/labels	user-auth	deny
 DELETE	/api/skills/{id}/labels/{labelId}	user-auth	deny
 POST	/api/skills/{id}/refresh	user-auth	deny
+GET	/api/skills/{id}/versions	user-auth	deny
+GET	/api/skills/{id}/versions/{version}	user-auth	deny
+POST	/api/skills/{id}/versions/{version}/restore	user-auth	deny
 POST	/api/slack/binding/redeem	user-auth	deny
 GET	/api/squads/	user-auth	deny
 POST	/api/squads/	user-auth	deny
@@ -508,6 +519,7 @@ GET	/api/workspaces/{id}/members	user-auth	allow
 POST	/api/workspaces/{id}/members	user-auth	deny
 DELETE	/api/workspaces/{id}/members/{memberId}/	user-auth	deny
 PATCH	/api/workspaces/{id}/members/{memberId}/	user-auth	deny
+PUT	/api/workspaces/{id}/pin	user-auth	deny
 GET	/api/workspaces/{id}/plugins	user-auth	deny
 POST	/api/workspaces/{id}/plugins	user-auth	deny
 GET	/api/workspaces/{id}/plugins/packages	user-auth	deny
@@ -552,7 +564,9 @@ GET	/api/workspaces/{id}/vcs/connections	user-auth	deny
 POST	/api/workspaces/{id}/vcs/connections	user-auth	deny
 DELETE	/api/workspaces/{id}/vcs/connections/{connectionId}	user-auth	deny
 POST	/api/workspaces/{id}/vcs/connections/{connectionId}/rotate-webhook	user-auth	deny
+POST	/api/workspaces/{id}/wecom/install/begin	user-auth	deny
 POST	/api/workspaces/{id}/wecom/install/byo	user-auth	deny
+GET	/api/workspaces/{id}/wecom/install/{sessionId}	user-auth	deny
 GET	/api/workspaces/{id}/wecom/installations	user-auth	deny
 DELETE	/api/workspaces/{id}/wecom/installations/{installationId}	user-auth	deny
 GET	/api/workspaces/{workspaceId}/issues/graph	user-auth	allow
@@ -575,4 +589,5 @@ GET	/v1/storage/{scope}	plugin-auth	separate-auth
 DELETE	/v1/storage/{scope}/{key}	plugin-auth	separate-auth
 GET	/v1/storage/{scope}/{key}	plugin-auth	separate-auth
 PUT	/v1/storage/{scope}/{key}	plugin-auth	separate-auth
+GET	/v1/tasks/{task_id}/messages	plugin-auth	separate-auth
 GET	/ws	public-or-capability	separate-auth

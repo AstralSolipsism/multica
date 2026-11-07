@@ -7,6 +7,52 @@ import (
 	"unicode/utf8"
 )
 
+// DecodeEscapedAgentOutput repairs agent output that arrived as one escaped
+// blob (GH #1820): no real line break anywhere, paragraphs joined by a literal
+// `\n\n`. Only that shape is decoded, and only its `\n` sequences become
+// newlines. Everything else is returned unchanged, because a backslash in
+// agent output is usually content: a single `\n` is also how `\neq` and
+// `C:\node_modules` begin, and `\t` / `\r` begin `\times` and `\rho`
+// (GH #8845, #9014). A `\\` pair is kept as written and never starts a `\n`.
+func DecodeEscapedAgentOutput(s string) string {
+	if strings.ContainsAny(s, "\n\r") || !hasEscapedParagraphBreak(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+				continue
+			case '\\':
+				b.WriteString(`\\`)
+				i++
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// hasEscapedParagraphBreak reports whether s contains a literal `\n\n` whose
+// first backslash is not itself escaped.
+func hasEscapedParagraphBreak(s string) bool {
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '\\' {
+			continue
+		}
+		if s[i+1] == 'n' && strings.HasPrefix(s[i+2:], `\n`) {
+			return true
+		}
+		i++
+	}
+	return false
+}
+
 // sanitizeJSONMaxDepth bounds SanitizeJSONForPostgres's recursion. Task tool
 // input is a handful of levels deep in practice; anything past this is either
 // pathological or hostile, and is dropped rather than walked so a deeply

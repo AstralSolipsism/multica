@@ -481,7 +481,7 @@ func (q *Queries) LabrastroLockBaselineDocs(ctx context.Context, arg LabrastroLo
 }
 
 const labrastroLockEngineeringMember = `-- name: LabrastroLockEngineeringMember :one
-SELECT id, workspace_id, user_id, role, created_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
+SELECT id, workspace_id, user_id, role, created_at, pinned_at FROM member WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
 `
 
 type LabrastroLockEngineeringMemberParams struct {
@@ -498,12 +498,13 @@ func (q *Queries) LabrastroLockEngineeringMember(ctx context.Context, arg Labras
 		&i.UserID,
 		&i.Role,
 		&i.CreatedAt,
+		&i.PinnedAt,
 	)
 	return i, err
 }
 
 const labrastroLockEngineeringProject = `-- name: LabrastroLockEngineeringProject :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id FROM project WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id FROM project WHERE workspace_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LabrastroLockEngineeringProjectParams struct {
@@ -530,6 +531,8 @@ func (q *Queries) LabrastroLockEngineeringProject(ctx context.Context, arg Labra
 		&i.StartDate,
 		&i.DueDate,
 		&i.WorkflowID,
+		&i.CreatorType,
+		&i.CreatorID,
 	)
 	return i, err
 }
@@ -587,7 +590,7 @@ func (q *Queries) LabrastroPutEngineering(ctx context.Context, arg LabrastroPutE
 }
 
 const labrastroReadEngineeringProject = `-- name: LabrastroReadEngineeringProject :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id FROM project WHERE workspace_id = $1 AND id = $2 FOR SHARE
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id FROM project WHERE workspace_id = $1 AND id = $2 FOR SHARE
 `
 
 type LabrastroReadEngineeringProjectParams struct {
@@ -613,6 +616,8 @@ func (q *Queries) LabrastroReadEngineeringProject(ctx context.Context, arg Labra
 		&i.StartDate,
 		&i.DueDate,
 		&i.WorkflowID,
+		&i.CreatorType,
+		&i.CreatorID,
 	)
 	return i, err
 }

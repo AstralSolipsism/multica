@@ -10,7 +10,15 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   SidebarInset: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,
 }));
-vi.mock("./app-sidebar", () => ({ AppSidebar: () => null }));
+vi.mock("./app-rail", () => ({ AppRail: () => null }));
+vi.mock("./app-shell-context", () => ({
+  AppShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+vi.mock("./compact-nav-sheet", () => ({ CompactNavSheet: () => null }));
+vi.mock("./route-data-prefetch", () => ({
+  ShellRouteDataPrefetch: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+vi.mock("./space-panel", () => ({ SpacePanel: () => null }));
 vi.mock("./global-shortcuts", () => ({ GlobalShortcuts: () => null }));
 vi.mock("./navigation-progress", () => ({ NavigationProgress: () => null }));
 vi.mock("./workspace-presence-prefetch", () => ({

@@ -212,7 +212,7 @@ func labrastroWriteCandidate(ctx context.Context, q *db.Queries, a labrastroSkil
 		}
 		written, err = overwriteSkillWithFilesInTx(ctx, q, skillOverwriteInput{WorkspaceID: a.ws, TargetSkillID: target.ID, UserID: uuidToString(a.user), NewName: name, AllowOverwrite: allow, Description: bundle.description, Content: bundle.content, Config: mergeSkillConfigOrigin(target.Config, bundle.origin), Files: importedSkillFileRequests(bundle)})
 	} else {
-		written, err = createSkillWithFilesInTx(ctx, q, skillCreateInput{WorkspaceID: a.ws, CreatorID: a.user, Name: name, Description: bundle.description, Content: bundle.content, Config: map[string]any{"origin": bundle.origin}, Files: importedSkillFileRequests(bundle)})
+		written, err = createSkillWithFilesInTx(ctx, q, skillCreateInput{VersionSource: skillVersionSourceImport, WorkspaceID: a.ws, CreatorID: a.user, Name: name, Description: bundle.description, Content: bundle.content, Config: map[string]any{"origin": bundle.origin}, Files: importedSkillFileRequests(bundle)})
 	}
 	if err != nil {
 		if isUniqueViolation(err) || errors.Is(err, errSkillOverwriteNameConflict) {

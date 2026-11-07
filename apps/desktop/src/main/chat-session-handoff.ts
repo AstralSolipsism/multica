@@ -1,7 +1,6 @@
 import {
   OPEN_CHAT_SESSION_CHANNEL,
   parseChatSessionHandoff,
-  type ChatSessionHandoff,
   type ChatSessionHandoffResult,
 } from "../shared/chat-session-handoff";
 import type { MainRendererMessageChannel } from "../shared/main-renderer-messages";
@@ -14,9 +13,14 @@ export interface ChatSessionHandoffDeps<W, S> {
   /** Whether an issue window has confirmed the main window's account. */
   accounts: { isCurrentIssueSession(window: W): boolean };
   /** Messages waiting for the main renderer's listener. */
-  queue: { clear(channel: MainRendererMessageChannel): void };
-  /** Queue for the main renderer and focus — or recreate — the main window. */
-  dispatch: (handoff: ChatSessionHandoff) => void;
+  queue: {
+    enqueue(target: W, channel: MainRendererMessageChannel, payload: unknown): void;
+    discard(channel: MainRendererMessageChannel, target: W): void;
+    clear(channel: MainRendererMessageChannel): void;
+  };
+  /** Resolve or create the main window for this workspace, never a fallback. */
+  resolveTargetMainWindow: (workspaceSlug: string) => W;
+  focusMainWindow: (window: W) => void;
 }
 
 /**
@@ -41,8 +45,14 @@ export function createChatSessionHandoff<W, S>(deps: ChatSessionHandoffDeps<W, S
       }
       const handoff = parseChatSessionHandoff(request);
       if (!handoff) return { ok: false, reason: "invalid_request" };
-      deps.dispatch(handoff);
+      const target = deps.resolveTargetMainWindow(handoff.workspaceSlug);
+      deps.queue.enqueue(target, OPEN_CHAT_SESSION_CHANNEL, handoff);
+      deps.focusMainWindow(target);
       return { ok: true };
+    },
+    /** A closed target must not hand its workspace's chats to another window. */
+    forgetWindow(window: W): void {
+      deps.queue.discard(OPEN_CHAT_SESSION_CHANNEL, window);
     },
     /** The main window's account changed: a waiting session was the old one's. */
     dropForAccountChange(): void {
