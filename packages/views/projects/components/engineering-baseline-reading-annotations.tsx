@@ -10,7 +10,7 @@ import type {
   BaselineComposerAnchor,
 } from "./engineering-baseline-annotation-model";
 import type { BaselineAnnotationDraftItem } from "@multica/core/projects/baseline-annotation-draft-store";
-import { isBaselineAnnotationReply } from "./engineering-baseline-annotation-model";
+import { isBaselineAnnotationReply, anchorOutdated, anchorPlacement } from "./engineering-baseline-annotation-model";
 import {
   BaselineAnnotationComposer,
   BaselineSubmittedThread,
@@ -77,6 +77,10 @@ export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
   const { t } = useT("engineering");
   const pending = props.pendingItems.filter((item) => !isBaselineAnnotationReply(item));
   if (!props.threads.length && !pending.length && !props.composer) return null;
+  // Reading mode renders the adopted baseline only: line anchors exist for the
+  // adopted revision itself, anything else has no rendered lines to land on.
+  const placement = (root: BaselineAnnotationThread["root"]) => anchorPlacement(root, props.adopted.id, props.adopted);
+  const outdated = (root: BaselineAnnotationThread["root"]) => anchorOutdated(root, props.adopted.id, props.adopted);
   return (
     <div className="mt-3 space-y-2 border-l-2 border-brand/30 pl-3" data-reading-annotations={props.section.anchor}>
       {props.threads.map((thread) => (
@@ -85,6 +89,8 @@ export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
           thread={thread}
           canDecide={props.canDecide}
           limitReached={props.limitReached}
+          placement={placement(thread.root)}
+          outdated={outdated(thread.root)}
           onAddReply={(note) => props.onAddReply(thread, note)}
           onUpdatePending={props.onUpdatePending}
           onDeletePending={props.onDeletePending}
@@ -97,9 +103,13 @@ export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
   );
 }
 
-export function BaselineStandaloneThreads({ title, threads, canDecide, limitReached, onAddReply, onUpdatePending, onDeletePending, onResolve }: {
+export function BaselineStandaloneThreads({ title, threads, baseRevisionId, candidate, forceOutdatedBadge, canDecide, limitReached, onAddReply, onUpdatePending, onDeletePending, onResolve }: {
   title: string;
   threads: readonly BaselineAnnotationThread[];
+  baseRevisionId: string | null;
+  candidate: BaselineRevision | null;
+  /** Diff context: every thread here lacks a row to sit on. */
+  forceOutdatedBadge?: boolean;
   canDecide: boolean;
   limitReached: boolean;
   onAddReply: (thread: BaselineAnnotationThread, note: string) => boolean;
@@ -118,6 +128,8 @@ export function BaselineStandaloneThreads({ title, threads, canDecide, limitReac
             thread={thread}
             canDecide={canDecide}
             limitReached={limitReached}
+            placement={anchorPlacement(thread.root, baseRevisionId, candidate)}
+            outdated={forceOutdatedBadge && thread.root.anchorKind === "lines" || anchorOutdated(thread.root, baseRevisionId, candidate)}
             onAddReply={(note) => onAddReply(thread, note)}
             onUpdatePending={onUpdatePending}
             onDeletePending={onDeletePending}

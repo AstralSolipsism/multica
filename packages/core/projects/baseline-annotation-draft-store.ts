@@ -2,6 +2,9 @@ import { BaselineChapterSchema, type BaselineChapter } from "../api/labrastro-en
 import { createDraftStore } from "../drafts/create-draft-store";
 
 export const BASELINE_ANNOTATION_DRAFT_LIMIT = 20;
+// Storage hygiene bound for the whole workspace store; the enforceable
+// per-review limit (project + chapter + owner) is BASELINE_ANNOTATION_DRAFT_LIMIT.
+export const BASELINE_ANNOTATION_STORE_LIMIT = BASELINE_ANNOTATION_DRAFT_LIMIT * 10;
 export const BASELINE_ANNOTATION_NOTE_LIMIT = 1000;
 export const BASELINE_ANNOTATION_QUOTE_LIMIT = 500;
 export const BASELINE_ANNOTATION_LINE_LIMIT = 50;
@@ -155,14 +158,14 @@ export function normalizeBaselineAnnotationDraftData(value: unknown): BaselineAn
   const rawAnnotations = Array.isArray(value.annotations) ? value.annotations : [];
   const rawReplies = Array.isArray(value.replies) ? value.replies : [];
   for (const raw of rawAnnotations) {
-    if (annotations.length + replies.length >= BASELINE_ANNOTATION_DRAFT_LIMIT) break;
+    if (annotations.length + replies.length >= BASELINE_ANNOTATION_STORE_LIMIT) break;
     const item = normalizeBaselineAnnotationDraft(raw);
     if (!item || ids.has(item.id)) continue;
     ids.add(item.id);
     annotations.push(item);
   }
   for (const raw of rawReplies) {
-    if (annotations.length + replies.length >= BASELINE_ANNOTATION_DRAFT_LIMIT) break;
+    if (annotations.length + replies.length >= BASELINE_ANNOTATION_STORE_LIMIT) break;
     const item = normalizeBaselineAnnotationReplyDraft(raw);
     if (!item || ids.has(item.id)) continue;
     ids.add(item.id);
@@ -176,7 +179,7 @@ export function addBaselineAnnotationDraft(
   item: BaselineAnnotationDraftItem,
 ): BaselineAnnotationDraftData {
   const current = normalizeBaselineAnnotationDraftData(data);
-  if (current.annotations.length + current.replies.length >= BASELINE_ANNOTATION_DRAFT_LIMIT) return current;
+  if (current.annotations.length + current.replies.length >= BASELINE_ANNOTATION_STORE_LIMIT) return current;
   if ("parentAnnotationId" in item) {
     const reply = normalizeBaselineAnnotationReplyDraft(item);
     if (!reply || current.annotations.some((entry) => entry.id === reply.id) || current.replies.some((entry) => entry.id === reply.id)) return current;

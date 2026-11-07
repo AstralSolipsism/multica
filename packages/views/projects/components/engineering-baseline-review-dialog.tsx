@@ -63,7 +63,9 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
     details: props.details,
   });
   const pendingCount = props.pendingItems.length;
-  const canRequestChanges = (pendingCount > 0 || !!summary.trim()) && route !== "conflict" && route !== "candidate_open";
+  // Server rejects reviews without annotations; the summary alone is not a
+  // submittable review, so requesting changes requires pending items.
+  const canRequestChanges = pendingCount > 0 && route !== "conflict" && route !== "candidate_open";
   const needsAgent = route === "new";
   const selectedAgent = props.actions.agents.find((agent) => agent.id === agentId);
   const routeAgentName = route === "append" && activeBatch

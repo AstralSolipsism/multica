@@ -655,6 +655,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         {!props.candidateLoading ? (
           <BaselineReviewBar
             workspaceSlug={props.workspaceSlug}
+            workspaceId={props.workspaceId}
             chapters={props.chapters}
             chapter={props.selectedChapter}
             revision={revision}
@@ -878,6 +879,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   <BaselineStandaloneThreads
                     title={t(($) => $.annotations.outdatedThreads)}
                     threads={annotationThreads.filter((thread) => !chapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
+                    baseRevisionId={selectedAdopted?.id ?? null}
+                    candidate={selectedAdopted ?? props.revision}
                     canDecide={props.canDecide}
                     limitReached={annotationDrafts.limitReached}
                     onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}

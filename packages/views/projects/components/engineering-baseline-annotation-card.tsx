@@ -13,6 +13,7 @@ import type {
 import { useT } from "../../i18n";
 import { useFormatRelativeDate } from "./labels";
 import type {
+  BaselineAnchorPlacement,
   BaselineAnnotationSide,
   BaselineAnnotationThread,
   BaselineComposerAnchor,
@@ -145,10 +146,12 @@ function HumanReply({ note, createdById, createdAt }: { note: string; createdByI
   );
 }
 
-export function BaselineSubmittedThread({ thread, canDecide, limitReached, onAddReply, onUpdatePending, onDeletePending, onResolve }: {
+export function BaselineSubmittedThread({ thread, canDecide, limitReached, placement, outdated, onAddReply, onUpdatePending, onDeletePending, onResolve }: {
   thread: BaselineAnnotationThread;
   canDecide: boolean;
   limitReached: boolean;
+  placement: BaselineAnchorPlacement | null;
+  outdated: boolean;
   onAddReply: (note: string) => boolean;
   onUpdatePending: (id: string, note: string) => void;
   onDeletePending: (id: string) => void;
@@ -179,8 +182,8 @@ export function BaselineSubmittedThread({ thread, canDecide, limitReached, onAdd
         <time className="text-muted-foreground" dateTime={root.createdAt}>{formatRelativeDate(root.createdAt)}</time>
         {resolved ? <Badge variant="secondary">{t(($) => $.annotations.resolved)}</Badge> : null}
         {root.state === "archived" || !active ? <Badge variant="outline">{t(($) => $.annotations.readOnly)}</Badge> : null}
-        {root.location === "outdated" ? <Badge variant="outline">{t(($) => $.annotations.outdated)}</Badge> : null}
-        <LineLocation start={root.located?.lineStart ?? root.lineStart ?? undefined} end={root.located?.lineEnd ?? root.lineEnd ?? undefined} side={root.side === "unknown" ? undefined : root.side} />
+        {outdated ? <Badge variant="outline">{t(($) => $.annotations.outdated)}</Badge> : null}
+        <LineLocation start={placement?.start} end={placement?.end} side={placement?.side} />
       </div>
       {root.quote ? <blockquote className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap border-l-2 pl-2 text-caption text-muted-foreground">{root.quote}</blockquote> : null}
       <p className="mt-2 whitespace-pre-wrap break-words text-body">{root.note}</p>

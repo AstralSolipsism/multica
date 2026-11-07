@@ -43,9 +43,10 @@ it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
   } as unknown as RealtimeSyncStores;
   const overviewKey = projectKeys.engineering("ws-1", "project-1");
   const historyKey = projectKeys.engineeringHistory("ws-1", "project-1", "overview", {});
+  const annotationsKey = projectKeys.baselineAnnotationBatches("ws-1", "project-1", {});
   const otherProjectKey = projectKeys.engineering("ws-1", "project-2");
   const otherWorkspaceKey = projectKeys.engineering("ws-2", "project-1");
-  for (const key of [overviewKey, historyKey, otherProjectKey, otherWorkspaceKey]) {
+  for (const key of [overviewKey, historyKey, annotationsKey, otherProjectKey, otherWorkspaceKey]) {
     qc.setQueryData(key, null);
   }
   renderHook(() => useRealtimeSync(ws, stores), {
@@ -65,6 +66,10 @@ it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
 
   expect(qc.getQueryState(overviewKey)?.isInvalidated).toBe(true);
   expect(qc.getQueryState(historyKey)?.isInvalidated).toBe(invalidatesHistory);
+  // A new working revision moves server annotation projections, so
+  // project_baseline:changed must also refresh annotation caches for the
+  // affected project only; engineering:updated leaves them alone.
+  expect(qc.getQueryState(annotationsKey)?.isInvalidated).toBe(type === "project_baseline:changed");
   expect(qc.getQueryState(otherProjectKey)?.isInvalidated).toBe(false);
   expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);
   qc.clear();

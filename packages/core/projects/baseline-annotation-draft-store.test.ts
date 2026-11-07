@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   addBaselineAnnotationDraft,
+  BASELINE_ANNOTATION_DRAFT_LIMIT,
+  BASELINE_ANNOTATION_STORE_LIMIT,
   deleteBaselineAnnotationDraft,
   EMPTY_BASELINE_ANNOTATION_DRAFT,
   normalizeBaselineAnnotationDraft,
@@ -57,7 +59,7 @@ describe("baseline annotation draft normalization", () => {
     expect(normalizeBaselineAnnotationDraft(annotation({ anchorKind: "section", lineStart: undefined, lineEnd: undefined }))).not.toBeNull();
   });
 
-  it("filters malformed persisted entries, duplicate IDs, and entries beyond the shared limit", () => {
+  it("filters malformed persisted entries and duplicate IDs", () => {
     const annotations = Array.from({ length: 19 }, (_, index) => annotation({ id: `annotation-${index}` }));
     const migrated = normalizeBaselineAnnotationDraftData({
       annotations: [
@@ -70,7 +72,7 @@ describe("baseline annotation draft normalization", () => {
     });
 
     expect(migrated.annotations).toHaveLength(19);
-    expect(migrated.replies).toHaveLength(1);
+    expect(migrated.replies).toHaveLength(2);
     expect(migrated.replies[0]?.parentAnnotationId).toBe("server-annotation-1");
     expect(normalizeBaselineAnnotationDraftData(null)).toEqual(EMPTY_BASELINE_ANNOTATION_DRAFT);
     expect(normalizeBaselineAnnotationDraftData({ annotations: {}, replies: "bad" })).toEqual(EMPTY_BASELINE_ANNOTATION_DRAFT);
@@ -102,9 +104,9 @@ describe("baseline annotation draft helpers", () => {
     expect(deleteBaselineAnnotationDraft(updated, "reply-1").replies).toEqual([]);
   });
 
-  it("enforces the shared limit and duplicate IDs when adding", () => {
+  it("enforces the shared store limit and duplicate IDs when adding", () => {
     let data = { annotations: [], replies: [] } as BaselineAnnotationDraftData;
-    for (let index = 0; index < 20; index++) {
+    for (let index = 0; index < BASELINE_ANNOTATION_STORE_LIMIT; index++) {
       data = addBaselineAnnotationDraft(data, annotation({ id: `annotation-${index}` }));
     }
     expect(addBaselineAnnotationDraft(data, reply()).replies).toEqual([]);
@@ -112,6 +114,17 @@ describe("baseline annotation draft helpers", () => {
       { annotations: [annotation()], replies: [] },
       annotation(),
     ).annotations).toHaveLength(1);
+  });
+
+  it("keeps different projects and chapters under one workspace store independently addable", () => {
+    let data = { annotations: [], replies: [] } as BaselineAnnotationDraftData;
+    for (let index = 0; index < BASELINE_ANNOTATION_DRAFT_LIMIT; index++) {
+      data = addBaselineAnnotationDraft(data, annotation({ id: `a-${index}` }));
+    }
+    const otherChapter = addBaselineAnnotationDraft(data, annotation({
+      id: "other-chapter", chapter: "architecture" as never,
+    }));
+    expect(otherChapter.annotations).toHaveLength(BASELINE_ANNOTATION_DRAFT_LIMIT + 1);
   });
 });
 

@@ -1480,6 +1480,9 @@ export function useRealtimeSync(
       if (wsId && project_id) {
         qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
         qc.invalidateQueries({ queryKey: projectKeys.engineeringHistoryAll(wsId, project_id) });
+        // A new working revision changes server-side annotation location/
+        // located projections; refresh them together with the engineering data.
+        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
       }
     });
 

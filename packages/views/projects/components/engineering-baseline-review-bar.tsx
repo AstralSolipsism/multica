@@ -20,6 +20,7 @@ export type BaselineCompareView = "source" | "render";
 
 interface ReviewBarProps {
   workspaceSlug: string;
+  workspaceId: string;
   chapters: readonly ChapterState[];
   chapter: BaselineChapter;
   revision: BaselineRevision | null;
@@ -111,7 +112,7 @@ export function BaselineReviewBar(props: ReviewBarProps) {
       {!props.canDecide ? <div className="mt-2 text-caption text-muted-foreground">{t(($) => $.annotations.readOnlyMember)}</div> : null}
       {revision && !props.currentCandidate ? <div className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.readOnlyRevision)}</div> : null}
       {revision && props.mode === "compare" && !props.changedCount ? <div className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.noChanges)}</div> : null}
-      {props.decisionResult ? <DecisionOpenIssues result={props.decisionResult} workspaceId={props.chapters.find((item) => item.chapter === props.chapter)?.adopted?.workspaceId ?? ""} /> : null}
+      {props.decisionResult ? <DecisionOpenIssues result={props.decisionResult} workspaceId={props.workspaceId} /> : null}
     </section>
   );
 }

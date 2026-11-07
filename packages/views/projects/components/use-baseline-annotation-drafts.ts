@@ -27,29 +27,34 @@ export function useBaselineAnnotationDrafts(options: {
     () => chapterDraftItems(draft, projectId, chapter, ownerId, canDecide),
     [draft, projectId, chapter, ownerId, canDecide],
   );
-  const total = draft.annotations.length + draft.replies.length;
-  const limitReached = total >= BASELINE_ANNOTATION_DRAFT_LIMIT;
+  // The 20-item cap applies to what this review can actually submit
+  // (project + chapter + owner), not the whole stored workspace draft.
+  const limitReached = items.length >= BASELINE_ANNOTATION_DRAFT_LIMIT;
 
   const addAnnotation = useCallback((anchor: BaselineComposerAnchor, note: string) => {
     const store = useBaselineAnnotationDraftStore.getState();
-    if (!ownerId || !canDecide || store.draft.annotations.length + store.draft.replies.length >= BASELINE_ANNOTATION_DRAFT_LIMIT) return false;
+    if (!ownerId || !canDecide || limitReached) return false;
     const { side: _side, targetLabel: _targetLabel, endRowIndex: _endRowIndex, ...draftAnchor } = anchor;
     const item = newBaselineAnnotation(draftAnchor, note.trim(), {
       id: createSafeId(), ownerId, projectId, chapter, createdAt: new Date().toISOString(),
     });
-    store.setDraft(addBaselineAnnotationDraft(store.draft, item));
+    const next = addBaselineAnnotationDraft(store.draft, item);
+    if (next === store.draft) return false;
+    store.setDraft(next);
     return true;
-  }, [canDecide, chapter, ownerId, projectId]);
+  }, [canDecide, chapter, limitReached, ownerId, projectId]);
 
   const addReply = useCallback((parent: BaselineAnnotation, note: string) => {
     const store = useBaselineAnnotationDraftStore.getState();
-    if (!ownerId || !canDecide || store.draft.annotations.length + store.draft.replies.length >= BASELINE_ANNOTATION_DRAFT_LIMIT) return false;
+    if (!ownerId || !canDecide || limitReached) return false;
     const item = newBaselineAnnotationReply(parent, note.trim(), {
       id: createSafeId(), ownerId, projectId, chapter, createdAt: new Date().toISOString(),
     });
-    store.setDraft(addBaselineAnnotationDraft(store.draft, item));
+    const next = addBaselineAnnotationDraft(store.draft, item);
+    if (next === store.draft) return false;
+    store.setDraft(next);
     return true;
-  }, [canDecide, chapter, ownerId, projectId]);
+  }, [canDecide, chapter, limitReached, ownerId, projectId]);
 
   const update = useCallback((id: string, note: string) => {
     const store = useBaselineAnnotationDraftStore.getState();
@@ -69,5 +74,5 @@ export function useBaselineAnnotationDrafts(options: {
     });
   }, []);
 
-  return { items, total, limitReached, addAnnotation, addReply, update, remove, clear };
+  return { items, limitReached, addAnnotation, addReply, update, remove, clear };
 }

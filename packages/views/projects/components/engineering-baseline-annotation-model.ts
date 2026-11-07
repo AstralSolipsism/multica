@@ -154,24 +154,65 @@ export function baselineReviewRoute(options: {
   return candidate?.sourceIssueId && candidate.createdByType === "agent" ? "source" : "new";
 }
 
+export interface BaselineAnchorPlacement {
+  side: BaselineAnnotationSide;
+  /** Line numbers in the side this anchor is placed on. */
+  start: number;
+  end: number;
+}
+
+// Server `location`/`located` are computed against the batch working revision,
+// which is not always the revision this Diff renders as before/after. Anchors
+// targeting the rendered base or candidate revisions keep their original lines
+// (before/after side respectively); only other revisions fall back to `located`
+// when it points at the rendered candidate.
+export function anchorPlacement(
+  annotation: BaselineAnnotation | BaselineAnnotationDraft,
+  baseRevisionId: string | null,
+  candidate: BaselineRevision | null,
+): BaselineAnchorPlacement | null {
+  if (annotation.anchorKind !== "lines") return null;
+  if (annotation.lineStart == null || annotation.lineEnd == null) return null;
+  if ("location" in annotation && annotation.targetRevisionId !== baseRevisionId && annotation.targetRevisionId !== candidate?.id) {
+    // Anchors on revisions this Diff does not render (e.g. replaced
+    // candidates) only locate through the server's working-version mapping,
+    // and only when that mapping points at the rendered candidate.
+    const located = annotation.located;
+    if (
+      annotation.location !== "exact" && annotation.location !== "moved" ||
+      !located || located.revisionNumber !== candidate?.revisionNumber ||
+      located.lineStart == null || located.lineEnd == null
+    ) return null;
+    return { side: "after", start: located.lineStart, end: located.lineEnd };
+  }
+  return annotation.targetRevisionId === baseRevisionId
+    ? { side: "before", start: annotation.lineStart, end: annotation.lineEnd }
+    : { side: "after", start: annotation.lineStart, end: annotation.lineEnd };
+}
+
+export function anchorOutdated(
+  annotation: BaselineAnnotation,
+  baseRevisionId: string | null,
+  candidate: BaselineRevision | null,
+): boolean {
+  // Outdated only when the version actually moved past the anchor: its target
+  // is neither rendered revision AND the server did not relocate it onto the
+  // rendered candidate (location exact/moved with candidate-numbered lines).
+  if (annotation.targetRevisionId === baseRevisionId || annotation.targetRevisionId === candidate?.id) return false;
+  return !(annotation.location === "exact" || annotation.location === "moved") ||
+    annotation.located?.revisionNumber !== candidate?.revisionNumber ||
+    annotation.located?.lineStart == null ||
+    annotation.located?.lineEnd == null;
+}
+
+// Used only for local drafts, which carry no server side/location; submitted
+// threads place via anchorPlacement instead.
 export function annotationSide(
   annotation: BaselineAnnotation | BaselineAnnotationDraft,
   baseRevisionId: string | null,
 ): BaselineAnnotationSide {
-  if ("side" in annotation && annotation.side === "before") return "before";
   if (!("side" in annotation) && annotation.targetRevisionId === baseRevisionId) return "before";
   return "after";
-}
-
-export function annotationLines(
-  annotation: BaselineAnnotation | BaselineAnnotationDraft,
-): { start: number; end: number } | null {
-  if (annotation.anchorKind !== "lines") return null;
-  const located = "located" in annotation ? annotation.located : null;
-  const start = located?.lineStart ?? annotation.lineStart;
-  const end = located?.lineEnd ?? annotation.lineEnd;
-  if (start == null || end == null) return null;
-  return { start, end };
 }
 
 export function annotationReplyAnchor(annotation: BaselineAnnotation): BaselineAnnotationDraftAnchor {
@@ -186,23 +227,6 @@ export function annotationReplyAnchor(annotation: BaselineAnnotation): BaselineA
     ...(annotation.prefix ? { prefix: annotation.prefix } : {}),
     ...(annotation.suffix ? { suffix: annotation.suffix } : {}),
     ...(annotation.start ? { start: annotation.start } : {}),
-  };
-}
-
-export function draftAnchor(
-  item: BaselineAnnotationDraftItem,
-): BaselineAnnotationDraftAnchor {
-  return {
-    anchorKind: item.anchorKind,
-    targetRevisionId: item.targetRevisionId,
-    sectionAnchor: item.sectionAnchor,
-    sectionTitle: item.sectionTitle,
-    ...(item.lineStart !== undefined ? { lineStart: item.lineStart } : {}),
-    ...(item.lineEnd !== undefined ? { lineEnd: item.lineEnd } : {}),
-    ...(item.quote !== undefined ? { quote: item.quote } : {}),
-    ...(item.prefix !== undefined ? { prefix: item.prefix } : {}),
-    ...(item.suffix !== undefined ? { suffix: item.suffix } : {}),
-    ...(item.start !== undefined ? { start: item.start } : {}),
   };
 }
 

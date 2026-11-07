@@ -20,7 +20,8 @@ import {
 import { useT } from "../../i18n";
 import { parseBaselineChapter, type BaselineDisplaySection } from "./engineering-baseline-utils";
 import {
-  annotationLines,
+  anchorOutdated,
+  anchorPlacement,
   annotationSide,
   isBaselineAnnotationReply,
   type BaselineAnnotationSide,
@@ -92,14 +93,13 @@ function locatedRowRange(
   rows: readonly BaselineSourceDiffRow[],
   item: BaselineAnnotationThread["root"] | BaselineAnnotationDraft,
   baseRevisionId: string | null,
+  candidate: BaselineRevision,
 ): { start: number; end: number } | null {
-  if ("location" in item && (item.location === "outdated" || item.location === "section_only")) return null;
-  const lines = annotationLines(item);
-  if (!lines) return null;
-  const side = annotationSide(item, baseRevisionId);
-  const key = side === "before" ? "beforeLine" : "afterLine";
-  const start = rows.findIndex((row) => row[key] === lines.start);
-  const end = rows.findIndex((row) => row[key] === lines.end);
+  const placement = anchorPlacement(item, baseRevisionId, candidate);
+  if (!placement) return null;
+  const key = placement.side === "before" ? "beforeLine" : "afterLine";
+  const start = rows.findIndex((row) => row[key] === placement.start);
+  const end = rows.findIndex((row) => row[key] === placement.end);
   return start >= 0 && end >= 0 ? { start: Math.min(start, end), end: Math.max(start, end) } : null;
 }
 
@@ -143,7 +143,7 @@ export function BaselineSourceDiff(props: BaselineSourceDiffProps) {
     const before = findBaselineSourceSection(props.beforeContent, section.anchor);
     const after = findBaselineSourceSection(props.afterContent, section.anchor);
     const rows = diffBaselineSourceLines(before?.ownMarkdown ?? "", after?.ownMarkdown ?? "");
-    if (locatedRowRange(rows, item, baseRevisionId)) placedPending.add(item.id);
+    if (locatedRowRange(rows, item, baseRevisionId, props.candidate)) placedPending.add(item.id);
   }
 
   const openLineComposer = (
@@ -207,18 +207,25 @@ export function BaselineSourceDiff(props: BaselineSourceDiffProps) {
     });
   };
 
-  const renderThread = (thread: BaselineAnnotationThread) => (
-    <BaselineSubmittedThread
-      key={thread.root.id}
-      thread={thread}
-      canDecide={props.canDecide}
-      limitReached={props.limitReached}
-      onAddReply={(note) => props.onAddReply(thread, note)}
-      onUpdatePending={props.onUpdatePending}
-      onDeletePending={props.onDeletePending}
-      onResolve={(resolved) => props.onResolve(thread.root.id, resolved)}
-    />
-  );
+  const renderThread = (thread: BaselineAnnotationThread, placed: boolean) => {
+    const placement = anchorPlacement(thread.root, baseRevisionId, props.candidate);
+    return (
+      <BaselineSubmittedThread
+        key={thread.root.id}
+        thread={thread}
+        canDecide={props.canDecide}
+        limitReached={props.limitReached}
+        placement={placement}
+        // In the Diff, outdated means the anchor has no row to sit on; the
+        // version-relative verdict only applies outside it.
+        outdated={thread.root.anchorKind === "lines" ? !placement || !placed : anchorOutdated(thread.root, baseRevisionId, props.candidate)}
+        onAddReply={(note) => props.onAddReply(thread, note)}
+        onUpdatePending={props.onUpdatePending}
+        onDeletePending={props.onDeletePending}
+        onResolve={(resolved) => props.onResolve(thread.root.id, resolved)}
+      />
+    );
+  };
   const renderPending = (item: BaselineAnnotationDraft) => (
     <PendingBaselineAnnotationCard
       key={item.id}
@@ -244,6 +251,7 @@ export function BaselineSourceDiff(props: BaselineSourceDiffProps) {
           beforeContent={props.beforeContent}
           afterContent={props.afterContent}
           baseRevisionId={baseRevisionId}
+          candidate={props.candidate}
           threads={props.threads.filter((thread) => thread.root.sectionAnchor === section.anchor)}
           pendingAnnotations={pendingAnnotations.filter((item) => item.sectionAnchor === section.anchor)}
           composer={composer?.sectionKey === section.key ? composer.anchor : null}
@@ -272,6 +280,9 @@ export function BaselineSourceDiff(props: BaselineSourceDiffProps) {
       <BaselineStandaloneThreads
         title={t(($) => $.annotations.unlocatedPendingGroup)}
         threads={props.threads.filter((thread) => !changedSections.some((section) => section.anchor === thread.root.sectionAnchor))}
+        baseRevisionId={baseRevisionId}
+        candidate={props.candidate}
+        forceOutdatedBadge
         canDecide={props.canDecide}
         limitReached={props.limitReached}
         onAddReply={props.onAddReply}
@@ -302,6 +313,7 @@ function BaselineDiffSection({
   beforeContent,
   afterContent,
   baseRevisionId,
+  candidate,
   threads,
   pendingAnnotations,
   composer,
@@ -319,6 +331,7 @@ function BaselineDiffSection({
   beforeContent: string;
   afterContent: string;
   baseRevisionId: string | null;
+  candidate: BaselineRevision;
   threads: readonly BaselineAnnotationThread[];
   pendingAnnotations: readonly BaselineAnnotationDraft[];
   composer: BaselineComposerAnchor | null;
@@ -329,7 +342,7 @@ function BaselineDiffSection({
   onAddAnnotation: (anchor: BaselineComposerAnchor, note: string) => boolean;
   onCancelComposer: () => void;
   placedPending: Set<string>;
-  renderThread: (thread: BaselineAnnotationThread) => React.ReactNode;
+  renderThread: (thread: BaselineAnnotationThread, placed: boolean) => React.ReactNode;
   renderPending: (item: BaselineAnnotationDraft) => React.ReactNode;
 }) {
   const { t } = useT("engineering");
@@ -350,7 +363,7 @@ function BaselineDiffSection({
   const requiredRowIndexes = new Set<number>();
 
   for (const thread of threads) {
-    const range = locatedRowRange(rows, thread.root, baseRevisionId);
+    const range = locatedRowRange(rows, thread.root, baseRevisionId, candidate);
     if (thread.root.anchorKind === "lines" && range) {
       const list = annotationsByRow.get(range.end) ?? [];
       list.push({ kind: "thread", thread });
@@ -361,7 +374,7 @@ function BaselineDiffSection({
     }
   }
   for (const item of pendingAnnotations) {
-    const range = locatedRowRange(rows, item, baseRevisionId);
+    const range = locatedRowRange(rows, item, baseRevisionId, candidate);
     const isBaseline = item.targetRevisionId === baseRevisionId;
     if (item.anchorKind === "lines" && range) {
       const list = annotationsByRow.get(range.end) ?? [];
@@ -446,7 +459,7 @@ function BaselineDiffSection({
       </header>
       {extra.length || composer?.anchorKind === "section" ? (
         <div className="space-y-2 border-b p-3" data-section-annotations={section.anchor}>
-          {extra.map((item) => item.kind === "thread" ? renderThread(item.thread) : renderPending(item.item))}
+          {extra.map((item) => item.kind === "thread" ? renderThread(item.thread, false) : renderPending(item.item))}
           {composer?.anchorKind === "section" ? <BaselineAnnotationComposer anchor={composer} limitReached={limitReached} onAdd={(note) => onAddAnnotation(composer, note)} onCancel={onCancelComposer} /> : null}
         </div>
       ) : null}
@@ -486,7 +499,7 @@ function BaselineDiffSection({
                   {annotations.length || showComposer ? (
                     <tr><td colSpan={4} className="border-y bg-background p-3 font-sans">
                       <div className="ml-0 space-y-2 md:ml-12">
-                        {annotations.map((item) => item.kind === "thread" ? renderThread(item.thread) : renderPending(item.item))}
+                        {annotations.map((item) => item.kind === "thread" ? renderThread(item.thread, true) : renderPending(item.item))}
                         {showComposer ? <BaselineAnnotationComposer anchor={composer} limitReached={limitReached} onAdd={(note) => onAddAnnotation(composer, note)} onCancel={onCancelComposer} /> : null}
                       </div>
                     </td></tr>

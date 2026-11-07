@@ -430,4 +430,95 @@ describe("baseline source annotations", () => {
     if (code === "baseline_review_conflict") expect(screen.getByRole("link", { name: "OL-42" })).toBeInTheDocument();
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toHaveLength(1);
   });
+
+  it("reject with pending items requires the discard confirmation before deciding", async () => {
+    const user = userEvent.setup();
+    seed([pending()]);
+    const onDecision = vi.fn(async () => true);
+    renderBaseline({ batches: [batch()], details: [detail()], onDecision });
+    await user.click(screen.getByRole("button", { name: "Return for changes" }));
+    let dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Return for changes" }));
+    dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Discard 1 pending items?")).toBeInTheDocument();
+    expect(onDecision).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Discard and reject" }));
+    await waitFor(() => expect(onDecision).toHaveBeenCalledWith("reject", candidate, "close"));
+    expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toEqual([]);
+  });
+
+  it("disables requesting changes when only an overall note exists", async () => {
+    const user = userEvent.setup();
+    const onSubmitReview = vi.fn(async () => reviewResult());
+    renderBaseline({ onSubmitReview });
+    await user.click(screen.getByRole("button", { name: "Finish review" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Overall note (optional)" }), "Summary only");
+    const option = within(dialog).getByRole("radio", { name: /Request changes/ });
+    expect(option).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Request changes" })).toBeDisabled();
+    expect(onSubmitReview).not.toHaveBeenCalled();
+  });
+
+  it("places working-version annotations on their original diff lines and marks foreign targets outdated", () => {
+    // Trigger A: candidate-numbered located lines must not leak into the
+    // before side; the thread stays on its original before line.
+    const moved = rootAnnotation({
+      id: "annotation-moved",
+      targetRevisionId: "rev-base", targetRevisionNumber: 2,
+      side: "before", location: "moved",
+      located: { revisionNumber: 3, lineStart: 3, lineEnd: 3, start: undefined },
+      lineStart: 2, lineEnd: 2, quote: "所有写接口应该携带幂等键。",
+    });
+    // Trigger B: deleted lines (outdated in the working version) keep their
+    // original before-side placement — no badge while the version is unchanged.
+    const outdated = rootAnnotation({
+      id: "annotation-outdated",
+      targetRevisionId: "rev-base", targetRevisionNumber: 2,
+      side: "before", location: "outdated", located: null,
+      lineStart: 3, lineEnd: 3,
+    });
+    // Trigger C: revision-task path targets the adopted revision only.
+    const foreign = rootAnnotation({
+      id: "annotation-foreign",
+      targetRevisionId: "rev-old", targetRevisionNumber: 1,
+      side: "unknown", location: "outdated", located: null,
+      lineStart: 1, lineEnd: 1,
+    });
+    renderBaseline({ batches: [batch()], details: [detail([moved, outdated, foreign])] });
+    const placed = document.querySelector("[data-annotation-thread='annotation-moved']")!;
+    expect(placed.closest("tr")).toBeTruthy();
+    expect(placed).toHaveTextContent("Line 2 within section · Before");
+    expect(placed).not.toHaveTextContent("Outdated");
+    const outdatedCard = document.querySelector("[data-annotation-thread='annotation-outdated']") as HTMLElement;
+    expect(within(outdatedCard).queryByText("Outdated")).not.toBeInTheDocument();
+    const foreignCard = document.querySelector("[data-annotation-thread='annotation-foreign']") as HTMLElement;
+    expect(within(foreignCard).getByText("Outdated")).toBeInTheDocument();
+  });
+
+  it("keeps same-side drag quote free of the opposite side when crossing the change block", async () => {
+    const user = userEvent.setup();
+    renderBaseline();
+    // Drag from the context title (before 1) across the removed line (before 2)
+    // and onto the opposite-side added row; the selection must stay within the
+    // before side and the quote must not absorb the after-side text.
+    const first = screen.getByRole("button", { name: "Annotate Before line 1 in 幂等键" });
+    fireEvent.mouseDown(first, { button: 0 });
+    fireEvent.mouseEnter(document.querySelector('[data-before-line="2"]')!);
+    fireEvent.mouseEnter(document.querySelector('[data-after-line="2"]')!);
+    fireEvent.mouseUp(window);
+    const composer = document.querySelector("[data-annotation-composer]")!;
+    expect(composer).toHaveTextContent("Line 1–2 within section");
+    expect(composer).toHaveTextContent("Before");
+    const quote = composer.querySelector("blockquote")!.textContent;
+    expect(quote).toBe("### [Rule-1] 幂等键\n所有写接口应该携带幂等键。");
+    expect(quote).not.toContain("必须");
+    await user.type(within(composer as HTMLElement).getByRole("textbox"), "Cross-block note");
+    await user.click(within(composer as HTMLElement).getByRole("button", { name: "Add to review" }));
+    const draft = useBaselineAnnotationDraftStore.getState().draft.annotations[0]!;
+    expect(draft.targetRevisionId).toBe("rev-base");
+    expect(draft.lineStart).toBe(1);
+    expect(draft.lineEnd).toBe(2);
+    expect(draft.quote).toBe("### [Rule-1] 幂等键\n所有写接口应该携带幂等键。");
+  });
 });
