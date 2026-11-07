@@ -27,9 +27,6 @@
       "connect_docs_link": "分步指南：将 Labrastro 智能体连接到 Telegram"
     }
   },
-  "lark": {
-    "conversation_description": "这些会话的参与者无需 Labrastro 账号。智能体会澄清、整理意见，再以自己的身份回填评论；处理会有延迟和模型消耗，不会把每条消息立即逐字变成任务评论。"
-  },
   "common": {
     "lark_bind": {
       "needs_auth_description": "需要登录 Labrastro 才能完成绑定。链接中的 token 会将你的飞书账号绑定到当前登录的 Labrastro 用户。",

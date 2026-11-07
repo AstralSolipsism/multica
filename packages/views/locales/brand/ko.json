@@ -27,9 +27,6 @@
       "byo_conflict_other_workspace": "이 봇은 이미 다른 Labrastro 워크스페이스에 연결되어 있어요. 거기서 먼저 연결을 해제한 뒤 연결해 주세요."
     }
   },
-  "lark": {
-    "conversation_description": "참여자는 Labrastro 계정이 없어도 됩니다. 에이전트가 의견을 확인하고 정리한 뒤 자신의 이름으로 댓글을 남깁니다. 처리 시간과 모델 사용량이 발생하며 모든 메시지가 그대로 작업에 복사되지는 않습니다."
-  },
   "common": {
     "lark_bind": {
       "needs_auth_description": "바인딩을 완료하려면 Labrastro에 로그인하세요. 링크의 토큰이 Lark 계정을 현재 로그인된 Labrastro 사용자에 연결하므로, 먼저 로그인해야 합니다.",

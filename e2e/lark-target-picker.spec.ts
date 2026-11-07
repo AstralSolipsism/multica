@@ -1,11 +1,8 @@
 // OL-74 e2e: Lark target pickers — group and message-anchor picking for the
-// push editors, and the conversation-grant multi-select — against the real
-// server of this checkout. Only the OL-72 discovery READS are route-mocked:
-// the dev transport is the stub, so unmocked they would answer 503
-// (lark_discovery_unsupported) and we would screenshot the fallback, not the
-// picker. The conversation-grant SAVE itself hits the real API (PUT
-// .../conversation), proving the picked IDs flow into the existing grant
-// path unchanged.
+// push editors — against the real server of this checkout. Only the OL-72
+// discovery READS are route-mocked: the dev transport is the stub, so
+// unmocked they would answer 503 (lark_discovery_unsupported) and we would
+// screenshot the fallback, not the picker.
 
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
@@ -58,7 +55,7 @@ const ANCHORS = {
 };
 
 /** Route-mock ONLY the discovery reads; everything else (installations list,
- * conversation save, catalogs) goes to the real server of this checkout. */
+ * catalogs) goes to the real server of this checkout. */
 async function mockDiscovery(page: Page, mode: "ok" | "permission_denied" | "old_server") {
   await page.route(
     /\/api\/workspaces\/[^/]+\/lark\/installations\/[^/]+\/(target-capabilities|chats)/,
@@ -188,36 +185,6 @@ test.describe("OL-74 Lark target pickers", () => {
 
   test.afterAll(async () => {
     await cleanup(refs);
-  });
-
-  test("conversation grant: groups picked from the joined-group list, saved through the real API", async ({ page }) => {
-    await mockDiscovery(page, "ok");
-    await authedGoto(page, token, `/${slug}/settings?tab=integrations&integration=lark`);
-    await waitForPageText(page, "Connected bots", 60000);
-
-    await page.getByText("Agent conversations").click();
-    await page.getByRole("button", { name: /Add groups/ }).click();
-    await waitForPageText(page, "Team A", 30000);
-    // Same-name groups are distinguished by description, external badge and ID suffix.
-    await waitForPageText(page, "Team B", 30000);
-    await waitForPageText(page, "External", 30000);
-    await page.screenshot({ path: `${SHOTS}/ol74-conversation-picker.png` });
-
-    // Name search goes to the (mocked) server one provider page at a time;
-    // paging continues past empty filtered pages.
-    await page.getByLabel("Search groups").fill("Random");
-    await waitForPageText(page, "Random", 30000);
-    expect(await page.getByRole("checkbox", { name: /Team A/ }).count()).toBe(0);
-
-    await page.getByLabel("Search groups").fill("");
-    await page.getByRole("checkbox", { name: /Team A/ }).click();
-    await page.getByRole("checkbox", { name: /Alerts/ }).click();
-    await page.getByRole("button", { name: "Done" }).click();
-    await page.screenshot({ path: `${SHOTS}/ol74-conversation-selected.png` });
-
-    // The save hits the REAL grant endpoint with the picked IDs.
-    await page.getByRole("button", { name: "Authorize conversations" }).click();
-    await waitForPageText(page, "Conversation authorization saved.", 30000);
   });
 
   test("team subscription editor: group then anchor, approve-and-save state", async ({ page }) => {

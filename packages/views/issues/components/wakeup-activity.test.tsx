@@ -19,7 +19,7 @@ const entry = (action: string, details: Record<string, unknown>, patch: Partial<
 const reply = { id: "w", kind: "event", mode: "once", event_types: ["comment.created"], agent_id: "a", filter_actor_type: "member", filter_actor_id: "u", created_by: "u" };
 
 function helpers() {
-  const { result } = renderHook(() => ({ t: useT("issues").t, tLark: useT("lark").t, text: useWakeupText() }), {
+  const { result } = renderHook(() => ({ t: useT("issues").t, text: useWakeupText() }), {
     wrapper: ({ children }) => (
       <I18nProvider locale="zh-Hans" resources={RESOURCES}>
         {children}
@@ -30,18 +30,9 @@ function helpers() {
 }
 
 describe("wakeup timeline entries", () => {
-  it("explains rejected inputs without claiming a run started", () => {
-    const { t, tLark, text } = helpers();
-    for (const details of [{ wakeup: reply }, { rule: "child_done" }]) {
-      expect(formatWakeupActivity(entry("wakeup_triggered", { ...details, outcome: "rejected" }), t, tLark, text, getActorName)).toBe(
-        "已丢弃此次唤醒输入：外部会话授权不可用或来源冲突",
-      );
-    }
-  });
-
   it("reads each entry as one sentence", () => {
-    const { t, tLark, text } = helpers();
-    const read = (e: TimelineEntry) => formatWakeupActivity(e, t, tLark, text, getActorName);
+    const { t, text } = helpers();
+    const read = (e: TimelineEntry) => formatWakeupActivity(e, t, text, getActorName);
     expect(read(entry("wakeup_created", { wakeup: reply }, { actor_type: "agent", actor_id: "a" }))).toBe(
       "添加了唤醒：当此任务有新评论时（由 Jiayuan 触发）唤醒 Emacs",
     );
@@ -83,8 +74,8 @@ describe("wakeup timeline entries", () => {
   });
 
   it("does not repeat \"wake\" when a time rule is added", () => {
-    const { t, tLark, text } = helpers();
-    const read = (e: TimelineEntry) => formatWakeupActivity(e, t, tLark, text, getActorName);
+    const { t, text } = helpers();
+    const read = (e: TimelineEntry) => formatWakeupActivity(e, t, text, getActorName);
     const at = { ...reply, kind: "at", event_types: [], next_fire_at: "2026-10-21T09:00:00Z" };
     const hourly = { ...reply, kind: "every", mode: "continuous", event_types: [], interval_seconds: 3600 };
     expect(read(entry("wakeup_created", { wakeup: at }))).toMatch(/^为 Emacs 添加了唤醒：.*09:00 唤醒$/);

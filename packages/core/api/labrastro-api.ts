@@ -10,11 +10,10 @@ import { installLabrastroQuotaApi, type LabrastroQuotaApi } from "./labrastro-qu
 import { installLabrastroYskApi, type LabrastroYskApi } from "./labrastro-ysk-api";
 import { installLabrastroGitHubApi, type LabrastroGitHubApi } from "./labrastro-github-api";
 
-// The upstream client's three retained boundary hooks use the same entry point.
+// The upstream client's two retained boundary hooks use the same entry point.
 export { ApiError } from "./labrastro-api-error";
 export { parseRequiredResponse } from "./labrastro-api-helpers";
 export { IssueBatchUpdateSchema, type IssueBatchUpdateResult } from "./dependency-schemas";
-export { LarkInstallationsSchema } from "../lark/schema";
 export { RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-quota-schemas";
 export { dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-dependency-api";
 

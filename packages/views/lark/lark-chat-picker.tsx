@@ -16,7 +16,7 @@ import {
   type LarkChatSelection,
 } from "./picker-common";
 
-/** One group row, shared by the single-select picker and the multi-select.
+/** One group row of the single-select picker.
  * Rows are divs with listbox semantics (not <button>) because they host the
  * nested ID-disclosure toggle; selection works with click and Enter/Space. */
 export function LarkChatRow({
@@ -124,17 +124,11 @@ export function LarkChatList({
   selectedIds,
   onToggle,
   disabled,
-  checkbox,
-  isRowDisabled,
 }: {
   list: ReturnType<typeof useLarkTargetChats>;
   selectedIds: ReadonlySet<string>;
   onToggle: (chat: LarkDiscoveredChat) => void;
   disabled?: boolean;
-  /** Multi-select renders rows as checkbox options (aria-checked). */
-  checkbox?: boolean;
-  /** Extra per-row disable (e.g. the multi-select's conversation cap). */
-  isRowDisabled?: (chat: LarkDiscoveredChat) => boolean;
 }) {
   const { t } = useT("lark");
   return (
@@ -148,61 +142,18 @@ export function LarkChatList({
       )}
       <div
         role="listbox"
-        aria-multiselectable={checkbox === true || undefined}
         aria-label={t(($) => $.picker.list_label)}
         className="max-h-56 divide-y overflow-y-auto rounded-md border"
       >
-        {list.items.map((chat) => {
-          const rowDisabled = disabled === true || isRowDisabled?.(chat) === true;
-          return checkbox ? (
-            <label
-              key={chat.chat_id}
-              className={cn(
-                "flex w-full items-start gap-2.5 px-3 py-2 transition-colors",
-                rowDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-muted",
-                selectedIds.has(chat.chat_id) && "bg-muted/60 font-medium",
-              )}
-            >
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={selectedIds.has(chat.chat_id)}
-                disabled={rowDisabled}
-                onChange={() => onToggle(chat)}
-              />
-              <LarkChatAvatar
-                name={chat.name.trim() !== "" ? chat.name : t(($) => $.picker.unnamed)}
-                avatar={chat.avatar}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="truncate text-body">
-                    {chat.name.trim() !== "" ? chat.name : t(($) => $.picker.unnamed)}
-                  </span>
-                  {chat.external === true && (
-                    <Badge variant="secondary" className="shrink-0">
-                      {t(($) => $.picker.external_badge)}
-                    </Badge>
-                  )}
-                </span>
-                {chat.description.trim() !== "" && (
-                  <span className="block truncate text-caption text-muted-foreground">
-                    {chat.description}
-                  </span>
-                )}
-                <ChatIdDisclosure id={chat.chat_id} />
-              </span>
-            </label>
-          ) : (
-            <LarkChatRow
-              key={chat.chat_id}
-              chat={chat}
-              selected={selectedIds.has(chat.chat_id)}
-              onSelect={() => onToggle(chat)}
-              disabled={rowDisabled}
-            />
-          );
-        })}
+        {list.items.map((chat) => (
+          <LarkChatRow
+            key={chat.chat_id}
+            chat={chat}
+            selected={selectedIds.has(chat.chat_id)}
+            onSelect={() => onToggle(chat)}
+            disabled={disabled}
+          />
+        ))}
         {list.isLoading && (
           <p className="px-3 py-4 text-center text-caption text-muted-foreground">
             {t(($) => $.picker.loading)}

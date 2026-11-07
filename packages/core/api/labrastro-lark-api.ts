@@ -1,22 +1,13 @@
 // Labrastro fork API. Public methods are mounted by labrastro-api.ts.
 import type { ApiClient } from "./client";
-import { clientFetch, installLabrastroApiMethods, parseConfirmedWrite, parseRequiredResponse } from "./labrastro-api-helpers";
-import { LarkConversationResponseSchema, LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema, LarkPrivateChatCandidatesSchema, type LarkTargetCapabilities, type LarkChatsPage, type LarkAnchorsPage, type LarkConversationGrant, type LarkPrivateChatCandidateList } from "../lark/schema";
+import { clientFetch, installLabrastroApiMethods, parseRequiredResponse } from "./labrastro-api-helpers";
+import { LarkTargetCapabilitiesSchema, LarkChatsPageSchema, LarkAnchorsPageSchema, type LarkTargetCapabilities, type LarkChatsPage, type LarkAnchorsPage } from "../lark/schema";
 
 const labrastroLarkApi = {
-  async setLarkConversation(this: ApiClient, workspaceId: string, installationId: string, chats: { chat_id: string; chat_type: "group" | "p2p" }[]): Promise<void> {
-    const raw = await clientFetch<unknown>(this, `/api/workspaces/${workspaceId}/lark/installations/${installationId}/conversation`, {
-      method: "PUT", body: JSON.stringify({ scope: "workspace", chats }),
-    });
-    // Schema validation is the confirmation evidence; null confirms revocation.
-    parseConfirmedWrite(raw, LarkConversationResponseSchema, "setLarkConversation", () => true);
-  },
-
   // Lark target discovery (OL-72 contract): read-only group / message-anchor
-  // listing behind the group, topic and conversation-grant pickers. Every
-  // response passes a schema before returning — a malformed page is thrown as
-  // an error so the picker shows its failure state instead of merging
-  // unverified rows. `cursor` is the opaque signed continuation from the
+  // listing behind the group and topic pickers. Every response passes a
+  // schema before returning — a malformed page is thrown as an error so the
+  // picker shows its failure state instead of merging unverified rows. `cursor` is the opaque signed continuation from the
   // previous page; it is forwarded unchanged, never constructed here.
 
   async getLarkTargetCapabilities(
@@ -62,38 +53,6 @@ const labrastroLarkApi = {
       `/api/workspaces/${workspaceId}/lark/installations/${installationId}/chats/${encodeURIComponent(chatId)}/message-anchors${qs ? `?${qs}` : ""}`,
     );
     return parseRequiredResponse(raw, LarkAnchorsPageSchema, "listLarkMessageAnchors");
-  },
-
-  // Lark private chat discovery (OL-75 contract): observed private chats a
-  // human can authorize. The list is read-only — it never sends messages or
-  // changes consent; confirmation appends the selected candidates to the
-  // saved grant atomically server-side and returns the resulting full grant,
-  // which callers must treat as the authoritative saved state.
-
-  async listLarkPrivateChatCandidates(
-    this: ApiClient,
-    workspaceId: string,
-    installationId: string,
-  ): Promise<LarkPrivateChatCandidateList> {
-    const raw = await clientFetch<unknown>(this,
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates`,
-    );
-    return parseRequiredResponse(raw, LarkPrivateChatCandidatesSchema, "listLarkPrivateChatCandidates");
-  },
-
-  async confirmLarkPrivateChatCandidates(
-    this: ApiClient,
-    workspaceId: string,
-    installationId: string,
-    candidateIds: string[],
-  ): Promise<LarkConversationGrant | null> {
-    const raw = await clientFetch<unknown>(this,
-      `/api/workspaces/${workspaceId}/lark/installations/${installationId}/private-chat-candidates/confirm`,
-      { method: "POST", body: JSON.stringify({ scope: "workspace", candidate_ids: candidateIds }) },
-    );
-    // The validated envelope is authoritative, including a null conversation.
-    const parsed = parseConfirmedWrite(raw, LarkConversationResponseSchema, "confirmLarkPrivateChatCandidates", () => true);
-    return parsed.conversation;
   },
 };
 

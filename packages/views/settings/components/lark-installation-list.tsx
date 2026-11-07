@@ -7,7 +7,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useLocale, useT } from "../../i18n";
-import { LarkConversationForm } from "./lark-conversation-form";
 
 export function LarkReceiptGuidance({
   installation,
@@ -32,15 +31,11 @@ export function LarkInstallationList({
   data,
   isLoading,
   canManage,
-  conversationWritable,
-  workspaceId,
   onDisconnect,
 }: {
   data: ListLarkInstallationsResponse | undefined;
   isLoading: boolean;
   canManage: boolean;
-  conversationWritable: boolean;
-  workspaceId: string;
   onDisconnect: (id: string) => void;
 }) {
   const { t } = useT("settings");
@@ -108,9 +103,6 @@ export function LarkInstallationList({
                 key={inst.id}
                 installation={inst}
                 canManage={canManage}
-                conversationSupported={data.conversation_supported === true || inst.conversation != null}
-                conversationWritable={conversationWritable}
-                workspaceId={workspaceId}
                 onDisconnect={() => onDisconnect(inst.id)}
               />
             ))}
@@ -122,17 +114,11 @@ export function LarkInstallationList({
 }
 
 function InstallationRow({
-  conversationSupported,
-  workspaceId,
-  conversationWritable,
   installation,
   canManage,
   onDisconnect,
 }: {
   installation: LarkInstallation;
-  workspaceId: string;
-  conversationWritable: boolean;
-  conversationSupported: boolean;
   canManage: boolean;
   onDisconnect: () => void;
 }) {
@@ -177,7 +163,6 @@ function InstallationRow({
               when: new Date(installation.installed_at).toLocaleString(locale),
             })}
           </p>
-          {canManage && isActive && conversationSupported && <LarkConversationForm workspaceId={workspaceId} installation={installation} disabled={!conversationWritable} />}
         </div>
       </div>
       {canManage && isActive && (

@@ -253,7 +253,6 @@ export type {
 } from "./vcs";
 export type {
   LarkInstallation,
-  LarkConversationGrant,
   ListLarkInstallationsResponse,
   BeginLarkInstallResponse,
   LarkInstallStatusResponse,
@@ -264,9 +263,6 @@ export type {
   LarkMessageAnchor,
   LarkMessageAnchorSender,
   LarkAnchorsPage,
-  LarkPrivateChatCandidate,
-  LarkPrivateChatCandidateSender,
-  LarkPrivateChatCandidateList,
 } from "./lark";
 export type {
   ComposioToolkit,
