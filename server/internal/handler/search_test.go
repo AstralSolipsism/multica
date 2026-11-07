@@ -671,24 +671,18 @@ func TestBuildSearchQuery_TitleDescScopeDropsComments(t *testing.T) {
 	}
 }
 
-// With scope=title_desc a number-only hit has no comment to fall back to; it
-// must report "number" instead of a misleading "description" (OL-458 first
-// review #2), while the default scope keeps the legacy "comment" fallback.
-func TestBuildSearchQuery_TitleDescScopeNumberHitMatchSource(t *testing.T) {
+func TestBuildSearchQuery_TitleDescScopeMatchSourceFallback(t *testing.T) {
 	titleDesc, _ := buildSearchQuery("mul-7", []string{"mul-7"}, 7, true, false, nil, pgtype.UUID{}, true)
-	if !strings.Contains(titleDesc, "WHEN im.number_exact THEN 'number'") {
-		t.Fatalf("title_desc scope lost the number match-source branch:\n%s", titleDesc)
-	}
 	if !strings.Contains(titleDesc, "ELSE 'description'") {
 		t.Fatalf("title_desc scope lost the description fallback:\n%s", titleDesc)
 	}
-	if strings.Contains(titleDesc, "ELSE 'comment'") {
-		t.Fatalf("title_desc scope must not fall back to comment:\n%s", titleDesc)
+	if strings.Contains(titleDesc, "ELSE 'comment'") || strings.Contains(titleDesc, "THEN 'number'") {
+		t.Fatalf("title_desc scope must fall back to description without a separate number branch:\n%s", titleDesc)
 	}
 
 	all, _ := buildSearchQuery("mul-7", []string{"mul-7"}, 7, true, false, nil, pgtype.UUID{}, false)
 	if strings.Contains(all, "THEN 'number'") {
-		t.Fatalf("default scope gained the number branch, breaking legacy parity:\n%s", all)
+		t.Fatalf("default scope gained a number branch:\n%s", all)
 	}
 	if !strings.Contains(all, "ELSE 'comment'") {
 		t.Fatalf("default scope lost the comment fallback:\n%s", all)

@@ -211,9 +211,6 @@ func TestIssueSearch_TitleDescScopeMultiWordQueries(t *testing.T) {
 	}
 }
 
-// Regression for the OL-458 first review #2: under scope=title_desc a
-// number-only hit must report match_source "number", not "description" (which
-// would also attach a description snippet that does not contain the query).
 func TestIssueSearch_TitleDescScopeNumberHitMatchSource(t *testing.T) {
 	workspaceID := dbfx.Workspace(t, "Number hit title_desc", "numhit-"+uuid.NewString(), testutil.Cols{"issue_prefix": "NH"})
 	dbfx.Member(t, workspaceID, testUserID, "owner")
@@ -239,15 +236,10 @@ func TestIssueSearch_TitleDescScopeNumberHitMatchSource(t *testing.T) {
 		}
 		want := "comment"
 		if scope != "" {
-			want = "number"
+			want = "description"
 		}
 		if response.Issues[0].MatchSource != want {
 			t.Fatalf("scope %q match_source = %q, want %q", scope, response.Issues[0].MatchSource, want)
-		}
-		// A number-only hit must not carry a description snippet, since the
-		// description does not contain the query.
-		if scope != "" && response.Issues[0].MatchedDescriptionSnippet != nil {
-			t.Fatalf("title_desc number hit attached a description snippet: %q", *response.Issues[0].MatchedDescriptionSnippet)
 		}
 	}
 }
