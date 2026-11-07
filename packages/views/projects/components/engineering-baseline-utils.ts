@@ -143,7 +143,7 @@ export function parseBaselineChapter(chapter: BaselineChapter, markdown: string)
     const rawBody = sourceBody.trim();
     if (!current.title && !rawBody) return;
     const leadingLines = sourceBody.slice(0, sourceBody.length - sourceBody.trimStart().length).split("\n").length - 1;
-    const firstSourceLine = current.level > 0 ? current.startLine + 2 : 1;
+    const firstSourceLine = current.level > 0 ? 2 : 1;
     const sourceLines = rawBody.split("\n").map((_, index) => firstSourceLine + leadingLines + index);
     const labeled = labeledParagraphs(rawBody, sourceLines);
     sections.push({

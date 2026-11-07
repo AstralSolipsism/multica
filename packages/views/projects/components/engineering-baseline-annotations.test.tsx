@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError, type BaselineAnnotation, type BaselineAnnotationBatch, type BaselineAnnotationDetail, type BaselineChapter, type BaselineReviewSubmitted, type BaselineRevision, type ChapterState, type IssueGraphNode } from "@multica/core/api";
 import {
@@ -576,6 +576,16 @@ describe("baseline Word-style reading annotations", () => {
       ["第一段。", "3"],
       ["第二段。", "8"],
     ]);
+    const retained = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:保留小节"]')!;
+    const retainedBlock = retained.querySelector<HTMLElement>("p[data-source-start]")!;
+    expect(retainedBlock).toHaveAttribute("data-source-start", "2");
+    const range = document.createRange();
+    range.selectNodeContents(retainedBlock);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(captureBaselineTextRange(retained, selection)).toMatchObject({ lineStart: 2, lineEnd: 2, quote: "保留内容。" });
+    selection.removeAllRanges();
   });
 
   it("annotates rendered block lines through a selection bubble without a single-send action", async () => {
@@ -684,6 +694,7 @@ describe("baseline Word-style reading annotations", () => {
 
   it("keeps narrow text anchors, later selections, and card hover isolated from inline card content", async () => {
     const originalMatchMedia = window.matchMedia;
+    const originalCaret = document.caretPositionFromPoint;
     window.matchMedia = ((query: string) => ({
       matches: query === "(max-width: 1279px)", media: query, onchange: null,
       addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
@@ -725,10 +736,22 @@ describe("baseline Word-style reading annotations", () => {
 
       const inline = document.querySelector<HTMLElement>('[data-reading-annotations="Rule-1"]')!;
       const card = document.querySelector<HTMLElement>('[data-reading-annotation="annotation-1"]')!;
+      const firstBlock = article.querySelector<HTMLElement>('p[data-source-start="3"]')!;
+      document.caretPositionFromPoint = () => ({ offsetNode: firstBlock.firstChild!, offset: 3, getClientRect: () => new DOMRect() });
+      const flushFrame = () => act(async () => {
+        await new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
+      });
+      fireEvent.mouseMove(firstBlock);
+      await flushFrame();
+      expect(card).toHaveAttribute("data-annotation-hovered");
+
+      document.caretPositionFromPoint = () => null;
       fireEvent.mouseEnter(card);
       fireEvent.mouseMove(inline);
+      await flushFrame();
       expect(card).toHaveAttribute("data-annotation-hovered");
     } finally {
+      document.caretPositionFromPoint = originalCaret;
       window.getSelection()?.removeAllRanges();
       window.matchMedia = originalMatchMedia;
     }
