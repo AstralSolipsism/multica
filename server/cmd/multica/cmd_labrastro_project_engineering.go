@@ -98,7 +98,8 @@ func runLabrastroProjectEngineering(cmd *cobra.Command, args []string) error {
 	if cmd.Name() == "set" {
 		err = client.PatchJSON(ctx, path, body, &result)
 	} else {
-		err = client.GetJSON(ctx, path, &result)
+		// Older servers ignore the flag and return the chapters as well.
+		err = client.GetJSON(ctx, path+"?with_chapters=false", &result)
 	}
 	if err != nil {
 		return engineeringRequestError(err, cmd.Name() == "set")

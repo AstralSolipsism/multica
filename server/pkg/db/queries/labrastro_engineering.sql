@@ -34,11 +34,26 @@ SELECT * FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 O
 -- name: LabrastroGetBaselineRevision :one
 SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
 
+-- name: LabrastroListBaselineRevisionsByID :many
+-- Loads every chapter's adopted and candidate revisions in one round trip.
+SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = ANY(sqlc.arg('ids')::uuid[]);
+
 -- name: LabrastroGetBaselineRevisionNumber :one
 SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3 AND revision_number = $4;
 
 -- name: LabrastroListBaselineRevisions :many
 SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
+    AND (sqlc.narg('before_number')::int IS NULL OR revision_number < sqlc.narg('before_number'))
+ORDER BY revision_number DESC LIMIT sqlc.arg('page_limit');
+
+-- name: LabrastroListBaselineRevisionSummaries :many
+-- Same page as LabrastroListBaselineRevisions without detoasting chapter bodies;
+-- columns stay in table order so rows convert to ProjectBaselineRevision.
+SELECT id, workspace_id, project_id, chapter, revision_number, status, ''::text AS content_markdown,
+    change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id,
+    created_by_type, created_by_id, created_by_task_id, decided_by_type, decided_by_id,
+    decided_by_task_id, decided_at, decision_credential, created_at
+FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
     AND (sqlc.narg('before_number')::int IS NULL OR revision_number < sqlc.narg('before_number'))
 ORDER BY revision_number DESC LIMIT sqlc.arg('page_limit');
 

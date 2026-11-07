@@ -384,6 +384,98 @@ func (q *Queries) LabrastroListBaselineDocs(ctx context.Context, arg LabrastroLi
 	return items, nil
 }
 
+const labrastroListBaselineRevisionSummaries = `-- name: LabrastroListBaselineRevisionSummaries :many
+SELECT id, workspace_id, project_id, chapter, revision_number, status, ''::text AS content_markdown,
+    change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id,
+    created_by_type, created_by_id, created_by_task_id, decided_by_type, decided_by_id,
+    decided_by_task_id, decided_at, decision_credential, created_at
+FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
+    AND ($4::int IS NULL OR revision_number < $4)
+ORDER BY revision_number DESC LIMIT $5
+`
+
+type LabrastroListBaselineRevisionSummariesParams struct {
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+	Chapter      string      `json:"chapter"`
+	BeforeNumber pgtype.Int4 `json:"before_number"`
+	PageLimit    int32       `json:"page_limit"`
+}
+
+type LabrastroListBaselineRevisionSummariesRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	Chapter            string             `json:"chapter"`
+	RevisionNumber     int32              `json:"revision_number"`
+	Status             string             `json:"status"`
+	ContentMarkdown    string             `json:"content_markdown"`
+	ChangeSummary      string             `json:"change_summary"`
+	BaseRevisionID     pgtype.UUID        `json:"base_revision_id"`
+	ReplacesRevisionID pgtype.UUID        `json:"replaces_revision_id"`
+	AnchorsDiff        []byte             `json:"anchors_diff"`
+	SourceIssueID      pgtype.UUID        `json:"source_issue_id"`
+	CreatedByType      string             `json:"created_by_type"`
+	CreatedByID        pgtype.UUID        `json:"created_by_id"`
+	CreatedByTaskID    pgtype.UUID        `json:"created_by_task_id"`
+	DecidedByType      pgtype.Text        `json:"decided_by_type"`
+	DecidedByID        pgtype.UUID        `json:"decided_by_id"`
+	DecidedByTaskID    pgtype.UUID        `json:"decided_by_task_id"`
+	DecidedAt          pgtype.Timestamptz `json:"decided_at"`
+	DecisionCredential pgtype.Text        `json:"decision_credential"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+// Same page as LabrastroListBaselineRevisions without detoasting chapter bodies;
+// columns stay in table order so rows convert to ProjectBaselineRevision.
+func (q *Queries) LabrastroListBaselineRevisionSummaries(ctx context.Context, arg LabrastroListBaselineRevisionSummariesParams) ([]LabrastroListBaselineRevisionSummariesRow, error) {
+	rows, err := q.db.Query(ctx, labrastroListBaselineRevisionSummaries,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Chapter,
+		arg.BeforeNumber,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LabrastroListBaselineRevisionSummariesRow{}
+	for rows.Next() {
+		var i LabrastroListBaselineRevisionSummariesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Chapter,
+			&i.RevisionNumber,
+			&i.Status,
+			&i.ContentMarkdown,
+			&i.ChangeSummary,
+			&i.BaseRevisionID,
+			&i.ReplacesRevisionID,
+			&i.AnchorsDiff,
+			&i.SourceIssueID,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.CreatedByTaskID,
+			&i.DecidedByType,
+			&i.DecidedByID,
+			&i.DecidedByTaskID,
+			&i.DecidedAt,
+			&i.DecisionCredential,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labrastroListBaselineRevisions = `-- name: LabrastroListBaselineRevisions :many
 SELECT id, workspace_id, project_id, chapter, revision_number, status, content_markdown, change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id, created_by_type, created_by_id, created_by_task_id, decided_by_type, decided_by_id, decided_by_task_id, decided_at, decision_credential, created_at FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
     AND ($4::int IS NULL OR revision_number < $4)
@@ -406,6 +498,59 @@ func (q *Queries) LabrastroListBaselineRevisions(ctx context.Context, arg Labras
 		arg.BeforeNumber,
 		arg.PageLimit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectBaselineRevision{}
+	for rows.Next() {
+		var i ProjectBaselineRevision
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Chapter,
+			&i.RevisionNumber,
+			&i.Status,
+			&i.ContentMarkdown,
+			&i.ChangeSummary,
+			&i.BaseRevisionID,
+			&i.ReplacesRevisionID,
+			&i.AnchorsDiff,
+			&i.SourceIssueID,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.CreatedByTaskID,
+			&i.DecidedByType,
+			&i.DecidedByID,
+			&i.DecidedByTaskID,
+			&i.DecidedAt,
+			&i.DecisionCredential,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labrastroListBaselineRevisionsByID = `-- name: LabrastroListBaselineRevisionsByID :many
+SELECT id, workspace_id, project_id, chapter, revision_number, status, content_markdown, change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id, created_by_type, created_by_id, created_by_task_id, decided_by_type, decided_by_id, decided_by_task_id, decided_at, decision_credential, created_at FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+`
+
+type LabrastroListBaselineRevisionsByIDParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	ProjectID   pgtype.UUID   `json:"project_id"`
+	Ids         []pgtype.UUID `json:"ids"`
+}
+
+// Loads every chapter's adopted and candidate revisions in one round trip.
+func (q *Queries) LabrastroListBaselineRevisionsByID(ctx context.Context, arg LabrastroListBaselineRevisionsByIDParams) ([]ProjectBaselineRevision, error) {
+	rows, err := q.db.Query(ctx, labrastroListBaselineRevisionsByID, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
 		return nil, err
 	}

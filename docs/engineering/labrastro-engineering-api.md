@@ -10,13 +10,13 @@ policy. Routes use `/api/projects/{id}`:
 
 | Method | Suffix | Result |
 | --- | --- | --- |
-| GET | `/engineering` | `engineering` and all `chapters` (four built-ins plus persisted modules), with `title`, `position`, nullable `adopted` and `candidate` |
+| GET | `/engineering` | `engineering` and all `chapters` (four built-ins plus persisted modules), with `title`, `position`, nullable `adopted` and `candidate`; `with_chapters=false` returns only `engineering`, the PATCH response shape |
 | PATCH | `/engineering` | Updated `engineering` configuration |
 | POST | `/baseline/candidates` | New revision, including structured `anchors_diff` |
 | POST | `/baseline/decisions` | All updated `chapters` and `open_issues` |
 | GET | `/baseline?index=true` | Chapter metadata and H1–H3 outlines, without content or Diffs |
 | GET | `/baseline?section=<query>` | Matching section subtrees and one-hop referenced definitions |
-| GET | `/baseline/revisions` | `revisions`, `has_more`, `next_before`, or a historical Diff |
+| GET | `/baseline/revisions` | `revisions`, `has_more`, `next_before`, or a historical Diff; `with_content=false` keeps metadata and `anchors_diff` but returns empty `content_markdown` |
 
 Configuration defaults to disabled. Only owner/admin can change `enabled`
 or `decider_member_ids`. Other configuration fields are

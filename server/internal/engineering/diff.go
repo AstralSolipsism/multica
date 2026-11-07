@@ -65,16 +65,24 @@ func normalize(s string) string {
 	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
-// Parse ignores fenced examples and ends each anchor at the next H1-H3 heading.
-func Parse(chapter, content string) ([]Section, error) {
+// validate holds Parse's input checks for callers that never use the sections.
+func validate(chapter, content string) error {
 	if !ValidChapter(chapter) {
-		return nil, &Error{"invalid_request"}
+		return &Error{"invalid_request"}
 	}
 	if len(content) > 65536 {
-		return nil, &Error{"baseline_too_large"}
+		return &Error{"baseline_too_large"}
 	}
 	if !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
-		return nil, &Error{"baseline_content_invalid"}
+		return &Error{"baseline_content_invalid"}
+	}
+	return nil
+}
+
+// Parse ignores fenced examples and ends each anchor at the next H1-H3 heading.
+func Parse(chapter, content string) ([]Section, error) {
+	if err := validate(chapter, content); err != nil {
+		return nil, err
 	}
 	headings := scanHeadings(content)
 	sections := []Section{}

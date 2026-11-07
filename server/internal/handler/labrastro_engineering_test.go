@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/engineering"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -226,7 +227,7 @@ func TestLabrastroEngineeringClaimDescriptionQueryFailure(t *testing.T) {
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
 	const original = "Original project context\n"
 	dbfx.Exec(t, `UPDATE project SET description=$2 WHERE id=$1`, f.project, original)
-	for _, query := range []string{"LabrastroGetEngineering", "LabrastroListBaselineDocs", "LabrastroGetBaselineRevision"} {
+	for _, query := range []string{"LabrastroGetEngineering", "LabrastroListBaselineDocs", "LabrastroListBaselineRevisionsByID"} {
 		t.Run(query, func(t *testing.T) {
 			h := *testHandler
 			h.Queries = db.New(failQueryDBTX{DBTX: testPool, failOn: query, err: errors.New("database read failed")})
@@ -756,4 +757,113 @@ func TestLabrastroEngineeringDiffIgnoresOtherChaptersAndRechecksStoredDiff(t *te
 	}
 	replacement := f.propose("domain_rules", next.ContentMarkdown, uuidToPtr(cut.ID), uuidToPtr(next.ID))
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", replacement), "pat")).Want(200)
+}
+
+func TestLabrastroEngineeringLightweightReads(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	first := f.propose("overview", "## First\nOne", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", first), "session")).Want(200)
+	f.propose("overview", "## First\nTwo", uuidToPtr(first.ID), nil)
+
+	var config map[string]json.RawMessage
+	testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering?with_chapters=false", nil, "session")).Want(200).JSON(&config)
+	var engineeringConfig engineeringConfigResponse
+	if _, hasChapters := config["chapters"]; hasChapters || json.Unmarshal(config["engineering"], &engineeringConfig) != nil || !engineeringConfig.Enabled {
+		t.Fatalf("config-only read=%s", config)
+	}
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering?with_chapters=no", nil, "session")).Want(400), "invalid_request")
+
+	type history struct {
+		Revisions []baselineRevisionResponse `json:"revisions"`
+		More      bool                       `json:"has_more"`
+		Before    *int                       `json:"next_before"`
+	}
+	var full, summary history
+	testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&limit=1", nil, "session")).Want(200).JSON(&full)
+	testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&limit=1&with_content=false", nil, "session")).Want(200).JSON(&summary)
+	if len(full.Revisions) != 1 || len(summary.Revisions) != 1 || full.Revisions[0].ContentMarkdown == "" || summary.Revisions[0].ContentMarkdown != "" {
+		t.Fatalf("full=%+v summary=%+v", full, summary)
+	}
+	fullRow, summaryRow := full.Revisions[0], summary.Revisions[0]
+	fullRow.ContentMarkdown = ""
+	if !reflect.DeepEqual(fullRow.ProjectBaselineRevision, summaryRow.ProjectBaselineRevision) || string(fullRow.AnchorsDiff) != string(summaryRow.AnchorsDiff) ||
+		full.More != summary.More || full.Before == nil || summary.Before == nil || *full.Before != *summary.Before {
+		t.Fatalf("summary page diverged: full=%+v summary=%+v", full, summary)
+	}
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&with_content=0", nil, "session")).Want(400), "invalid_request")
+
+	// The batched chapter read keeps the single-row contract for a dangling pointer.
+	dbfx.Exec(t, `UPDATE project_baseline_doc SET adopted_revision_id = gen_random_uuid() WHERE workspace_id=$1 AND project_id=$2 AND chapter='overview'`, testWorkspaceID, f.project)
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(404), "not_found")
+}
+
+func TestLabrastroEngineeringPatchRejectsMalformedDeciderBeforeLocking(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	// Matches the decision endpoint: request shape errors precede any row lock.
+	h := *testHandler
+	h.TxStarter = refusingEngineeringTx{t}
+	testutil.Call(t, h.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"decider_member_ids": []string{"not-a-uuid"}}, "session")).Want(400)
+}
+
+type refusingEngineeringTx struct{ t *testing.T }
+
+func (r refusingEngineeringTx) Begin(context.Context) (pgx.Tx, error) {
+	r.t.Error("malformed request opened a transaction")
+	return nil, errors.New("transaction refused")
+}
+
+// lockProbeWriter checks, while the body is being written, whether a project
+// edit can take its row lock; a read snapshot still open would block it.
+type lockProbeWriter struct {
+	*httptest.ResponseRecorder
+	t       *testing.T
+	project string
+	probed  bool
+	err     error
+}
+
+func (w *lockProbeWriter) Write(b []byte) (int, error) {
+	if !w.probed {
+		w.probed = true
+		ctx := context.Background()
+		tx, err := testPool.Begin(ctx)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '200ms'`); err != nil {
+			w.t.Fatal(err)
+		}
+		_, w.err = tx.Exec(ctx, `UPDATE project SET title = title WHERE id = $1`, w.project)
+	}
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestLabrastroEngineeringReadsReleaseLocksBeforeWriting(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	adopted := f.propose("overview", "## First\nOne", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		path    string
+	}{
+		{"overview", testHandler.LabrastroGetEngineering, "/engineering"},
+		{"config", testHandler.LabrastroGetEngineering, "/engineering?with_chapters=false"},
+		{"index", testHandler.LabrastroReadBaseline, "/baseline?index=true"},
+		{"section", testHandler.LabrastroReadBaseline, "/baseline?section=First"},
+		{"history", testHandler.LabrastroBaselineHistory, "/baseline/revisions?chapter=overview"},
+		{"diff", testHandler.LabrastroBaselineHistory, "/baseline/revisions?chapter=overview&diff_from=1&diff_to=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &lockProbeWriter{ResponseRecorder: httptest.NewRecorder(), t: t, project: f.project}
+			tc.handler(w, f.request("GET", tc.path, nil, "session"))
+			if w.Code != 200 || !w.probed || w.err != nil {
+				t.Fatalf("status=%d probed=%v project edit while streaming: %v", w.Code, w.probed, w.err)
+			}
+		})
+	}
 }
