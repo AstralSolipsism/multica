@@ -658,6 +658,20 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     else onOpenStage(reference.stage.stage);
   }, [onConcept, navigation, workspaceSlug, onOpenStage]);
 
+  // Stable across search input, hover and read tracking, so reference links
+  // in every rendered section are not re-rendered by local state changes.
+  const wikiContext = useMemo(() => ({
+    lens,
+    workspaceId: props.workspaceId,
+    chapters: props.chapters,
+    sections: activeSections,
+    nodes,
+    stages: props.roadmap.stages,
+    relations,
+    referenceCounts,
+    onNavigate,
+  }), [lens, props.workspaceId, props.chapters, activeSections, nodes, props.roadmap.stages, relations, referenceCounts, onNavigate]);
+
   const jumpChange = useCallback((index: number) => {
     if (!changedSections.length) return;
     const next = (index + changedSections.length) % changedSections.length;
@@ -734,17 +748,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   );
 
   return (
-    <BaselineWikiProvider value={{
-      lens,
-      workspaceId: props.workspaceId,
-      chapters: props.chapters,
-      sections: activeSections,
-      nodes,
-      stages: props.roadmap.stages,
-      relations,
-      referenceCounts,
-      onNavigate,
-    }}>
+    <BaselineWikiProvider value={wikiContext}>
       <div className="mt-5" data-engineering-region="baseline">
         <header>
           <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
