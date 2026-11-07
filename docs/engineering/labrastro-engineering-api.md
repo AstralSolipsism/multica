@@ -182,3 +182,46 @@ match appends, even if another title or anchor contains the query. Existing
 base/candidate checks run before merge, and the merged chapter must still fit
 65536 bytes. The normal Diff, candidate creation and human decision flow is
 unchanged; unrelated source bytes are preserved.
+
+## Baseline annotations
+
+Baseline annotations are decider instructions attached to one chapter revision.
+They reach exactly one carrier issue's runs and never enter any other context.
+The full interaction model, isolation boundaries, ticket template and CLI
+formats live in [labrastro-baseline-annotations.md](labrastro-baseline-annotations.md);
+this section records the HTTP contract.
+
+Migrations `9059_labrastro_baseline_annotations` (three tables, no foreign
+keys: batch, review, annotation) and `9060`–`9063` (four concurrent indexes:
+unique `client_key` idempotency, unique one-active-batch-per-chapter partial
+index, unique batch ordinal, review batch ordering) store the data. Human
+replies are annotation rows with `parent_annotation_id`; anchors are `text`,
+`lines` or `section` with relocations recomputed against the working version.
+
+Routes under `/api/projects/{id}/baseline`:
+
+| Method | Suffix | Actor | Result |
+| --- | --- | --- | --- |
+| POST | `/reviews` | human decider | Finish a review: `{client_key, chapter, reviewed_revision_id, assignee?, summary?, annotations: [1..20]}` → `201 {batch, review, carrier, woke}`; same `client_key` replays the stored result |
+| GET | `/annotation-batches?chapter=&state=&issue_id=` | member or task | Batch summaries and counts, never annotation bodies |
+| GET | `/annotation-batches/{batch}?state=open\|all&with_sections=true` | member or task | `{batch, reviews, annotations, sections}`; default-open filtering happens server-side; `with_sections` returns deduped annotated section subtrees only |
+| POST | `/annotations/responses` | task token whose issue is the batch carrier | `{responses: [1..50]{annotation_id, response}}`; 409 `baseline_batch_closed`; wakes nobody |
+| POST | `/annotations/resolve` | human decider | `{annotation_ids: [1..50], resolved}` |
+| POST | `/annotation-batches/{batch}/close` | human decider | Manual close (`manual`) |
+
+Each annotation carries `ordinal` (per batch), `anchor_kind`, section anchor,
+target revision, `line_start/line_end`, `quote`, `note`, optional `response`,
+`state` (`open`/`resolved`/`archived`), `location` (`exact`/`moved`/
+`section_only`/`outdated`) and the recomputed `located` coordinates. `side` is
+derived from `target_revision_id`: the reviewed candidate's base revision is
+`before`, otherwise `after`.
+
+`POST /baseline/decisions` accepts an optional `annotation_batch_action`
+(`close` default, or `keep`); it applies only to related batches — the candidate
+was submitted by the batch carrier or is itself a reviewed revision of that
+batch. Admitting or rejecting an unrelated candidate never touches batches.
+Cancelling or deleting the carrier issue closes its batch as `issue_closed`
+(read-time effective state, persisted on next write). Closing a batch never
+rewrites the carrier issue's workflow status. Limits: ≤20 annotations per
+review, ≤50 per batch including replies, `note`/`response` ≤1000 characters,
+`quote` ≤500, `prefix`/`suffix` ≤64, lines spans ≤50.

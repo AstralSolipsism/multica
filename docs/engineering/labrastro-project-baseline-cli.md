@@ -18,6 +18,9 @@ multica project baseline diff <project-id> --chapter domain_rules --from 3 --to 
 multica project baseline adopt <project-id> --revision domain_rules:4
 multica project baseline adopt <project-id> --revision domain_rules:4 --reject
 multica project baseline export <project-id> --dir ./docs/baseline --output json
+
+multica project baseline annotations <project-id> --batch <batch-id|OL-1240> --with-sections
+multica project baseline respond <project-id> --batch <batch-id> --responses-file ./responses.json
 ```
 
 `get` defaults to chapter summaries. A selected chapter, a historical revision,
@@ -97,7 +100,7 @@ replaced atomically; a filesystem failure can leave earlier files updated.
 Existing non-regular targets, including symlinks, are rejected. JSON output
 lists exported paths, while completion notices go to stderr.
 
-All five commands support `--output json`; text (or table) is the default.
+All commands above support `--output json`; text (or table) is the default.
 Failures write only to stderr, without echoing baseline bodies even under
 `--debug`. Exit codes are 0 for success, 1 for business/transport failures
 (including 403/409/422), and 2 for invalid parameters or missing resources.
@@ -105,6 +108,50 @@ HTTP 400/404 also exit 2. Invalid, missing, or ambiguous project prefixes retain
 the resolver's explanation (including matching IDs) and exit 2; failures while
 fetching project candidates still use the transport/HTTP error handling.
 Other CLI commands retain their existing exit conventions.
+
+
+## Read annotation batches and respond (carrier issue runs)
+
+```sh
+multica project baseline annotations <project-id> --batch 7f3c… --with-sections
+multica project baseline annotations <project-id> --batch OL-1240 --output json
+multica project baseline respond <project-id> --batch 7f3c… --responses-file ./responses.json
+```
+
+`annotations` is read-only and always requires `--batch`: either the batch UUID
+or the carrier issue identifier (`OL-1240`), which resolves through the chapter's
+single active batch. There is no command that lists all batches. `--state`
+defaults to `open` (resolved and archived annotations stay out of context);
+`--state all` includes them. The interaction model and isolation boundaries
+live in [labrastro-baseline-annotations.md](labrastro-baseline-annotations.md).
+
+Text output leads with one batch header line (short batch ID, carrier
+identifier, chapter, working version, open/total counts) and the review summary
+when present, then one block per top-level annotation starting `[A<ordinal>]`:
+section anchor and title, side/version/lines or selected-text/whole-section
+targeting, location status (`exact`/`moved` with recomputed lines/
+`section_only`/`outdated`), quoted source, note, human replies
+(`↳ 回复（…）：…`) and the previous agent response
+(`↳ 智能体回应（上轮）：…`). `--with-sections` appends the deduped annotated
+section subtrees from the working version behind `<!-- <chapter> [<anchor>] -->`
+markers. JSON output is the server's `{batch, reviews, annotations, sections}`
+object unchanged.
+
+`respond` is callable only by runs of the batch's carrier issue (the server
+rejects every other credential with 403). `--responses-file` must be a UTF-8
+JSON file inside the current working directory, bounded by the request limit,
+with the same traversal and symlink rejection as `--content-file`. The file is
+an array of 1–50 `{"annotation": "A1"|"<uuid>", "response": "…"}` objects;
+`A<ordinal>` references are resolved to UUIDs by first reading the batch with
+`--state all`, and duplicates are rejected before any write. Each response is
+1–1000 characters. Responses wake nobody; on success text output prints the
+updated count, JSON passes the server result through. Failures never echo
+annotation or response bodies. Both commands use the same 0/1/2 exit codes as
+the rest of the baseline family; `propose` gains no new flags.
+
+```json
+[{"annotation": "A1", "response": "已按批注补充跨月规则，见 v5 第 14 行"}]
+```
 
 
 ## Engineering configuration
