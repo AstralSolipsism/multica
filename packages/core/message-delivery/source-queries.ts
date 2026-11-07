@@ -119,8 +119,8 @@ function isInFlight(status: string): boolean {
  * source records are located by `source_ref_id`, and borrowing the
  * automation run query would misread non-run rows.
  *
- * Refresh: no websocket event covers worker write-backs, so the first page
- * polls — fast while any row is in flight, slow otherwise.
+ * Refresh: no websocket event covers worker write-backs, so loaded pages
+ * poll — fast while the first page has an in-flight row, slow otherwise.
  */
 export function messageRouteDeliveriesInfiniteOptions(
   wsId: string,
