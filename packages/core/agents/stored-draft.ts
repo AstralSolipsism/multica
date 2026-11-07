@@ -1,5 +1,9 @@
 import type { StoredAgentDraft } from "../types";
 import { EMPTY_AGENT_DRAFT, type AgentDraft } from "./draft";
+import {
+  parseOmpRuntimeConfig,
+  serializeOmpRuntimeConfig,
+} from "./omp-runtime-config";
 
 export type { StoredAgentDraft };
 
@@ -8,6 +12,7 @@ export function toStoredAgentDraft(
   appliedMessageId: string | null,
   dismissedMessageId: string | null = null,
 ): StoredAgentDraft {
+  const ompRuntimeConfig = serializeOmpRuntimeConfig(draft.ompRuntimeConfig);
   return {
     name: draft.name,
     description: draft.description,
@@ -16,6 +21,9 @@ export function toStoredAgentDraft(
     avatar_url: draft.avatarUrl,
     model: draft.model,
     qoder_agent_id: draft.qoderAgentId,
+    ...(Object.keys(ompRuntimeConfig).length > 0
+      ? { omp_runtime_config: ompRuntimeConfig }
+      : {}),
     thinking_level: draft.thinkingLevel,
     service_tier: draft.serviceTier,
     skill_ids: [...draft.skillIds],
@@ -45,6 +53,7 @@ export function fromStoredAgentDraft(
     runtimeId,
     model: stored.model,
     qoderAgentId: stored.qoder_agent_id ?? "",
+    ompRuntimeConfig: parseOmpRuntimeConfig(stored.omp_runtime_config),
     thinkingLevel: stored.thinking_level,
     serviceTier: stored.service_tier,
     skillIds: new Set(stored.skill_ids),

@@ -11,6 +11,7 @@ import type {
 import {
   type AgentPresenceDetail,
   effectiveAccessScope,
+  parseOmpRuntimeConfig,
   qoderAgentId,
   summarizeActivityWindow,
   useWorkspaceActivityMap,
@@ -27,6 +28,7 @@ import { ModelPicker } from "./inspector/model-picker";
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingPropRow } from "./inspector/thinking-prop-row";
 import { useExecutionControls } from "./inspector/use-execution-controls";
+import { OmpRuntimeConfigSummary } from "./omp-runtime-config";
 import { AgentPerformanceSummary, SuccessRate } from "./tabs/activity-tab";
 
 const ACCESS_ICONS = {
@@ -213,6 +215,14 @@ export function AgentPropertiesPanel({
           </Value>
         </ObjectProperty>
       </ObjectPanelSection>
+
+      {runtime?.provider === "omp" ? (
+        <ObjectPanelSection title={t(($) => $.omp.inspector.title)}>
+          <OmpRuntimeConfigSummary
+            config={parseOmpRuntimeConfig(agent.runtime_config)}
+          />
+        </ObjectPanelSection>
+      ) : null}
 
       <div className="border-t pt-3">
         <Button

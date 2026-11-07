@@ -106,6 +106,13 @@ export function ompRuntimeConfigEquals(
   );
 }
 
+export function ompRuntimeConfigHandoffMissing(config: OmpRuntimeConfig): boolean {
+  return (
+    (config.executionMode === "plan_yolo" || config.executionMode === "prewalk") &&
+    !config.handoffModel?.trim()
+  );
+}
+
 // Remove the OMP-only keys from an arbitrary runtime_config record, returning
 // the surviving provider-neutral / other-provider keys (possibly `{}`).
 // Runtime switching (model-change-cleanup pattern): settings that only the

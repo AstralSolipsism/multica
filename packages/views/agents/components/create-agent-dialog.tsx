@@ -39,11 +39,16 @@ import { Label } from "@multica/ui/components/ui/label";
 import { toast } from "sonner";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
+  ompRuntimeConfigHandoffMissing,
+  parseOmpRuntimeConfig,
+  serializeOmpRuntimeConfig,
   VISIBILITY_DESCRIPTION,
   VISIBILITY_LABEL,
+  type OmpRuntimeConfig,
 } from "@multica/core/agents";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { CharCounter } from "./char-counter";
+import { OmpRuntimeConfigPanel } from "./omp-runtime-config";
 import { useT } from "../../i18n";
 
 export function CreateAgentDialog({
@@ -61,8 +66,8 @@ export function CreateAgentDialog({
   members: MemberWithUser[];
   currentUserId: string | null;
   // When provided, the dialog opens in "Duplicate" mode: the visible
-  // fields (name / description / runtime / visibility / model) are
-  // pre-populated from this agent, and the hidden fields
+  // fields (name / description / runtime / visibility / model / OMP roles)
+  // are pre-populated from this agent, and the hidden fields
   // (instructions / custom_args / custom_env / max_concurrent_tasks)
   // are forwarded to the create call so the new agent is a true clone.
   // Skills are copied separately by the caller after createAgent
@@ -142,6 +147,9 @@ export function CreateAgentDialog({
     }));
 
   const [model, setModel] = useState(template?.model ?? "");
+  const [ompRuntimeConfig, setOmpRuntimeConfig] = useState<OmpRuntimeConfig>(() =>
+    parseOmpRuntimeConfig(template?.runtime_config),
+  );
   const [instructions, setInstructions] = useState(template?.instructions ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(template?.avatar_url ?? null);
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
@@ -178,6 +186,9 @@ export function CreateAgentDialog({
     !workspaceTargetOn &&
     selectedMemberIds.size === 0 &&
     templateTeamTargets.length === 0;
+  const ompHandoffMissing =
+    selectedRuntime?.provider === "omp" &&
+    ompRuntimeConfigHandoffMissing(ompRuntimeConfig);
 
   // Shared squad-join follow-up. Returns nothing — the caller has
   // already shown its create-success toast; we only need to surface a
@@ -214,7 +225,8 @@ export function CreateAgentDialog({
       !name.trim() ||
       !selectedRuntime ||
       selectedRuntimeLocked ||
-      accessSelectionInvalid
+      accessSelectionInvalid ||
+      ompHandoffMissing
     ) {
       return;
     }
@@ -231,6 +243,10 @@ export function CreateAgentDialog({
         avatar_url: avatarUrl ?? undefined,
         skill_ids: [...selectedSkillIds],
       };
+      if (selectedRuntime.provider === "omp") {
+        const runtimeConfig = serializeOmpRuntimeConfig(ompRuntimeConfig);
+        if (Object.keys(runtimeConfig).length > 0) data.runtime_config = runtimeConfig;
+      }
       if (accessPickerEnabled) {
         // New MUL-3963 shape: send the authoritative permission fields and
         // let the backend derive the legacy `visibility` field. Mirror the
@@ -423,7 +439,10 @@ export function CreateAgentDialog({
               onSelect={(id) => {
                 // Models are per-runtime; a value picked for the old runtime
                 // may not exist on the new one, so drop it on runtime change.
-                if (id !== selectedRuntimeId) setModel("");
+                if (id !== selectedRuntimeId) {
+                  setModel("");
+                  setOmpRuntimeConfig({});
+                }
                 setSelectedRuntimeId(id);
               }}
             />
@@ -435,6 +454,26 @@ export function CreateAgentDialog({
               onChange={setModel}
               disabled={!selectedRuntime}
             />
+
+            {selectedRuntime?.provider === "omp" ? (
+              <details className="rounded-lg border">
+                <summary className="cursor-pointer px-4 py-3 text-body font-medium">
+                  {t(($) => $.omp.panel.create_section)}
+                </summary>
+                <div className="border-t p-4">
+                  <OmpRuntimeConfigPanel
+                    provider={selectedRuntime.provider}
+                    runtimeId={selectedRuntime.id}
+                    runtimeOnline={selectedRuntime.status === "online"}
+                    mainModel={model}
+                    value={ompRuntimeConfig}
+                    canEdit
+                    onChange={setOmpRuntimeConfig}
+                    compact
+                  />
+                </div>
+              </details>
+            ) : null}
 
             {/* --- Optional sections (instructions / skills) ---
                 Collapsed by default so quick-create stays fast.
@@ -470,16 +509,22 @@ export function CreateAgentDialog({
             label={
               selectedRuntimeLocked
                 ? t(($) => $.create_dialog.runtime_private_locked_tooltip)
-                : undefined
+                : ompHandoffMissing
+                  ? t(($) => $.omp.panel.handoff_required)
+                  : undefined
             }
           >
             <Button
               onClick={handleSubmit}
               disabled={
-                creating || !name.trim() || !selectedRuntime || selectedRuntimeLocked
+                creating ||
+                !name.trim() ||
+                !selectedRuntime ||
+                selectedRuntimeLocked ||
+                ompHandoffMissing
               }
               // Keeps the button hoverable so its tooltip can say why it is blocked.
-              focusableWhenDisabled={selectedRuntimeLocked}
+              focusableWhenDisabled={selectedRuntimeLocked || ompHandoffMissing}
               className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               {creating ? t(($) => $.create_dialog.creating) : t(($) => $.create_dialog.create)}

@@ -527,6 +527,53 @@
       "upload_failed_toast": "Échec de l'envoi de l'avatar"
     }
   },
+  "omp": {
+    "panel": {
+      "model_roles": "Rôles des modèles",
+      "smol_model": "Modèle Smol",
+      "smol_hint": "Délègue les tâches internes légères. Laissez vide pour hériter du modèle principal.",
+      "advisor": "Réviseur Advisor",
+      "advisor_enabled": "Activer Advisor",
+      "advisor_disabled_hint": "Activez cette option pour choisir un modèle réviseur et la fréquence de révision.",
+      "slow_model": "Modèle Slow / Advisor",
+      "slow_model_placeholder": "Sélection automatique parmi les comptes disponibles",
+      "review_mode": "Moment de révision",
+      "review_agent_end": "Avant la livraison (recommandé)",
+      "review_agent_end_hint": "Révise une fois avant la fin de l'exécution.",
+      "review_turn": "À chaque tour",
+      "review_turn_hint": "Révise après chaque tour. Consomme davantage de quota.",
+      "execution": "Mode d'exécution",
+      "mode_label": "Mode de collaboration",
+      "mode_standard": "Standard",
+      "mode_standard_hint": "Le modèle principal effectue toute l'exécution.",
+      "mode_plan_yolo": "Plan-Yolo",
+      "mode_plan_yolo_hint": "Planifie en lecture seule, puis délègue l'implémentation.",
+      "mode_prewalk": "Prewalk",
+      "mode_prewalk_hint": "Établit une liste de tâches, puis délègue à la première modification.",
+      "plan_model": "Modèle de planification (facultatif)",
+      "handoff_model": "Modèle de relais",
+      "handoff_plan_yolo_hint": "Cible de --plan-yolo-into.",
+      "handoff_prewalk_hint": "Cible de --prewalk-into.",
+      "handoff_model_placeholder": "Sélectionner un modèle",
+      "handoff_required": "Sélectionnez un modèle de relais pour ce mode d'exécution.",
+      "same_main_model": "Ce modèle est identique au modèle principal ; ce rôle supplémentaire ne délèguera pas le travail.",
+      "model_inherit_main": "Hériter du modèle principal",
+      "create_section": "Collaboration OMP (facultatif)"
+    },
+    "inspector": {
+      "title": "Collaboration",
+      "empty": "Aucune stratégie de collaboration activée",
+      "smol": "Smol : {{model}}",
+      "advisor": "Advisor : {{model}} · {{mode}}",
+      "auto_model": "Sélection automatique",
+      "agent_end": "Avant la livraison",
+      "turn": "À chaque tour",
+      "execution_plan_yolo": "Plan-Yolo → {{model}}",
+      "execution_prewalk": "Prewalk → {{model}}",
+      "plan": "Plan : {{model}}",
+      "handoff_missing": "Non défini"
+    }
+  },
   "conversation_starters": {
     "label": "Amorces de conversation",
     "hint": "Proposées dans une nouvelle discussion avec cet agent. En choisir une remplit le champ de saisie sans envoyer le message.",

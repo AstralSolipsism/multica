@@ -527,6 +527,53 @@
       "upload_failed_toast": "Avatar upload failed"
     }
   },
+  "omp": {
+    "panel": {
+      "model_roles": "Model roles",
+      "smol_model": "Smol model",
+      "smol_hint": "Routes lightweight internal work. Leave empty to inherit the main model.",
+      "advisor": "Advisor reviewer",
+      "advisor_enabled": "Enable Advisor",
+      "advisor_disabled_hint": "Turn on to choose a reviewer model and review cadence.",
+      "slow_model": "Slow / Advisor model",
+      "slow_model_placeholder": "Auto-select from available accounts",
+      "review_mode": "Review timing",
+      "review_agent_end": "Before delivery (recommended)",
+      "review_agent_end_hint": "Review once before the agent finishes the run.",
+      "review_turn": "Every turn",
+      "review_turn_hint": "Review after every turn. Uses more quota.",
+      "execution": "Execution mode",
+      "mode_label": "Collaboration mode",
+      "mode_standard": "Standard",
+      "mode_standard_hint": "The main model executes the whole run.",
+      "mode_plan_yolo": "Plan-Yolo",
+      "mode_plan_yolo_hint": "Plan read-only, then hand off implementation.",
+      "mode_prewalk": "Prewalk",
+      "mode_prewalk_hint": "Build a todo list, then hand off at the first edit.",
+      "plan_model": "Plan model (optional)",
+      "handoff_model": "Handoff model",
+      "handoff_plan_yolo_hint": "Target for --plan-yolo-into.",
+      "handoff_prewalk_hint": "Target for --prewalk-into.",
+      "handoff_model_placeholder": "Select a model",
+      "handoff_required": "Select a handoff model for this execution mode.",
+      "same_main_model": "This matches the main model, so the extra role will not offload work.",
+      "model_inherit_main": "Inherit main model",
+      "create_section": "OMP collaboration (optional)"
+    },
+    "inspector": {
+      "title": "Collaboration",
+      "empty": "No collaboration strategies enabled",
+      "smol": "Smol: {{model}}",
+      "advisor": "Advisor: {{model}} · {{mode}}",
+      "auto_model": "Auto-select",
+      "agent_end": "Before delivery",
+      "turn": "Every turn",
+      "execution_plan_yolo": "Plan-Yolo → {{model}}",
+      "execution_prewalk": "Prewalk → {{model}}",
+      "plan": "Plan: {{model}}",
+      "handoff_missing": "Not set"
+    }
+  },
   "conversation_starters": {
     "label": "Conversation starters",
     "hint": "Suggested in a new chat with this agent. Picking one fills the composer without sending.",

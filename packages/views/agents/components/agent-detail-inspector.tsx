@@ -11,7 +11,13 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   AGENT_MAX_CONCURRENT_TASKS_MAX,
   AGENT_MAX_CONCURRENT_TASKS_MIN,
+  ompRuntimeConfigEquals,
+  ompRuntimeConfigHandoffMissing,
+  parseOmpRuntimeConfig,
   runtimeSupportsThinkingAdapt,
+  serializeOmpRuntimeConfig,
+  stripOmpRuntimeConfig,
+  type OmpRuntimeConfig,
 } from "@multica/core/agents";
 import { useConfigStore } from "@multica/core/config";
 import { isImeComposing } from "@multica/core/utils";
@@ -31,6 +37,7 @@ import { useT } from "../../i18n";
 import { CharCounter } from "./char-counter";
 import { ConversationStartersEditor } from "./conversation-starters-editor";
 import { NewChatPreview } from "./new-chat-preview";
+import { OmpRuntimeConfigPanel } from "./omp-runtime-config";
 import { useConversationStartersFocus } from "./use-conversation-starters-focus";
 import { ModelPicker } from "./inspector/model-picker";
 import { RuntimePicker } from "./inspector/runtime-picker";
@@ -99,6 +106,9 @@ export function AgentDetailInspector({
   const [starters, setStarters] = useState<AgentConversationStarter[]>(
     agent.conversation_starters ?? [],
   );
+  const [ompConfig, setOmpConfig] = useState<OmpRuntimeConfig>(() =>
+    parseOmpRuntimeConfig(agent.runtime_config),
+  );
 
   useEffect(() => {
     setName(agent.name);
@@ -108,6 +118,12 @@ export function AgentDetailInspector({
     // must not erase a newer local draft while an autosave is in flight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
+
+  useEffect(() => {
+    setOmpConfig(parseOmpRuntimeConfig(agent.runtime_config));
+    // A runtime switch clears the local roles even before the PATCH returns.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id, agent.runtime_id]);
 
   const profileDraft = useMemo(
     () => ({ name: name.trim(), description }),
@@ -167,6 +183,31 @@ export function AgentDetailInspector({
     onSave: saveStarters,
     enabled: canEdit && showStarters && startersComplete,
     isEqual: startersEqual,
+  });
+  const savedOmpConfig = useMemo(
+    () => parseOmpRuntimeConfig(agent.runtime_config),
+    [agent.runtime_config],
+  );
+  const saveOmpConfig = useCallback(
+    async (next: OmpRuntimeConfig) => {
+      await update({
+        runtime_config: {
+          ...stripOmpRuntimeConfig(agent.runtime_config),
+          ...serializeOmpRuntimeConfig(next),
+        },
+      });
+    },
+    [agent.runtime_config, update],
+  );
+  const ompAutoSave = useAutoSave({
+    value: ompConfig,
+    savedValue: savedOmpConfig,
+    onSave: saveOmpConfig,
+    enabled:
+      canEdit &&
+      runtime?.provider === "omp" &&
+      !ompRuntimeConfigHandoffMissing(ompConfig),
+    isEqual: ompRuntimeConfigEquals,
   });
   const startersFocus = useConversationStartersFocus(agent.id, showStarters);
   const nameInvalid = name.trim().length === 0;
@@ -360,6 +401,24 @@ export function AgentDetailInspector({
               </SettingsRow>
             </SettingsCard>
           </SettingsSection>
+
+          <OmpRuntimeConfigPanel
+            provider={runtime?.provider}
+            runtimeId={agent.runtime_id}
+            runtimeOnline={canDiscoverRuntimeModels}
+            mainModel={agent.model ?? ""}
+            value={ompConfig}
+            canEdit={canEdit}
+            onChange={setOmpConfig}
+            headerAction={
+              <SettingsSaveState
+                status={ompAutoSave.status}
+                savingLabel={ts(($) => $.auto_save.saving)}
+                savedLabel={ts(($) => $.auto_save.saved)}
+                errorLabel={ts(($) => $.auto_save.failed)}
+              />
+            }
+          />
         </div>
 
         <SettingsSection

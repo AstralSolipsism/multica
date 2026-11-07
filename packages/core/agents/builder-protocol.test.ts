@@ -13,6 +13,7 @@ import type { AgentDraft } from "./draft";
 
 const draft = (): AgentDraft => ({
   qoderAgentId: "",
+  ompRuntimeConfig: {},
   name: "Old name",
   description: "Old description",
   instructions: "Old instructions",

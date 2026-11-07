@@ -295,4 +295,33 @@ describe("useCreateAgentForm skill reconciliation", () => {
     await act(async () => resolveSkills([{ ...skill, workspace_id: "ws-2" }]));
     await waitFor(() => expect([...result.current.draft.skillIds]).toEqual([skill.id]));
   });
+
+  it("blocks OMP creation until a collaborative mode has a handoff model", async () => {
+    api.listRuntimes.mockResolvedValue([{
+      id: "runtime-omp",
+      provider: "omp",
+      status: "online",
+      owner_id: "user-1",
+      visibility: "public",
+    }]);
+    const { result } = renderHook(() => useCreateAgentForm(), { wrapper: Wrapper });
+    act(() => result.current.setDraft({
+      ...EMPTY_AGENT_DRAFT,
+      name: "OMP agent",
+      runtimeId: "runtime-omp",
+      ompRuntimeConfig: { executionMode: "plan_yolo" },
+    }));
+
+    await waitFor(() => expect(result.current.selectedRuntime?.provider).toBe("omp"));
+    expect(result.current.draftReady).toBe(false);
+
+    act(() => result.current.setDraft((current) => ({
+      ...current,
+      ompRuntimeConfig: {
+        executionMode: "plan_yolo",
+        handoffModel: "zai/glm-5.3",
+      },
+    })));
+    await waitFor(() => expect(result.current.draftReady).toBe(true));
+  });
 });
