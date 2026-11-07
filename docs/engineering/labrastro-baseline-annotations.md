@@ -104,16 +104,16 @@ stateDiagram-v2
 
 - `project_baseline_annotation_batch`：章、承载（`revision_issue` / `source_issue` + `issue_id`）、负责智能体、关闭信息（`closed_at` + `close_reason ∈ adopted/rejected/manual/issue_closed`）。
 - `project_baseline_review`：一次完成审阅，含幂等键 `client_key`、总体说明（≤500 字）、唤醒评论 `wake_comment_id`。
-- `project_baseline_annotation`：批注，`ordinal`（批内 1–50）、`anchor_kind ∈ text/lines/section`、目标版本、小节锚点、行号（`lines`）、`quote/prefix/suffix/start`、正文 `note`、`response`、解决信息；人的回复是 `parent_annotation_id` 指向父批注的行，锚点字段从父批注复制。
+- `project_baseline_annotation`：批注，`ordinal`（批内 1–50）、`anchor_kind ∈ text/lines/section`、目标版本、小节锚点、行号（`lines` 必填、`text` 可选）、`quote/prefix/suffix/start`、正文 `note`、`response`、解决信息；人的回复是 `parent_annotation_id` 指向父批注的行，锚点字段从父批注复制。
 
-并发索引各占一个迁移：`9060_labrastro_baseline_review_client_key_index`（`review (workspace_id, project_id, client_key)` 唯一，提交幂等）、`9061_labrastro_baseline_annotation_active_index`（`batch (workspace_id, project_id, chapter) WHERE closed_at IS NULL` 唯一，I3）、`9062_labrastro_baseline_annotation_ordinal_index`（`annotation (workspace_id, batch_id, ordinal)` 唯一）、`9063_labrastro_baseline_review_batch_index`（`review (workspace_id, batch_id, created_at)`）。
+并发索引各占一个迁移：`9060_labrastro_baseline_review_client_key_index`（`review (workspace_id, project_id, client_key)` 唯一，提交幂等）、`9061_labrastro_baseline_annotation_active_index`（`batch (workspace_id, project_id, chapter) WHERE closed_at IS NULL` 唯一，I3）、`9062_labrastro_baseline_annotation_ordinal_index`（`annotation (workspace_id, batch_id, ordinal)` 唯一）、`9063_labrastro_baseline_review_batch_index`（`review (workspace_id, batch_id, created_at)`）。`9064_labrastro_baseline_text_block_lines` 调整锚点约束：`lines` 必须有行号且单次最多选择 50 行，`text` 可记录块行号，`section` 不得携带行号。
 
 锚点模型与重新定位（`server/internal/engineering/annotations.go`）：
 
 | `anchor_kind` | 字段 | 重新定位 |
 |---|---|---|
 | `lines` | `line_start/line_end` 为目标版本里该小节自身文本的行号（标题行为第 1 行）；`quote` ≤500 字 | 新工作版本同小节内精确匹配 `quote`：唯一 → `moved` 并给新行号；否则 `outdated` |
-| `text` | 渲染后文本的 `quote/prefix/suffix/start` | 唯一匹配 → `moved`；失败退回小节，标 `section_only` |
+| `text` | 渲染后文本的 `quote/prefix/suffix/start`；`line_start/line_end` 记录所在块的源码行（标题行为第 1 行） | 唯一匹配 → `moved`；失败退回小节，标 `section_only` |
 | `section` | 只有 `section_anchor` | 锚点在 → `exact`；否则 `outdated` |
 
 工作版本：存在由本批次承载任务提交、仍在待审的候选时以它为准，否则用当前 adopted。`location` 对工作版本计算。体量上限：每次完成审阅 ≤20 条、每批次合计 ≤50 条（回复计入）；`note`/`response` ≤1000 字、`prefix`/`suffix` ≤64 字、`lines` 一次 ≤50 行。

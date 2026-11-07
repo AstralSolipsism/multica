@@ -102,6 +102,26 @@ function createReferencePlugin(options: {
   };
 }
 
+const SOURCE_LINE_BLOCKS = new Set(["p", "div", "li", "pre", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "table", "ul", "ol"]);
+
+function annotateSourceLines(tree: Root, lineOffset: number) {
+  const visit = (node: Parent) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      const element = child as Element;
+      if (SOURCE_LINE_BLOCKS.has(element.tagName) && element.position?.start.line && element.position.end.line) {
+        element.properties = {
+          ...element.properties,
+          dataSourceStart: element.position.start.line + lineOffset,
+          dataSourceEnd: element.position.end.line + lineOffset,
+        };
+      }
+      visit(element);
+    }
+  };
+  visit(tree);
+}
+
 function RelatedConceptButton({ section }: { section: BaselineSection }) {
   const { onNavigate } = useBaselineWiki();
   return <button type="button" className="mr-2 inline text-left text-caption text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground" onClick={() => onNavigate({ kind: "concept", key: section.key, label: section.title, section })}>{section.title}</button>;
@@ -191,10 +211,11 @@ function BaselineReferenceLink({ reference, children }: { reference: BaselineRef
   );
 }
 
-export function BaselineMarkdown({ content, currentSection, chapter }: {
+export function BaselineMarkdown({ content, currentSection, chapter, sourceLineOffset = 1 }: {
   content: string;
   currentSection: BaselineSection;
   chapter?: BaselineChapter;
+  sourceLineOffset?: number;
 }) {
   const { lens, sections, nodes, stages } = useBaselineWiki();
   const references = useMemo(() => {
@@ -220,6 +241,7 @@ export function BaselineMarkdown({ content, currentSection, chapter }: {
     stages,
     conceptsOnly: lens === "understand",
   }), [sections, currentSection.key, nodes, stages, lens]);
+  const sourceLinePlugin = useMemo(() => () => (tree: Root) => annotateSourceLines(tree, sourceLineOffset), [sourceLineOffset]);
   const components = useMemo(() => ({
     "baseline-reference": ({ referenceId: id, children }: { referenceId?: string; children?: ReactNode }) => {
       const reference = id ? references.get(id) : undefined;
@@ -229,7 +251,7 @@ export function BaselineMarkdown({ content, currentSection, chapter }: {
   if (!content.trim()) return null;
   return (
     <div className="rich-text-editor readonly text-body leading-7 [&_li]:my-1 [&_p]:my-2 [&_strong]:font-medium" data-baseline-markdown={chapter ?? currentSection.chapter}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[plugin]} components={components}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[plugin, sourceLinePlugin]} components={components}>{content}</ReactMarkdown>
     </div>
   );
 }

@@ -574,3 +574,28 @@ func TestBaselineAnnotationsProjectAndWorkspaceCleanup(t *testing.T) {
 		}
 	}
 }
+
+func TestBaselineAnnotationTextBlockLines(t *testing.T) {
+	f := annotationFixture(t)
+	revision := f.propose("domain_rules", "## [RULE-1] Rules\nfirst block\n\nsecond block\n", nil, nil)
+	body := reviewBody(f, revision)
+	a := body["annotations"].([]map[string]any)[0]
+	a["anchor_kind"] = "text"
+	a["quote"] = "first block"
+	a["line_start"] = 2
+	a["line_end"] = 2
+	result := submitReview(t, f, body)
+	detail := readAnnotations(t, f, result.Batch.ID, "")
+	if len(detail.Annotations) != 1 || detail.Annotations[0].LineStart.Int32 != 2 || detail.Annotations[0].LineEnd.Int32 != 2 {
+		t.Fatalf("text block lines were not preserved: %+v", detail.Annotations)
+	}
+	for _, kind := range []string{"section", "text"} {
+		invalid := reviewBody(f, revision)
+		annotation := invalid["annotations"].([]map[string]any)[0]
+		annotation["anchor_kind"] = kind
+		if kind == "text" {
+			delete(annotation, "line_end")
+		}
+		testutil.Call(t, testHandler.LabrastroSubmitBaselineReview, f.request("POST", "/baseline/reviews", invalid, "session")).Want(400)
+	}
+}
