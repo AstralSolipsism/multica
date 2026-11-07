@@ -493,6 +493,10 @@ export interface DagFlowNodesOptions {
   projectNames: ReadonlyMap<string, string>;
 }
 
+function dagIssueAriaLabel(issue: { id: string; identifier: string | null; title: string }) {
+  return [issue.identifier, issue.title].filter(Boolean).join(" ") || issue.id;
+}
+
 export function dagSceneFlowNodes(
   model: DagCanvasModel,
   options: DagFlowNodesOptions,
@@ -512,6 +516,7 @@ export function dagSceneFlowNodes(
           card,
           statusColor: card.issue ? statusColorOf(card.issue.status) : null,
         },
+        ariaLabel: card.issue ? dagIssueAriaLabel(card.issue) : card.id,
         selected: false,
         draggable: false,
         zIndex: 2,
@@ -555,6 +560,7 @@ export function dagSceneFlowNodes(
           statusColor: statusColorOf(frame.issue.status),
           projectTitle: frame.issue.projectId ? projectNames.get(frame.issue.projectId) ?? null : null,
         },
+        ariaLabel: dagIssueAriaLabel(frame.issue),
         draggable: false,
         selectable: false,
         zIndex: 0,
@@ -578,6 +584,7 @@ export function dagSceneFlowNodes(
           projectTitle: task.issue.projectId ? projectNames.get(task.issue.projectId) ?? null : null,
           showStage: parentId ? stageLabels.get(parentId) === true : true,
         },
+        ariaLabel: dagIssueAriaLabel(task.issue),
         selected: false,
         draggable: false,
         zIndex: 2,
@@ -595,6 +602,7 @@ export function dagSceneFlowNodes(
           width: box.width,
           height: box.height,
           data: { group, side },
+          ariaLabel: dagIssueAriaLabel(group.issue),
           draggable: false,
           selectable: false,
           zIndex: 2,
@@ -619,6 +627,7 @@ export function dagSceneFlowNodes(
         projectTitle: task.issue.projectId ? projectNames.get(task.issue.projectId) ?? null : null,
         showStage: true,
       },
+      ariaLabel: dagIssueAriaLabel(task.issue),
       selected: false,
       draggable: false,
       zIndex: 2,

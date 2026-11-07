@@ -68,7 +68,7 @@ export function useDagSceneLayout<T>(
     cancel: () => {
       live.current = null;
       if (plan) runner.current?.cancel(plan.input.kind);
-      setState((old) => ({ ...old, pending: false }));
+      setState((old) => ({ ...old, pending: false, error: "DAG layout cancelled" }));
     },
     retry: () => { if (plan) runner.current?.cancel(plan.input.kind); bypassCache.current = true; setRevision((value) => value + 1); },
   };

@@ -745,7 +745,7 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
     }
   });
 
-  it("refreshes committed changes and reconnects without patching topology", () => {
+  it("refreshes committed changes and reconnects without patching topology", async () => {
     vi.useFakeTimers();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const ws = createMockWs();
@@ -777,14 +777,17 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
         qc.setQueryData(key, snapshot);
         qc.setQueryData(otherKey, snapshot);
         change();
+        await vi.advanceTimersByTimeAsync(0);
         expect(qc.getQueryState(key)?.isInvalidated, `graph event ${index}`).toBe(true);
         expect(qc.getQueryData(key)).toBe(snapshot);
         expect(qc.getQueryState(otherKey)?.isInvalidated).toBe(false);
       }
-      qc.setQueryData(key, snapshot);
-      onAny({ type: "task:message", payload: {} } as never);
-      vi.advanceTimersByTime(100);
-      expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+      for (const type of ["task:message", "task:progress", "task:usage", "task:coalesced"]) {
+        qc.setQueryData(key, snapshot);
+        onAny({ type, payload: {} } as never);
+        vi.advanceTimersByTime(100);
+        expect(qc.getQueryState(key)?.isInvalidated, type).toBe(false);
+      }
     } finally {
       unmount();
       qc.clear();

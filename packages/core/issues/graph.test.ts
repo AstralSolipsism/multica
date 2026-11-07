@@ -24,6 +24,39 @@ describe("issue graph data", () => {
     expect(normalizeIssueGraphRequest({ query: { ...query, search: "  two  spaces  " } }).query.search).toBe("two  spaces");
   });
 
+  it("canonicalizes every set-like filter and advanced condition values", () => {
+    const filters = {
+      project_statuses: ["in_progress", "paused"],
+      relations: ["created", "assigned"],
+      due_dates: ["today", "overdue"],
+      negate: ["statuses", "priorities"],
+      unread_issue_ids: ["issue-2", "issue-1", "issue-2"],
+      advanced: {
+        match: "all",
+        children: [{
+          field: "priorities",
+          values: [{ op: "gte", value: "2" }, "high", { op: "gte", value: "2" }],
+        }],
+      },
+    } satisfies IssueTableQuerySpec["filters"];
+    const reversed = {
+      ...filters,
+      project_statuses: [...filters.project_statuses].reverse(),
+      relations: [...filters.relations].reverse(),
+      due_dates: [...filters.due_dates].reverse(),
+      negate: [...filters.negate].reverse(),
+      unread_issue_ids: ["issue-1", "issue-2"],
+      advanced: {
+        ...filters.advanced,
+        children: [{ field: "priorities", values: ["high", { op: "gte", value: "2" }] }],
+      },
+    } satisfies IssueTableQuerySpec["filters"];
+    const a = normalizeIssueGraphRequest({ query: { ...query, filters } });
+    const b = normalizeIssueGraphRequest({ query: { ...query, filters: reversed } });
+    expect(a).toEqual(b);
+    expect(hashKey(issueKeys.graph("ws", a))).toBe(hashKey(issueKeys.graph("ws", b)));
+  });
+
   it("cancels the old workspace request without showing its data in the new scope", async () => {
     const signals: AbortSignal[] = [];
     const getIssueGraph = vi.fn((_ws: string, _request: unknown, options: { signal: AbortSignal }) => {

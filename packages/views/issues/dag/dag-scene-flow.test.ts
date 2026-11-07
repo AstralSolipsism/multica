@@ -470,6 +470,8 @@ describe("dagSceneFlowNodes", () => {
     const line = nodes.find((node) => node.id === "issue:r1")!;
     expect(line.position).toEqual({ x: 10, y: 20 });
     expect(line.type).toBe("dagOverviewCard");
+    expect(line.ariaLabel).toBe("T-R1 Task r1");
+    expect(nodes.find((node) => node.id === DAG_INDEPENDENT_GROUP)?.ariaLabel).toBe(DAG_INDEPENDENT_GROUP);
   });
 
   it("nests line frames and tasks with relative positions and stage labels", () => {

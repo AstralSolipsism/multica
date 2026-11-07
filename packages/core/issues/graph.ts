@@ -1,13 +1,22 @@
 import { invalidateIssueQueries } from "./invalidation";
 import { hashKey, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api, ApiError, type IssueGraph, type IssueGraphRequest } from "../api";
-import type { Issue, IssueTableQuerySpec } from "../types";
+import type { Issue, IssueTableFilterGroup, IssueTableQuerySpec } from "../types";
 import { issueKeys } from "./queries";
 
 function sortedSet<T>(values: T[] | undefined): T[] | undefined {
   if (values === undefined) return undefined;
   return [...new Map(values.map((value) => [hashKey([value]), value])).entries()]
     .sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value);
+}
+
+function normalizeAdvancedFilters(group: IssueTableFilterGroup): IssueTableFilterGroup {
+  return {
+    ...group,
+    children: group.children.map((child) => "children" in child
+      ? normalizeAdvancedFilters(child)
+      : { ...child, values: sortedSet(child.values) ?? [] }),
+  };
 }
 
 /** Preserve explicit empty predicates while canonicalizing set-like filters. */
@@ -26,8 +35,11 @@ export function normalizeIssueGraphRequest(request: IssueGraphRequest): IssueGra
         ...f,
         statuses: sortedSet(f.statuses), priorities: sortedSet(f.priorities),
         assignees: sortedSet(f.assignees), creators: sortedSet(f.creators),
-        project_ids: sortedSet(f.project_ids), label_ids: sortedSet(f.label_ids),
-        working_issue_ids: sortedSet(f.working_issue_ids),
+        project_ids: sortedSet(f.project_ids), project_statuses: sortedSet(f.project_statuses),
+        label_ids: sortedSet(f.label_ids), relations: sortedSet(f.relations),
+        due_dates: sortedSet(f.due_dates), negate: sortedSet(f.negate),
+        working_issue_ids: sortedSet(f.working_issue_ids), unread_issue_ids: sortedSet(f.unread_issue_ids),
+        advanced: f.advanced ? normalizeAdvancedFilters(f.advanced) : undefined,
         properties: f.properties ? Object.fromEntries(Object.entries(f.properties)
           .sort(([a], [b]) => a.localeCompare(b)).map(([key, values]) => [key, sortedSet(values) ?? []])) : undefined,
       },

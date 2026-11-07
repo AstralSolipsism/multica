@@ -98,10 +98,11 @@ export function EditDependenciesModal({
   data: Record<string, unknown> | null;
 }) {
   const issueId = typeof data?.issueId === "string" ? data.issueId : null;
+  const [saving, setSaving] = useState(false);
   return (
-    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Dialog open onOpenChange={(v) => { if (!v && !saving) onClose(); }}>
       {issueId ? (
-        <EditDependenciesBody key={issueId} issueId={issueId} onClose={onClose} />
+        <EditDependenciesBody key={issueId} issueId={issueId} onClose={onClose} saving={saving} setSaving={setSaving} />
       ) : (
         <DialogContent>
           <DialogHeader>
@@ -116,9 +117,13 @@ export function EditDependenciesModal({
 function EditDependenciesBody({
   issueId,
   onClose,
+  saving,
+  setSaving,
 }: {
   issueId: string;
   onClose: () => void;
+  saving: boolean;
+  setSaving: (saving: boolean) => void;
 }) {
   const { t } = useT("modals");
   const { t: tDependencies } = useT("dependencies");
@@ -140,7 +145,6 @@ function EditDependenciesBody({
     selected: Map<string, EditablePrerequisite>;
   } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [saving, setSaving] = useState(false);
   // A refused save leaves the intent pending: even when the conflict merge
   // lands on a selection equal to the fresh baseline, the user must be able
   // to confirm that visible state with one more Save (a version-matched
@@ -312,7 +316,7 @@ function EditDependenciesBody({
   const malformed = depsQuery.isSuccess && depsQuery.data === null;
 
   return (
-    <DialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg">
+    <DialogContent showCloseButton={!saving} className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg">
       <DialogHeader className="shrink-0 px-4 pt-4 pb-3">
         <DialogTitle>{tDependencies(($) => $.edit_dependencies.title)}</DialogTitle>
         <DialogDescription>
@@ -420,7 +424,15 @@ function EditDependenciesBody({
                       {t(($) => $.issue_picker.searching)}
                     </div>
                   )}
-                  {!searching && query.trim() && results.length === 0 && (
+                  {!searching && searchQuery.isError && query.trim() && (
+                    <div role="alert" className="flex flex-col items-center gap-2 py-4 text-caption text-muted-foreground">
+                      <p>{tDependencies(($) => $.edit_dependencies.load_error)}</p>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void searchQuery.refetch()}>
+                        {tDependencies(($) => $.edit_dependencies.retry)}
+                      </Button>
+                    </div>
+                  )}
+                  {!searching && !searchQuery.isError && query.trim() && results.length === 0 && (
                     <CommandEmpty>{t(($) => $.issue_picker.no_results)}</CommandEmpty>
                   )}
                   {!searching && !query.trim() && (
