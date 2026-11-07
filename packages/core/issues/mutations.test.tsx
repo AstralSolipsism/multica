@@ -1615,6 +1615,7 @@ describe("compound dependency writes", () => {
     });
     setApiInstance({ updateIssueWithDependencies } as unknown as ApiClient);
     const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
 
     await act(async () => {
       await result.current.mutateAsync({ id: "issue-1", blockedBy: [] });
@@ -1625,6 +1626,8 @@ describe("compound dependency writes", () => {
     expect(
       qc.getQueryState(issueKeys.dependencies(WS_ID, "issue-2"))?.isInvalidated,
     ).toBe(true);
+    const graphKey = JSON.stringify(issueKeys.graphAll(WS_ID));
+    expect(invalidate.mock.calls.filter(([filters]) => JSON.stringify(filters?.queryKey) === graphKey)).toHaveLength(1);
   });
 
   it("keeps plain field updates on the legacy endpoint", async () => {

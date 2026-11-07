@@ -710,6 +710,34 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
 });
 
 describe("useRealtimeSync — graph snapshot invalidation", () => {
+  function setupTaskGraphRefresh(getIssueGraph: (wsId: string, request: unknown, options: { signal: AbortSignal }) => Promise<IssueGraph>) {
+    vi.useFakeTimers();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    setApiInstance({ getIssueGraph } as unknown as ApiClient);
+    const ws = createMockWs();
+    const realtime = renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    const options = issueGraphOptions("ws-1", {
+      scope: { kind: "workspace" }, filters: {}, sort: { field: "position", direction: "asc" },
+    });
+    const before = IssueGraphSchema.parse(referenceGraph);
+    qc.setQueryData(options.queryKey, before);
+    const observer = new QueryObserver(qc, options);
+    const unsubscribe = observer.subscribe(() => {});
+    const onAny = vi.mocked(ws.onAny).mock.calls[0]![0];
+    return {
+      before,
+      observer,
+      emit: (type: string) => onAny({ type, payload: {} } as never),
+      unmount: realtime.unmount,
+      dispose: () => {
+        unsubscribe();
+        realtime.unmount();
+        qc.clear();
+        vi.useRealTimers();
+      },
+    };
+  }
+
   it.each(["task:completed", "reconnect"])("supersedes the first graph read on %s", async (event) => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const before = IssueGraphSchema.parse(referenceGraph);
@@ -792,6 +820,73 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
       unmount();
       qc.clear();
       vi.useRealTimers();
+    }
+  });
+
+  it("starts a graph refresh in the first fixed window during a continuous task stream", async () => {
+    const after = { ...IssueGraphSchema.parse(referenceGraph), snapshotId: "after-fixed-window" };
+    const getIssueGraph = vi.fn((_ws: string, _request: unknown, _options: { signal: AbortSignal }) => Promise.resolve(after));
+    const fixture = setupTaskGraphRefresh(getIssueGraph);
+    try {
+      fixture.emit("task:running");
+      await vi.advanceTimersByTimeAsync(50);
+      fixture.emit("task:started");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+      fixture.emit("task:completed");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("serializes a slow graph read and runs exactly one trailing refresh", async () => {
+    let finishSlow!: (value: IssueGraph) => void;
+    const signals: AbortSignal[] = [];
+    const after = { ...IssueGraphSchema.parse(referenceGraph), snapshotId: "after-trailing" };
+    const getIssueGraph = vi.fn((_ws: string, _request: unknown, { signal }: { signal: AbortSignal }) => {
+      signals.push(signal);
+      if (signals.length === 1) return new Promise<IssueGraph>((resolve) => { finishSlow = resolve; });
+      return Promise.resolve(after);
+    });
+    const fixture = setupTaskGraphRefresh(getIssueGraph);
+    try {
+      fixture.emit("task:running");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+      for (const type of ["task:completed", "task:started", "task:completed"]) {
+        fixture.emit(type);
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+      expect(signals[0]?.aborted).toBe(false);
+
+      finishSlow({ ...after, snapshotId: "slow-finished" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(getIssueGraph).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.observer.getCurrentResult().data?.snapshotId).toBe("after-trailing");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("does not schedule a trailing graph refresh after unmounting during a slow read", async () => {
+    let finishSlow!: (value: IssueGraph) => void;
+    const after = { ...IssueGraphSchema.parse(referenceGraph), snapshotId: "after-unmount" };
+    const getIssueGraph = vi.fn(() => new Promise<IssueGraph>((resolve) => { finishSlow = resolve; }));
+    const fixture = setupTaskGraphRefresh(getIssueGraph);
+    try {
+      fixture.emit("task:running");
+      await vi.advanceTimersByTimeAsync(100);
+      fixture.emit("task:completed");
+      fixture.unmount();
+      finishSlow(after);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getIssueGraph).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.dispose();
     }
   });
 });
