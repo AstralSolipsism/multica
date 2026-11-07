@@ -1320,7 +1320,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Populate description snippet when description matches
-		if sr.matchSource == "description" || descriptionContains(sr.issue.Description, q, terms) {
+		if (sr.matchSource == "description" && !titleDescOnly) || descriptionContains(sr.issue.Description, q, terms) {
 			if sr.issue.Description.Valid && sr.issue.Description.String != "" {
 				snippet := extractSnippet(sr.issue.Description.String, q)
 				sir.MatchedDescriptionSnippet = &snippet

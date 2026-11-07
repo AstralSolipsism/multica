@@ -273,6 +273,9 @@ func TestIssueSearch_TitleDescScopeNumberHitMatchSource(t *testing.T) {
 		if response.Issues[0].MatchSource != want {
 			t.Fatalf("scope %q match_source = %q, want %q", scope, response.Issues[0].MatchSource, want)
 		}
+		if scope != "" && response.Issues[0].MatchedDescriptionSnippet != nil {
+			t.Fatalf("title_desc number hit attached a description snippet: %q", *response.Issues[0].MatchedDescriptionSnippet)
+		}
 	}
 }
 
