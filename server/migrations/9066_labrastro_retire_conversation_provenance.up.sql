@@ -1,12 +1,43 @@
--- Retire Feishu external-conversation provenance (OL-1274). The function
--- below is upstream 579's capture_issue_wakeup, byte for byte, replacing the
--- 9009/9028 variants that also recorded conversation roots in receipts.
--- New tasks no longer derive a conversation root. The nullable
--- agent_task_queue.conversation_root_task_id column keeps its historical
--- values so an older binary still works against this schema during a rolling
--- deploy; it fails closed on a missing root. No code path uses the column now.
+-- Retire Feishu external conversations (OL-1274). Feishu chat now uses only
+-- upstream's member-binding flow, so no pre-upgrade external work may keep or
+-- regain execution rights:
+-- 1. Revoke every conversation grant first. A rolling deploy's older binary
+--    re-checks the live grant on ingress, enqueue, claim, every task-token
+--    request and replies, so it fails closed from this commit on. Its lock on
+--    the installation also orders an in-flight ingest before step 3.
+-- 2. Drop the root-stamping trigger. Its table lock waits for in-flight task
+--    writers, whose rows were stamped, so step 3 sees them.
+-- 3. Cancel unfinished external roots and descendants; terminal tasks are
+--    never retried, so nothing re-enters the queue.
+-- 4. Delete their task tokens; the token user is the runtime owner, which the
+--    removed policy used to replace with the grantor inside a sandbox.
+-- 5. Consume pending wakeup inputs captured from external work so they do not
+--    later dispatch as their rule creator.
+-- Audit data (task rows, roots, frozen delivery snapshots) is kept.
+UPDATE channel_installation
+SET config = config - 'conversation' - 'private_chat_candidates', updated_at = now()
+WHERE channel_type = 'feishu' AND (config ? 'conversation' OR config ? 'private_chat_candidates');
+
 DROP TRIGGER IF EXISTS trg_task_conversation_root ON agent_task_queue;
 DROP FUNCTION IF EXISTS stamp_task_conversation_root();
+
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
+    cancelled_by_type = 'system', cancelled_by_id = NULL, cancelled_by_name = NULL
+WHERE (conversation_root_task_id IS NOT NULL OR originator_source = 'channel_integration')
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred');
+
+DELETE FROM task_token t USING agent_task_queue q
+WHERE t.task_id = q.id
+  AND (q.conversation_root_task_id IS NOT NULL OR q.originator_source = 'channel_integration');
+
+UPDATE issue_wakeup_receipt SET processed_at = now()
+WHERE processed_at IS NULL AND payload->>'conversation_root_task_id' IS NOT NULL;
+
+-- The function below is upstream 579's capture_issue_wakeup, byte for byte,
+-- replacing the 9009/9028 variants that also recorded conversation roots.
+-- The nullable agent_task_queue.conversation_root_task_id column keeps its
+-- historical values for audit; no code path uses it.
 CREATE OR REPLACE FUNCTION capture_issue_wakeup(p_issue uuid, p_type text, p_key text, p_agent uuid, p_task uuid, p_payload jsonb)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE w issue_wakeup; owner_workspace uuid; evidence jsonb; violated_constraint text;

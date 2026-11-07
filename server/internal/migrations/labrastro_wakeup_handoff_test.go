@@ -55,8 +55,12 @@ func TestLabrastroWakeupCaptureMigrationOrders(t *testing.T) {
 				CREATE TABLE issue_status (workspace_id uuid, key text, category text);
 				CREATE TABLE agent_task_queue (
 					id uuid, conversation_root_task_id uuid, context jsonb,
-					originator_source text, retry_of_task_id uuid, delegated_from_task_id uuid
+					originator_source text, retry_of_task_id uuid, delegated_from_task_id uuid,
+					status text DEFAULT 'completed', completed_at timestamptz, prepare_lease_expires_at timestamptz,
+					cancelled_by_type text, cancelled_by_id uuid, cancelled_by_name text
 				);
+				CREATE TABLE channel_installation (id uuid, channel_type text, config jsonb, updated_at timestamptz);
+				CREATE TABLE task_token (task_id uuid, token_hash text);
 				CREATE TABLE issue_wakeup (
 					id uuid, workspace_id uuid, issue_id uuid, agent_id uuid,
 					enabled boolean, kind text, event_types text[], revision bigint,
@@ -77,7 +81,10 @@ func TestLabrastroWakeupCaptureMigrationOrders(t *testing.T) {
 				exec(readMigrationFile(t, file))
 			}
 			exec(readMigrationFile(t, "9028_labrastro_wakeup_skip_handed_to_agent.up.sql"))
+			retire := seedConversationRetirement(t, exec)
 			exec(readMigrationFile(t, "9066_labrastro_retire_conversation_provenance.up.sql"))
+			retire.assert(t, ctx, tx)
+			exec("DELETE FROM issue_wakeup_receipt")
 
 			const issue = "00000000-0000-0000-0000-000000000001"
 			const workspace = "00000000-0000-0000-0000-000000000002"
@@ -153,5 +160,91 @@ func TestLabrastroWakeupCaptureMigrationOrders(t *testing.T) {
 				t.Fatal("9066 up after down still stamps conversation roots")
 			}
 		})
+	}
+}
+
+// Pre-upgrade external work that 9066 must retire, beside first-party rows
+// that must not change.
+type conversationRetirement struct{ install string }
+
+func seedConversationRetirement(t *testing.T, exec func(string, ...any)) conversationRetirement {
+	t.Helper()
+	const install = "00000000-0000-0000-0000-0000000000a0"
+	exec(`INSERT INTO channel_installation VALUES ($1,'feishu',
+		'{"app_id":"cli_keep","conversation":{"id":"grant"},"private_chat_candidates":[{"id":"c"}]}',NULL)`, install)
+	for _, row := range []struct {
+		id, source, root, status string
+	}{
+		{"00000000-0000-0000-0000-0000000000a1", "channel_integration", "00000000-0000-0000-0000-0000000000a1", "running"},
+		{"00000000-0000-0000-0000-0000000000a2", "delegation", "00000000-0000-0000-0000-0000000000a1", "queued"},
+		{"00000000-0000-0000-0000-0000000000a3", "retry", "00000000-0000-0000-0000-0000000000a1", "deferred"},
+		{"00000000-0000-0000-0000-0000000000a4", "channel_integration", "", "dispatched"},
+		{"00000000-0000-0000-0000-0000000000a5", "channel_integration", "00000000-0000-0000-0000-0000000000a5", "completed"},
+		{"00000000-0000-0000-0000-0000000000a6", "direct_human", "", "queued"},
+	} {
+		exec(`INSERT INTO agent_task_queue (id, context, originator_source, conversation_root_task_id, status)
+			VALUES ($1,'{}',$2,NULLIF($3,'')::uuid,$4)`, row.id, row.source, row.root, row.status)
+		exec("INSERT INTO task_token VALUES ($1,$2)", row.id, "token-"+row.id)
+	}
+	const rule = "00000000-0000-0000-0000-0000000000b0"
+	exec(`INSERT INTO issue_wakeup (id, enabled, kind, event_types, revision) VALUES ($1,true,'event',ARRAY['comment.created'],1)`, rule)
+	exec(`INSERT INTO issue_wakeup_receipt (id, wakeup_id, revision, event_key, event_type, payload) VALUES
+		(gen_random_uuid(),$1,1,'external','comment.created','{"conversation_root_task_id":"00000000-0000-0000-0000-0000000000a1"}'),
+		(gen_random_uuid(),$1,1,'first-party','comment.created','{"conversation_root_task_id":null}')`, rule)
+	return conversationRetirement{install: install}
+}
+
+func (c conversationRetirement) assert(t *testing.T, ctx context.Context, tx pgx.Tx) {
+	t.Helper()
+	var config string
+	if err := tx.QueryRow(ctx, "SELECT config::text FROM channel_installation WHERE id=$1", c.install).Scan(&config); err != nil {
+		t.Fatal(err)
+	}
+	if config != `{"app_id": "cli_keep"}` {
+		t.Fatalf("installation config after retirement = %s, want only credentials", config)
+	}
+	rows, err := tx.Query(ctx, `SELECT q.id::text, q.status, q.cancelled_by_type IS NOT DISTINCT FROM 'system',
+		EXISTS (SELECT 1 FROM task_token t WHERE t.task_id=q.id)
+		FROM agent_task_queue q WHERE q.id::text LIKE '00000000-0000-0000-0000-0000000000a_' ORDER BY q.id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for rows.Next() {
+		var id, status string
+		var systemCancel, token bool
+		if err := rows.Scan(&id, &status, &systemCancel, &token); err != nil {
+			t.Fatal(err)
+		}
+		got[id[len(id)-2:]] = fmt.Sprintf("%s/system=%t/token=%t", status, systemCancel, token)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"a1": "cancelled/system=true/token=false", "a2": "cancelled/system=true/token=false",
+		"a3": "cancelled/system=true/token=false", "a4": "cancelled/system=true/token=false",
+		"a5": "completed/system=false/token=false", "a6": "queued/system=false/token=true",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("task retirement = %v, want %v", got, want)
+	}
+	var pending []string
+	rows, err = tx.Query(ctx, "SELECT event_key FROM issue_wakeup_receipt WHERE processed_at IS NULL AND wakeup_id='00000000-0000-0000-0000-0000000000b0' ORDER BY event_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			t.Fatal(err)
+		}
+		pending = append(pending, key)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(pending) != "[first-party]" {
+		t.Fatalf("pending wakeup inputs after retirement = %v, want only the first-party one", pending)
 	}
 }

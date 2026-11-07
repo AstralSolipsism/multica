@@ -1,5 +1,8 @@
 -- Restore 9028's capture function and 551's root-stamping trigger. Tasks
 -- created while 9066 was applied keep a NULL root; up never backfilled them.
+-- Destructive in up and not restored here: revoked conversation grants,
+-- cancelled external tasks, deleted task tokens and consumed wakeup inputs.
+-- A member must authorize conversations again with the matching binary.
 CREATE OR REPLACE FUNCTION stamp_task_conversation_root()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
