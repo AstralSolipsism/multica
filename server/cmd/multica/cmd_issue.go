@@ -2456,19 +2456,6 @@ func floatVal(m map[string]any, key string) float64 {
 // Comment commands
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
-
 	since, _ := cmd.Flags().GetString("since")
 	thread, _ := cmd.Flags().GetString("thread")
 	recent, _ := cmd.Flags().GetInt("recent")
@@ -2556,6 +2543,19 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if before != "" {
 		params.Set("before", before)
 		params.Set("before_id", beforeID)
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
 	}
 
 	path := "/api/issues/" + issueRef.ID + "/comments"
