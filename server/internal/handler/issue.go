@@ -959,13 +959,12 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	))
 
 	commentWhere := "c.workspace_id = " + wsParam
-	if projectParam != "" {
-		// EXISTS prunes comments from other projects before aggregating; repeating
-		// i.workspace_id lets PostgreSQL drive index lookups from issue.
+	if projectParam != "" || terminalStatusesParam != "" {
+		// Reuse the issue candidate filters before normalizing and aggregating
+		// comments. Terminal issues cannot contribute to an open-only search.
 		commentWhere += fmt.Sprintf(
-			" AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND i.workspace_id = %s AND i.project_id = %s)",
-			wsParam,
-			projectParam,
+			" AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND %s)",
+			issueWhere,
 		)
 	}
 
