@@ -21,6 +21,10 @@ runs:
         node --test scripts/check-branding.test.mjs
         node scripts/check-branding.mjs
 
+    - name: Test YSK runtime extensions
+      shell: bash
+      run: pnpm test:ysk
+
     # Keep existing knip findings advisory in either caller.
     - name: Check for dead code and phantom dependencies (knip)
       continue-on-error: true

@@ -90,8 +90,9 @@ export function lightBatch(text: string, ctx: YskContext, step: number, earlier:
 
   const seen = shownKeys(ctx, earlier)
   const tips: Tip[] = []
+  const remaining = Math.min(3, ctx.lightTipCount) - earlier.filter((tip) => tip.tag === 'you_should_know').length
   for (const candidate of Array.isArray(reply.tips) ? reply.tips : []) {
-    if (tips.length >= ctx.lightTipCount) break
+    if (tips.length >= remaining) break
     const tip = tipFrom(candidate, 'you_should_know', ctx.limits)
     if (tip === undefined || seen.has(tipKey(tip.line))) continue
     seen.add(tipKey(tip.line))
@@ -123,6 +124,7 @@ export type HeadsUpOutcome =
   | { kind: 'found'; batch: Batch }
 
 export function headsUpOutcome(text: string, ctx: YskContext, step: number, earlier: readonly Tip[] = []): HeadsUpOutcome {
+  if (earlier.some((tip) => tip.tag === 'heads_up')) return { kind: 'repeat' }
   const reply = replyObject(text)
   if (reply === undefined || !('heads_up' in reply)) return { kind: 'unreadable' }
   if (reply.heads_up === null) return { kind: 'none' }

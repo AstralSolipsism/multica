@@ -111,6 +111,8 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 		{"old daemon", `{"you_should_know_enabled":true}`, "claude", "", false},
 		{"substring", `{"you_should_know_enabled":true}`, "claude", "x-you-should-know-v1", false},
 		{"no issue", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, false},
+		{"omp enabled", `{"you_should_know_enabled":true}`, "omp", protocol.DaemonCapabilityYouShouldKnowV1, true},
+		{"omp off", `{"you_should_know_enabled":false}`, "omp", protocol.DaemonCapabilityYouShouldKnowV1, false},
 		{"enabled", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

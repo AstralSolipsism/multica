@@ -50,7 +50,15 @@ func (f *yskFixture) sendTipChat(t *testing.T, session, content string) SendChat
 }
 
 func TestLabrastroTipChatLifecycle(t *testing.T) {
+	for _, provider := range []string{"claude", "omp"} {
+		t.Run(provider, func(t *testing.T) { testLabrastroTipChatLifecycle(t, provider) })
+	}
+}
+
+func testLabrastroTipChatLifecycle(t *testing.T, provider string) {
+	t.Helper()
 	f := newTipChatFixture(t)
+	f.Exec(t, `UPDATE agent_runtime SET provider=$2 WHERE id=$1`, f.runtime, provider)
 	project := f.Project(t, "Tip project")
 	f.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, f.issue, project)
 	tip := f.tip(t, "one tip")

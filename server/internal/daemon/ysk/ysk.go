@@ -1,4 +1,4 @@
-// Package ysk installs the labrastro-ysk Claude Code mod for one task: the
+// Package ysk installs the labrastro-ysk Claude mod or OMP extension for one task: the
 // "You should know" tips of OL-187. The mod's TypeScript sources live in mod/
 // and ship inside the daemon binary.
 package ysk
@@ -26,6 +26,8 @@ const (
 	ContextFileEnv = "MULTICA_YSK_CONTEXT_FILE"
 	// PluginDirsEnv is Claude Code's list of plugin folders to load from disk.
 	PluginDirsEnv = "CLAUDE_CODE_PLUGIN_DIRS"
+	// OMPExtensionEnv is consumed by piBackend when launching OMP.
+	OMPExtensionEnv = "MULTICA_OMP_YSK_EXTENSION"
 
 	modRoot = "mod"
 )
@@ -49,30 +51,50 @@ func PathsFor(configRoot string) Paths {
 // Code at them. existingPluginDirs is the CLAUDE_CODE_PLUGIN_DIRS the child
 // would otherwise run with; its folders stay ahead of the mod's.
 func Install(configRoot string, context json.RawMessage, existingPluginDirs string) (map[string]string, error) {
+	paths, err := install(configRoot, context)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		PluginDirsEnv:  appendPathList(existingPluginDirs, paths.Plugin),
+		ContextFileEnv: paths.Context,
+	}, nil
+}
+
+// InstallOMP writes the same shared modules and context without enabling a Claude plugin.
+func InstallOMP(configRoot string, context json.RawMessage) (map[string]string, error) {
+	paths, err := install(configRoot, context)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		OMPExtensionEnv: filepath.Join(paths.Plugin, "hooks", "omp.ts"),
+		ContextFileEnv:  paths.Context,
+	}, nil
+}
+
+func install(configRoot string, context json.RawMessage) (Paths, error) {
 	if configRoot == "" {
-		return nil, errors.New("no task config directory")
+		return Paths{}, errors.New("no task config directory")
 	}
 	if !json.Valid(context) || !strings.HasPrefix(strings.TrimSpace(string(context)), "{") {
-		return nil, errors.New("you_should_know is not a JSON object")
+		return Paths{}, errors.New("you_should_know is not a JSON object")
 	}
 	paths := PathsFor(configRoot)
 	if err := writeMod(paths.Plugin); err != nil {
-		return nil, err
+		return Paths{}, err
 	}
 	if err := os.WriteFile(paths.Context, context, 0o600); err != nil {
-		return nil, fmt.Errorf("write you_should_know context: %w", err)
+		return Paths{}, fmt.Errorf("write you_should_know context: %w", err)
 	}
 	// Later runs can reuse the same environment. Only installation starts a
 	// new lifetime; toggling the workspace back on during a run never clears
 	// its marker. The poller registers its path after this reset, so an off
 	// signal already received for the new run will be written again.
 	if err := os.Remove(paths.Stop); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("clear you_should_know stop marker: %w", err)
+		return Paths{}, fmt.Errorf("clear you_should_know stop marker: %w", err)
 	}
-	return map[string]string{
-		PluginDirsEnv:  appendPathList(existingPluginDirs, paths.Plugin),
-		ContextFileEnv: paths.Context,
-	}, nil
+	return paths, nil
 }
 
 // writeMod replaces dir with the embedded mod, so a reused task directory

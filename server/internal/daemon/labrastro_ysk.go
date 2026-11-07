@@ -16,7 +16,7 @@ import (
 )
 
 // Labrastro "You should know" (OL-187): the daemon loads the labrastro-ysk mod
-// into a Claude task when the claim asks for it, and forwards the tips the mod
+// into a Claude or OMP task when the claim asks for it, and forwards the tips the mod
 // produces. Neither step may affect the task itself.
 
 const youShouldKnowReportTimeout = time.Minute
@@ -29,14 +29,14 @@ var (
 )
 
 // prepareYouShouldKnow installs the mod when the claim carries
-// `you_should_know` and the local Claude Code can run it, adding the variables
+// `you_should_know` and the provider can run it, adding the variables
 // that load it to agentEnv. It reports whether the mod is in; when it is not,
 // nothing was written and agentEnv is unchanged.
 func prepareYouShouldKnow(ctx context.Context, task Task, provider, cliVersion string, env *execenv.Environment, agentEnv map[string]string, logger *slog.Logger) bool {
-	if provider != "claude" || len(task.YouShouldKnow) == 0 || env == nil || env.MulticaConfigRoot == "" {
+	if (provider != "claude" && provider != "omp") || len(task.YouShouldKnow) == 0 || env == nil || env.MulticaConfigRoot == "" {
 		return false
 	}
-	if !agent.SupportsClaudeYouShouldKnow(cliVersion) {
+	if provider == "claude" && !agent.SupportsClaudeYouShouldKnow(cliVersion) {
 		logger.Info("you-should-know: Claude Code is too old for the tips mod; running without it",
 			"claude_version", cliVersion, "minimum", agent.ClaudeYouShouldKnowMinVersion)
 		return false
@@ -45,7 +45,13 @@ func prepareYouShouldKnow(ctx context.Context, task Task, provider, cliVersion s
 	if !ok {
 		existing = os.Getenv(ysk.PluginDirsEnv)
 	}
-	vars, err := ysk.Install(env.MulticaConfigRoot, task.YouShouldKnow, existing)
+	var vars map[string]string
+	var err error
+	if provider == "omp" {
+		vars, err = ysk.InstallOMP(env.MulticaConfigRoot, task.YouShouldKnow)
+	} else {
+		vars, err = ysk.Install(env.MulticaConfigRoot, task.YouShouldKnow, existing)
+	}
 	if err != nil {
 		logger.Warn("you-should-know: tips mod not installed; running without it", "error", err)
 		return false

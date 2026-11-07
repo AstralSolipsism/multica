@@ -22,6 +22,7 @@ for (const [name, files, selected] of [
   ["mobile UI", ["apps/mobile/app/index.tsx"], ["quality"]],
   ["migration only", ["server/migrations/999_example.up.sql"], ["backend", "sqlc", "e2e"]],
   ["agent process code", ["server/pkg/agent/cursor_background.go"], ["backend", "runtime", "e2e"]],
+  ["YSK extension", ["server/internal/daemon/ysk/mod/hooks/omp.ts"], ["backend", "runtime", "e2e", "quality"]],
   ["daemon dependency", ["server/internal/skill/service.go"], ["backend", "runtime", "e2e"]],
   ["native test compilation dependency", ["server/pkg/db/generated/issues.sql.go"], ["backend", "sqlc", "runtime", "e2e"]],
   ["Go dependencies", ["server/go.mod", "server/go.sum"], ["backend", "runtime", "e2e"]],

@@ -42,7 +42,7 @@ func labrastroYSKPreferenceDefaults(prefs map[string]string) map[string]string {
 // Called only by the shared claim builder, after its workspace/source gates.
 // taskToResponse and all human/agent-readable task projections leave this nil.
 func (h *Handler) labrastroYSKClaimContext(r *http.Request, task db.AgentTaskQueue, runtime db.AgentRuntime, settings []byte, identifier string) *protocol.YouShouldKnowContext {
-	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || runtime.Provider != "claude" ||
+	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || (runtime.Provider != "claude" && runtime.Provider != "omp") ||
 		!requestHasClientCapability(r, protocol.DaemonCapabilityYouShouldKnowV1) || !labrastroYSKEnabled(settings) {
 		return nil
 	}
