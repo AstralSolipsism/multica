@@ -63,6 +63,23 @@ describe("parseBaselineChapter", () => {
     expect(document.sections[1]?.title).toBe("订单状态");
   });
 
+  it("maps filtered body lines back to the original section source", () => {
+    const document = parseBaselineChapter("domain_rules", [
+      "### [Rule-1] Rules",
+      "",
+      "First paragraph.",
+      "",
+      "为什么：Keep this out of the body.",
+      "",
+      "",
+      "Second paragraph.",
+    ].join("\n"));
+    const section = document.sections[0]!;
+    expect(section.body).toBe("First paragraph.\n\nSecond paragraph.");
+    expect(section.sourceLineMap[0]).toBe(3);
+    expect(section.sourceLineMap[2]).toBe(8);
+  });
+
   it("keeps content before the first heading instead of dropping it", () => {
     const document = parseBaselineChapter("overview", "项目的自然语言简介。");
     expect(document.sections[0]).toMatchObject({ anchor: "intro", title: "", body: "项目的自然语言简介。" });
