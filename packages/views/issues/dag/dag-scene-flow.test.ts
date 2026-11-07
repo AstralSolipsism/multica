@@ -470,6 +470,8 @@ describe("dagSceneFlowNodes", () => {
     const line = nodes.find((node) => node.id === "issue:r1")!;
     expect(line.position).toEqual({ x: 10, y: 20 });
     expect(line.type).toBe("dagOverviewCard");
+    expect(line.ariaLabel).toBe("T-R1 Task r1");
+    expect(nodes.find((node) => node.id === DAG_INDEPENDENT_GROUP)?.ariaLabel).toBe(DAG_INDEPENDENT_GROUP);
   });
 
   it("nests line frames and tasks with relative positions and stage labels", () => {
@@ -514,13 +516,16 @@ describe("dagSceneFlowNodes", () => {
     expect(byId.get("r1")!.position).toEqual({ x: 0, y: 0 });
     expect(byId.get("sub")!.position).toEqual({ x: 340, y: 160 });
     expect(byId.get("sub")!.parentId).toBe("r1");
+    expect(byId.get("sub")!.ariaLabel).toBe("T-SUB Task sub");
     expect(byId.get("t1")!.position).toEqual({ x: 60, y: 150 });
     expect(byId.get("t1")!.parentId).toBe("r1");
+    expect(byId.get("t1")!.ariaLabel).toBe("T-T1 Task t1");
     expect((byId.get("t1")!.data as { showStage: boolean }).showStage).toBe(true);
     expect(byId.get("s1")!.position).toEqual({ x: 80, y: 80 });
     expect((byId.get("s1")!.data as { showStage: boolean }).showStage).toBe(false);
     const external = byId.get(JSON.stringify(["external", "upstream", "r2"]))!;
     expect(external.type).toBe("dagExternal");
+    expect(external.ariaLabel).toBe("T-R2 Task r2");
     expect((external.data as { side: string }).side).toBe("upstream");
   });
 
@@ -553,6 +558,7 @@ describe("dagSceneFlowNodes", () => {
       { geometry, statusColorOf: () => null, projectNames: new Map() },
     );
     expect(nodes.map((node) => node.id).sort()).toEqual(["solo-1", "solo-2"]);
+    expect(nodes.map((node) => node.ariaLabel)).toEqual(["T-SOLO-1 Task solo-1", "T-SOLO-2 Task solo-2"]);
     expect(nodes.every((node) => !node.parentId)).toBe(true);
   });
 });

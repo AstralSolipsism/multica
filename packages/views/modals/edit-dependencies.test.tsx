@@ -11,8 +11,10 @@ const mocks = vi.hoisted(() => ({
   openModal: vi.fn(),
   push: vi.fn(),
   refetch: vi.fn(),
+  searchRefetch: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
   searchResults: { issues: [] as unknown[] },
+  searchError: false,
   deps: {
     view: null as unknown,
     isLoading: false,
@@ -50,8 +52,10 @@ vi.mock("@tanstack/react-query", () => ({
     if (kind === "search") {
       return {
         data: mocks.searchResults,
-        isSuccess: true,
+        isSuccess: !mocks.searchError,
+        isError: mocks.searchError,
         isFetching: false,
+        refetch: mocks.searchRefetch,
       };
     }
     return {
@@ -104,8 +108,12 @@ vi.mock("../issues/components/dependency-prerequisites", () => ({
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => null }));
 
 vi.mock("@multica/ui/components/ui/dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Dialog: ({ children, onOpenChange }: { children: React.ReactNode; onOpenChange: (open: boolean) => void }) => (
+    <div><button type="button" onClick={() => onOpenChange(false)}>Dismiss</button>{children}</div>
+  ),
+  DialogContent: ({ children, showCloseButton }: { children: React.ReactNode; showCloseButton?: boolean }) => (
+    <div>{showCloseButton && <span>Close button</span>}{children}</div>
+  ),
   DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -226,7 +234,38 @@ describe("EditDependenciesModal", () => {
     mocks.save.mockResolvedValue({ id: "issue-1" });
     mocks.search.mockResolvedValue({ issues: [] });
     mocks.searchResults = { issues: [] };
+    mocks.searchError = false;
     mocks.refetch.mockResolvedValue({ data: mocks.deps.view });
+  });
+
+  it("shows a retryable search error instead of reporting no results", async () => {
+    mocks.searchError = true;
+    render(<EditDependenciesModal onClose={vi.fn()} data={{ issueId: "issue-1" }} />);
+    fireEvent.change(screen.getByPlaceholderText("Search issues"), { target: { value: "missing" } });
+
+    expect(await screen.findByText("load error")).toBeInTheDocument();
+    expect(screen.queryByText("No results")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(mocks.searchRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps dismiss controls from unmounting a pending save", async () => {
+    let rejectSave!: (error: Error) => void;
+    mocks.save.mockImplementation(() => new Promise((_, reject) => { rejectSave = reject; }));
+    const onClose = vi.fn();
+    render(<EditDependenciesModal onClose={onClose} data={{ issueId: "issue-1" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "remove-MUL-9" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByText("Close button")).not.toBeInTheDocument();
+
+    rejectSave(new ApiError("failed", 500, "Internal Server Error"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+    expect(screen.getByText("Close button")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("adds a searched issue and saves the full replacement set with the reviewed version", async () => {

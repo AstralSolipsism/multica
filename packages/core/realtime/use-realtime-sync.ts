@@ -1070,9 +1070,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (!wsId) return;
         qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.list(wsId) });
-        // Working-agent projections have their own bounded refresh below.
-        // Retained DAG snapshots also include task lifecycle state.
-        void invalidateIssueQueries(qc, wsId, "graph");
+        // Working-agent and DAG projections have bounded refreshers below.
         // 30d activity series shares the same lifecycle signal — any task
         // completion / failure shifts the histogram. (Dispatch alone
         // doesn't change a completed_at-anchored series, but invalidating
@@ -1143,6 +1141,25 @@ export function useRealtimeSync(
       }, 1_000));
     };
 
+    const taskGraphTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const taskGraphInFlight = new Set<string>();
+    const taskGraphDirty = new Set<string>();
+    const scheduleTaskGraphRefresh = (wsId: string) => {
+      taskGraphDirty.add(wsId);
+      if (taskGraphTimers.has(wsId) || taskGraphInFlight.has(wsId)) return;
+      taskGraphTimers.set(wsId, setTimeout(async () => {
+        taskGraphTimers.delete(wsId);
+        taskGraphDirty.delete(wsId);
+        taskGraphInFlight.add(wsId);
+        try {
+          await invalidateIssueQueries(qc, wsId, "graph");
+        } finally {
+          taskGraphInFlight.delete(wsId);
+          if (!disposed && taskGraphDirty.has(wsId)) scheduleTaskGraphRefresh(wsId);
+        }
+      }, 100));
+    };
+
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const debouncedRefresh = (prefix: string, fn: () => void) => {
       const existing = timers.get(prefix);
@@ -1211,6 +1228,10 @@ export function useRealtimeSync(
       if (prefix === "agent" || prefix === "task") {
         const wsId = getCurrentWsId();
         if (wsId) scheduleWorkingAgentRefresh(wsId);
+      }
+      if (prefix === "task" && msg.type !== "task:usage" && msg.type !== "task:coalesced") {
+        const wsId = getCurrentWsId();
+        if (wsId) scheduleTaskGraphRefresh(wsId);
       }
       if (msg.type === "skill:deleted") {
         const wsId = getCurrentWsId();
@@ -2070,6 +2091,9 @@ export function useRealtimeSync(
       workingAgentTimers.forEach(clearTimeout);
       workingAgentTimers.clear();
       workingAgentDirty.clear();
+      taskGraphTimers.forEach(clearTimeout);
+      taskGraphTimers.clear();
+      taskGraphDirty.clear();
     };
   }, [ws, qc, authStore, onToast]);
 

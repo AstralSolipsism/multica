@@ -413,7 +413,6 @@ export function useUpdateIssue() {
           qc.setQueryData(issueKeys.dependencies(wsId, serverIssue.id), dependencies);
         }
         void invalidateDependencyQueries(qc, wsId);
-        void invalidateIssueQueries(qc, wsId, "graph");
       }
       reconcileIssueFullSnapshotRevision(
         qc,

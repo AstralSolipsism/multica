@@ -39,8 +39,12 @@ describe("scene hook", () => {
     expect(f.runner.dispose).toHaveBeenCalledOnce();
     act(() => f.finish(0)); expect(view.result.current.geometry).toBeNull();
     act(() => view.result.current.cancel());
+    expect(view.result.current.pending).toBe(false);
+    expect(view.result.current.error).toBe("DAG layout cancelled");
     act(() => f.finish(1)); expect(view.result.current.geometry).toBeNull();
     act(() => view.result.current.retry());
+    expect(view.result.current.error).toBeNull();
+    expect(view.result.current.pending).toBe(true);
     act(() => f.finish(2)); expect(view.result.current.snapshot).toBe("two");
     view.unmount(); expect(f.runner.dispose).toHaveBeenCalledTimes(2);
   });
