@@ -400,6 +400,53 @@ func (q *Queries) LabrastroGetBaselineReviewByKey(ctx context.Context, arg Labra
 	return i, err
 }
 
+const labrastroListActiveAnnotationBatches = `-- name: LabrastroListActiveAnnotationBatches :many
+SELECT id, workspace_id, project_id, chapter, carrier_kind, issue_id, agent_id, created_by_type, created_by_id, created_at, closed_at, close_reason, closed_by_type, closed_by_id, closed_revision_id FROM project_baseline_annotation_batch
+WHERE workspace_id=$1 AND project_id=$2 AND chapter=$3 AND closed_at IS NULL
+`
+
+type LabrastroListActiveAnnotationBatchesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+	Chapter     string      `json:"chapter"`
+}
+
+func (q *Queries) LabrastroListActiveAnnotationBatches(ctx context.Context, arg LabrastroListActiveAnnotationBatchesParams) ([]ProjectBaselineAnnotationBatch, error) {
+	rows, err := q.db.Query(ctx, labrastroListActiveAnnotationBatches, arg.WorkspaceID, arg.ProjectID, arg.Chapter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectBaselineAnnotationBatch{}
+	for rows.Next() {
+		var i ProjectBaselineAnnotationBatch
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Chapter,
+			&i.CarrierKind,
+			&i.IssueID,
+			&i.AgentID,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.CreatedAt,
+			&i.ClosedAt,
+			&i.CloseReason,
+			&i.ClosedByType,
+			&i.ClosedByID,
+			&i.ClosedRevisionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labrastroListAnnotationBatches = `-- name: LabrastroListAnnotationBatches :many
 SELECT id, workspace_id, project_id, chapter, carrier_kind, issue_id, agent_id, created_by_type, created_by_id, created_at, closed_at, close_reason, closed_by_type, closed_by_id, closed_revision_id FROM project_baseline_annotation_batch WHERE workspace_id=$1 AND project_id=$2 ORDER BY created_at, id
 `
