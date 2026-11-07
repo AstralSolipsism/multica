@@ -88,6 +88,54 @@ func TestBuildOmpArgsRuntimeMapping(t *testing.T) {
 	}
 }
 
+func TestBuildOmpArgsOverlayWithoutAdvisor(t *testing.T) {
+	// Memory or auto-learn alone must inject the settings overlay via
+	// --config even when the advisor is off (review #1).
+	for name, runtime := range map[string]*OmpRuntimeOpts{
+		"memory only":    {MemoryBackend: "sharpshooter"},
+		"autolearn only": {AutolearnEnabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			args := buildOmpArgs("", dir, ExecOptions{OmpRuntime: runtime}, slog.Default())
+			overlay := filepath.Join(dir, ompSettingsOverlayName)
+			want := []string{"-p", "--mode", "json", "--session-dir", dir, "--config", overlay}
+			if !slices.Equal(args, want) {
+				t.Fatalf("args = %v, want %v", args, want)
+			}
+			if _, err := os.Stat(overlay); err != nil {
+				t.Fatalf("overlay missing: %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildOmpArgsGatesHiddenRoleModels(t *testing.T) {
+	// A stored slow/plan value whose toggle is off must not reach argv —
+	// the UI hides the selector and the quota extractor ignores it (review #3).
+	dir := t.TempDir()
+	args := buildOmpArgs("", dir, ExecOptions{OmpRuntime: &OmpRuntimeOpts{
+		SlowModel: "openai-codex/gpt-6-astra",
+		PlanModel: "anthropic/claude-opus-4.7",
+	}}, slog.Default())
+	want := []string{"-p", "--mode", "json", "--session-dir", dir}
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+
+	// Advisor on routes slow; a collaborative mode routes plan.
+	gated := buildOmpArgs("", dir, ExecOptions{OmpRuntime: &OmpRuntimeOpts{
+		SlowModel:      "openai-codex/gpt-6-astra",
+		AdvisorEnabled: true,
+		ExecutionMode:  "plan_yolo",
+		PlanModel:      "anthropic/claude-opus-4.7",
+		HandoffModel:   "zai/glm-5.3",
+	}}, slog.Default())
+	if !slices.Contains(gated, "--slow") || !slices.Contains(gated, "--plan") {
+		t.Fatalf("enabled roles missing their flags: %v", gated)
+	}
+}
+
 func TestBuildOmpArgsPrewalkAndResume(t *testing.T) {
 	resume := filepath.Join(t.TempDir(), "saved.jsonl")
 	opts := ExecOptions{OmpRuntime: &OmpRuntimeOpts{

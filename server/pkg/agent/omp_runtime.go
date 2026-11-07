@@ -108,9 +108,15 @@ type ompFlag struct {
 //
 //	--smol/--slow/--plan <id>   role model routing
 //	--advisor                   advisor second-opinion reviewer
-//	--config <overlay>          advisor review cadence (written per run)
+//	--config <overlay>          managed settings (written per run)
 //	--plan-yolo[---into <id>]   headless plan then handoff execution
 //	--prewalk[---into <id>]     todo-first then handoff execution
+//
+// --slow and --plan are gated the same way the quota extractor and the UI
+// gate the roles: a slow model only routes while the advisor is enabled, a
+// plan model only while a collaborative execution mode is active. Otherwise
+// a value hidden behind a switched-off toggle would still consume its
+// provider's quota (review #3).
 func (o *OmpRuntimeOpts) flags(advisorConfigPath string) []ompFlag {
 	if o == nil {
 		return nil
@@ -119,17 +125,17 @@ func (o *OmpRuntimeOpts) flags(advisorConfigPath string) []ompFlag {
 	if o.SmolModel != "" {
 		out = append(out, ompFlag{"--smol", o.SmolModel})
 	}
-	if o.SlowModel != "" {
+	if o.AdvisorEnabled && o.SlowModel != "" {
 		out = append(out, ompFlag{"--slow", o.SlowModel})
 	}
-	if o.PlanModel != "" {
+	if o.ExecutionMode != "" && o.PlanModel != "" {
 		out = append(out, ompFlag{"--plan", o.PlanModel})
 	}
 	if o.AdvisorEnabled {
 		out = append(out, ompFlag{"--advisor", ""})
-		if advisorConfigPath != "" {
-			out = append(out, ompFlag{"--config", advisorConfigPath})
-		}
+	}
+	if advisorConfigPath != "" {
+		out = append(out, ompFlag{"--config", advisorConfigPath})
 	}
 	switch o.ExecutionMode {
 	case "plan_yolo":
