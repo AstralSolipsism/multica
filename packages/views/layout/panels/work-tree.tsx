@@ -25,7 +25,7 @@ import { useSidebarKeptStore } from "@multica/core/issues/stores/sidebar-kept-st
 import { useSidebarTreeStore, type SidebarIssueSettings } from "@multica/core/issues/stores/sidebar-tree-store";
 import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { projectEngineeringOptions } from "@multica/core/projects/queries";
+import { projectEngineeringConfigOptions } from "@multica/core/projects/queries";
 import type { Issue, ListIssuesResponse, Project } from "@multica/core/types";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useT } from "../../i18n";
@@ -252,7 +252,7 @@ function ProjectTreeItem({
     : projectSidebarRequest(project.id, issueSettings, statusCatalog.statuses, userId);
   const prefetch = usePrefetch(wsId, source, params);
   const { data: engineeringOverview, isPending: engineeringPending } = useQuery({
-    ...projectEngineeringOptions(wsId, project.id),
+    ...projectEngineeringConfigOptions(wsId, project.id),
     enabled: open && menuOpen,
   });
   const { data: members = [], isPending: membersPending } = useQuery({

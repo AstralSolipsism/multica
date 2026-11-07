@@ -70,15 +70,3 @@ export type BaselineRevision = z.infer<typeof BaselineRevisionSchema>;
 export type BaselineDiff = z.infer<typeof BaselineDiffSchema>;
 export type BaselineDecision = z.infer<typeof BaselineDecisionSchema>;
 export type BaselineHistory = z.infer<typeof BaselineHistorySchema>;
-
-const BaselineHeadingSchema = z.object({ anchor: z.string().min(1), title: z.string(), level: z.number().int().min(1).max(3) });
-export const BaselineIndexSchema = z.object({ chapters: z.array(z.object({
-  chapter: BaselineChapterSchema, title: z.string().default(""), position: z.number().int().default(0),
-  revision_id: id.nullable(), revision_number: z.number().int().nonnegative(), status: z.string(), sections: z.array(BaselineHeadingSchema),
-}).transform((v) => ({ chapter: v.chapter, title: v.title, position: v.position, revisionId: v.revision_id, revisionNumber: v.revision_number, status: v.status, sections: v.sections }))) });
-export const BaselineSliceSchema = z.object({
-  sections: z.array(BaselineHeadingSchema.extend({ chapter: BaselineChapterSchema, content_markdown: z.string() }).transform((v) => ({ chapter: v.chapter, anchor: v.anchor, title: v.title, level: v.level, contentMarkdown: v.content_markdown }))),
-  referenced_sections: z.array(BaselineHeadingSchema.extend({ chapter: BaselineChapterSchema, definition: z.string(), why: z.string() })),
-}).transform((v) => ({ sections: v.sections, referencedSections: v.referenced_sections }));
-export type BaselineIndex = z.infer<typeof BaselineIndexSchema>;
-export type BaselineSlice = z.infer<typeof BaselineSliceSchema>;

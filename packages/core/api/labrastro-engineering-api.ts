@@ -2,31 +2,27 @@ import type { z } from "zod";
 import type { ApiClient } from "./client";
 import { clientFetch, installLabrastroApiMethods } from "./labrastro-api-helpers";
 import { parseWithFallback } from "./schema";
-import { BaselineIndexSchema, BaselineSliceSchema, BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, type BaselineChapter, type EngineeringStageSchema } from "./labrastro-engineering-schemas";
+import { BaselineDecisionSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema, type BaselineChapter, type EngineeringStageSchema } from "./labrastro-engineering-schemas";
+
+export interface BaselineHistoryOptions {
+  limit?: number;
+  before?: number;
+  /** false returns an empty contentMarkdown for list views that only need metadata and anchorsDiff. */
+  withContent?: boolean;
+}
 
 const headers = (workspaceId: string) => ({ "X-Workspace-ID": workspaceId, "X-Workspace-Slug": "" });
 const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}`;
 const labrastroEngineeringApi = {
-  async getProjectBaselineIndex(this: ApiClient, workspaceId: string, projectId: string, options: { chapter?: BaselineChapter; candidate?: boolean } = {}) {
-    const query = new URLSearchParams({ index: "true" });
-    if (options.chapter) query.set("chapter", options.chapter);
-    if (options.candidate) query.set("candidate", "true");
-    const endpoint = `${projectPath(projectId)}/baseline?${query}`;
-    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
-    return parseWithFallback<z.infer<typeof BaselineIndexSchema> | null>(raw, BaselineIndexSchema, null, { endpoint });
-  },
-  async getProjectBaselineSection(this: ApiClient, workspaceId: string, projectId: string, section: string, options: { chapter?: BaselineChapter; candidate?: boolean } = {}) {
-    const query = new URLSearchParams({ section });
-    if (options.chapter) query.set("chapter", options.chapter);
-    if (options.candidate) query.set("candidate", "true");
-    const endpoint = `${projectPath(projectId)}/baseline?${query}`;
-    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
-    return parseWithFallback<z.infer<typeof BaselineSliceSchema> | null>(raw, BaselineSliceSchema, null, { endpoint });
-  },
   async getProjectEngineering(this: ApiClient, workspaceId: string, projectId: string) {
     const endpoint = `${projectPath(projectId)}/engineering`;
     const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
     return parseWithFallback<z.infer<typeof EngineeringOverviewSchema> | null>(raw, EngineeringOverviewSchema, null, { endpoint });
+  },
+  async getProjectEngineeringConfig(this: ApiClient, workspaceId: string, projectId: string) {
+    const endpoint = `${projectPath(projectId)}/engineering?with_chapters=false`;
+    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
+    return parseWithFallback<z.infer<typeof EngineeringUpdatedSchema> | null>(raw, EngineeringUpdatedSchema, null, { endpoint });
   },
   async updateProjectEngineering(this: ApiClient, workspaceId: string, projectId: string, data: {
     enabled?: boolean; currentStage?: number; modeSummary?: string; deciderMemberIds?: string[]; stages?: z.input<typeof EngineeringStageSchema>[];
@@ -55,19 +51,14 @@ const labrastroEngineeringApi = {
     }) });
     return parseWithFallback<z.infer<typeof BaselineDecisionSchema> | null>(raw, BaselineDecisionSchema, null, { endpoint });
   },
-  async getProjectBaselineHistory(this: ApiClient, workspaceId: string, projectId: string, chapter: BaselineChapter, options: { limit?: number; before?: number } = {}) {
+  async getProjectBaselineHistory(this: ApiClient, workspaceId: string, projectId: string, chapter: BaselineChapter, options: BaselineHistoryOptions = {}) {
     const query = new URLSearchParams({ chapter });
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.before !== undefined) query.set("before", String(options.before));
+    if (options.withContent !== undefined) query.set("with_content", String(options.withContent));
     const endpoint = `${projectPath(projectId)}/baseline/revisions?${query}`;
     const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
     return parseWithFallback<z.infer<typeof BaselineHistorySchema> | null>(raw, BaselineHistorySchema, null, { endpoint });
-  },
-  async diffProjectBaselineHistory(this: ApiClient, workspaceId: string, projectId: string, chapter: BaselineChapter, from: number, to: number) {
-    const query = new URLSearchParams({ chapter, diff_from: String(from), diff_to: String(to) });
-    const endpoint = `${projectPath(projectId)}/baseline/revisions?${query}`;
-    const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
-    return parseWithFallback<z.infer<typeof BaselineDiffSchema> | null>(raw, BaselineDiffSchema, null, { endpoint });
   },
 };
 export type LabrastroEngineeringApi = typeof labrastroEngineeringApi;

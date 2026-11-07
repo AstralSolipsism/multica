@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
-import { BaselineChapterSchema, BaselineIndexSchema, BaselineSliceSchema, BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema } from "./labrastro-engineering-schemas";
+import { BaselineChapterSchema, BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema } from "./labrastro-engineering-schemas";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const diff = { chapter: "domain_rules", base_revision_number: 0, added: [], modified: [], removed: [], unchanged_count: 0, warnings: [] };
@@ -58,26 +58,15 @@ it("parses dynamic stages and defaults an omitted goal", () => {
   expect(parsed.engineering.stages).toEqual([{ stage: 9, title: "Release", goal: "" }]);
 });
 
-it("accepts module chapters throughout revisions and outlines, with legacy metadata defaults", () => {
+it("accepts module chapters throughout revisions, with legacy metadata defaults", () => {
   const chapter = "module:auth-engine";
   const adopted = { ...revision, chapter, anchors_diff: { ...diff, chapter } };
   const state = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id }, chapters: [{ chapter, title: "Authentication", position: 9, adopted, candidate: null }, { chapter: "overview", adopted: null, candidate: null }] });
   expect(state.chapters[0]).toMatchObject({ chapter, title: "Authentication", position: 9, adopted: { chapter } });
   expect(state.chapters[1]).toMatchObject({ title: "", position: 0 });
-  const index = BaselineIndexSchema.parse({ chapters: [{ chapter, revision_id: id, revision_number: 1, status: "adopted", sections: [{ anchor: "Auth", title: "Authentication", level: 2 }] }] });
-  expect(index.chapters[0]?.revisionId).toBe(id);
-  expect(index.chapters[0]).not.toHaveProperty("contentMarkdown");
-  const slice = BaselineSliceSchema.parse({ sections: [{ chapter, anchor: "Auth", title: "Authentication", level: 2, content_markdown: "## Authentication\n[[Identity]]" }], referenced_sections: [{ chapter: "domain_rules", anchor: "Identity", title: "Identity", level: 2, definition: "An account.", why: "Traceability." }] });
-  expect(slice.sections[0]?.contentMarkdown).toContain("[[Identity]]");
-  expect(slice.referencedSections[0]?.why).toBe("Traceability.");
 });
 
 it.each(["module:", "module:UPPER", "module:-a", "module:a/b", `module:${"a".repeat(64)}`, "module:a\n", "unknown"])("rejects malformed dynamic chapter %j", (chapter) => {
   expect(BaselineChapterSchema.safeParse(chapter).success).toBe(false);
 });
 
-it("rejects missing or malformed compact responses", () => {
-  expect(parseWithFallback({ chapters: [{ chapter: "module:billing", sections: null }] }, BaselineIndexSchema, null, { endpoint: "index test" })).toBeNull();
-  expect(parseWithFallback({ sections: [], referenced_sections: "bad" }, BaselineSliceSchema, null, { endpoint: "slice test" })).toBeNull();
-  expect(parseWithFallback({ sections: [{ chapter: "overview", title: "Bad", anchor: "Bad", level: 7, content_markdown: "bad" }], referenced_sections: [] }, BaselineSliceSchema, null, { endpoint: "slice test" })).toBeNull();
-});

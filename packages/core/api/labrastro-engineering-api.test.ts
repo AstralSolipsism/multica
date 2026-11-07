@@ -50,21 +50,40 @@ it("sends stages as a replacement array and omits unspecified fields", async () 
   ]);
 });
 
-it("sends local section proposals and server-side compact reads", async () => {
+it("sends local section proposals", async () => {
   const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({}))));
   vi.stubGlobal("fetch", fetcher);
   const api = new ApiClient("https://example.test");
   await api.proposeProjectBaseline("workspace", "project", { chapter: "module:billing", chapterTitle: "Billing", section: "Pay", contentMarkdown: "Updated", changeSummary: "Edit", baseRevisionId: null });
   await api.proposeProjectBaseline("workspace", "project", { chapter: "module:billing", section: "Pay", deleteSection: true, contentMarkdown: "", changeSummary: "Remove", baseRevisionId: "base" });
-  await api.getProjectBaselineIndex("workspace", "project");
-  await api.getProjectBaselineSection("workspace", "project", "A & B", { chapter: "module:billing", candidate: true });
   const bodies = fetcher.mock.calls.slice(0,2).map((call) => JSON.parse(call[1].body));
   expect(bodies[0]).toMatchObject({ chapter: "module:billing", chapter_title: "Billing", section: "Pay", content_markdown: "Updated", base_revision_id: null });
   expect(bodies[1]).toMatchObject({ section: "Pay", delete_section: true, content_markdown: "", base_revision_id: "base" });
-  expect(fetcher.mock.calls[2]?.[0]).toBe("https://example.test/api/projects/project/baseline?index=true");
-  const url = new URL(fetcher.mock.calls[3]?.[0]);
-  expect(url.searchParams.get("section")).toBe("A & B");
-  expect(url.searchParams.get("chapter")).toBe("module:billing");
-  expect(url.searchParams.get("candidate")).toBe("true");
-  expect(new Headers(fetcher.mock.calls[3]?.[1].headers).get("X-Workspace-ID")).toBe("workspace");
+  expect(new Headers(fetcher.mock.calls[1]?.[1].headers).get("X-Workspace-ID")).toBe("workspace");
+});
+
+it("reads the configuration and history summaries without chapter bodies", async () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const fetcher = vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(
+    url.includes("/engineering")
+      ? { engineering: { project_id: id, workspace_id: id, enabled: true } }
+      : { revisions: [], has_more: false, next_before: null },
+  ))));
+  vi.stubGlobal("fetch", fetcher);
+  const api = new ApiClient("https://example.test");
+
+  expect((await api.getProjectEngineeringConfig("workspace", "project"))?.engineering.enabled).toBe(true);
+  await api.getProjectBaselineHistory("workspace", "project", "module:billing", { limit: 10, withContent: false });
+  await api.getProjectBaselineHistory("workspace", "project", "overview", { before: 3 });
+
+  expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+    "https://example.test/api/projects/project/engineering?with_chapters=false",
+    "https://example.test/api/projects/project/baseline/revisions?chapter=module%3Abilling&limit=10&with_content=false",
+    "https://example.test/api/projects/project/baseline/revisions?chapter=overview&before=3",
+  ]);
+});
+
+it("returns null for a malformed configuration-only response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ engineering: { enabled: "yes" } }), { status: 200, headers: { "Content-Type": "application/json" } })));
+  expect(await new ApiClient("https://example.test").getProjectEngineeringConfig("workspace", "project")).toBeNull();
 });

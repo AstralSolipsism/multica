@@ -6,8 +6,8 @@ import type { ApiClient } from "../api/client";
 import {
   projectBaselineAnnotationBatchOptions,
   projectBaselineAnnotationBatchesOptions,
-  projectBaselineDiffOptions,
   projectBaselineHistoryOptions,
+  projectEngineeringConfigOptions,
   projectEngineeringDecisionIssuesOptions,
   projectEngineeringOptions,
   projectKeys,
@@ -34,33 +34,53 @@ describe("project engineering queries", () => {
     await expect(qc.fetchQuery(options)).resolves.toBeNull();
     expect(getProjectEngineering).toHaveBeenCalledWith("ws-1", "project-1");
     expect(options.queryKey).toEqual([
-      "projects", "ws-1", "detail", "project-1", "engineering", "overview",
+      "project-engineering", "ws-1", "project-1", "overview",
     ]);
   });
 
-  it("scopes baseline history and historical diffs by workspace, project, and chapter", async () => {
+  it("keeps engineering reads out of the project prefix that issue events invalidate", () => {
+    const keys = [
+      projectKeys.engineering("ws-1", "project-1"),
+      projectKeys.engineeringConfig("ws-1", "project-1"),
+      projectKeys.engineeringHistory("ws-1", "project-1", "overview", { limit: 10, withContent: false }),
+    ];
+    for (const key of keys) qc.setQueryData(key, null);
+    qc.setQueryData(projectKeys.detail("ws-1", "project-1"), null);
+
+    // Issue status/project changes and project events invalidate projects/{wsId}.
+    void qc.invalidateQueries({ queryKey: projectKeys.all("ws-1") });
+
+    expect(qc.getQueryState(projectKeys.detail("ws-1", "project-1"))?.isInvalidated).toBe(true);
+    for (const key of keys) expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+    void qc.invalidateQueries({ queryKey: projectKeys.engineeringRoot("ws-1") });
+    for (const key of keys) expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it("requests the configuration without chapter bodies", async () => {
+    const config = { engineering: { enabled: true } };
+    const getProjectEngineeringConfig = vi.fn().mockResolvedValue(config);
+    setApiInstance({ getProjectEngineeringConfig } as unknown as ApiClient);
+    const options = projectEngineeringConfigOptions("ws-1", "project-1");
+
+    await expect(qc.fetchQuery(options)).resolves.toBe(config);
+    expect(getProjectEngineeringConfig).toHaveBeenCalledWith("ws-1", "project-1");
+    expect(options.queryKey).toEqual(projectKeys.engineeringConfig("ws-1", "project-1"));
+  });
+
+  it("scopes baseline history by workspace, project, chapter and page shape", async () => {
     const history = { revisions: [], hasMore: false, nextBefore: null };
-    const diff = { chapter: "architecture", added: [], modified: [], removed: [] };
     const getProjectBaselineHistory = vi.fn().mockResolvedValue(history);
-    const diffProjectBaselineHistory = vi.fn().mockResolvedValue(diff);
-    setApiInstance({ getProjectBaselineHistory, diffProjectBaselineHistory } as unknown as ApiClient);
-    const historyOptions = projectBaselineHistoryOptions("ws-1", "project-1", "architecture", { limit: 25, before: 7 });
-    const diffOptions = projectBaselineDiffOptions("ws-1", "project-1", "architecture", 2, 5);
+    setApiInstance({ getProjectBaselineHistory } as unknown as ApiClient);
+    const historyOptions = projectBaselineHistoryOptions("ws-1", "project-1", "architecture", { limit: 25, before: 7, withContent: false });
 
     await expect(qc.fetchQuery(historyOptions)).resolves.toBe(history);
-    await expect(qc.fetchQuery(diffOptions)).resolves.toBe(diff);
     expect(getProjectBaselineHistory).toHaveBeenCalledWith(
-      "ws-1", "project-1", "architecture", { limit: 25, before: 7 },
+      "ws-1", "project-1", "architecture", { limit: 25, before: 7, withContent: false },
     );
-    expect(diffProjectBaselineHistory).toHaveBeenCalledWith("ws-1", "project-1", "architecture", 2, 5);
     expect(historyOptions.queryKey).toEqual([
       ...projectKeys.engineeringHistoryAll("ws-1", "project-1"),
       "architecture",
-      { limit: 25, before: 7 },
-    ]);
-    expect(diffOptions.queryKey).toEqual([
-      ...projectKeys.engineeringHistoryAll("ws-1", "project-1"),
-      "architecture", "diff", 2, 5,
+      { limit: 25, before: 7, withContent: false },
     ]);
   });
 

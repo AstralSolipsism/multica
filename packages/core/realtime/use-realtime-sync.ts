@@ -679,6 +679,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
     qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+    qc.invalidateQueries({ queryKey: projectKeys.engineeringRoot(wsId) });
     qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: autopilotKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.all(wsId) });
@@ -1498,6 +1499,7 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (wsId && project_id) {
         qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
+        qc.invalidateQueries({ queryKey: projectKeys.engineeringConfig(wsId, project_id) });
       }
     });
 
