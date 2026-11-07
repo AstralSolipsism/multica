@@ -30,8 +30,7 @@ interface SkillPickerListProps {
   onToggleMany?: (skills: SkillSummary[], selected: boolean) => void;
 
   /** Group skills into the workspace folder tree (OL-104). Folders prune to
-   *  the caller-provided skills; package candidates that were never imported
-   *  show as gray, unbindable rows. Flat list stays the default. */
+   *  the caller-provided skills. Flat list stays the default. */
   tree?: boolean;
 
   /** Show the search input at the top. Default true. */

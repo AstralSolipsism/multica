@@ -187,8 +187,6 @@
   },
   "picker": {
     "uncategorized": "미분류",
-    "not_imported": "가져오지 않음",
-    "not_imported_hint": "바인딩하기 전에 스킬 페이지에서 이 스킬을 가져오세요.",
     "toggle_folder": "\"{{name}}\" 전체 선택"
   }
 }
