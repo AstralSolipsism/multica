@@ -55,11 +55,12 @@ describe('shared exploration schedule', () => {
     for (const command of ['multica issue get x --output json', 'multica issue get x | head -20', 'multica issue comment list x', 'multica repo checkout x', 'pwd && ls', 'git status --short']) {
       expect(isExploration('bash', { command })).toBe(false)
     }
-    for (const command of ['rg schema server', 'sed -n 1,40p src/main.go', 'git diff main', 'go test ./...', 'multica issue get x && cat src/main.go']) {
+    for (const command of ['rg schema server', 'sed -n 1,40p src/main.go', 'git diff main', 'go test ./...', 'python3 -c \"import auth; print(auth.check())\"', 'multica issue get x && cat src/main.go']) {
       expect(isExploration('Bash', { command })).toBe(true)
     }
     expect(isExploration('read', { path: 'main.go' })).toBe(true)
     expect(isExploration('task', {})).toBe(false)
+    for (const path of ['AGENTS.md', '/task/CLAUDE.md', 'issue.md', 'C:\\task\\SKILL.md']) expect(isExploration('Read', { file_path: path })).toBe(false)
   })
 
   it('counts exploration rounds once and falls back at the eighth step', () => {

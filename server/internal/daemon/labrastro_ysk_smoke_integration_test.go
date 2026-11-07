@@ -86,10 +86,11 @@ func TestYouShouldKnowRealClaudeSmoke(t *testing.T) {
 		"1. Read issue.md with the Read tool.\n" +
 		"2. Read auth.py with the Read tool.\n" +
 		"3. Add a function send_sms_code(phone) to auth.py that enforces the 60-second limit with an in-memory dict and returns True when a code may be sent. Leave login_with_password as it is.\n" +
-		"4. Run `python3 -c 'import auth; print(auth.send_sms_code(\"13800000000\"), auth.send_sms_code(\"13800000000\"))'` with Bash.\n" +
-		"5. Run `printenv MULTICA_YSK_CONTEXT_FILE CLAUDE_CODE_PLUGIN_DIRS; echo exit=$?` with Bash.\n" +
-		"6. Run `sleep 40 && echo waited` with Bash.\n" +
-		"7. Reply with a two-sentence summary."
+		"4. Read the updated auth.py with the Read tool.\n" +
+		"5. Run `python3 -c 'import auth; print(auth.send_sms_code(\"13800000000\"), auth.send_sms_code(\"13800000000\"))'` with Bash.\n" +
+		"6. Run `printenv MULTICA_YSK_CONTEXT_FILE CLAUDE_CODE_PLUGIN_DIRS; echo exit=$?` with Bash.\n" +
+		"7. Run `sleep 40 && echo waited` with Bash.\n" +
+		"8. Reply with a two-sentence summary."
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	session, err := backend.Execute(ctx, prompt, agent.ExecOptions{

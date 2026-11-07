@@ -75,10 +75,14 @@ export class Schedule {
 
 /** Classify evidence gathering, not platform setup or task metadata reads. */
 export function isExploration(name: string, input: Record<string, unknown>): boolean {
-  if (/^(read|grep|glob|search|read_file)$/i.test(name)) return true
+  if (/^(read|read_file)$/i.test(name)) {
+    const path = input.file_path ?? input.path
+    return typeof path === 'string' && !/(?:^|[/\\])(?:AGENTS|CLAUDE|SKILL|issue)\.md$/i.test(path)
+  }
+  if (/^(grep|glob|search)$/i.test(name)) return true
   if (!/^(bash|shell|exec_command)$/i.test(name)) return false
   const command = input.command ?? input.cmd
   if (typeof command !== 'string') return false
   // Count a mixed shell command if it also reads source or diagnoses behavior.
-  return /(?:^|[;&\n])\s*(?:(?:rg|grep|cat|sed|head|tail|less)\b|git\s+(?:diff|show|log|blame)\b|(?:go|cargo)\s+(?:test|check|build)\b|(?:npm|pnpm|bun)\s+(?:run\s+)?(?:test|typecheck|lint)\b|(?:pytest|curl|ps)\b)/.test(command)
+  return /(?:^|[;&\n])\s*(?:(?:rg|grep|cat|sed|head|tail|less)\b|git\s+(?:diff|show|log|blame)\b|(?:go|cargo)\s+(?:test|check|build)\b|(?:npm|pnpm|bun)\s+(?:run\s+)?(?:test|typecheck|lint)\b|(?:python3?|node)\s+(?:-c|-e|-m)\b|(?:pytest|curl|ps)\b)/.test(command)
 }
