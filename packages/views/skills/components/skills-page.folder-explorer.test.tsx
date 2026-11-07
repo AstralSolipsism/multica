@@ -606,6 +606,26 @@ describe("SkillsPage flat view and tree fallback", () => {
     expect(controller.path).toBe("/acme/skills?view=compact");
   });
 
+  it("keeps the description beside the folder path in flat results", async () => {
+    mocks.skills = [
+      { ...makeSkill("placed", "placed-skill"), description: "Debug database locks" },
+      makeSkill("loose", "loose-skill"),
+    ];
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Expand Engineering" }));
+    await userEvent.click(screen.getByRole("button", { name: "Expand Frontend" }));
+    // Tree rows already show their folder, so only the description.
+    expect(screen.getByText("Debug database locks")).toBeTruthy();
+    expect(screen.queryByText("Engineering / Frontend")).toBeNull();
+
+    // A description-only match must still show why it matched.
+    await userEvent.type(screen.getByRole("textbox", { name: "Search skills" }), "database");
+    expect(await screen.findByText("Results from all folders")).toBeTruthy();
+    expect(screen.getByText("Debug database locks")).toBeTruthy();
+    expect(screen.getByText("Engineering / Frontend")).toBeTruthy();
+    expect(screen.queryByText("loose-skill")).toBeNull();
+  });
+
   it("searches skill rows across folders rather than filtering explorer rows", async () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Expand Engineering" }));

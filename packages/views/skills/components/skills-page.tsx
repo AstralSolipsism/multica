@@ -109,6 +109,8 @@ function NameCell({
 }) {
   const { t } = useT("skills");
   const { skill, canEdit } = row;
+  // Flat search/filter results add the folder path after the description
+  // instead of replacing it: search also matches descriptions.
   return (
     <CollectionNameCell
       icon={
@@ -128,7 +130,14 @@ function NameCell({
           </Tooltip>
         )
       }
-      description={pathHint ?? (skill.description || undefined)}
+      description={skill.description || undefined}
+      trailing={
+        pathHint ? (
+          <span title={pathHint} className="min-w-0 max-w-[40%] truncate text-faint-foreground">
+            {pathHint}
+          </span>
+        ) : undefined
+      }
     />
   );
 }
@@ -386,8 +395,8 @@ export default function SkillsPage() {
   // from this.
   const scopeRows = scope === "mine" ? mineRows : allRows;
 
-  // Matching skill rows: name search + filters, then sort. The explorer adds
-  // direct folders and package candidates around these rows.
+  // Matching skill rows: name/description search + filters, then sort. The
+  // explorer adds direct folders and package candidates around these rows.
   const rows = useMemo<SkillRow[]>(() => {
     const filtered = scopeRows.filter(
       (row) => matchesSkillSearch(row, search) && rowMatchesFilters(row, filters),
