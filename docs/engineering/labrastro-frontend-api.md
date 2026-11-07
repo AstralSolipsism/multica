@@ -13,7 +13,7 @@ All paths below are relative to `packages/core/api/` unless noted otherwise.
 | Module | Public methods / responsibility |
 | --- | --- |
 | `labrastro-message-delivery-api.ts` | 25 methods: automation route CRUD, enable/test, approvals/revocation, delivery list/detail/retry; personal/team catalog, route CRUD, enable/test, approvals/revocation and delivery list/detail/retry |
-| `labrastro-lark-api.ts` | 6 methods: `setLarkConversation`, target capabilities, chat pages, message anchors, private-chat candidates and confirmation |
+| `labrastro-lark-api.ts` | 3 methods: target capabilities, chat pages, message anchors (conversation grants and private-chat candidates were retired by OL-1274) |
 | `labrastro-dependency-api.ts` | 4 methods: issue graph, dependency read, compound create/update; also `dependencyErrorDetails` and its public type |
 | `labrastro-quota-api.ts` | `getGlmQuota` |
 | `labrastro-skill-api.ts` | The existing 16 skill/package/folder/placement methods |
@@ -63,9 +63,7 @@ for debugging; views select localized failure copy from the code.
 Malformed shapes or failed operation evidence emit `response_unconfirmed`.
 Every caller must supply its confirmation predicate explicitly.
 Message writes still require the returned route/delivery/approval ID;
-revocations still require `revoked === true`. Lark writes retain their
-schema-only confirmation contract: a validated `conversation: null` is a
-legitimate result, including revocation. There is no automatic write retry.
+revocations still require `revoked === true`. There is no automatic write retry.
 
 Other policies remain separate: delivery history retains its existing empty
 list/unknown-detail fallbacks; graph/dependency reads and skill responses
@@ -84,9 +82,7 @@ Field contract comments live on schema properties so inferred types preserve
 their editor documentation; type-level comments live on the inferred aliases.
 
 Views own localized failure copy. Lark discovery maps unreadable responses to
-the existing picker translation; private-chat and conversation authorization
-map unreadable/unconfirmed codes into the fork `lark` namespace in all five
-locales. The dependency editor uses `clientErrorMessage` with a localized
+the existing picker translation. The dependency editor uses `clientErrorMessage` with a localized
 fallback in the fork `dependencies` namespace. Issue creation, the batch toolbar
 and run confirmation explicitly map `response_unreadable` to their existing
 `create_issue.toast_failed`, `batch.update_failed` and `run_confirm.toast_failed`
@@ -99,22 +95,18 @@ coded error class. No upstream locale file is modified.
 
 | File | Retained hook and reason |
 | --- | --- |
-| `packages/core/api/client.ts` | Imports and calls the aggregate installer; imports/re-exports the unchanged `ApiError` identity and re-exports dependency error helpers. Only three upstream method bodies retain fork changes, listed below. |
+| `packages/core/api/client.ts` | Imports and calls the aggregate installer; imports/re-exports the unchanged `ApiError` identity and re-exports dependency error helpers. Only two upstream method bodies retain fork changes, listed below. |
 | `packages/core/api/client.ts` — `batchUpdateIssues` | Keeps the established public name and richer batch result type; parses authoritative totals and optional per-item dependency/dispatch diagnostics. |
 | `packages/core/api/client.ts` — `listRuntimes` | Keeps the public name and upstream workspace header logic; parses host metrics per row with the same shallow fallback. |
-| `packages/core/api/client.ts` — `listLarkInstallations` | Keeps the public name; preserves unreadable conversation grants and rejects malformed configuration responses. |
 | `packages/core/api/schemas.ts` | Re-exports message/quota/skill schemas. The pre-existing `IssueSchema.dispatch` and `SkillSchema.diagnostics` extensions and their imports remain: these fields extend upstream entities and are not standalone schemas. |
-| `packages/core/types/lark.ts` | Re-exports schema-inferred installation/list and fork discovery/conversation types; device-flow response interfaces remain unchanged. |
-| `packages/views/settings/components/lark-conversation-form.tsx` | Uses the fork `lark` copy for unconfirmed authorization responses; drafts and mutation ownership are unchanged. |
+| `packages/core/types/lark.ts` | Re-exports the fork discovery types; installation and device-flow interfaces match upstream. |
 | `packages/views/modals/create-issue.tsx` | Maps unreadable dependency-create responses to the existing localized failure copy while preserving the draft. |
 | `packages/views/issues/components/batch-action-toolbar.tsx` | Maps unreadable batch-update responses to the existing localized failure copy while preserving the selection. |
 | `packages/views/modals/run-confirm.tsx` | Maps unreadable batch-update responses to the existing localized failure copy and leaves the dialog open. |
 
-The three methods stay in place because upstream callers already use their
+The two methods stay in place because upstream callers already use their
 names. Renaming them would require sweeping callers and could leave some
 paths without boundary validation. They are never overwritten by installation.
-`setLarkConversation` is a new fork method relative to `2ea01ae4e` and moves
-with the other five Lark methods.
 
 The comparison command is:
 
@@ -130,7 +122,7 @@ hooks. Neither upstream file contains standalone fork method/schema blocks.
 ## Verification
 
 Canonical boundary matrices remain in the existing core suites beside the
-client, including message delivery/contracts, Lark discovery/conversations,
+client, including message delivery/contracts, Lark discovery,
 dependency/graph, quota/runtime and skill-package suites. The new helper suite
 covers collisions, descriptors, module import order and shared parser policy.
 Lark query tests cover retry preservation; views tests cover error localization
