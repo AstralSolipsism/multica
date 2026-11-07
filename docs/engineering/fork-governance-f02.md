@@ -82,7 +82,7 @@ F02 运行时代码边界为 **7 个文件（3 Go、4 TS）**，数据库迁移 
 | scope | 非 all/title_desc 提前报错；all 不发 | 仅 title_desc 特殊处理，未知值沿用 all，这是已发布的容错契约，未擅改成400 |
 | limit | list 1–100 越界报错；search 默认20，<=0 或 >50 截为50，JSON回显有效值；本次补帮助描述 | search 默认20/max50，list默认100/max100；非法/非正数回默认，超上限截断，保持历史行为 |
 | offset | list 拒负数；search 原先负数不发但回显负数，本次在 project 解析前拒绝 | 非法/负数回0，非负整数生效；open_only 列表无分页 |
-| include-closed | 默认 `false`（对齐上游，排除终态並触发终态评论剪枝）；传 `--include-closed` 时发送 `include_closed=true` | 只有字面 true 包含终态；否则批量展开 done/closed 类，含自定义及归档状态 |
+| include-closed | 默认 `false`（对齐上游，排除终态并触发终态评论剪枝）；传 `--include-closed` 时发送 `include_closed=true` | 只有字面 true 包含终态；否则批量展开 done/closed 类，含自定义及归档状态 |
 | list sort/direction | 白名单或 property:name/id；position 不接受 direction | Handler 支持更多 UI 排序字段；无效 sort 400，position 忽略 direction；CLI 子集不是遗漏接口 |
 | list status/priority | 字符串转交，未知过滤值可能为空；不是写入状态的校验路径 | UUID/actor 类型/日期/元数据/属性先校验；open_only 分支使用原生静态过滤子集 |
 
