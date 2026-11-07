@@ -5,9 +5,9 @@
 // breaker, local opt-out) degrades to a typed *FallbackError and never
 // blocks the caller beyond one timeout-bounded attempt per source.
 //
-// Credentials follow the MULTICA_ZENMUX_MANAGEMENT_API_KEY handling: they
-// are read from the environment only, travel exclusively in Authorization
-// headers, and never appear in logs, error strings, or reported structs.
+// Credentials are read from the environment only, travel exclusively in
+// Authorization headers, and never appear in logs, error strings, or
+// reported structs.
 package jev
 
 import (
@@ -77,8 +77,8 @@ type Source struct {
 }
 
 // SourceEnv carries the Jev credentials read by daemon config loading.
-// The key fields are secrets in the MULTICA_ZENMUX_MANAGEMENT_API_KEY
-// sense: environment-only, never logged, never serialized.
+// The key fields are secrets: environment-only, never logged, never
+// serialized.
 type SourceEnv struct {
 	OpenCodeAPIKey       string
 	DashScopeAPIKey      string
@@ -345,10 +345,21 @@ func New(opts Options) *Client {
 // whole call, including failed attempts on earlier sources; on any failure
 // it returns a *FallbackError and the caller proceeds with its default.
 func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
+	dec, latency, err := runSources(c, ctx, func(ctx context.Context, src Source) (Decision, FallbackReason, error) {
+		return c.trySource(ctx, src, req)
+	})
+	dec.LatencyMS = latency
+	return dec, err
+}
+
+// runSources shares source selection, cancellation and circuit-breaking across
+// effort decisions and task evaluations. Caller input never selects a source.
+func runSources[T any](c *Client, ctx context.Context, attempt func(context.Context, Source) (T, FallbackReason, error)) (T, int64, error) {
+	var zero T
 	started := c.now()
 	if c.disabled {
 		c.recordDisabled()
-		return Decision{}, &FallbackError{Reason: ReasonDisabled}
+		return zero, 0, &FallbackError{Reason: ReasonDisabled}
 	}
 
 	c.mu.Lock()
@@ -356,17 +367,17 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 	c.mu.Unlock()
 	if !allowed {
 		c.recordBreakerFallback()
-		return Decision{}, &FallbackError{Reason: ReasonBreaker}
+		return zero, 0, &FallbackError{Reason: ReasonBreaker}
 	}
 
 	var firstReason FallbackReason
 	var firstErr error
 	for i, src := range c.sources {
-		dec, reason, err := c.trySource(ctx, src, req)
+		dec, reason, err := attempt(ctx, src)
 		if err == nil {
-			dec.LatencyMS = c.now().Sub(started).Milliseconds()
-			c.recordSuccess(src.Name, dec.LatencyMS)
-			return dec, nil
+			latency := c.now().Sub(started).Milliseconds()
+			c.recordSuccess(src.Name, latency)
+			return dec, latency, nil
 		}
 		if i == 0 {
 			firstReason, firstErr = reason, err
@@ -383,14 +394,14 @@ func (c *Client) Decide(ctx context.Context, req Request) (Decision, error) {
 				c.brk.release()
 				c.mu.Unlock()
 			}
-			return Decision{}, &FallbackError{Reason: reason, Err: err}
+			return zero, 0, &FallbackError{Reason: reason, Err: err}
 		}
 	}
 	if len(c.sources) == 0 {
 		firstReason, firstErr = ReasonError, errors.New("no sources configured")
 	}
 	c.recordAllSourcesFailed()
-	return Decision{}, &FallbackError{Reason: firstReason, Err: firstErr}
+	return zero, 0, &FallbackError{Reason: firstReason, Err: firstErr}
 }
 
 // probeRequest is the fixed, business-content-free request Probe sends.
@@ -469,55 +480,13 @@ func (c *Client) Snapshot() Snapshot {
 // trySource performs one timeout-bounded attempt against one source. The
 // returned Decision carries no latency; Decide/Probe measure end-to-end.
 func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decision, FallbackReason, error) {
-	sctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
 	questions, err := req.MarshalQuestionsJSON()
 	if err != nil {
-		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode questions: %w", src.Name, err)
+		return Decision{}, ReasonInvalid, errors.New("encode questions")
 	}
-	body, err := json.Marshal(decideRequest{
-		Model:     src.Model,
-		State:     req.State,
-		Questions: questions,
-	})
+	raw, reason, err := c.callSource(ctx, src, req.State, questions)
 	if err != nil {
-		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: encode request: %w", src.Name, err)
-	}
-
-	hreq, err := http.NewRequestWithContext(sctx, http.MethodPost, src.BaseURL, bytes.NewReader(body))
-	if err != nil {
-		return Decision{}, ReasonError, fmt.Errorf("source %s: %w", src.Name, err)
-	}
-	// Plain JSON only — the OpenCode Zen gateway rejects Content-Encoding.
-	hreq.Header.Set("Content-Type", "application/json")
-	if src.BearerToken != "" {
-		hreq.Header.Set("Authorization", "Bearer "+src.BearerToken)
-	}
-
-	resp, err := c.hc.Do(hreq)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return Decision{}, ReasonTimeout, fmt.Errorf("source %s: %w", src.Name, err)
-		}
-		return Decision{}, ReasonError, fmt.Errorf("source %s: %w", src.Name, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return Decision{}, ReasonError, fmt.Errorf("source %s: http %d", src.Name, resp.StatusCode)
-	}
-
-	// Read once, capped at maxResponseBytes+1: the extra byte detects an
-	// oversized response without buffering it all.
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return Decision{}, ReasonTimeout, fmt.Errorf("source %s: read response: %w", src.Name, err)
-		}
-		return Decision{}, ReasonError, fmt.Errorf("source %s: read response: %w", src.Name, err)
-	}
-	if len(raw) > maxResponseBytes {
-		return Decision{}, ReasonInvalid, fmt.Errorf("source %s: response exceeds %d bytes", src.Name, maxResponseBytes)
+		return Decision{}, reason, err
 	}
 	// Unmarshal (unlike a streaming Decode) rejects trailing garbage and
 	// any second JSON value after the object.
@@ -545,6 +514,57 @@ func (c *Client) trySource(ctx context.Context, src Source, req Request) (Decisi
 		Probabilities: out.Answers.Effort.Probabilities,
 		Source:        src.Name,
 	}, "", nil
+}
+
+// callSource is the bounded System One transport. Only daemon configuration
+// supplies the endpoint, model and authorization header.
+func (c *Client) callSource(ctx context.Context, src Source, state any, questions json.RawMessage) ([]byte, FallbackReason, error) {
+	sctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	body, err := json.Marshal(decideRequest{
+		Model:     src.Model,
+		State:     state,
+		Questions: questions,
+	})
+	if err != nil {
+		return nil, ReasonInvalid, fmt.Errorf("source %s: encode request: %w", src.Name, err)
+	}
+
+	hreq, err := http.NewRequestWithContext(sctx, http.MethodPost, src.BaseURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, ReasonError, fmt.Errorf("source %s: %w", src.Name, err)
+	}
+	// Plain JSON only — the OpenCode Zen gateway rejects Content-Encoding.
+	hreq.Header.Set("Content-Type", "application/json")
+	if src.BearerToken != "" {
+		hreq.Header.Set("Authorization", "Bearer "+src.BearerToken)
+	}
+
+	resp, err := c.hc.Do(hreq)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, ReasonTimeout, fmt.Errorf("source %s: %w", src.Name, err)
+		}
+		return nil, ReasonError, fmt.Errorf("source %s: %w", src.Name, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, ReasonError, fmt.Errorf("source %s: http %d", src.Name, resp.StatusCode)
+	}
+
+	// Read once, capped at maxResponseBytes+1: the extra byte detects an
+	// oversized response without buffering it all.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, ReasonTimeout, fmt.Errorf("source %s: read response: %w", src.Name, err)
+		}
+		return nil, ReasonError, fmt.Errorf("source %s: read response: %w", src.Name, err)
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, ReasonInvalid, fmt.Errorf("source %s: response exceeds %d bytes", src.Name, maxResponseBytes)
+	}
+	return raw, "", nil
 }
 
 // setStatus records the status; caller holds c.mu. Since is the immutable

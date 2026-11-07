@@ -1,58 +1,41 @@
-import { useState, useEffect } from "react";
 import { cn } from "../../lib/utils";
 
-interface MulticaIconProps extends React.ComponentProps<"span"> {
-  /**
-   * If true, play a one-time entrance spin animation.
-   */
-  animate?: boolean;
-  /**
-   * If true, disable hover spin animation.
-   */
-  noSpin?: boolean;
-  /**
-   * If true, show a border around the icon.
-   */
-  bordered?: boolean;
-  /**
-   * Size of the bordered icon: "sm" (default), "md", "lg"
-   */
-  size?: "sm" | "md" | "lg";
+export type MulticaIconMode = "static" | "think" | "intro" | "launch";
+
+interface MulticaIconProps extends Omit<React.ComponentProps<"svg">, "mode"> {
+  mode?: MulticaIconMode;
+  shape?: "square" | "circle";
+  size?: number;
+  title?: string;
 }
 
-const borderedSizes = {
-  sm: { wrapper: "p-1.5", icon: "size-3.5" },
-  md: { wrapper: "p-2", icon: "size-4" },
-  lg: { wrapper: "p-2.5", icon: "size-5" },
-};
-
-/**
- * Paw-print icon matching the Labrastro logo (same geometry as
- * /favicon.svg's mark). Inline SVG with `fill: currentColor` so it adapts to
- * light/dark themes automatically.
- */
+/** Labrastro's retained paw geometry with the upstream icon call contract. */
 export function MulticaIcon({
+  mode = "static",
+  shape = "square",
+  size,
+  title,
   className,
-  animate = false,
-  noSpin = false,
-  bordered = false,
-  size = "sm",
+  style,
   ...props
 }: MulticaIconProps) {
-  const [entranceDone, setEntranceDone] = useState(!animate);
-
-  useEffect(() => {
-    if (!animate) return;
-    const timer = setTimeout(() => setEntranceDone(true), 600);
-    return () => clearTimeout(timer);
-  }, [animate]);
-
-  const mark = (
+  return (
     <svg
       viewBox="0 0 100 100"
-      className="block size-full"
       fill="currentColor"
-      aria-hidden="true"
+      role={title ? "img" : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+      className={cn(
+        "inline-block shrink-0",
+        size == null && "size-[1em]",
+        shape === "circle" && "rounded-full",
+        (mode === "think" || mode === "launch") && "animate-pulse",
+        mode === "intro" && "multica-pop",
+        className,
+      )}
+      style={{ ...(size != null && { width: size, height: size }), ...style }}
+      {...props}
     >
       <ellipse cx="18.5" cy="42" rx="10.5" ry="14" transform="rotate(-24 18.5 42)" />
       <ellipse cx="38.5" cy="27" rx="10.5" ry="14" transform="rotate(-8 38.5 27)" />
@@ -60,46 +43,5 @@ export function MulticaIcon({
       <ellipse cx="81.5" cy="42" rx="10.5" ry="14" transform="rotate(24 81.5 42)" />
       <ellipse cx="50" cy="70" rx="24" ry="19" />
     </svg>
-  );
-
-  if (bordered) {
-    const sizeConfig = borderedSizes[size];
-    return (
-      <span
-        className={cn(
-          "inline-flex items-center justify-center border border-border rounded-md",
-          sizeConfig.wrapper,
-          className
-        )}
-        aria-hidden="true"
-        {...props}
-      >
-        <span
-          className={cn(
-            "block",
-            sizeConfig.icon,
-            !entranceDone && "animate-entrance-spin",
-            entranceDone && !noSpin && "hover:animate-spin"
-          )}
-        >
-          {mark}
-        </span>
-      </span>
-    );
-  }
-
-  return (
-    <span
-      className={cn(
-        "inline-block size-[1em]",
-        !entranceDone && "animate-entrance-spin",
-        entranceDone && !noSpin && "hover:animate-spin",
-        className
-      )}
-      aria-hidden="true"
-      {...props}
-    >
-      {mark}
-    </span>
   );
 }

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { getCurrentSlug } from "@multica/core/platform";
-import { useRequiredWorkspaceSlug } from "@multica/core/paths";
+import { paths, useRequiredWorkspaceSlug } from "@multica/core/paths";
 import { useT } from "@multica/views/i18n";
 import { useOpenChatSession, type OpenChatSession } from "@multica/views/you-should-know";
-import { useTabStore } from "@/stores/tab-store";
+import { useNavigation } from "@multica/views/navigation";
+import { handOffToWorkspaceWindow } from "./workspace-windows";
 import type { ChatSessionHandoff } from "../../../shared/chat-session-handoff";
 
 /**
@@ -47,12 +48,13 @@ export function useMainWindowChatOpener(workspaceSlug: string): OpenChatSession 
 export function DesktopChatSessionBridge() {
   const slug = useRequiredWorkspaceSlug();
   const openChatSession = useOpenChatSession();
+  const navigation = useNavigation();
   // The opener changes with the active tab's location; keep the main-process
   // subscription stable across navigations.
-  const latest = useRef(openChatSession);
+  const latest = useRef({ openChatSession, navigation });
   useEffect(() => {
-    latest.current = openChatSession;
-  }, [openChatSession]);
+    latest.current = { openChatSession, navigation };
+  }, [openChatSession, navigation]);
   const waiting = useRef<{ handoff: ChatSessionHandoff; from: string | null } | null>(null);
 
   useEffect(() => {
@@ -62,11 +64,18 @@ export function DesktopChatSessionBridge() {
       const current = getCurrentSlug();
       if (handoff.workspaceSlug === current) {
         waiting.current = null;
-        latest.current(handoff.sessionId);
+        latest.current.openChatSession(handoff.sessionId);
+        return;
+      }
+      if (handOffToWorkspaceWindow(
+        handoff.workspaceSlug,
+        paths.workspace(handoff.workspaceSlug).chatSession(handoff.sessionId),
+      )) {
+        waiting.current = null;
         return;
       }
       waiting.current = { handoff, from: current };
-      useTabStore.getState().switchWorkspace(handoff.workspaceSlug);
+      latest.current.navigation.push(paths.workspace(handoff.workspaceSlug).issues());
     });
   }, []);
 

@@ -14,10 +14,10 @@ on:
         required: true
         type: string
   pull_request:
-    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*']
+    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*', 'scripts/local-images*']
   push:
     branches: [main]
-    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*']
+    paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*', 'scripts/local-images*']
 
 permissions:
   contents: read
@@ -55,7 +55,7 @@ jobs:
         with:
           go-version: '~1.27.3'
           cache-dependency-path: server/go.sum
-      - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs
+      - run: node --test scripts/check-release.test.mjs scripts/build-candidate-web.test.mjs scripts/local-images.test.mjs
       - name: Check Actions syntax
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -291,7 +291,11 @@ jobs:
           compression-level: 0
 
   images:
-    needs: prepare
+    # Packages images from the backend/web jobs' SHA-256-verified candidate
+    # archives instead of recompiling Go and Next.js just to discard the
+    # result. Web arm64 still builds from source (the web archive is
+    # linux/amd64 only). Still no image export, GHCR push or registry.
+    needs: [prepare, backend, web]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -299,8 +303,10 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-latest
+            from-archives: backend,web
           - arch: arm64
             runner: ubuntu-24.04-arm
+            from-archives: backend
     steps:
       - uses: actions/checkout@v6
         with:
@@ -309,9 +315,45 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-candidate
+      # v5 extracts a single named artifact directly into `path`, so give each
+      # bundle its own subdirectory matching the receipt layout candidate.py
+      # verifies. A missing bundle must fail, never `continue`.
+      - uses: actions/download-artifact@v5
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
+          path: dist/inputs/candidate-${{ github.run_id }}-${{ github.run_attempt }}-backend
+      - uses: actions/download-artifact@v5
+        if: matrix.from-archives == 'backend,web'
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
+          path: dist/inputs/candidate-${{ github.run_id }}-${{ github.run_attempt }}-web
+      - name: Restore candidate archives for packaging
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib, shutil
+          run_id, attempt = "${{ github.run_id }}", "${{ github.run_attempt }}"
+          tag, sha = os.environ["LABRASTRO_RELEASE_TAG"], os.environ["LABRASTRO_RELEASE_SHA"]
+          inputs = pathlib.Path("dist/inputs")
+          assets = pathlib.Path("dist/candidate") / tag / "assets"
+          assets.mkdir(parents=True, exist_ok=True)
+          restored = []
+          for job in ("backend", "web"):
+              source = inputs / f"candidate-{run_id}-{attempt}-{job}"
+              if not source.is_dir():
+                  continue
+              receipt = json.loads((source / "receipt.json").read_text())
+              assert receipt["result"] == "success", job
+              assert receipt["tag"] == tag and receipt["commit"] == sha, job
+              for path in source.iterdir():
+                  if path.name != "receipt.json" and path.suffix in (".gz", ".json"):
+                      shutil.copyfile(path, assets / path.name)
+                      restored.append(path.name)
+          assert restored, "no candidate archives restored from component bundles"
+          print("restored", sorted(restored))
+          EOF
       - run: python scripts/candidate.py start images-${{ matrix.arch }}
-      - name: Build and verify locally on the disposable native runner
-        run: node scripts/local-images.mjs --arch ${{ matrix.arch }}
+      - name: Package images from verified archives (web from source when no archive matches)
+        run: node scripts/local-images.mjs --arch ${{ matrix.arch }} --from-archives ${{ matrix.from-archives }}
       - run: python scripts/candidate.py seal images-${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:

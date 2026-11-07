@@ -192,6 +192,7 @@
     "reject": "退回修改",
     "adopt": "采用",
     "enable": "启用总览",
+    "open_baseline": "打开工程基线",
     "editChapter": "编辑本章",
     "initializeChapter": "初始化本章",
     "addModule": "新增功能模块章节",

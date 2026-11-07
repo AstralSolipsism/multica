@@ -72,6 +72,44 @@ export interface RuntimePlanQuotaWindow {
   group?: string | null;
 }
 
+/** Per-account status inside a gateway provider pool (OMP). */
+export type PlanQuotaAccountStatus =
+  | "ok"
+  | "warning"
+  | "exhausted"
+  | "reserve"
+  | "disabled"
+  | "unknown";
+
+/**
+ * One redacted account inside a provider pool. `label` is the reporter's
+ * masked identifier ("19*") — never an email; a snapshot whose labels carry
+ * identity strings is dropped by the sanitizer.
+ */
+export interface RuntimePlanQuotaAccount {
+  label: string;
+  status: PlanQuotaAccountStatus;
+  windows: RuntimePlanQuotaWindow[];
+  note: string | null;
+}
+
+/**
+ * One vendor's account pool inside a gateway runtime: every logged-in
+ * (redacted) account with its own windows, plus counts. Pool health is an
+ * OR across accounts: `status` stays "ok" while at least one account is
+ * usable; "limited" means every account is unavailable and `resumes_at`
+ * (unix seconds) is the earliest reset among them.
+ */
+export interface RuntimePlanQuotaAccountPool {
+  id: string;
+  total_accounts: number;
+  available_accounts: number;
+  disabled_accounts: number;
+  status: "ok" | "limited";
+  resumes_at: number | null;
+  accounts: RuntimePlanQuotaAccount[];
+}
+
 /**
  * A point-in-time snapshot of a runtime's plan quota (`observed_at` is unix
  * seconds). `status: "limited"` means the provider rate-limited / exhausted
@@ -85,6 +123,12 @@ export interface RuntimePlanQuota {
   windows: RuntimePlanQuotaWindow[];
   observed_at: number;
   source: string;
+  /**
+   * Multi-account provider pools for gateway runtimes (OMP): every vendor
+   * the gateway is logged into, each with its redacted account breakdown.
+   * Single-account providers omit it; older backends never send it.
+   */
+  account_pools?: RuntimePlanQuotaAccountPool[];
 }
 
 /**
@@ -170,6 +214,12 @@ export interface RuntimeDevice {
    * malformed. Older backends omit the field.
    */
   thinking_adapt?: RuntimeThinkingAdapt | null;
+  /**
+   * Runtime-wide cap on tasks running at once across every agent bound to
+   * this runtime (GitHub #9626). `null` means no runtime cap; each agent's
+   * own limit still applies. Older backends omit the field.
+   */
+  max_concurrent_tasks?: number | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
@@ -217,6 +267,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "muse",
   "devin",
   "zeroclaw",
+  "zcode",
 ] as const;
 
 export type RuntimeProtocolFamily =
@@ -553,6 +604,10 @@ export interface AgentTask {
  * instead. Unlike the aggregate rows there is no `uncosted_*` split here: a
  * `task_usage` row is priced or it isn't, so "uncosted" is just "all of them
  * when cost_usd_ticks is absent", which is what the estimator already assumes.
+ *
+ * `credits_micros` is the charge of a provider that bills in its own credits
+ * instead of exposing tokens (Qoder Cloud Agents), in millionths of a credit.
+ * It has no USD rate and is shown beside the cost, never folded into it.
  */
 export interface TaskUsage {
   provider?: string;
@@ -562,6 +617,7 @@ export interface TaskUsage {
   cache_read_tokens: number;
   cache_write_tokens: number;
   cost_usd_ticks?: number;
+  credits_micros?: number;
 }
 
 /**
@@ -986,6 +1042,32 @@ export interface SkillFile {
   content: string;
   created_at: string;
   updated_at: string;
+}
+
+/** How a skill reached a version. Unknown server values fall back to "update". */
+export type SkillVersionSource =
+  | "baseline"
+  | "create"
+  | "update"
+  | "import"
+  | "refresh"
+  | "restore";
+
+export interface SkillVersionSummary {
+  id: string;
+  skill_id: string;
+  version: number;
+  name: string;
+  source: SkillVersionSource;
+  restored_from_version: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface SkillVersion extends SkillVersionSummary {
+  description: string;
+  content: string;
+  files: { path: string; content: string }[];
 }
 
 export interface CreateSkillRequest {

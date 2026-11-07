@@ -120,7 +120,21 @@ func labrastroFindPackage(s labrastroPackageSnapshot, src *labrastroSkillSource)
 	return nil
 }
 func labrastroPreviewFingerprint(a labrastroSkillActor, s labrastroPackageSnapshot, src *labrastroSkillSource, candidates []LabrastroSkillCandidate) string {
-	return labrastroJSONHash([]any{uuidToString(a.ws), uuidToString(a.user), src.spec.owner, src.spec.repo, src.spec.ref, src.spec.skillDir, src.commit, candidates, s})
+	// Only membership identity and permission affect preview validity. New
+	// presentation fields such as pinned_at must not invalidate an import or
+	// change the established fingerprint format.
+	type memberIdentity struct {
+		ID          pgtype.UUID        `json:"id"`
+		WorkspaceID pgtype.UUID        `json:"workspace_id"`
+		UserID      pgtype.UUID        `json:"user_id"`
+		Role        string             `json:"role"`
+		CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	}
+	snapshot := struct {
+		labrastroPackageSnapshot
+		Member memberIdentity
+	}{s, memberIdentity{s.Member.ID, s.Member.WorkspaceID, s.Member.UserID, s.Member.Role, s.Member.CreatedAt}}
+	return labrastroJSONHash([]any{uuidToString(a.ws), uuidToString(a.user), src.spec.owner, src.spec.repo, src.spec.ref, src.spec.skillDir, src.commit, candidates, snapshot})
 }
 
 func labrastroResolveCandidates(a labrastroSkillActor, s labrastroPackageSnapshot, src *labrastroSkillSource, raw []LabrastroSkillCandidate, p *db.LabrastroSkillPackage) []LabrastroSkillCandidate {

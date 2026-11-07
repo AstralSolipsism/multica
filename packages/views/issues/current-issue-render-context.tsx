@@ -9,10 +9,12 @@ import {
 export type CurrentIssueRenderContextValue = Readonly<{
   id: string;
   identifier: string;
+  submitComment?: (content: string) => Promise<boolean>;
+  fillCommentDraft?: (content: string) => void;
 }>;
 
 /**
- * The issue identity that owns the content currently being rendered.
+ * The issue identity and optional comment actions for the rendered content.
  *
  * It intentionally defaults to null: content renderers are shared by issue
  * detail, inbox, chat, and other surfaces, and only an explicit issue-detail

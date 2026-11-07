@@ -331,8 +331,9 @@ test.describe("Issue dependencies (OL-44)", () => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await enterWorkspace(page, ctx);
     await page.goto(`/${ctx.workspaceSlug}/issues`);
-    await page.getByRole("button", { name: "Board", exact: true }).click();
-    await page.getByText("Graph", { exact: true }).click();
+    await page.getByRole("button", { name: "Display", exact: true }).click();
+    await page.getByRole("group", { name: "View", exact: true }).getByRole("button", { name: "Graph", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
     await openDagLine(page);
     const node = page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`);
@@ -392,26 +393,38 @@ test.describe("Issue dependencies (OL-44)", () => {
     ).toBeVisible();
   });
 
-  test("saved DAG at the view-bar overflow boundary reloads on the open line", async ({ page }) => {
+  test("saved DAG reloads on the open line across viewport changes", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await enterWorkspace(page, ctx);
     await page.goto(`/${ctx.workspaceSlug}/issues`);
-    await page.getByRole("button", { name: "Board", exact: true }).click();
-    await page.getByText("Graph", { exact: true }).click();
+    // A filter exposes the initial save action; every fixture issue is Todo.
+    await page.getByRole("button", { name: "Filter", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Status", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Todo" }).click();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Display", exact: true }).click();
+    await page.getByRole("group", { name: "View", exact: true }).getByRole("button", { name: "Graph", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(page.locator(".react-flow__node").first()).toBeVisible({ timeout: 30_000 });
     const viewIds: string[] = [];
     try {
-      // These label widths put the third saved view at the last fitting tab:
-      // the old fitCount/reserveTier effects oscillated between 5 and 6 tabs.
-      for (const name of ["OL45 saved DAG", "OL45 saved DAG", "OL45 saved DAG 1789114381162", "OL45 clean saved DAG 1789115242133"]) {
-        await page.getByRole("button", { name: "Views", exact: true }).click();
-        await page.getByText("New view", { exact: true }).click();
-        const dialog = page.getByRole("dialog");
-        await dialog.getByPlaceholder("e.g. Needs review").fill(name);
+      for (const [index, name] of ["OL45 saved DAG", "OL45 saved DAG", "OL45 saved DAG 1789114381162", "OL45 clean saved DAG 1789115242133"].entries()) {
+        if (index > 0) {
+          await page.getByRole("button", { name: "Show satisfied dependencies", exact: true }).click();
+          await page.getByRole("button", { name: "More save options", exact: true }).click();
+        }
         const response = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/issue-views");
-        await dialog.getByRole("button", { name: "Create view", exact: true }).click();
+        if (index === 0) {
+          await page.getByRole("button", { name: "Save as view", exact: true }).click();
+        } else {
+          await page.getByRole("menuitem", { name: /^Save as new view/ }).click();
+        }
         viewIds.push((await (await response).json()).id);
-        await expect(dialog).not.toBeVisible();
+        const rename = page.getByRole("textbox", { name: "Rename", exact: true });
+        await rename.fill(name);
+        await rename.press("Enter");
+        await expect(page.locator("h1").getByRole("button", { name, exact: true })).toBeVisible();
       }
       await page.goto(`/${ctx.workspaceSlug}/issues?view=${viewIds[2]}`);
       // The view holds one task line, so the overview may auto-enter it; the
@@ -423,15 +436,16 @@ test.describe("Issue dependencies (OL-44)", () => {
       await page.reload();
       await expect(crumb).toContainText("Dependency task line", { timeout: 30_000 });
       await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
-      await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
+      const activeView = page.locator("h1").getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true });
+      await expect(activeView).toBeVisible();
       for (const width of [1024, 680, 1440]) {
         await page.setViewportSize({ width, height: 1000 });
         // The entire toolbar is hidden at the mobile breakpoint; the graph
-        // and the open level must survive it and return with the same tab.
+        // and the open level must survive it and return with the same view.
         await expect(page.locator(`.react-flow__node[data-id="${ctx.issueC.id}"]`)).toBeVisible();
         if (width >= 1024) {
-          await expect(page.getByRole("button", { name: "OL45 saved DAG 1789114381162", exact: true })).toBeVisible();
-          await expect(page.getByRole("button", { name: "Graph", exact: true })).toBeVisible();
+          await expect(activeView).toBeVisible();
+          await expect(page.getByRole("button", { name: "Display", exact: true })).toBeVisible();
         }
       }
     } finally {

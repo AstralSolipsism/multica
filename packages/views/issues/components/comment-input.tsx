@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect, useMemo } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState, useEffect, useMemo } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -34,25 +34,35 @@ interface CommentInputProps {
   onEditAnnotation?: (id: string) => boolean;
 }
 
+export interface CommentInputRef {
+  getMarkdown: () => string | undefined;
+  /** Explicit replacement only; ordinary draft writes keep editor sync guards. */
+  adoptContent: (content: string) => void;
+}
+
 // A top-level comment belongs to no thread, so it takes a running turn by
 // default only when that turn has no thread of its own (an assignment run).
 function steerTopLevelByDefault(task: AgentTask): boolean {
   return !task.trigger_comment_id;
 }
 
-function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: CommentInputProps) {
+const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }, ref) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
+  useImperativeHandle(ref, () => ({
+    getMarkdown: () => editorRef.current?.getMarkdown(),
+    adoptContent: (content) => editorRef.current?.adoptContent(content),
+  }), []);
   // Sending mid-upload would strip the pending image's blob URL out of the
   // markdown and bind no attachment id — the comment posts without the file.
   const uploadGate = useUploadGate(editorRef);
   // Subscribe to the persisted draft so text written into it from outside
   // this composer shows up even while it is mounted.
-  // Quick actions in the `/` menu: picking one inserts the server-rendered
+  // Quick actions in the `/` menu: picking one inserts the cached
   // body so the user can edit before sending, instead of firing immediately.
-  const quickActionMenu = useQuickActionMenu(issueId);
+  const quickActionMenu = useQuickActionMenu();
   const draftKey = `new:${issueId}` as const;
   const [initialDraft] = useState(() =>
     useCommentDraftStore.getState().getDraft(draftKey),
@@ -167,7 +177,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
     },
     // A top-level comment ends a turn: the caret is dropped rather than kept,
     // so the composer stops reading as "still writing" once the comment is
-    // posted above it. Thread replies are the opposite — see ReplyInput.
+    // posted above it. Thread replies do the same — see ReplyInput.
     afterAccepted: () => (editorScrubbedRef.current ? "blur" : "none"),
     onSubmit: async (content) => {
       editorScrubbedRef.current = false;
@@ -355,6 +365,6 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation }: Comme
       {isDragOver && <FileDropOverlay />}
     </div>
   );
-}
+});
 
 export { CommentInput };

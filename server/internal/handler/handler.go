@@ -124,6 +124,9 @@ type Config struct {
 	CloudTimeout             time.Duration
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
+	// MaxPreviewSizeBytes bounds text-backed attachment previews independently
+	// of upload/download limits. Zero selects the default 2 MiB limit.
+	MaxPreviewSizeBytes int64
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments
@@ -385,6 +388,14 @@ type Handler struct {
 	// WecomCredentials unseals a wecom installation's smart-bot secret for the
 	// WebSocket subscribe frame. Nil disables the wecom integration.
 	WecomCredentials wecom.CredentialsResolver
+	// WecomInstall drives the scan-code install sessions (QR generate + poll).
+	// Nil unless MULTICA_WECOM_SECRET_KEY is set; Configured() is additionally
+	// false without a QR provider, in which case the endpoints return 503 but
+	// in-flight sessions still terminate cleanly.
+	WecomInstall *wecom.InstallService
+	// WecomInstallWorker drives those sessions. Built in cmd/server/router.go;
+	// main.go starts it as an independent worker.
+	WecomInstallWorker *wecom.InstallWorker
 	// WecomBindingTokens mints/redeems the user-binding tokens behind the
 	// "link your Multica account" prompt sent to first-time WeCom users
 	// (their aibot userid is a "T"-prefixed anonymized id with no relation
@@ -457,10 +468,13 @@ type Handler struct {
 	// Wired in cmd/server/router.go after New.
 	PRRefresh *ghsnapshot.Manager
 
-	// GlmQuota polls the Zhipu/GLM Coding Plan balance (account-level, shared
-	// by every GLM-backed runtime). Nil when GLM_QUOTA_API_KEY is unset.
-	GlmQuota *GlmQuotaMonitor
-	cfg      Config
+	cfg Config
+
+	// QuotaSourceBox encrypts user-registered subscription credentials at
+	// rest (OL-1205 scenario 3). Nil when MULTICA_QUOTA_SOURCE_SECRET_KEY is
+	// unset: write endpoints answer 503 and polling skips, existing rows
+	// stay readable (snapshot and status only, never the credential).
+	QuotaSourceBox *secretbox.Box
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -588,7 +602,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
 	}
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
-	h.GlmQuota = NewGlmQuotaMonitorFromEnv()
 	taskSvc.PRSnapshotsEnabled = h.PRRefresh.Enabled()
 
 	return h

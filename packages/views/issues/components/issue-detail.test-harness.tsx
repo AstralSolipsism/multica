@@ -21,6 +21,7 @@ import {
   mockRecordVisit,
   mockViewport,
   readonlyContentRenders,
+  renderedIssueContext,
   scrollIntoViewSpy,
   scrollToIndexSpy,
   TEST_RESOURCES,
@@ -38,6 +39,7 @@ import { issueStatusKeys } from "@multica/core/issue-statuses";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
 import { useCommentCollapseStore } from "@multica/core/issues/stores";
+import { useCurrentIssueRenderContext } from "../current-issue-render-context";
 
 vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => mockViewport.isMobile,
@@ -206,6 +208,7 @@ vi.mock("../../editor", async () => ({
   ),
   isPreviewable: () => false,
   ReadonlyContent: ({ content }: { content: string }) => {
+    renderedIssueContext.current = useCurrentIssueRenderContext();
     readonlyContentRenders.push(content);
     return <div data-testid="readonly-content">{content}</div>;
   },

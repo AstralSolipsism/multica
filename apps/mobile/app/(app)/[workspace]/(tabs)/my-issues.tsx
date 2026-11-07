@@ -188,9 +188,9 @@ export default function MyIssues() {
 
 /**
  * Outline icon button matching the pill height so the toolbar row reads as
- * one visual group. Mirrors web `IssuesHeader` / `MyIssuesHeader` filter
- * trigger (`packages/views/my-issues/components/my-issues-header.tsx:174`),
- * which is also `variant="outline"` + icon-sized — NOT the ghost-style we'd
+ * one visual group. Mirrors the web `IssueDisplayControls` filter trigger
+ * (`packages/views/issues/components/issues-header.tsx`), which is also
+ * `variant="outline"` + icon-sized — NOT the ghost-style we'd
  * get from <IconButton>. Square (`w-9`) with `px-0` to suppress the sm
  * default `px-3`.
  */
@@ -229,8 +229,7 @@ function FilterButton({
 }
 
 /**
- * Toolbar row mirroring web `MyIssuesHeader` / `IssuesHeader`
- * (`packages/views/my-issues/components/my-issues-header.tsx:138-163`):
+ * Toolbar row mirroring the web issue display controls:
  * left-aligned scope pill group + right-side Filter icon (red dot when
  * filters are active). Replaces the previous full-width segmented tabs +
  * Filter-in-title-bar split — keeps scope and the filter affordance in the

@@ -354,6 +354,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 	triggerWords := map[string]string{
 		"references/issues.md":             "issue",
 		"references/pull-requests.md":      "pr",
+		"references/sub-issues.md":         "sub-issue",
 		"references/issue-dependencies.md": "prerequisite",
 		"references/mentions.md":           "mention",
 		"references/agents.md":             "agent",
@@ -428,6 +429,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				// The router's whole job: name every domain and its file.
 				"references/issues.md",
 				"references/pull-requests.md",
+				"references/sub-issues.md",
 				"references/mentions.md",
 				"references/agents.md",
 				"references/squads.md",
@@ -509,14 +511,10 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			file: "references/issues.md",
 			want: []string{
 				"[pull-requests.md](pull-requests.md)",
-				"--status backlog",
-				// MUL-5442: the brief's Sub-issue Creation section is a
-				// one-line map pointing here. These anchors are the demoted
-				// playbook — if they leave, the brief pointer dangles.
-				"todo starts work now, backlog parks it",
-				"`--stage <N>`",
-				"wakes the parent assignee when a stage",
-				"multica issue status <child-id> todo",
+				// MUL-8441 moved the sub-issue playbook out. Daemons released
+				// before the move still point their brief here for it, so the
+				// signpost must name where it went.
+				"references/sub-issues.md",
 				// MUL-6966 phase 1 retired the metadata write discipline
 				// along with the brief section that pointed here. What the
 				// bans were protecting still needs a home, so the
@@ -571,6 +569,26 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Start from the trigger, not from memory",
 				"multica issue comment list <issue-id> --thread <trigger-comment-id>",
 				"multica issue comment add <issue-id> --parent <trigger-comment-id>",
+			},
+		},
+		{
+			file: "references/sub-issues.md",
+			want: []string{
+				// MUL-5442: the brief's Sub-issue Creation section is a
+				// one-line map pointing here. These anchors are the demoted
+				// playbook — if they leave, the brief pointer dangles.
+				"todo starts work now, backlog parks it",
+				"--status backlog",
+				"`--stage <N>`",
+				"wakes the parent assignee when a stage",
+				"multica issue status <child-id> todo",
+				// MUL-8441: the brief's split rule is the short form of this
+				// section; the child-side half depends on the [Parent issue]
+				// block the daemon renders.
+				"Before splitting: one issue, one PR",
+				"Slice by user-visible behavior, never by layer",
+				"A PR that is large to review is not a reason to split",
+				"`[Parent issue]` block",
 			},
 		},
 		{

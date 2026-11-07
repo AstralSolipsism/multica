@@ -26,6 +26,9 @@ const (
 const (
 	PlanQuotaSourceDaemon   = "daemon"
 	PlanQuotaSourceExternal = "external"
+	// PlanQuotaSourceSubscription marks snapshots written by the server-side
+	// subscription quota-source poller (OL-1205 scenario 3).
+	PlanQuotaSourceSubscription = "subscription"
 )
 
 // Validation bounds for RuntimePlanQuota. Server-side validation rejects
@@ -38,7 +41,8 @@ const (
 	// PlanQuotaMaxWindowName bounds window names ("primary", "secondary").
 	PlanQuotaMaxWindowName = 32
 	// PlanQuotaMaxGroupName bounds the optional quota-group label a window
-	// may carry (antigravity's "gemini" / "claude_gpt" pools).
+	// may carry (antigravity's "gemini" / "claude_gpt" pools, OMP's provider
+	// pool ids like "kimi-code").
 	PlanQuotaMaxGroupName = 32
 	// PlanQuotaMaxWindowMinutes is one year in minutes — a generous upper
 	// bound that still rejects nonsense values.
@@ -47,6 +51,34 @@ const (
 	// over-100 percentages when a window is oversubscribed, and clamping
 	// would hide the overshoot.
 	PlanQuotaMaxUsedPercent = 10000
+)
+
+// Bounds for the multi-account provider pools (OMP). The per-account window
+// lists each stay under PlanQuotaMaxWindows; the pools carry the multi-account
+// structure the flat window list cannot.
+const (
+	// PlanQuotaMaxAccountPools caps the provider pool list.
+	PlanQuotaMaxAccountPools = 16
+	// PlanQuotaMaxAccountsPerPool caps the account list inside one pool.
+	PlanQuotaMaxAccountsPerPool = 32
+	// PlanQuotaMaxAccountLabel bounds the redacted account label.
+	PlanQuotaMaxAccountLabel = 64
+	// PlanQuotaMaxAccountNote bounds the per-account note (e.g. the disabled
+	// credential's cause).
+	PlanQuotaMaxAccountNote = 128
+)
+
+// Per-account status values inside a provider pool. "reserve" marks an
+// account inside its Usage Reserve (omp policy.state "inside-reserve"):
+// OMP keeps the remainder reserved and stops routing to it, so it is NOT
+// usable.
+const (
+	PlanQuotaAccountOK        = "ok"
+	PlanQuotaAccountWarning   = "warning"
+	PlanQuotaAccountExhausted = "exhausted"
+	PlanQuotaAccountReserve   = "reserve"
+	PlanQuotaAccountDisabled  = "disabled"
+	PlanQuotaAccountUnknown   = "unknown"
 )
 
 // RuntimePlanQuotaWindow describes one provider rate-limit window. Every
@@ -82,6 +114,55 @@ type RuntimePlanQuota struct {
 	// daemon and external reporters write the same row (newer wins).
 	ObservedAt int64  `json:"observed_at"`
 	Source     string `json:"source"`
+	// AccountPools carries the multi-provider, multi-account structure of
+	// gateways that pool several vendor subscriptions behind one runtime
+	// (OMP). Optional: single-account providers omit it and keep using
+	// Windows; a snapshot with pools may still carry a top-level Windows
+	// summary. Pool account labels are redacted by the reporter (--redact);
+	// the validator rejects labels that look like plaintext emails.
+	AccountPools []RuntimePlanQuotaAccountPool `json:"account_pools,omitempty"`
+}
+
+// RuntimePlanQuotaAccountPool is one vendor's account pool inside a gateway
+// runtime: every logged-in (redacted) account with its own windows, plus
+// counts derived from the pool. Pool health is an OR across accounts — see
+// the daemon-side collector; only a pool whose accounts are ALL unavailable
+// is Exhausted, with ResumesAt = the earliest reset among its accounts.
+type RuntimePlanQuotaAccountPool struct {
+	// ID is the vendor id as the gateway reports it ("kimi-code",
+	// "anthropic", "openai-codex", "zai"). Bounded to PlanQuotaMaxGroupName.
+	ID string `json:"id"`
+	// TotalAccounts / AvailableAccounts / DisabledAccounts describe the
+	// pool: how many accounts are logged in, currently usable, and needing
+	// re-login. Required: 0 total fails validation.
+	TotalAccounts     int `json:"total_accounts"`
+	AvailableAccounts int `json:"available_accounts"`
+	DisabledAccounts  int `json:"disabled_accounts"`
+	// Status is the OR-ed pool status: "ok" while at least one account is
+	// usable, "limited" only when every account is unavailable.
+	Status string `json:"status"`
+	// ResumesAt is unix seconds; when the whole pool is down, the earliest
+	// resets_at among its accounts, nil when unknown or not exhausted.
+	ResumesAt *int64 `json:"resumes_at,omitempty"`
+	// Accounts are the pool's redacted account entries. The list is capped
+	// at PlanQuotaMaxAccountsPerPool.
+	Accounts []RuntimePlanQuotaAccount `json:"accounts"`
+}
+
+// RuntimePlanQuotaAccount is one (redacted) account inside a pool. Label is
+// the reporter's masked identifier ("19*", "ca*9*") — never an email; the
+// validator rejects labels containing "@".
+type RuntimePlanQuotaAccount struct {
+	// Label is the redacted account identifier.
+	Label string `json:"label"`
+	// Status: ok | warning | exhausted | reserve | disabled | unknown.
+	Status string `json:"status"`
+	// Windows are this account's rate-limit windows (same shape as the
+	// top-level list, ≤ PlanQuotaMaxWindows entries).
+	Windows []RuntimePlanQuotaWindow `json:"windows,omitempty"`
+	// Note is an optional short per-account note (e.g. why a credential is
+	// disabled). Bounded; the validator rejects "@" inside it.
+	Note string `json:"note,omitempty"`
 }
 
 // HostMetrics is one machine-level resource sample from the daemon host.

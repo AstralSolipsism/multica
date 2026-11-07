@@ -620,6 +620,7 @@ func main() {
 	registerSubscriberListeners(bus, pool)
 	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
+	registerIssueUnreadListeners(bus, queries)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -797,11 +798,6 @@ func main() {
 	// No-op when unconfigured (no App private key).
 	h.PRRefresh.Start(sweepCtx)
 
-	// GLM Coding Plan balance poller; no-op when unconfigured (no API key).
-	if h.GlmQuota != nil {
-		h.GlmQuota.Start(sweepCtx)
-	}
-
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is channel-agnostic,
 	// not Lark-specific, but remains nil when lease startup validation fails
@@ -823,6 +819,14 @@ func main() {
 	if h.ChannelMediaReconciler != nil {
 		h.ChannelMediaReconciler.Metrics = channelMediaMetrics
 		go h.ChannelMediaReconciler.Run(sweepCtx)
+	}
+
+	// WeCom scan-code install worker: drives QR generate + poll out of band, so
+	// no HTTP request waits on WeCom. Started even when the scan flow is
+	// unconfigured, so any session already in flight reaches a terminal state
+	// instead of spinning forever in the admin's dialog.
+	if h.WecomInstallWorker != nil {
+		go h.WecomInstallWorker.Run(sweepCtx)
 	}
 
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
@@ -865,6 +869,11 @@ func main() {
 	// machinery. The job is inert while plugins_v1 is disabled.
 	if err := schedulerMgr.Register(scheduler.PluginHookScheduleDispatchJob(queries, h.PluginService)); err != nil {
 		slog.Warn("scheduler: failed to register plugin_hook_schedule_dispatch job", "error", err)
+	}
+	// User-registered subscription quota sources (OL-1205 scenario 3): the
+	// handler owns the decryption box and drivers; the job only owns cadence.
+	if err := schedulerMgr.Register(scheduler.QuotaSourcePollJob(queries, h)); err != nil {
+		slog.Warn("scheduler: failed to register quota_source_poll job", "error", err)
 	}
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)

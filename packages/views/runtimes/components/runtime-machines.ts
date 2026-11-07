@@ -1,6 +1,9 @@
 import {
   deriveRuntimeHealth,
+  evaluatePlanQuotaPools,
+  isQuotaCollectionInterrupted,
   isSystemStatsStale,
+  parsePlanQuota,
   pickMachineSystemStats,
   planQuotaState,
   type QuotaTone,
@@ -26,6 +29,8 @@ export interface MachineQuotaChip {
   provider: string;
   /** The pool this pill summarizes; null when it covers the whole runtime. */
   group: string | null;
+  /** OMP provider pool id; absent for single-account quota chips. */
+  accountPoolId?: string;
   remainingPercent: number | null;
   limited: boolean;
   tone: QuotaTone;
@@ -218,6 +223,11 @@ export function filterRuntimeMachines(
   });
 }
 
+/** Number of machines `buildRuntimeMachines` would group these runtimes into. */
+export function countRuntimeMachines(runtimes: AgentRuntime[]): number {
+  return new Set(runtimes.map(runtimeMachineId)).size;
+}
+
 export function runtimeMachineCounts(machines: RuntimeMachine[]): {
   all: number;
   online: number;
@@ -333,6 +343,27 @@ function machineQuotaChips(
 ): MachineQuotaChip[] {
   const chips: MachineQuotaChip[] = [];
   for (const runtime of runtimes) {
+    const quota = runtime.provider === "omp" || runtime.plan_quota?.provider === "omp"
+      ? parsePlanQuota(runtime.plan_quota)
+      : null;
+    const accountPools = quota ? evaluatePlanQuotaPools(quota, now) : null;
+    if (quota && accountPools) {
+      for (const pool of accountPools.pools) {
+        const primary = pool.windows.find((window) => window.windowMinutes === 300) ?? pool.windows[0];
+        chips.push({
+          key: `${runtime.id}:account-pool:${pool.id}`,
+          runtimeId: runtime.id,
+          provider: quota.provider || runtime.provider,
+          group: null,
+          accountPoolId: pool.id,
+          remainingPercent: primary?.remainingPercent ?? null,
+          limited: pool.exhausted,
+          tone: pool.tone,
+          interrupted: isQuotaCollectionInterrupted(quota, now),
+        });
+      }
+      continue;
+    }
     const state = planQuotaState(runtime.plan_quota, now);
     if (!state) continue;
     const provider = state.provider || runtime.provider;

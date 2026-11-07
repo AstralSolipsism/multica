@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { agentFolderKeys } from "@multica/core/agents/folder-queries";
@@ -67,19 +67,22 @@ describe("squad changes invalidate the agent directory", () => {
       await user.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(mocks.update).toHaveBeenCalledWith("sq-1", { name: "Research" }));
     } else if (change === "leader") {
-      await user.click(screen.getByRole("button", { name: "Make squad leader" }));
+      fireEvent.click(screen.getByRole("button", { name: "Actions for Candidate" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Make squad leader" }));
       await waitFor(() => expect(mocks.update).toHaveBeenCalledWith("sq-1", { leader_id: "candidate" }));
     } else if (change === "add member") {
-      await user.click(screen.getByRole("button", { name: "Add Member" }));
+      await user.click(screen.getByRole("button", { name: "Add member" }));
       await user.click(screen.getByRole("button", { name: "Select a member or agent" }));
       await user.click(screen.getByText("New member"));
       await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add" }));
       await waitFor(() => expect(mocks.add).toHaveBeenCalledWith("sq-1", { member_type: "agent", member_id: "new-member", role: undefined }));
     } else if (change === "remove member") {
-      await user.click(screen.getByRole("button", { name: "Remove from squad" }));
+      fireEvent.click(screen.getByRole("button", { name: "Actions for Candidate" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from squad" }));
       await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("sq-1", { member_type: "agent", member_id: "candidate" }));
     } else {
-      await user.click(screen.getByRole("button", { name: "Archive" }));
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
       await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive" }));
       await waitFor(() => expect(mocks.archive).toHaveBeenCalledWith("sq-1"));
     }

@@ -11,32 +11,25 @@ import {
   Folder,
   FolderInput,
   FolderPlus,
-  ListChevronsDownUp,
-  ListChevronsUpDown,
-  MoreHorizontal,
   Pencil,
   Trash2,
 } from "@multica/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSquadFolder } from "@multica/core/api/schemas";
 import type { Agent } from "@multica/core/types";
-import type { AgentColumnKey, AgentListFilters } from "@multica/core/agents/stores";
+import type { AgentListFilters } from "@multica/core/agents/stores";
 import { agentFolderTreeOptions } from "@multica/core/agents/folder-queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { ListGridCell } from "@multica/ui/components/ui/list-grid";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import {
-  FolderExplorerRow,
-  NewFolderButton,
+  FolderExplorerHeaderActions,
+  FolderExplorerNameCell,
   entryPathHints,
   flattenFolderExplorerRows,
   useFolderExplorerExpansion,
@@ -44,6 +37,11 @@ import {
 } from "../../common/folder-explorer";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
+import {
+  CollectionRowMenu,
+  type CollectionColumn,
+  type CollectionSelection,
+} from "../../layout/collection-list";
 import {
   agentEntryFolderIds,
   agentMoveDestinations,
@@ -64,6 +62,7 @@ import {
 } from "./agent-folder-dialogs";
 import { AgentFolderAvatars } from "./agent-folder-avatars";
 import { AgentFolderStatusCell } from "./agent-folder-status";
+import { AgentRowActions } from "./agent-row-actions";
 import type { AgentTreeActions } from "./agent-tree-actions";
 import type { AgentListRow } from "./agents-page";
 import type { AgentsScope } from "@multica/core/agents/stores";
@@ -74,21 +73,21 @@ interface AgentExplorerRowBase {
   depth: number;
 }
 
-export type AgentExplorerListRow =
-  | (AgentExplorerRowBase & {
-      kind: "agent";
-      row: AgentListRow;
-      pathHints?: string[];
-      leaderLabel?: string;
-    })
-  | (AgentExplorerRowBase & {
-      kind: "folder";
-      folder: FolderExplorerFolder;
-      entryCount: number;
-      memberRows: AgentListRow[];
-    });
+export type AgentExplorerAgentRow = AgentExplorerRowBase & {
+  kind: "agent";
+  row: AgentListRow;
+  pathHints?: string[];
+  leaderLabel?: string;
+};
 
-export type AgentExplorerAuxRow = Exclude<AgentExplorerListRow, { kind: "agent" }>;
+export type AgentExplorerFolderRow = AgentExplorerRowBase & {
+  kind: "folder";
+  folder: FolderExplorerFolder;
+  entryCount: number;
+  memberRows: AgentListRow[];
+};
+
+export type AgentExplorerListRow = AgentExplorerAgentRow | AgentExplorerFolderRow;
 
 export interface AgentsPageListModel {
   rows: AgentExplorerListRow[];
@@ -98,18 +97,26 @@ export interface AgentsPageListModel {
 
 export interface AgentsPageFolderExplorer {
   treeActions: AgentTreeActions | undefined;
-  toolbarActions: ReactNode;
+  headerActions: ReactNode;
   notice: ReactNode;
   dialogs: ReactNode;
   organizeRows: (rows: AgentListRow[]) => AgentsPageListModel;
-  renderRow: (row: AgentExplorerAuxRow) => ReactNode;
+  explorerColumns: (
+    columns: readonly CollectionColumn<AgentListRow>[],
+  ) => CollectionColumn<AgentExplorerListRow>[];
+  rowMenu: (row: AgentExplorerListRow) => ReactNode;
+  selection: (
+    rows: readonly AgentExplorerListRow[],
+    selectedIds: ReadonlySet<string>,
+    onChange: (next: ReadonlySet<string>) => void,
+  ) => CollectionSelection<AgentExplorerListRow>;
+  onRowOpen: (row: AgentExplorerListRow) => void;
   treeLoading: boolean;
   treeReady: boolean;
   hasFolders: boolean;
 }
 
-function AgentFolderRowMenu({
-  folder,
+export function AgentFolderMenuItems({
   squad,
   canManageSquadFolder,
   onOpenSquad,
@@ -118,7 +125,6 @@ function AgentFolderRowMenu({
   onMove,
   onDelete,
 }: {
-  folder: FolderExplorerFolder;
   squad: AgentSquadFolder | null;
   canManageSquadFolder: boolean;
   onOpenSquad: () => void;
@@ -128,88 +134,51 @@ function AgentFolderRowMenu({
   onDelete: () => void;
 }) {
   const { t } = useT("agent-folders");
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={t(($) => $.tree.folder_actions, { name: folder.name })}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-xs text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/row:opacity-100 aria-expanded:opacity-100 [@media(hover:none)]:opacity-100"
-          >
-            <MoreHorizontal className="size-4" />
-          </button>
-        }
-      />
-      <DropdownMenuContent align="end" className="w-56">
-        {squad ? (
-          <>
-            <DropdownMenuItem onClick={onOpenSquad}>
-              <ExternalLink />
-              {t(($) => $.tree.open_squad)}
-            </DropdownMenuItem>
-            {canManageSquadFolder ? (
-              <DropdownMenuItem onClick={onMove}>
-                <FolderInput />
-                {t(($) => $.tree.move_to_folder)}
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem disabled>
-                <FolderInput />
-                <span className="flex min-w-0 flex-col">
-                  <span>{t(($) => $.tree.move_to_folder)}</span>
-                  <span className="whitespace-normal text-caption text-muted-foreground">
-                    {t(($) => $.tree.squad_move_forbidden)}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-            )}
-          </>
+  if (squad) {
+    return (
+      <>
+        <DropdownMenuItem onClick={onOpenSquad}>
+          <ExternalLink />
+          {t(($) => $.tree.open_squad)}
+        </DropdownMenuItem>
+        {canManageSquadFolder ? (
+          <DropdownMenuItem onClick={onMove}>
+            <FolderInput />
+            {t(($) => $.tree.move_to_folder)}
+          </DropdownMenuItem>
         ) : (
-          <>
-            <DropdownMenuItem onClick={onCreateSubfolder}>
-              <FolderPlus />
-              {t(($) => $.tree.new_subfolder)}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onRename}>
-              <Pencil />
-              {t(($) => $.tree.rename_folder)}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onMove}>
-              <Folder />
-              {t(($) => $.tree.move_folder)}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={onDelete}>
-              <Trash2 />
-              {t(($) => $.tree.delete_folder)}
-            </DropdownMenuItem>
-          </>
+          <DropdownMenuItem disabled>
+            <FolderInput />
+            <span className="flex min-w-0 flex-col">
+              <span>{t(($) => $.tree.move_to_folder)}</span>
+              <span className="whitespace-normal text-caption text-muted-foreground">
+                {t(($) => $.tree.squad_move_forbidden)}
+              </span>
+            </span>
+          </DropdownMenuItem>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function AgentFolderTrailingCells({
-  rows,
-  isColVisible,
-}: {
-  rows: AgentListRow[];
-  isColVisible: (key: AgentColumnKey) => boolean;
-}) {
+      </>
+    );
+  }
   return (
     <>
-      {isColVisible("status") ? (
-        <AgentFolderStatusCell rows={rows} />
-      ) : (
-        <ListGridCell className="px-0" />
-      )}
-      {(["owner", "access", "runtime", "lastActive", "runs", "model", "created"] as const).map((key) => (
-        <ListGridCell key={key} className="hidden px-0 @2xl:flex" />
-      ))}
+      <DropdownMenuItem onClick={onCreateSubfolder}>
+        <FolderPlus />
+        {t(($) => $.tree.new_subfolder)}
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={onRename}>
+        <Pencil />
+        {t(($) => $.tree.rename_folder)}
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={onMove}>
+        <Folder />
+        {t(($) => $.tree.move_folder)}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem variant="destructive" onClick={onDelete}>
+        <Trash2 />
+        {t(($) => $.tree.delete_folder)}
+      </DropdownMenuItem>
     </>
   );
 }
@@ -221,7 +190,8 @@ export function useAgentsPageFolderExplorer({
   scope,
   search,
   filters,
-  isColVisible,
+  duplicateHref,
+  renderAgentName,
   onMoved,
 }: {
   wsId: string;
@@ -230,7 +200,8 @@ export function useAgentsPageFolderExplorer({
   scope: AgentsScope;
   search: string;
   filters: AgentListFilters;
-  isColVisible: (key: AgentColumnKey) => boolean;
+  duplicateHref: (agent: Agent) => string;
+  renderAgentName: (row: AgentExplorerAgentRow) => ReactNode;
   onMoved: () => void;
 }): AgentsPageFolderExplorer {
   const { t: tFolder } = useT("agent-folders");
@@ -381,18 +352,13 @@ export function useAgentsPageFolderExplorer({
     [treeLoading, isFlatView, entryFolderIdsFor, folders, squads, expandedFolderIds, tFolder],
   );
 
-  const renderRow = useCallback(
-    (row: AgentExplorerAuxRow): ReactNode => {
+  const renderFolderName = useCallback(
+    (row: AgentExplorerFolderRow): ReactNode => {
       const { folder } = row;
       const squad = squads.get(folder.id) ?? null;
       const expanded = expandedFolderIds.has(folder.id);
-      const canManageSquadFolder =
-        squad !== null &&
-        (isAdmin || (currentUserId !== null && squad.creatorId === currentUserId));
       return (
-        <FolderExplorerRow
-          key={row.key}
-          className="h-14 border-b bg-muted/40 [--folder-row-background:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:bg-muted/70 hover:[--folder-row-background:color-mix(in_oklab,var(--muted)_70%,var(--background))]"
+        <FolderExplorerNameCell
           name={folder.name}
           typeLabel={squad ? tFolder(($) => $.tree.squad_label) : undefined}
           countLabel={tFolder(($) => $.tree.folder_agent_count, { count: row.entryCount })}
@@ -403,27 +369,23 @@ export function useAgentsPageFolderExplorer({
           onOpen={() => toggleFolder(folder.id)}
           expanded={expanded}
           depth={row.depth}
-          leading={<ListGridCell className="hidden justify-center px-0 @2xl:flex" />}
-          trailing={<AgentFolderTrailingCells rows={row.memberRows} isColVisible={isColVisible} />}
           icon={
             squad ? (
-              <span className="relative size-8 shrink-0">
+              <span className="relative size-5 shrink-0">
                 <ActorAvatar
                   name={squad.name}
                   initials={squad.name.slice(0, 2).toUpperCase()}
                   avatarUrl={resolvePublicFileUrl(squad.avatarUrl)}
                   isSquad
-                  size="lg"
+                  size="sm"
                   className="shrink-0"
                 />
-                <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-xs bg-warning/15 text-warning ring-2 ring-[var(--folder-row-background)]">
-                  <Folder aria-hidden="true" className="size-3 fill-current" />
+                <span className="absolute -right-1 -bottom-1 flex size-3 items-center justify-center rounded-xs bg-warning/15 text-warning ring-1 ring-background">
+                  <Folder aria-hidden="true" className="size-2 fill-current" />
                 </span>
               </span>
             ) : (
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning">
-                <Folder aria-hidden="true" className="size-5 fill-current" />
-              </span>
+              <Folder aria-hidden="true" className="size-4 shrink-0 fill-current text-warning" />
             )
           }
           preview={
@@ -435,66 +397,147 @@ export function useAgentsPageFolderExplorer({
               leaderId={squad?.leaderId}
             />
           }
-          actions={
-            <AgentFolderRowMenu
-              folder={folder}
-              squad={squad}
-              canManageSquadFolder={canManageSquadFolder}
-              onOpenSquad={() => {
-                if (squad) navigation.push(paths.squadDetail(squad.squadId));
-              }}
-              onCreateSubfolder={() => setFolderForm({ mode: "create", parentId: folder.id })}
-              onRename={() => setFolderForm({ mode: "rename", folder })}
-              onMove={() => setFolderMove(folder)}
-              onDelete={() => setFolderDelete(folder)}
-            />
-          }
         />
       );
     },
-    [squads, expandedFolderIds, isAdmin, currentUserId, tFolder, toggleFolder, isColVisible, navigation, paths],
+    [squads, expandedFolderIds, tFolder, toggleFolder],
   );
 
-  const treeActions: AgentTreeActions | undefined =
-    treeReady && placements && squadMemberships
-      ? {
-          defaultVariant: "move",
-          squadFolderIds: new Set(squads.keys()),
-          onMove: (agents, variant) => setMoveAgents({ agents, variant }),
-        }
-      : undefined;
+  const explorerColumns = useCallback(
+    (
+      columns: readonly CollectionColumn<AgentListRow>[],
+    ): CollectionColumn<AgentExplorerListRow>[] =>
+      columns.map((column, index) => ({
+        ...column,
+        cell: (listRow) => {
+          if (listRow.kind === "agent") {
+            return index === 0
+              ? renderAgentName(listRow)
+              : column.cell(listRow.row);
+          }
+          if (index === 0) return renderFolderName(listRow);
+          if (column.key === "status") {
+            return <AgentFolderStatusCell rows={listRow.memberRows} />;
+          }
+          return null;
+        },
+      })),
+    [renderAgentName, renderFolderName],
+  );
 
-  const toolbarActions = treeReady && !isFlatView ? (
-    <>
-      {folders.length > 0 && (
-        <>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={tFolder(($) => $.tree.expand_all)}
-            onClick={() => expandAll(folders.map((folder) => folder.id))}
-          >
-            <ListChevronsUpDown aria-hidden="true" className="size-3.5" />
-            <span className="hidden md:inline">{tFolder(($) => $.tree.expand_all)}</span>
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={tFolder(($) => $.tree.collapse_all)}
-            onClick={collapseAll}
-          >
-            <ListChevronsDownUp aria-hidden="true" className="size-3.5" />
-            <span className="hidden md:inline">{tFolder(($) => $.tree.collapse_all)}</span>
-          </Button>
-        </>
-      )}
-      <NewFolderButton
-        label={tFolder(($) => $.tree.new_folder)}
-        onClick={() => setFolderForm({ mode: "create", parentId: null })}
-      />
-    </>
+  const treeActions = useMemo<AgentTreeActions | undefined>(
+    () =>
+      treeReady && placements && squadMemberships
+        ? {
+            defaultVariant: "move",
+            squadFolderIds: new Set(squads.keys()),
+            onMove: (agents, variant) => setMoveAgents({ agents, variant }),
+          }
+        : undefined,
+    [treeReady, placements, squadMemberships, squads],
+  );
+
+  const rowMenu = useCallback(
+    (listRow: AgentExplorerListRow): ReactNode => {
+      if (listRow.kind === "agent") {
+        const { row } = listRow;
+        return (
+          <AgentRowActions
+            agent={row.agent}
+            presence={row.presence}
+            canManage={row.canManage}
+            duplicateHref={duplicateHref(row.agent)}
+            treeActions={treeActions}
+            parentFolderId={listRow.parentFolderId}
+          />
+        );
+      }
+
+      const { folder } = listRow;
+      const squad = squads.get(folder.id) ?? null;
+      const canManageSquadFolder =
+        squad !== null &&
+        (isAdmin || (currentUserId !== null && squad.creatorId === currentUserId));
+      return (
+        <CollectionRowMenu
+          label={tFolder(($) => $.tree.folder_actions, { name: folder.name })}
+          contentClassName="w-56"
+        >
+          <AgentFolderMenuItems
+            squad={squad}
+            canManageSquadFolder={canManageSquadFolder}
+            onOpenSquad={() => {
+              if (squad) navigation.push(paths.squadDetail(squad.squadId));
+            }}
+            onCreateSubfolder={() => setFolderForm({ mode: "create", parentId: folder.id })}
+            onRename={() => setFolderForm({ mode: "rename", folder })}
+            onMove={() => setFolderMove(folder)}
+            onDelete={() => setFolderDelete(folder)}
+          />
+        </CollectionRowMenu>
+      );
+    },
+    [duplicateHref, treeActions, squads, isAdmin, currentUserId, tFolder, navigation, paths],
+  );
+
+  const selection = useCallback(
+    (
+      rows: readonly AgentExplorerListRow[],
+      selectedIds: ReadonlySet<string>,
+      onChange: (next: ReadonlySet<string>) => void,
+    ): CollectionSelection<AgentExplorerListRow> => {
+      const agentIdByRowKey = new Map(
+        rows.flatMap((row) =>
+          row.kind === "agent" ? [[row.key, row.row.agent.id] as const] : [],
+        ),
+      );
+      const selectedRowKeys = new Set(
+        rows.flatMap((row) =>
+          row.kind === "agent" && selectedIds.has(row.row.agent.id)
+            ? [row.key]
+            : [],
+        ),
+      );
+      return {
+        selectedIds: selectedRowKeys,
+        onChange: (nextRowKeys) => {
+          if (nextRowKeys.size === 0) {
+            onChange(new Set());
+            return;
+          }
+          const nextSelectedIds = new Set(selectedIds);
+          for (const [rowKey, agentId] of agentIdByRowKey) {
+            const wasSelected = selectedRowKeys.has(rowKey);
+            const isSelected = nextRowKeys.has(rowKey);
+            if (wasSelected === isSelected) continue;
+            if (isSelected) nextSelectedIds.add(agentId);
+            else nextSelectedIds.delete(agentId);
+          }
+          onChange(nextSelectedIds);
+        },
+        isSelectable: (row) => row.kind === "agent",
+      };
+    },
+    [],
+  );
+
+  const onRowOpen = useCallback(
+    (row: AgentExplorerListRow) => {
+      if (row.kind === "folder") toggleFolder(row.folder.id);
+    },
+    [toggleFolder],
+  );
+
+  const headerActions = treeReady && !isFlatView ? (
+    <FolderExplorerHeaderActions
+      hasFolders={folders.length > 0}
+      expandAllLabel={tFolder(($) => $.tree.expand_all)}
+      collapseAllLabel={tFolder(($) => $.tree.collapse_all)}
+      newFolderLabel={tFolder(($) => $.tree.new_folder)}
+      onExpandAll={() => expandAll(folders.map((folder) => folder.id))}
+      onCollapseAll={collapseAll}
+      onNewFolder={() => setFolderForm({ mode: "create", parentId: null })}
+    />
   ) : null;
 
   const notice = treeUnavailable ? (
@@ -563,11 +606,14 @@ export function useAgentsPageFolderExplorer({
 
   return {
     treeActions,
-    toolbarActions,
+    headerActions,
     notice,
     dialogs,
     organizeRows,
-    renderRow,
+    explorerColumns,
+    rowMenu,
+    selection,
+    onRowOpen,
     treeLoading,
     treeReady,
     hasFolders: (folderTree?.folders.length ?? 0) + (folderTree?.squads.length ?? 0) > 0,

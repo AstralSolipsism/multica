@@ -192,6 +192,7 @@
     "reject": "Renvoyer pour modification",
     "adopt": "Adopter",
     "enable": "Activer la vue",
+    "open_baseline": "Ouvrir la baseline d’ingénierie",
     "editChapter": "Modifier le chapitre",
     "initializeChapter": "Initialiser le chapitre",
     "addModule": "Ajouter un module",

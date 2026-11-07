@@ -10,6 +10,7 @@ export const runtimeKeys = {
   all: (wsId: string) => ["runtimes", wsId] as const,
   list: (wsId: string) => [...runtimeKeys.all(wsId), "list"] as const,
   listMine: (wsId: string) => [...runtimeKeys.all(wsId), "list", "mine"] as const,
+  quotaSources: (wsId: string) => [...runtimeKeys.all(wsId), "quota-sources"] as const,
   usage: (rid: string, days: number, tz: string) =>
     ["runtimes", "usage", rid, days, tz] as const,
   usageByAgent: (rid: string, days: number, tz: string) =>
@@ -76,13 +77,22 @@ export function runtimeListOptions(wsId: string, owner?: "me", wsSlug?: string) 
   });
 }
 
-// The GLM (Zhipu) Coding Plan balance is account-level, not workspace- or
-// runtime-scoped: one entry for the whole deployment, refreshed server-side
-// every few minutes — a 2-minute staleTime avoids hammering it on navigation.
-export function glmQuotaOptions() {
+export const quotaSourceKeys = {
+  all: () => ["me", "quota-sources"] as const,
+};
+
+export function quotaSourceListOptions() {
   return queryOptions({
-    queryKey: ["glm-quota"] as const,
-    queryFn: () => api.getGlmQuota(),
-    staleTime: 2 * 60 * 1000,
+    queryKey: quotaSourceKeys.all(),
+    queryFn: () => api.listQuotaSources(),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function workspaceQuotaSourceListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: runtimeKeys.quotaSources(wsId),
+    queryFn: () => api.listWorkspaceQuotaSources(wsId),
+    staleTime: 30 * 1000,
   });
 }

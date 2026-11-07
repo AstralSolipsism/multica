@@ -1,9 +1,7 @@
 {
   "page": {
     "title": "运行时",
-    "learn_more": "了解更多 →",
     "connect_remote": "添加机器",
-    "search_placeholder": "搜索...",
     "scope_mine": "我的",
     "scope_all": "全部",
     "live": "实时",
@@ -25,7 +23,7 @@
       "title": "正在启动本地运行时...",
       "hint": "正在连接工作区..."
     },
-    "add": "添加",
+    "add": "添加运行时",
     "add_menu": {
       "machines": "机器",
       "this_computer": "这台电脑",
@@ -67,9 +65,101 @@
       "no_matches": "没有匹配的机器或云服务"
     },
     "filters": {
-      "all": "全部",
+      "all": "全部运行时",
       "online": "在线",
       "offline": "离线"
+    }
+  },
+  "quota_sources": {
+    "action": "订阅配额",
+    "kinds": {
+      "glm": "智谱 GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "订阅"
+    },
+    "cards": {
+      "region": "订阅配额",
+      "tokens_period": "{{period}} token",
+      "credits_period": "{{period}}积分",
+      "tools_period": "{{period}}工具积分",
+      "subscription_period": "{{period}}订阅额度",
+      "subscription_window": "订阅额度",
+      "generic_window": "配额窗口",
+      "waiting": "等待首次采集"
+    },
+    "visibility": {
+      "private": "仅自己可见",
+      "shared": "跟随共享机器",
+      "private_hint": "订阅卡片仅在你查看时显示。",
+      "shared_hint": "仅在有你共享机器的工作区向成员展示。"
+    },
+    "dialog": {
+      "title": "订阅配额",
+      "description": "管理你的智谱 GLM 和 ZenMux 订阅凭证与卡片。",
+      "loading": "正在加载订阅",
+      "load_failed": "无法加载订阅配额。",
+      "retry": "重试",
+      "empty_title": "还没有订阅配额源",
+      "add": "添加订阅",
+      "auto_refresh": "服务端每 5 分钟采集一次已启用的订阅",
+      "toggle": "启停 {{name}}",
+      "refresh": "刷新 {{name}}",
+      "refresh_now": "立即刷新",
+      "refresh_in": "{{seconds}} 秒后可刷新",
+      "edit": "编辑 {{name}}",
+      "delete": "删除 {{name}}"
+    },
+    "status": {
+      "ok": "正常",
+      "probing": "试采中",
+      "disabled": "已停用"
+    },
+    "form": {
+      "back": "返回订阅列表",
+      "add_title": "添加订阅配额源",
+      "edit_title": "编辑订阅配额源",
+      "description": "新凭证或接口地址会先通过服务商试采，验证通过后才保存。",
+      "kind_section": "1. 渠道",
+      "credential_section": "2. 凭证",
+      "name": "名称",
+      "name_placeholder": "例如：智谱主力号",
+      "api_key": "API Key",
+      "management_key": "Management API Key",
+      "saved_credential": "已保存的凭证（掩码）",
+      "replace_key": "更换密钥",
+      "credential_placeholder": "粘贴 API Key",
+      "credential_hint": "凭证加密后用于服务端采集，保存后仅显示末 4 位。",
+      "base_url": "接口地址（可选）",
+      "visibility_section": "3. 可见范围",
+      "name_required": "请输入名称。",
+      "credential_required": "请输入 API Key。",
+      "cancel": "取消",
+      "save": "保存并试采",
+      "saving": "正在试采并保存..."
+    },
+    "errors": {
+      "invalid_credential": "服务商拒绝了该凭证，请核对或更换 API Key。",
+      "rate_limited": "服务商正在限流，请稍后重试。",
+      "network_error": "无法连接服务商，请检查接口地址和网络。",
+      "invalid_base_url": "请使用该渠道支持的公网 HTTPS 接口地址。",
+      "unexpected_response": "服务商返回了无法识别的配额响应。",
+      "provider_error": "服务商配额采集失败。",
+      "generic": "无法更新订阅，请重试。",
+      "encryption_unconfigured": "服务端尚未配置 MULTICA_QUOTA_SOURCE_SECRET_KEY，请管理员配置后再管理订阅凭证。",
+      "refresh_cooldown": "刚刚已刷新，请等待 30 秒冷却结束。"
+    },
+    "delete": {
+      "title": "删除“{{name}}”？",
+      "description": "对应卡片将不再显示，加密凭证会被销毁。此操作无法撤销。",
+      "cancel": "取消",
+      "confirm": "删除订阅",
+      "deleting": "删除中..."
+    },
+    "toasts": {
+      "created": "已添加订阅",
+      "updated": "已更新订阅",
+      "refreshed": "已刷新订阅",
+      "deleted": "已删除订阅"
     }
   },
   "mika_setup": {
@@ -93,7 +183,7 @@
     "this_machine": "本机",
     "local_badge": "本地 · 这台机器",
     "pending_custom_runtimes": "待注册自定义运行时",
-    "runtime_count_other": "{{count}} 个运行时",
+    "daemon_title": "守护进程",
     "busy_count_other": "{{count}} 个忙碌",
     "no_matches_title": "没有机器",
     "no_matches_hint": "没有机器匹配当前搜索或筛选。",
@@ -158,15 +248,16 @@
     "fact_owner": "所有者",
     "fact_device": "设备",
     "fact_runtime": "运行时",
-    "technical_details": "技术详情",
     "fact_daemon_cli": "守护进程 CLI",
     "fact_daemon_id": "守护进程 ID",
-    "serving_title": "服务中",
-    "serving_count_other": "{{count}} 个智能体",
+    "usage_title": "用量",
     "no_agents": "还没有智能体绑定到这个运行时。",
-    "diagnostics_title": "诊断",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "可见性",
+    "concurrency_title": "并发",
+    "concurrency_none": "不限制",
+    "concurrency_hint": "此运行时上所有智能体同时进行的运行总数上限（{{min}}–{{max}}）。留空表示不限制。",
+    "toast_concurrency_failed": "更新并发上限失败",
     "visibility_label": {
       "private": "私有",
       "public": "公开",
@@ -652,6 +743,30 @@
       "working": "正在断开…",
       "cancel": "取消",
       "done": "已断开 Qoder"
+    }
+  },
+  "intro": {
+    "title": "给智能体一台干活的电脑",
+    "description": "运行时是智能体真正执行任务的地方：你的电脑、一台服务器，或者云服务。",
+    "slides": {
+      "local": {
+        "title": "这台电脑，自动连接",
+        "description": "下载桌面端并登录，这台电脑上的 Claude Code、Codex 等会自动出现。"
+      },
+      "remote": {
+        "title": "其他机器，两条命令",
+        "description": "在服务器或另一台电脑上装好 CLI，运行 multica setup 就连上了。"
+      },
+      "cloud": {
+        "title": "或者用云端节点",
+        "description": "不想自己管机器？创建一台 Multica 托管的云节点。"
+      }
+    },
+    "art": {
+      "this_computer": "这台电脑 · 桌面端",
+      "detected": "自动识别到的 harness",
+      "run_there": "在那台机器上运行",
+      "connected": "{{name}} 已连接到 Multica"
     }
   }
 }

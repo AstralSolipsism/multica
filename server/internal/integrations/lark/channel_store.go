@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -121,6 +122,7 @@ func (s *ChannelStore) ListActiveLarkInstallations(ctx context.Context) ([]Insta
 
 func (s *ChannelStore) UpsertLarkInstallation(ctx context.Context, arg UpsertInstallationParams) (Installation, error) {
 	cfg, err := encodeInstallConfig(Installation{
+		BindingGeneration:  uuid.NewString(),
 		AppID:              arg.AppID,
 		AppSecretEncrypted: arg.AppSecretEncrypted,
 		TenantKey:          arg.TenantKey,
@@ -187,7 +189,8 @@ func (s *ChannelStore) SetLarkInstallationStatus(ctx context.Context, arg SetIns
 }
 
 // SetLarkInstallationBotUnionID patches only the bot identity field. A stale
-// whole-config write could restore a concurrently revoked conversation grant.
+// whole-config write could restore a concurrently revoked conversation grant or
+// overwrite a concurrent inbound receipt / rebind generation.
 func (s *ChannelStore) SetLarkInstallationBotUnionID(ctx context.Context, arg SetInstallationBotUnionIDParams) error {
 	_, err := s.Queries.SetLarkInstallationBotUnionID(ctx, db.SetLarkInstallationBotUnionIDParams{
 		ID: arg.ID, BotUnionID: arg.BotUnionID,

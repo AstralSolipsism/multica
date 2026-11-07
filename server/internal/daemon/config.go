@@ -175,31 +175,13 @@ type Config struct {
 	// command_name on PATH. nil/empty means "always resolve via PATH".
 	ProfileCommandOverrides map[string]string
 
-	// ZenMuxManagementAPIKey is the ZenMux Management API key (console-issued,
-	// distinct from the inference key) used by the hermes subscription quota
-	// collector (MULTICA_ZENMUX_MANAGEMENT_API_KEY). The value never leaves
-	// this machine and never appears in payloads or logs.
-	ZenMuxManagementAPIKey string
-	// ZenMuxLink is the explicit, operator-maintained association between the
-	// configured ZenMux account and the runtimes it backs
-	// (MULTICA_ZENMUX_LINK: "hermes" or "hermes@<workspace-id>",
-	// comma-separated). Empty means NO runtime reports this account —
-	// configuring the key alone never links every hermes runtime (S2: the
-	// association is manual by product decision; the daemon never infers a
-	// runtime's LLM gateway).
-	ZenMuxLink zenmuxLinkSet
-	// ZenMuxAPIBaseURL overrides the subscription-detail endpoint
-	// (MULTICA_ZENMUX_API_BASE_URL); empty uses the official
-	// https://zenmux.ai/api/v1/management/subscription/detail. Exists so
-	// tests and staging proxies can point the collector elsewhere.
-	ZenMuxAPIBaseURL string
-	// PlanQuotaKimiInterval / PlanQuotaZenMuxInterval pace the two plan-quota
-	// collectors (MULTICA_KIMI_QUOTA_POLL_INTERVAL /
-	// MULTICA_ZENMUX_QUOTA_POLL_INTERVAL, default 2m). ZenMux rate-limits its
-	// Management API per endpoint, so the default stays inside the documented
-	// 1-3 minute band and 422 answers stretch the delay exponentially.
-	PlanQuotaKimiInterval   time.Duration
-	PlanQuotaZenMuxInterval time.Duration
+	// PlanQuotaKimiInterval paces the kimi collector
+	// (MULTICA_KIMI_QUOTA_POLL_INTERVAL, default 2m).
+	PlanQuotaKimiInterval time.Duration
+
+	// PlanQuotaOmpInterval paces the omp collector
+	// (MULTICA_OMP_QUOTA_POLL_INTERVAL, default 2m).
+	PlanQuotaOmpInterval time.Duration
 
 	// Jev adaptive-thinking decision engine (OL-992 S1-3). All values are
 	// daemon-local in the MULTICA_ZENMUX_MANAGEMENT_API_KEY sense: secrets
@@ -227,6 +209,8 @@ type Overrides struct {
 	// AgentTimeout is a pointer so an explicit `--agent-timeout 0` (no cap) is
 	// distinguishable from "flag not passed". nil = use env/default.
 	AgentTimeout                   *time.Duration
+	AgentIdleWatchdog              *time.Duration
+	AgentToolWatchdog              *time.Duration
 	CodexSemanticInactivityTimeout time.Duration
 	CodexHandshakeTimeout          time.Duration
 	MaxConcurrentTasks             int
@@ -314,7 +298,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// can re-run the same discovery on a live daemon (MUL-5439).
 	agents := probeAgentCLIs()
 	if len(agents) == 0 && !overrides.AllowNoAgents {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codearts, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, devin, dim, or zeroclaw and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codearts, codex, copilot, opencode, deveco, openclaw, hermes, pi, omp, cursor-agent, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, muse, devin, dim, zeroclaw, or zcode and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
@@ -386,6 +370,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if overrides.AgentIdleWatchdog != nil {
+		agentIdleWatchdog = *overrides.AgentIdleWatchdog
+	}
 	// MULTICA_OPENCODE_IDLE_WATCHDOG narrows the no-message window for
 	// OpenCode's streamed model responses. Zero removes the provider-specific
 	// override and falls back to MULTICA_AGENT_IDLE_WATCHDOG; positive values
@@ -423,6 +410,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	agentToolWatchdog, err := durationFromEnv("MULTICA_AGENT_TOOL_WATCHDOG", agentIdleWatchdog)
 	if err != nil {
 		return Config{}, err
+	}
+	if overrides.AgentToolWatchdog != nil {
+		agentToolWatchdog = *overrides.AgentToolWatchdog
 	}
 
 	// Codex runs a semantic-inactivity timer of its own inside the app-server
@@ -668,19 +658,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		autoReloadEnabled = false
 	}
 
-	// Plan-quota collectors. The ZenMux key is a secret: read it from the
-	// environment only, never log it, never serialize it.
-	zenmuxKey := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_MANAGEMENT_API_KEY"))
-	zenmuxBaseURL := strings.TrimSpace(os.Getenv("MULTICA_ZENMUX_API_BASE_URL"))
-	zenmuxLink, err := parseZenMuxLink(os.Getenv("MULTICA_ZENMUX_LINK"))
-	if err != nil {
-		return Config{}, err
-	}
+	// Plan-quota collectors (ZenMux removed in OL-1205 scenario 3).
 	kimiQuotaInterval, err := durationFromEnv("MULTICA_KIMI_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
 	if err != nil {
 		return Config{}, err
 	}
-	zenmuxQuotaInterval, err := durationFromEnv("MULTICA_ZENMUX_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
+	ompQuotaInterval, err := durationFromEnv("MULTICA_OMP_QUOTA_POLL_INTERVAL", defaultPlanQuotaPollInterval)
 	if err != nil {
 		return Config{}, err
 	}
@@ -763,11 +746,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		QwenArgs:                        qwenArgs,
 		QwenpawArgs:                     qwenpawArgs,
 		ProfileCommandOverrides:         profileCommandOverrides,
-		ZenMuxManagementAPIKey:          zenmuxKey,
-		ZenMuxLink:                      zenmuxLink,
-		ZenMuxAPIBaseURL:                zenmuxBaseURL,
 		PlanQuotaKimiInterval:           kimiQuotaInterval,
-		PlanQuotaZenMuxInterval:         zenmuxQuotaInterval,
+		PlanQuotaOmpInterval:            ompQuotaInterval,
 		JevDisabled:                     jevDisabled,
 		JevSources:                      jevSources,
 		JevTimeout:                      jevTimeout,
@@ -1079,8 +1059,21 @@ func isExecutableFile(path string) bool {
 // doesn't require editing this list by hand.
 var defaultAgentCommandNames = append([]string{
 	"claude", "codex", "opencode", "codearts", "deveco", "openclaw", "hermes",
-	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "muse", "devin", "dim", "zeroclaw",
+	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "muse", "devin", "dim", "zeroclaw", "zcode",
 }, agent.BuiltinRuntimeCommands()...)
+
+// zcodeDesktopAppBundlePaths discovers the CLI in default Desktop installs.
+var zcodeDesktopAppBundlePaths = func() []string {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	const bundle = "ZCode.app/Contents/Resources/glm/zcode.cjs"
+	paths := []string{filepath.Join("/Applications", bundle)}
+	if home, err := os.UserHomeDir(); err == nil {
+		paths = append(paths, filepath.Join(home, "Applications", bundle))
+	}
+	return paths
+}
 
 // codexDesktopAppBundlePaths returns candidate macOS app-bundle locations for
 // the bundled Codex CLI. OpenAI relocated the Desktop app from Codex.app to

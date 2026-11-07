@@ -123,6 +123,10 @@ allowlist의 정확한 판단 순서는 [로그인과 가입](/auth-setup#가입
 
 `S3_BUCKET`을 설정하지 않으면 Multica가 로컬 디스크를 사용합니다.
 
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `MULTICA_MAX_PREVIEW_SIZE` | `2MiB` | 텍스트 및 HTML 온라인 미리보기 본문의 최대 크기이며 상한은 `16MiB`입니다. 양의 정수 바이트 수 또는 `KB`/`KiB`, `MB`/`MiB`(이진 단위)를 지원합니다. `16MiB`를 초과하는 유효한 값은 `16MiB`로 제한되며 잘못된 값은 기본값을 사용합니다. 상한을 높이면 특히 구문 강조와 Markdown 렌더링 시 브라우저 미리보기가 느려질 수 있습니다. 변경 후 API를 재시작해야 하며 업로드 및 다운로드 제한은 바뀌지 않습니다. |
+
 ### S3 또는 호환 저장소
 
 | 변수 | 기본값 | 설명 |
@@ -191,6 +195,7 @@ reverse proxy 뒤에 배포한다면 실제 proxy 네트워크를 입력해야 �
 | Composio | `COMPOSIO_STATE_SECRET` | OAuth state 서명 키. `JWT_SECRET`에서 파생 가능 |
 | 자체 호스팅 Git | `MULTICA_VCS_INTEGRATION_ENABLED` | Forgejo/Gitea/GitLab 연동 스위치. compose에서는 기본 활성화 |
 | 자체 호스팅 Git | `MULTICA_VCS_SECRET_KEY` | base64로 인코딩한 32바이트 암호화 키(`openssl rand -base64 32`). 없으면 전체 기능을 사용할 수 없음 |
+| 구독 할당량 소스 | `MULTICA_QUOTA_SOURCE_SECRET_KEY` | 사용자 등록 구독 자격 증명(GLM Coding Plan, ZenMux)을 암호화하는 base64 인코딩 32바이트 키. 없으면 관리 엔드포인트가 503을 반환하고 폴링이 건너뛰어짐 |
 | Plugins | `MULTICA_PLUGIN_SECRET_KEY` | 저장된 secret과 surface 실행 URL을 암호화하는 base64 인코딩 32바이트 키 |
 | Plugins | `MULTICA_PLUGIN_SURFACE_ORIGIN` | 백엔드로 라우팅되는 쿠키 없는 전용 origin. app/API origin과 달라야 하며 `Host`를 보존해야 함 |
 | Plugins | `MULTICA_PLUGIN_API_URL` | 버전을 포함한 Plugin Public API의 전체 Base URL(예: `https://plugin-api.example.com/v1`). 설정하지 않으면 `MULTICA_PUBLIC_URL` + `/v1` 사용 |
@@ -256,11 +261,7 @@ API key와 base URL이 모두 비어 있으면 이 레이어가 꺼지고 업스
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 실행용 작업 디렉터리의 루트 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`(Linux/macOS) | Linux/macOS 전용. 실행별 비공개 임시 디렉터리의 상위 디렉터리입니다. 기존의 쓰기 가능한 절대 경로여야 하며, 값이 잘못되면 `/tmp`로 대체하지 않고 실행 시작에 실패합니다. 짧은 경로를 선택하세요. 하위 도구가 그 아래에 AF_UNIX 소켓을 만들 수 있으며 `sun_path` 제한은 Linux에서 108바이트, macOS에서 104바이트입니다 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 디버깅을 위해 작업 디렉터리 유지 |
-| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 비어 있음 | ZenMux Management API 키(콘솔 발급, 추론 키와 별개). 구독 쿼터 수집기용이며 이 머신을 벗어나지 않습니다. `MULTICA_ZENMUX_LINK`로 런타임을 연결하기 전까지는 아무것도 보고되지 않습니다 |
-| `MULTICA_ZENMUX_LINK` | 비어 있음(연결된 런타임 없음) | ZenMux 계정과 런타임의 명시적 수동 연결: `hermes`는 이 daemon의 모든 hermes 런타임, `hermes@<workspace-id>`는 지정 워크스페이스의 hermes 런타임, `hermes:profile:<profile-id>`는 특정 커스텀 런타임 프로필만, `hermes:builtin[@<workspace-id>]`는 내장 hermes 런타임만 연결합니다(한 워크스페이스에 내장과 커스텀 프로필이 공존할 때 구분용). 여러 개는 쉼표로 구분합니다. daemon은 런타임이 실제로 사용하는 LLM 게이트웨이를 추론하지 않으며 연결되지 않은 런타임은 "미보고" 상태를 유지합니다. daemon 시작 시 적용됩니다. 항목을 추가·수정·삭제한 후 daemon을 재시작하면 반영되며, 삭제된 연결은 다음 하트비트에서 해당 런타임의 쿼터 표시를 즉시 지웁니다(24시간 신선도 만료를 기다리지 않습니다) |
 | `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 플랜 쿼터 수집기의 폴 간격. 이 머신의 Kimi Code 로컬 Server API를 탐색하며 `kimi web`이 실행 중이 아니면 조용히 "미보고" 상태를 유지합니다. Bearer 토큰은 로컬 서버가 현재 사용자 소유임을 증명한 후에만 전송됩니다(Linux/macOS 지원, 다른 플랫폼에서는 수집기가 동작하지 않고 "미보고"를 유지합니다) |
-| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 플랜 쿼터 수집기의 폴 간격. 422 레이트 리밋 응답 시 지연을 지수적으로 늘립니다 |
-| `MULTICA_ZENMUX_API_BASE_URL` | 공식 엔드포인트 | ZenMux subscription-detail 엔드포인트 재정의. 테스트 및 스테이징 프록시용 |
 | `MULTICA_JEV_DISABLED` | `false` | 이 머신에서 Jev 적응형 사고 판단 엔진 끄기: `1`로 설정하면 사고 레벨 판단이 항상 폴백되며 외부로 요청이 나가지 않는다 |
 | `MULTICA_JEV_SOURCES` | `opencode-free` | 순서대로 시도하는 판단 소스의 쉼표 구분 목록: `opencode-free`(기본값, 키 불필요), `opencode`(`MULTICA_JEV_OPENCODE_API_KEY` 필요), `dashscope`(`MULTICA_JEV_DASHSCOPE_API_KEY`와 `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID` 필요), `self-hosted`(`MULTICA_JEV_SELF_HOSTED_URL` 필요). 필수 변수가 없는 소스는 건너뛴다. 기본값은 무설정(제로 구성): 에이전트가 적응형 사고를 선택하면 도구 출력 원문을 포함한 실행 요약이 OpenCode Zen 무료 채널로 전송된다. `MULTICA_JEV_DISABLED=1`로 이 머신에서 끌 수 있으며 API 키는 이 머신에만 남는다 |
 | `MULTICA_JEV_TIMEOUT_MS` | `1500` | 소스당 하드 타임아웃(밀리초). 초과 시 다음 소스로 전환 |

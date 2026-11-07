@@ -196,6 +196,11 @@ func TestLabrastroSourceCachedSnapshotEquivalence(t *testing.T) {
 					t.Fatal(err)
 				}
 				if !bytes.Equal(got, want) {
+					for i := 0; i < len(got) && i < len(want); i++ {
+						if got[i] != want[i] {
+							t.Fatalf("%s snapshot differs at byte %d: got %.120q, want %.120q", pass, i, got[i:], want[i:])
+						}
+					}
 					t.Fatalf("%s outputs differ byte-for-byte from d8a51e11 baseline", pass)
 				}
 				raw := 0

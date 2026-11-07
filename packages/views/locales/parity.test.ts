@@ -9,7 +9,8 @@ import { RESOURCES, UPSTREAM_RESOURCES } from "./index";
 // in every non-English bundle and vice-versa. Catches retrofit drift where a
 // new EN key lands without a translated key, which would silently fall back
 // to the English string in production. Traditional Chinese intentionally
-// falls back to Simplified Chinese for fork copy; check that effective bundle.
+// falls back to Simplified Chinese for fork copy; new Spanish fork copy uses
+// branded English until translated. Check those effective bundles.
 //
 // i18next plural rule: EN uses `_one` + `_other`; zh only uses `_other`
 // because Chinese has no grammatical number. Normalize both forms to

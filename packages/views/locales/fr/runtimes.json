@@ -1,9 +1,7 @@
 {
   "page": {
     "title": "Runtimes",
-    "learn_more": "En savoir plus →",
     "connect_remote": "Ajouter une machine",
-    "search_placeholder": "Rechercher…",
     "scope_mine": "Les miens",
     "scope_all": "Tous",
     "live": "En direct",
@@ -25,7 +23,7 @@
       "title": "Démarrage du runtime local…",
       "hint": "Connexion à l’espace de travail..."
     },
-    "add": "Ajouter",
+    "add": "Ajouter un runtime",
     "add_menu": {
       "machines": "Machines",
       "this_computer": "Cet ordinateur",
@@ -67,9 +65,101 @@
       "no_matches": "Aucune machine ni aucun service cloud ne correspond"
     },
     "filters": {
-      "all": "Tous",
+      "all": "Tous les runtimes",
       "online": "En ligne",
       "offline": "Hors ligne"
+    }
+  },
+  "quota_sources": {
+    "action": "Quotas d'abonnement",
+    "kinds": {
+      "glm": "Zhipu GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "Abonnement"
+    },
+    "cards": {
+      "region": "Quotas d'abonnement",
+      "tokens_period": "Jetons {{period}}",
+      "credits_period": "Crédits {{period}}",
+      "tools_period": "Crédits d'outils {{period}}",
+      "subscription_period": "Abonnement {{period}}",
+      "subscription_window": "Solde de l'abonnement",
+      "generic_window": "Fenêtre de quota",
+      "waiting": "En attente de la première collecte"
+    },
+    "visibility": {
+      "private": "Privé",
+      "shared": "Partagé",
+      "private_hint": "Vous seul pouvez voir cette carte d'abonnement.",
+      "shared_hint": "Visible par les membres uniquement dans les espaces où l'une de vos machines partagées est visible."
+    },
+    "dialog": {
+      "title": "Quotas d'abonnement",
+      "description": "Gérez vos identifiants et cartes d'abonnement GLM et ZenMux.",
+      "loading": "Chargement des abonnements",
+      "load_failed": "Impossible de charger les quotas d'abonnement.",
+      "retry": "Réessayer",
+      "empty_title": "Aucune source de quota d'abonnement",
+      "add": "Ajouter un abonnement",
+      "auto_refresh": "Le serveur vérifie les abonnements actifs toutes les 5 minutes",
+      "toggle": "Activer ou désactiver {{name}}",
+      "refresh": "Actualiser {{name}}",
+      "refresh_now": "Actualiser maintenant",
+      "refresh_in": "Actualisation possible dans {{seconds}} s",
+      "edit": "Modifier {{name}}",
+      "delete": "Supprimer {{name}}"
+    },
+    "status": {
+      "ok": "Normal",
+      "probing": "Vérification",
+      "disabled": "Désactivé"
+    },
+    "form": {
+      "back": "Retour aux abonnements",
+      "add_title": "Ajouter une source de quota",
+      "edit_title": "Modifier la source de quota",
+      "description": "Un nouvel identifiant ou endpoint est validé auprès du fournisseur avant son enregistrement.",
+      "kind_section": "1. Canal",
+      "credential_section": "2. Identifiant",
+      "name": "Nom",
+      "name_placeholder": "Exemple : compte GLM principal",
+      "api_key": "Clé API",
+      "management_key": "Clé API de gestion",
+      "saved_credential": "Identifiant enregistré (masqué)",
+      "replace_key": "Remplacer la clé",
+      "credential_placeholder": "Collez la clé API",
+      "credential_hint": "Chiffré pour la collecte côté serveur ; seuls les quatre derniers caractères sont affichés après l'enregistrement.",
+      "base_url": "Endpoint (facultatif)",
+      "visibility_section": "3. Visibilité",
+      "name_required": "Saisissez un nom.",
+      "credential_required": "Saisissez une clé API.",
+      "cancel": "Annuler",
+      "save": "Enregistrer et vérifier",
+      "saving": "Vérification et enregistrement..."
+    },
+    "errors": {
+      "invalid_credential": "Le fournisseur a rejeté cet identifiant. Vérifiez ou remplacez la clé API.",
+      "rate_limited": "Le fournisseur limite les requêtes. Réessayez plus tard.",
+      "network_error": "Le fournisseur est injoignable. Vérifiez l'endpoint et le réseau.",
+      "invalid_base_url": "Utilisez un endpoint HTTPS public pris en charge par ce canal.",
+      "unexpected_response": "Le fournisseur a renvoyé une réponse de quota illisible.",
+      "provider_error": "Le fournisseur n'a pas pu collecter les quotas.",
+      "generic": "Impossible de mettre à jour l'abonnement. Réessayez.",
+      "encryption_unconfigured": "Les identifiants d'abonnement sont indisponibles tant que l'administrateur n'a pas configuré MULTICA_QUOTA_SOURCE_SECRET_KEY.",
+      "refresh_cooldown": "Actualisation récente. Attendez la fin du délai de 30 secondes."
+    },
+    "delete": {
+      "title": "Supprimer « {{name}} » ?",
+      "description": "Sa carte disparaîtra et l'identifiant chiffré sera détruit. Cette action est irréversible.",
+      "cancel": "Annuler",
+      "confirm": "Supprimer l'abonnement",
+      "deleting": "Suppression..."
+    },
+    "toasts": {
+      "created": "Abonnement ajouté",
+      "updated": "Abonnement mis à jour",
+      "refreshed": "Abonnement actualisé",
+      "deleted": "Abonnement supprimé"
     }
   },
   "mika_setup": {
@@ -93,8 +183,7 @@
     "this_machine": "Cet appareil",
     "local_badge": "Local · cette machine",
     "pending_custom_runtimes": "Runtimes personnalisés en attente",
-    "runtime_count_one": "{{count}} runtime",
-    "runtime_count_other": "{{count}} runtimes",
+    "daemon_title": "Daemon",
     "busy_count_one": "{{count}} occupé",
     "busy_count_other": "{{count}} occupés",
     "no_matches_title": "Aucune machine",
@@ -162,16 +251,16 @@
     "fact_owner": "Propriétaire",
     "fact_device": "Appareil",
     "fact_runtime": "Runtime",
-    "technical_details": "Détails techniques",
     "fact_daemon_cli": "CLI du daemon",
     "fact_daemon_id": "Identifiant du daemon",
-    "serving_title": "Au service de",
-    "serving_count_one": "{{count}} agent",
-    "serving_count_other": "{{count}} agents",
+    "usage_title": "Consommation",
     "no_agents": "Aucun agent n'est encore associé à ce runtime.",
-    "diagnostics_title": "Diagnostics",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "Visibilité",
+    "concurrency_title": "Concurrence",
+    "concurrency_none": "Aucune limite",
+    "concurrency_hint": "Nombre maximal d'exécutions simultanées pour tous les agents de ce runtime ({{min}}–{{max}}). Laissez vide pour ne pas limiter.",
+    "toast_concurrency_failed": "Échec de la mise à jour de la limite de concurrence",
     "visibility_label": {
       "private": "Privé",
       "public": "Public",
@@ -674,6 +763,30 @@
       "working": "Déconnexion…",
       "cancel": "Annuler",
       "done": "Qoder déconnecté"
+    }
+  },
+  "intro": {
+    "title": "Donnez à vos agents un ordinateur pour travailler",
+    "description": "Un runtime, c'est là où les agents exécutent vraiment leurs tâches : votre ordinateur, un serveur ou un service cloud.",
+    "slides": {
+      "local": {
+        "title": "Cet ordinateur se connecte tout seul",
+        "description": "Téléchargez l'app de bureau et connectez-vous : Claude Code, Codex et les autres CLI de cet ordinateur apparaissent d'eux-mêmes."
+      },
+      "remote": {
+        "title": "Une autre machine, deux commandes",
+        "description": "Installez la CLI sur un serveur ou un autre ordinateur, puis lancez multica setup pour le connecter."
+      },
+      "cloud": {
+        "title": "Ou un nœud cloud",
+        "description": "Pas envie de gérer des machines ? Créez un nœud cloud hébergé par Multica."
+      }
+    },
+    "art": {
+      "this_computer": "Cet ordinateur · Bureau",
+      "detected": "Harness détectés",
+      "run_there": "À lancer sur cette machine",
+      "connected": "{{name}} connecté à Multica"
     }
   }
 }

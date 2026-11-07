@@ -123,6 +123,10 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 
 没有设置 `S3_BUCKET` 时，Multica 使用本地磁盘。
 
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MULTICA_MAX_PREVIEW_SIZE` | `2MiB` | 文本和 HTML 在线预览的正文大小上限，最大 `16MiB`。支持正整数字节数或 `KB`/`KiB`、`MB`/`MiB`（均按二进制单位计算）。超过 `16MiB` 的有效值截断为 `16MiB`，非法值回退到默认值。调大上限可能拖慢浏览器预览，尤其是语法高亮和 Markdown 渲染。修改后需重启 API；不改变上传或下载限制。 |
+
 ### S3 或兼容存储
 
 | 变量 | 默认值 | 说明 |
@@ -191,6 +195,7 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 | Composio | `COMPOSIO_STATE_SECRET` | OAuth state 签名密钥；可从 `JWT_SECRET` 派生 |
 | 自托管 Git | `MULTICA_VCS_INTEGRATION_ENABLED` | Forgejo/Gitea/GitLab 集成开关，compose 默认开启 |
 | 自托管 Git | `MULTICA_VCS_SECRET_KEY` | base64 编码的 32 字节加密密钥（`openssl rand -base64 32`）；未配置时该功能整体不可用 |
+| 订阅配额源 | `MULTICA_QUOTA_SOURCE_SECRET_KEY` | base64 编码的 32 字节密钥，用于加密用户录入的订阅凭证（智谱 GLM Coding Plan、ZenMux）；未配置时管理接口返回 503，轮询跳过 |
 | 插件 | `MULTICA_PLUGIN_SECRET_KEY` | base64 编码的 32 字节密钥，用于加密已存 secret 和 surface 启动 URL |
 | 插件 | `MULTICA_PLUGIN_SURFACE_ORIGIN` | 路由到后端的独立无 Cookie 浏览器 origin；必须不同于 app/API origin，并保留 `Host` |
 | 插件 | `MULTICA_PLUGIN_API_URL` | 带版本的插件 Public API 完整 Base URL，例如 `https://plugin-api.example.com/v1`；未设置时使用 `MULTICA_PUBLIC_URL` + `/v1` |
@@ -256,11 +261,7 @@ API key 与 base URL 都为空时，这一层关闭，不会发出任何上游�
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 执行工作目录的根目录 |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`（Linux/macOS） | 仅适用于 Linux/macOS。每次运行的私有临时目录的父目录；必须是现有、可写的绝对路径，无效值会使运行启动失败，不会回退到 `/tmp`。请选择较短的路径——子工具可能会在其中绑定 AF_UNIX socket；Linux 的 `sun_path` 上限为 108 字节，macOS 为 104 字节 |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | 保留运行目录用于调试 |
-| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 空 | ZenMux Management API Key（控制台签发，与推理 Key 不同），供订阅配额采集器使用；该 Key 不会离开本机。在用 `MULTICA_ZENMUX_LINK` 关联运行时之前不会上报任何数据 |
-| `MULTICA_ZENMUX_LINK` | 空（不关联任何运行时） | ZenMux 账户与运行时的显式人工关联：`hermes` 关联本守护进程上的所有 hermes 运行时，`hermes@<workspace-id>` 只关联指定工作区的 hermes 运行时，`hermes:profile:<profile-id>` 只关联某个自定义运行时 profile，`hermes:builtin[@<workspace-id>]` 只关联内置 hermes 运行时（用于内置与自定义 profile 同工作区共存时的精确区分），多个条目用逗号分隔。守护进程不会推断运行时真实使用的 LLM 网关，未关联的运行时保持 "未上报"。配置在守护进程启动时生效：新增、修改或删除条目后重启守护进程；被删除的关联会在下一次心跳时主动清除该运行时的配额展示，而不必等待 24 小时过期窗口 |
 | `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi 套餐配额采集器的轮询间隔；采集器探测本机 Kimi Code 本地 Server API，`kimi web` 未运行时静默保持 "未上报"。Bearer 凭据只在本地服务证明属于当前用户后才发送（支持 Linux/macOS；其他平台采集器不启动，运行时保持 "未上报"） |
-| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux 套餐配额采集器的轮询间隔；遇到 422 限流应答时按指数退避拉长间隔 |
-| `MULTICA_ZENMUX_API_BASE_URL` | 官方端点 | 覆盖 ZenMux subscription-detail 端点；用于测试与预发代理 |
 | `MULTICA_JEV_DISABLED` | `false` | 在本机关闭 Jev 自适应思考决策引擎：置 `1` 后思考挡位决策一律回退，不再向外部发送请求 |
 | `MULTICA_JEV_SOURCES` | `opencode-free` | 决策来源的有序逗号分隔列表，依次尝试：`opencode-free`（默认，免 key）、`opencode`（需 `MULTICA_JEV_OPENCODE_API_KEY`）、`dashscope`（需 `MULTICA_JEV_DASHSCOPE_API_KEY` 和 `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID`）、`self-hosted`（需 `MULTICA_JEV_SELF_HOSTED_URL`）。缺少变量的来源会被跳过。默认零配置：当智能体选择自适应后，运行摘要（包括工具输出原文）会发送到 OpenCode Zen 免费通道；`MULTICA_JEV_DISABLED=1` 可在本机关闭；API key 只留在本机 |
 | `MULTICA_JEV_TIMEOUT_MS` | `1500` | 单个来源的硬超时（毫秒），超时后切换下一个来源 |

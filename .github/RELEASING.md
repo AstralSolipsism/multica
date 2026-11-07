@@ -7,6 +7,17 @@ must explicitly target `AstralSolipsism/multica`. Never let a tool infer the for
 upstream as its target. Historical module paths and copyright attribution are
 not publishing destinations; retain LICENSE and NOTICE.
 
+## Repository boundary with Labrastro-runtime
+
+This repository owns the platform service components only (`backend`, `web`,
+`cli`, `desktop`). Agent Runtime container images are built and versioned in
+the separate private repository `AstralSolipsism/Labrastro-runtime`; the two
+repositories interface exclusively through this project's published CLI
+release artifacts — the `multica-cli-<version>-<os>-<arch>` archives
+(`.tar.gz`, `.zip` on Windows) and `cli-checksums.txt`. Renaming either side
+of that interface is a breaking cross-repository change. See
+[local build instructions](../docs/local-builds.md#repository-boundary-with-labrastro-runtime).
+
 `release.yml` contains the complete candidate graph described below. PR/main
 events run static verification; only `workflow_dispatch` from fork `main` can
 build an existing authorized tag. All jobs default to `contents: read`; only
@@ -225,7 +236,7 @@ clean-tree check carries the same single `apps/web/next-env.d.ts` exemption).
 | `make build` / direct Go build | Run preflight first, then `make build VERSION="$VERSION" COMMIT="$COMMIT" DATE="$DATE"`. `GOOS` and `GOARCH` select the binary target; `CGO_ENABLED=0` for distributed CLI. All distributed Go binaries retain full source SHA and Go build metadata. | OL-82 |
 | Web standalone | Preflight, then `node scripts/build-candidate-web.mjs`. It runs `STANDALONE=true NEXT_PUBLIC_APP_VERSION="$VERSION" pnpm --filter @multica/web build` itself, refuses output it cannot prove belongs to this version, and packs standalone output, `.next/static`, public assets, LICENSE/NOTICE and `web-build.json` evidence into `labrastro-web-<version>-linux-amd64-node-standalone.tar.gz` under `C/assets/` plus the inactive `C/downloads/releases/<tag>/`. | OL-81 |
 | Desktop `apps/desktop/scripts/package.mjs` | Preflight runs before cleanup/build inside `package.mjs` whenever the three release inputs are set; the preflight version goes to `extraMetadata.version` and the same version/full SHA/date reach `bundle-cli.mjs` as `VERSION`/`COMMIT`/`DATE`. Candidate packaging is always local: `--publish never` is pinned and any other publish mode fails. Invoke through `pnpm -C apps/desktop package -- --linux AppImage --win --x64 --arm64`. Generic internal feed stays configured. Afterwards `node apps/desktop/scripts/stage-candidate.mjs` verifies each target (app version/notices, bundled CLI platform/arch/version, installer hashes, channel pact) and writes the version directory, proposed feeds and inventory below. | OL-81 |
-| Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. | OL-82 |
+| Local `Dockerfile` / `Dockerfile.web` | Preflight on host source, backend args `VERSION`, `COMMIT`, `DATE`; Web arg `NEXT_PUBLIC_APP_VERSION`. Local image names `labrastro-backend:$LABRASTRO_RELEASE_TAG` and `labrastro-web:$LABRASTRO_RELEASE_TAG`; record full revision/version OCI labels and local Image IDs. Use local build/load, never push. `scripts/local-images.mjs --from-archives backend,web` packages the same tags from the candidate component archives after SHA-256 verification against their builder evidence, without recompiling (web archive is linux/amd64 only; other architectures build web from source). | OL-82 |
 
 The table is the interface for successor work. Web and Desktop candidate
 entries are implemented as `scripts/build-candidate-web.mjs`,
@@ -300,8 +311,13 @@ Keep existing manifest identity fields `tag`, `version`, `commit`, `prepared_at`
 `release_state: "draft"`, `release_url` (fork only), `internal_upload_complete`,
 `production_inventory_complete`, `deployment_performed`, `images` and `artifacts`.
 Do not set operational completion flags from a successful build. Retain image
-`build_method: "local_from_source"`, `registry_required: false`, explicit status
-and actual local Image IDs when available; do not require a registry digest.
+`build_method: "local_from_source"` or `"local_from_archives"` (archive
+packaging additionally records the consumed archive name and SHA-256, which
+assembly cross-checks against the candidate's own archive inventory, and
+requires — both directions — that only archive packaging carries an archive
+anchor),
+`registry_required: false`, explicit status and actual local Image IDs when
+available; do not require a registry digest.
 Add `repository: "AstralSolipsism/multica"` and identify each artifact's
 `component`, `os`, `arch` (omit os/arch for shared metadata). Each artifact has:
 
@@ -418,7 +434,7 @@ reviewed history record and component `--mode rebuild` contract above.
 | `backend` | Existing `make candidate-backend`, independent archive verification; QEMU required for cross-target version execution |
 | `web` | Existing Linux x64 standalone builder and its build/inventory evidence |
 | `desktop` | Linux and Windows build hosts each package x64 + arm64, stage both targets, seal the **full** target directories in tar plus host verification; Windows also runs PowerShell installer regressions |
-| `images` | Both native Linux architectures build backend/Web images locally with the existing image entry, verify actual container bytes, retain Image IDs and evidence only; no image export or registry push |
+| `images` | Both native Linux architectures package backend/Web images from the backend and web jobs' SHA-256-verified candidate archives (amd64: backend+web; arm64: backend from archive, web from source because the web archive is linux/amd64 only), verify actual container bytes — including a real in-image `sharp` native-module load for web (glibc bookworm-slim base matches the CI-built archive) — retain Image IDs and evidence only; no image export or registry push and no duplicate Go/Next.js compile |
 | `assemble` | Runs even if a dependency failed/skipped; requires every job and receipt, verifies CLI/backend binaries, Web archive/client version and all Desktop staging inputs/feeds, merges manifest and download tree |
 | `draft` | Protected environment; recheck candidate identity and transferred bytes/feeds; create a new incomplete draft, upload, download every remote asset and compare hashes, then mark notes complete |
 

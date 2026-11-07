@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { RuntimePlanQuotaWindow } from "../types";
 import {
   evaluatePlanQuota,
+  evaluatePlanQuotaPools,
   formatCompactDuration,
   groupQuotaWindows,
   isCollectorObservationInterrupted,
@@ -438,7 +439,7 @@ describe("formatCompactDuration", () => {
 
 // The antigravity probe reports two quota pools (gemini, claude_gpt), each
 // with a 5h and a weekly window — four buckets a flat list would leave
-// ambiguous once the short "5h"/"wk" labels repeat.
+// ambiguous once the short "5h"/"7d" labels repeat.
 describe("quota window groups", () => {
   const antigravityWindows: RuntimePlanQuotaWindow[] = [
     { name: "gemini_weekly", used_percent: 50, window_minutes: 10080, resets_at: null, group: "gemini" },
@@ -525,4 +526,420 @@ describe("fully replenished windows (OL-141 four-window shape)", () => {
     expect(groups[0]?.windows.map((window) => window.name)).toEqual(["gemini_5h", "gemini_weekly"]);
     expect(groups[1]?.windows.map((window) => window.name)).toEqual(["claude_gpt_5h", "claude_gpt_weekly"]);
   });
+});
+
+describe("multi-account provider pools (OMP)", () => {
+  const account = (
+    label: string,
+    status: string,
+    used5h: number | null,
+    resets5h: number | null = NOW_SEC + 3600,
+  ) => ({
+    label,
+    status,
+    windows: [
+      {
+        name: "5h",
+        used_percent: used5h,
+        window_minutes: 300,
+        resets_at: resets5h,
+      },
+    ],
+    note: null,
+  });
+
+  const gatewayQuota = (pools: unknown[]) => ({
+    provider: "omp",
+    status: "ok",
+    windows: [],
+    observed_at: NOW_SEC - 60,
+    source: "daemon",
+    account_pools: pools,
+  });
+
+  it("parses pools, preserving counts and redacted labels", () => {
+    const state = planQuotaState(
+      gatewayQuota([
+        {
+          id: "kimi-code",
+          total_accounts: 3,
+          available_accounts: 2,
+          disabled_accounts: 0,
+          status: "ok",
+          resumes_at: null,
+          accounts: [account("19*", "exhausted", 100), account("as*", "ok", 15), account("de*", "ok", 5)],
+        },
+      ]),
+      NOW_MS,
+    );
+    expect(state).not.toBeNull();
+    const pools = evaluatePlanQuotaPools(parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 3,
+        available_accounts: 2,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("19*", "exhausted", 100), account("as*", "ok", 15), account("de*", "ok", 5)],
+      },
+    ]))!, NOW_MS);
+    expect(pools).not.toBeNull();
+    expect(pools!.pools).toHaveLength(1);
+    const pool = pools!.pools[0]!;
+    expect(pool.id).toBe("kimi-code");
+    expect(pool.availableAccounts).toBe(2);
+    expect(pool.totalAccounts).toBe(3);
+    expect(pool.exhausted).toBe(false);
+    expect(pool.tone).toBe("ok");
+    expect(pool.windows[0]).toMatchObject({ windowMinutes: 300, remainingPercent: 60, tone: "ok" });
+    expect(pool.accounts.map((a) => a.label)).toEqual(["19*", "as*", "de*"]);
+  });
+
+  it("OR health: one exhausted account of three does not exhaust the pool", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 3,
+        available_accounts: 2,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("19*", "exhausted", 100), account("as*", "ok", 85), account("de*", "ok", 100)],
+      },
+    ]))!;
+    const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(false);
+    expect(pools.pools[0]!.windows[0]!.remainingPercent).toBe(5);
+    expect(pools.exhausted).toBe(false);
+    expect(pools.tone).toBe("destructive");
+  });
+
+  it("all accounts exhausted: pool is exhausted and resumes at the earliest reset", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 2,
+        available_accounts: 0,
+        disabled_accounts: 0,
+        status: "limited",
+        resumes_at: NOW_SEC + 4320,
+        accounts: [
+          account("19*", "exhausted", 100, NOW_SEC + 4320),
+          account("as*", "exhausted", 100, NOW_SEC + 90000),
+        ],
+      },
+      {
+        id: "anthropic",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("ca*", "ok", 30)],
+      },
+    ]))!;
+    const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(true);
+    expect(pools.pools[0]!.resumesAt).toBe(NOW_SEC + 4320);
+    expect(pools.pools[1]!.exhausted).toBe(false);
+    // One healthy pool keeps the runtime usable.
+    expect(pools.exhausted).toBe(false);
+  });
+
+  it("every pool exhausted: runtime resumes at the earliest pool recovery", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 0,
+        disabled_accounts: 0,
+        status: "limited",
+        resumes_at: NOW_SEC + 3600,
+        accounts: [account("19*", "exhausted", 100, NOW_SEC + 3600)],
+      },
+      {
+        id: "zai",
+        total_accounts: 1,
+        available_accounts: 0,
+        disabled_accounts: 0,
+        status: "limited",
+        resumes_at: NOW_SEC + 7200,
+        accounts: [account("ze*", "exhausted", 100, NOW_SEC + 7200)],
+      },
+    ]))!;
+    const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
+    expect(pools.exhausted).toBe(true);
+    expect(pools.tone).toBe("destructive");
+    expect(pools.resumesAt).toBe(NOW_SEC + 3600);
+  });
+
+  it("disabled credentials count toward disabled, not available", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "anthropic",
+        total_accounts: 2,
+        available_accounts: 1,
+        disabled_accounts: 1,
+        status: "ok",
+        resumes_at: null,
+        accounts: [
+          account("ca*", "ok", 30),
+          { label: "di*", status: "disabled", windows: [], note: "oauth refresh failed" },
+        ],
+      },
+    ]))!;
+    const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
+    const pool = pools.pools[0]!;
+    expect(pool.disabledAccounts).toBe(1);
+    expect(pool.availableAccounts).toBe(1);
+    expect(pool.exhausted).toBe(false);
+    const disabled = pool.accounts.find((a) => a.status === "disabled")!;
+    expect(disabled.usable).toBe(false);
+    expect(disabled.note).toBe("oauth refresh failed");
+  });
+
+  it("drops pools and accounts that fail sanitization", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("19*", "ok", 15)],
+      },
+      { id: "", total_accounts: 1, available_accounts: 1, disabled_accounts: 0, status: "ok", resumes_at: null, accounts: [] },
+      {
+        id: "anthropic",
+        total_accounts: 2,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        // An unredacted email label fails the privacy guard.
+        accounts: [account("someone@example.com", "ok", 10), account("ca*", "ok", 20)],
+      },
+    ]))!;
+    expect(quota.account_pools).toHaveLength(2);
+    expect(quota.account_pools!.map((p) => p.id)).toEqual(["kimi-code", "anthropic"]);
+    // The offending account dropped; the healthy sibling survived.
+    expect(quota.account_pools![1]!.accounts.map((a) => a.label)).toEqual(["ca*"]);
+  });
+
+  it("a passed reset refills the account's window", () => {
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 0,
+        disabled_accounts: 0,
+        status: "limited",
+        resumes_at: null,
+        accounts: [account("19*", "exhausted", 100, NOW_SEC - 60)],
+      },
+    ]))!;
+    const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
+    const acc = pools.pools[0]!.accounts[0]!;
+    expect(acc.windows[0]!.remainingPercent).toBe(100);
+    expect(acc.windows[0]!.resetsAt).toBeNull();
+    // The snapshot said exhausted, but its only window refilled: the account
+    // recovers with the window (same refill rule as the flat list).
+    expect(acc.usable).toBe(true);
+  });
+
+  it("pool-only snapshots render (planQuotaState does not require windows)", () => {
+    const state = planQuotaState(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("19*", "ok", 15)],
+      },
+    ]), NOW_MS);
+    expect(state).not.toBeNull();
+  });
+
+  it("omp snapshots participate in interruption detection", () => {
+    const stale = gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [account("19*", "ok", 15)],
+      },
+    ]);
+    stale.observed_at = NOW_SEC - 2 * 3600;
+    const quota = parsePlanQuota(stale)!;
+    expect(isQuotaCollectionInterrupted(quota, NOW_MS)).toBe(true);
+  });
+});
+
+describe("multi-account provider pools (review regressions)", () => {
+  const pool = (accounts: unknown[], overrides: Record<string, unknown> = {}) => ({
+    id: "kimi-code",
+    total_accounts: accounts.length,
+    available_accounts: 0,
+    disabled_accounts: 0,
+    status: "ok",
+    resumes_at: null,
+    accounts,
+    ...overrides,
+  });
+  const quotaOf = (pools: unknown[]) =>
+    parsePlanQuota({
+      provider: "omp",
+      status: "ok",
+      windows: [],
+      observed_at: NOW_SEC - 60,
+      source: "daemon",
+      account_pools: pools,
+    })!;
+
+  // #3: reserve is not usable (OMP stops routing to inside-reserve accounts).
+  it("reserve accounts are excluded from available", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "reserve", windows: [{ name: "5h", used_percent: 93, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+        { label: "as*", status: "ok", windows: [{ name: "5h", used_percent: 30, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+      ]),
+    ]), NOW_MS)!;
+    const p = pools.pools[0]!;
+    expect(p.availableAccounts).toBe(1);
+    expect(p.accounts[0]!.usable).toBe(false);
+    expect(p.exhausted).toBe(false);
+  });
+
+  // #4: unknown-only pool is missing evidence, not exhaustion.
+  it("a pool of only unknown accounts is not exhausted", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([{ label: "ze*", status: "unknown", windows: [], note: null }]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(false);
+    expect(pools.pools[0]!.tone).not.toBe("destructive");
+    expect(pools.exhausted).toBe(false);
+    expect(pools.tone).not.toBe("destructive");
+  });
+
+  // Mixed: unknown sibling must not flip an otherwise-exhausted pool either.
+  it("an unknown account alongside exhausted ones does not mask exhaustion", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "exhausted", windows: [{ name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+        { label: "ze*", status: "unknown", windows: [], note: null },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(true);
+  });
+
+  // #5: recovery waits for the account's LATEST exhausted window (serial
+  // windows), then the earliest account wins.
+  it("pool recovery uses the slowest exhausted window per account", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "ca*",
+          status: "exhausted",
+          windows: [
+            { name: "5h", used_percent: 30, window_minutes: 300, resets_at: NOW_SEC + 2 * 3600 },
+            { name: "7d", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    const p = pools.pools[0]!;
+    expect(p.exhausted).toBe(true);
+    // 3 days (the exhausted 7d window), NOT 2 hours (the healthy 5h one).
+    expect(p.resumesAt).toBe(NOW_SEC + 3 * 24 * 3600);
+  });
+
+  // #7: OMP-judged exhausted survives when no reset has passed (a reached
+  // spend cap below 100% is still a denial).
+  it("snapshot exhausted stands when no reset has passed", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "co*",
+          status: "exhausted",
+          windows: [
+            { name: "5h", used_percent: 97, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    const acc = pools.pools[0]!.accounts[0]!;
+    expect(acc.status).toBe("exhausted");
+    expect(acc.usable).toBe(false);
+    expect(pools.pools[0]!.exhausted).toBe(true);
+  });
+
+  // #14 (m7): a window at exactly 100% used is exhausted even when the
+  // snapshot status says ok.
+  it("a 100% window marks the account exhausted regardless of snapshot status", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "19*",
+          status: "ok",
+          windows: [
+            { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.accounts[0]!.status).toBe("exhausted");
+  });
+
+  // #14 (t1): warning accounts count as available.
+  it("warning accounts remain usable", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "warning", windows: [{ name: "5h", used_percent: 85, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.availableAccounts).toBe(1);
+    expect(pools.pools[0]!.exhausted).toBe(false);
+  });
+
+// #18/#19 (scenario-2 primary example): 5h exhausted, 7d healthy — recovery
+// is the earliest 5h (exhausted-window) reset, never the healthy 7d reset.
+it("recovery ignores healthy windows (scenario-2 primary example)", () => {
+  const pools = evaluatePlanQuotaPools(quotaOf([
+    pool([
+      {
+        label: "19*",
+        status: "exhausted",
+        windows: [
+          { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 4320 },
+          { name: "7d", used_percent: 35, window_minutes: 10080, resets_at: NOW_SEC + 5 * 24 * 3600 },
+        ],
+        note: null,
+      },
+      {
+        label: "as*",
+        status: "exhausted",
+        windows: [
+          { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 7200 },
+          { name: "7d", used_percent: 20, window_minutes: 10080, resets_at: NOW_SEC + 6 * 24 * 3600 },
+        ],
+        note: null,
+      },
+    ]),
+  ]), NOW_MS)!;
+  const p = pools.pools[0]!;
+  expect(p.exhausted).toBe(true);
+  // Account #1's 5h reset (1h12m), not either 7d reset (5–6 days out).
+  expect(p.resumesAt).toBe(NOW_SEC + 4320);
+  expect(p.resumesAccountIndex).toBe(0);
+});
 });

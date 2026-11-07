@@ -14,6 +14,12 @@ vi.mock("../platform/local-directory", () => ({
   isDesktopShell: vi.fn(() => false),
 }));
 
+// The What's new entry is covered with the real menu in whats-new-menu-panel.test.tsx.
+vi.mock("../whats-new/whats-new-menu-panel", () => ({
+  useWhatsNewMenuPanel: () => ({ available: false }),
+  WhatsNewMenuPanel: () => null,
+}));
+
 // react-i18next isn't initialised in the views test env, so resolve the
 // selector against the assembled namespace to assert on actual copy.
 vi.mock("../i18n", () => ({
@@ -30,9 +36,8 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-// Follows the app-sidebar.test.tsx convention of flattening the Base UI
-// dropdown primitives to plain children so the menu content is always in
-// the DOM, instead of exercising the real portal/open-state interaction.
+// Flatten the Base UI dropdown primitives to plain children so the menu
+// content stays in the DOM instead of exercising the real portal interaction.
 //
 // The mock deliberately preserves ONE real invariant: DropdownMenuLabel wraps
 // Base UI's Menu.GroupLabel, whose useMenuGroupRootContext() throws when it has
@@ -124,6 +129,14 @@ describe("HelpLauncher", () => {
     expect(link).toHaveAttribute("href", "https://multica.outlune.com/download");
   });
 
+  it("omits retired docs, changelog, and Discord links", () => {
+    render(<HelpLauncher />);
+
+    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg"]) {
+      expect(document.querySelector(`a[href*="${href}"]`)).toBeNull();
+    }
+  });
+
   // The community entry opens the group QR dialog in place — it must not be
   // an outbound anchor, so joining never leaves the app or hits a
   // third-party host.
@@ -144,7 +157,7 @@ describe("HelpLauncher", () => {
     ).not.toBeInTheDocument();
   });
 
-  // AppSidebar is shared: apps/desktop renders the same component tree. Without
+  // HelpLauncher is shared: apps/desktop renders the same component tree. Without
   // this gate the desktop app would offer to download the desktop app.
   it("hides the download entry inside the desktop shell", () => {
     vi.mocked(isDesktopShell).mockReturnValue(true);

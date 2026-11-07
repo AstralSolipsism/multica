@@ -1,9 +1,7 @@
 {
   "page": {
     "title": "런타임",
-    "learn_more": "자세히 보기 →",
     "connect_remote": "머신 추가",
-    "search_placeholder": "검색…",
     "scope_mine": "내 것",
     "scope_all": "전체",
     "live": "실시간",
@@ -25,7 +23,7 @@
       "title": "로컬 런타임 시작 중...",
       "hint": "워크스페이스에 연결 중..."
     },
-    "add": "추가",
+    "add": "런타임 추가",
     "add_menu": {
       "machines": "머신",
       "this_computer": "이 컴퓨터",
@@ -67,9 +65,101 @@
       "no_matches": "일치하는 머신 또는 클라우드 서비스가 없습니다"
     },
     "filters": {
-      "all": "전체",
+      "all": "모든 런타임",
       "online": "온라인",
       "offline": "오프라인"
+    }
+  },
+  "quota_sources": {
+    "action": "구독 할당량",
+    "kinds": {
+      "glm": "Zhipu GLM Coding Plan",
+      "zenmux": "ZenMux",
+      "unknown": "구독"
+    },
+    "cards": {
+      "region": "구독 할당량",
+      "tokens_period": "{{period}} 토큰",
+      "credits_period": "{{period}} 크레딧",
+      "tools_period": "{{period}} 도구 크레딧",
+      "subscription_period": "{{period}} 구독",
+      "subscription_window": "구독 잔량",
+      "generic_window": "할당량 기간",
+      "waiting": "첫 수집을 기다리는 중"
+    },
+    "visibility": {
+      "private": "나만 보기",
+      "shared": "공유 머신에 연동",
+      "private_hint": "이 구독 카드는 나에게만 표시됩니다.",
+      "shared_hint": "내 공유 머신이 보이는 워크스페이스에서만 멤버에게 표시됩니다."
+    },
+    "dialog": {
+      "title": "구독 할당량",
+      "description": "GLM 및 ZenMux 구독 자격 증명과 카드를 관리합니다.",
+      "loading": "구독 로드 중",
+      "load_failed": "구독 할당량을 불러오지 못했습니다.",
+      "retry": "다시 시도",
+      "empty_title": "아직 구독 할당량 소스가 없습니다",
+      "add": "구독 추가",
+      "auto_refresh": "서버가 활성화된 구독을 5분마다 확인합니다",
+      "toggle": "{{name}} 전환",
+      "refresh": "{{name}} 새로고침",
+      "refresh_now": "지금 새로고침",
+      "refresh_in": "{{seconds}}초 후 새로고침 가능",
+      "edit": "{{name}} 편집",
+      "delete": "{{name}} 삭제"
+    },
+    "status": {
+      "ok": "정상",
+      "probing": "확인 중",
+      "disabled": "비활성화됨"
+    },
+    "form": {
+      "back": "구독 목록으로 돌아가기",
+      "add_title": "구독 할당량 소스 추가",
+      "edit_title": "구독 할당량 소스 편집",
+      "description": "새 자격 증명이나 엔드포인트는 저장 전에 제공업체에서 검증합니다.",
+      "kind_section": "1. 채널",
+      "credential_section": "2. 자격 증명",
+      "name": "이름",
+      "name_placeholder": "예: 기본 GLM 계정",
+      "api_key": "API 키",
+      "management_key": "Management API 키",
+      "saved_credential": "저장된 자격 증명(마스크됨)",
+      "replace_key": "키 교체",
+      "credential_placeholder": "API 키 붙여넣기",
+      "credential_hint": "서버 측 수집을 위해 암호화되며 저장 후에는 마지막 4자만 표시됩니다.",
+      "base_url": "엔드포인트(선택 사항)",
+      "visibility_section": "3. 공개 범위",
+      "name_required": "이름을 입력하세요.",
+      "credential_required": "API 키를 입력하세요.",
+      "cancel": "취소",
+      "save": "저장하고 확인",
+      "saving": "확인하고 저장하는 중..."
+    },
+    "errors": {
+      "invalid_credential": "제공업체가 이 자격 증명을 거부했습니다. API 키를 확인하거나 교체하세요.",
+      "rate_limited": "제공업체가 요청을 제한하고 있습니다. 나중에 다시 시도하세요.",
+      "network_error": "제공업체에 연결할 수 없습니다. 엔드포인트와 네트워크를 확인하세요.",
+      "invalid_base_url": "이 채널에서 지원하는 공개 HTTPS 엔드포인트를 사용하세요.",
+      "unexpected_response": "제공업체가 읽을 수 없는 할당량 응답을 반환했습니다.",
+      "provider_error": "제공업체 할당량을 수집하지 못했습니다.",
+      "generic": "구독을 업데이트할 수 없습니다. 다시 시도하세요.",
+      "encryption_unconfigured": "서버 관리자가 MULTICA_QUOTA_SOURCE_SECRET_KEY를 설정해야 구독 자격 증명을 사용할 수 있습니다.",
+      "refresh_cooldown": "방금 새로고침했습니다. 30초 재사용 대기 시간 후에 다시 시도하세요."
+    },
+    "delete": {
+      "title": "\"{{name}}\"을(를) 삭제할까요?",
+      "description": "카드가 사라지고 암호화된 자격 증명이 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "cancel": "취소",
+      "confirm": "구독 삭제",
+      "deleting": "삭제하는 중..."
+    },
+    "toasts": {
+      "created": "구독을 추가했습니다",
+      "updated": "구독을 업데이트했습니다",
+      "refreshed": "구독을 새로고침했습니다",
+      "deleted": "구독을 삭제했습니다"
     }
   },
   "mika_setup": {
@@ -93,7 +183,7 @@
     "this_machine": "이 Mac",
     "local_badge": "로컬 · 이 기기",
     "pending_custom_runtimes": "등록 대기 중인 사용자 지정 런타임",
-    "runtime_count_other": "런타임 {{count}}개",
+    "daemon_title": "데몬",
     "busy_count_other": "사용 중 {{count}}개",
     "no_matches_title": "기기 없음",
     "no_matches_hint": "현재 검색 또는 필터와 일치하는 기기가 없습니다.",
@@ -158,15 +248,16 @@
     "fact_owner": "소유자",
     "fact_device": "기기",
     "fact_runtime": "런타임",
-    "technical_details": "기술 세부 정보",
     "fact_daemon_cli": "데몬 CLI",
     "fact_daemon_id": "데몬 ID",
-    "serving_title": "제공 중",
-    "serving_count_other": "에이전트 {{count}}개",
+    "usage_title": "사용량",
     "no_agents": "아직 이 런타임에 연결된 에이전트가 없습니다.",
-    "diagnostics_title": "진단",
     "diagnostics_cli": "CLI",
     "diagnostics_visibility": "공개 범위",
+    "concurrency_title": "동시 실행",
+    "concurrency_none": "제한 없음",
+    "concurrency_hint": "이 런타임의 모든 에이전트가 동시에 진행할 수 있는 최대 실행 수({{min}}-{{max}}). 비워 두면 제한이 없습니다.",
+    "toast_concurrency_failed": "동시 실행 제한을 업데이트하지 못했습니다",
     "visibility_label": {
       "private": "비공개",
       "public": "공개",
@@ -652,6 +743,30 @@
       "working": "연결 해제 중…",
       "cancel": "취소",
       "done": "Qoder 연결을 해제했습니다"
+    }
+  },
+  "intro": {
+    "title": "에이전트에게 일할 컴퓨터를",
+    "description": "런타임은 에이전트가 실제로 태스크를 실행하는 곳입니다. 내 컴퓨터, 서버, 또는 클라우드 서비스를 쓸 수 있습니다.",
+    "slides": {
+      "local": {
+        "title": "이 컴퓨터는 자동 연결",
+        "description": "데스크톱 앱을 내려받아 로그인하면 이 컴퓨터의 Claude Code, Codex 등이 자동으로 나타납니다."
+      },
+      "remote": {
+        "title": "다른 머신은 명령 두 개로",
+        "description": "서버나 다른 컴퓨터에 CLI를 설치하고 multica setup을 실행하면 연결됩니다."
+      },
+      "cloud": {
+        "title": "클라우드 노드도 가능",
+        "description": "머신을 직접 관리하기 싫다면 Multica가 호스팅하는 클라우드 노드를 만드세요."
+      }
+    },
+    "art": {
+      "this_computer": "이 컴퓨터 · 데스크톱",
+      "detected": "감지된 harness",
+      "run_there": "해당 머신에서 실행",
+      "connected": "{{name}}이(가) Multica에 연결됨"
     }
   }
 }

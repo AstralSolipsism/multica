@@ -50,7 +50,7 @@ func (q *Queries) AttachMediaJob(ctx context.Context, arg AttachMediaJobParams) 
 }
 
 const availableMediaRuntimes = `-- name: AvailableMediaRuntimes :many
-SELECT r.id, r.workspace_id, r.daemon_id, r.name, r.runtime_mode, r.provider, r.status, r.device_info, r.metadata, r.last_seen_at, r.created_at, r.updated_at, r.owner_id, r.legacy_daemon_id, r.visibility, r.profile_id, r.custom_name, r.plan_quota, r.shared_with FROM agent_runtime r WHERE r.workspace_id = $1 AND r.status = 'online'
+SELECT r.id, r.workspace_id, r.daemon_id, r.name, r.runtime_mode, r.provider, r.status, r.device_info, r.metadata, r.last_seen_at, r.created_at, r.updated_at, r.owner_id, r.legacy_daemon_id, r.visibility, r.profile_id, r.custom_name, r.plan_quota, r.shared_with, r.max_concurrent_tasks FROM agent_runtime r WHERE r.workspace_id = $1 AND r.status = 'online'
 AND r.daemon_id IS NOT NULL
 AND NOT EXISTS (SELECT 1 FROM media_job j WHERE j.runtime_id = r.id AND j.state = 'running' AND j.expires_at > now())
 ORDER BY r.id
@@ -85,6 +85,7 @@ func (q *Queries) AvailableMediaRuntimes(ctx context.Context, workspaceID pgtype
 			&i.CustomName,
 			&i.PlanQuota,
 			&i.SharedWith,
+			&i.MaxConcurrentTasks,
 		); err != nil {
 			return nil, err
 		}

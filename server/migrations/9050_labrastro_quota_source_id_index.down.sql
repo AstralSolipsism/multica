@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS uq_quota_source_id;

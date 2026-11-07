@@ -123,6 +123,10 @@ allowlist の正確な判定順序は[ログインとサインアップ](/auth-s
 
 `S3_BUCKET` が未設定の場合、Multica はローカルディスクを使います。
 
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `MULTICA_MAX_PREVIEW_SIZE` | `2MiB` | テキストと HTML のオンラインプレビュー本文の上限。最大 `16MiB`。正の整数のバイト数、`KB`/`KiB`、`MB`/`MiB`（二進単位）を指定できます。`16MiB` を超える有効な値は `16MiB` に制限され、不正な値はデフォルトに戻ります。上限を増やすと、特に構文ハイライトや Markdown の描画でブラウザーのプレビューが遅くなる場合があります。変更後は API を再起動してください。アップロードとダウンロードの制限は変わりません。 |
+
 ### S3 または互換ストレージ
 
 | 変数 | デフォルト | 説明 |
@@ -191,6 +195,7 @@ allowlist の正確な判定順序は[ログインとサインアップ](/auth-s
 | Composio | `COMPOSIO_STATE_SECRET` | OAuth state の署名シークレット。`JWT_SECRET` から派生可能 |
 | セルフホスト Git | `MULTICA_VCS_INTEGRATION_ENABLED` | Forgejo/Gitea/GitLab 連携のスイッチ。compose ではデフォルトで有効 |
 | セルフホスト Git | `MULTICA_VCS_SECRET_KEY` | base64 エンコードされた 32 バイトの暗号化キー（`openssl rand -base64 32`）。未設定の場合、この機能全体が利用できません |
+| サブスクリプション クォータ ソース | `MULTICA_QUOTA_SOURCE_SECRET_KEY` | ユーザー登録のサブスクリプション資格情報（GLM Coding Plan、ZenMux）を暗号化する base64 エンコード 32 バイトキー。未設定の場合、管理エンドポイントは 503 を返し、ポーリングはスキップされます |
 | Plugins | `MULTICA_PLUGIN_SECRET_KEY` | 保存済み secret と surface 起動 URL を暗号化する base64 形式の 32 バイト鍵 |
 | Plugins | `MULTICA_PLUGIN_SURFACE_ORIGIN` | バックエンドへルーティングする Cookie なしの専用 origin。app/API origin と分離し、`Host` を保持すること |
 | Plugins | `MULTICA_PLUGIN_API_URL` | バージョンを含む Plugin Public API の完全な Base URL（例: `https://plugin-api.example.com/v1`）。未設定時は `MULTICA_PUBLIC_URL` + `/v1` |
@@ -256,11 +261,7 @@ API key と base URL の両方が空の場合、このレイヤーは無効に�
 | `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` | 実行用作業ディレクトリのルート |
 | `MULTICA_AGENT_TEMP_BASE` | `/tmp`（Linux/macOS） | Linux/macOS 専用。作業ごとのプライベート一時ディレクトリの親ディレクトリ。既存かつ書き込み可能な絶対パスである必要があり、無効な値の場合は `/tmp` にフォールバックせず作業の開始に失敗します。短いパスを選んでください。子ツールがその配下に AF_UNIX ソケットを作成する場合があり、`sun_path` の上限は Linux で 108 バイト、macOS で 104 バイトです |
 | `MULTICA_KEEP_ENV_AFTER_TASK` | `false` | デバッグ用に実行ディレクトリを保持 |
-| `MULTICA_ZENMUX_MANAGEMENT_API_KEY` | 空 | ZenMux Management API キー（コンソール発行、推論キーとは別）。サブスクリプションクォータコレクター用で、このマシンから外部に出ません。`MULTICA_ZENMUX_LINK` でランタイムを関連付けるまで何も報告されません |
-| `MULTICA_ZENMUX_LINK` | 空（関連付けなし） | ZenMux アカウントとランタイムの明示的な手動関連付け: `hermes` はこの daemon の全 hermes ランタイム、`hermes@<workspace-id>` は指定ワークスペースの hermes ランタイム、`hermes:profile:<profile-id>` は特定のカスタムランタイムプロファイルのみ、`hermes:builtin[@<workspace-id>]` は組み込み hermes ランタイムのみ（同一ワークスペースで組み込みとカスタムプロファイルが共存する場合の区別用）。複数はカンマ区切り。daemon はランタイムが実際に使う LLM ゲートウェイを推測せず、未関連付けのランタイムは "未報告" のままです。daemon 起動時に適用されます。エントリの追加・変更・削除後に再起動すると反映され、削除された関連付けは次のハートビートでそのランタイムのクォータ表示が直ちにクリアされます（24 時間の鮮度期限切れを待ちません） |
 | `MULTICA_KIMI_QUOTA_POLL_INTERVAL` | `2m` | Kimi プラクォータコレクターのポーリング間隔。マシン上の Kimi Code ローカル Server API をプローブし、`kimi web` が動いていない間は "未報告" のまま静かに待機します。Bearer トークンはローカルサーバーが同一ユーザーの所有であることを証明した後にのみ送信されます（Linux/macOS 対応。他のプラットフォームではコレクターは動作せず "未報告" のままです） |
-| `MULTICA_ZENMUX_QUOTA_POLL_INTERVAL` | `2m` | ZenMux プラクォータコレクターのポーリング間隔。422 レート制限応答時は遅延を指数的に延長します |
-| `MULTICA_ZENMUX_API_BASE_URL` | 公式エンドポイント | ZenMux subscription-detail エンドポイントの上書き。テストやステージングプロキシ向け |
 | `MULTICA_JEV_DISABLED` | `false` | Jev アダプティブ思考判定エンジンをこのマシンで無効化：`1` にすると思考レベル判定は常にフォールバックし、リクエストは外部に送信されない |
 | `MULTICA_JEV_SOURCES` | `opencode-free` | 判定ソースの順序付きカンマ区切りリスト（順番に試行）：`opencode-free`（デフォルト、キー不要）、`opencode`（`MULTICA_JEV_OPENCODE_API_KEY` 必要）、`dashscope`（`MULTICA_JEV_DASHSCOPE_API_KEY` と `MULTICA_JEV_DASHSCOPE_WORKSPACE_ID` 必要）、`self-hosted`（`MULTICA_JEV_SELF_HOSTED_URL` 必要）。必須変数のないソースはスキップされる。デフォルトはゼロ設定：エージェントがアダプティブ思考を選ぶと、ツール出力を含む実行要約が OpenCode Zen 無料チャンネルへ送られる。`MULTICA_JEV_DISABLED=1` でこのマシンからオフにでき、API キーはこのマシンから出ない |
 | `MULTICA_JEV_TIMEOUT_MS` | `1500` | 1 ソースあたりのハードタイムアウト（ミリ秒）。超過時は次のソースへ切り替え |
