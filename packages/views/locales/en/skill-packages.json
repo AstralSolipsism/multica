@@ -198,8 +198,6 @@
   },
   "picker": {
     "uncategorized": "Uncategorized",
-    "not_imported": "Not imported",
-    "not_imported_hint": "Import this skill from the skills page before binding it.",
     "toggle_folder": "Select all in {{name}}"
   }
 }

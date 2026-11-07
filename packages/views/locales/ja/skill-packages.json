@@ -187,8 +187,6 @@
   },
   "picker": {
     "uncategorized": "未分類",
-    "not_imported": "未インポート",
-    "not_imported_hint": "紐付ける前に、スキルページでこのスキルをインポートしてください。",
     "toggle_folder": "「{{name}}」内をすべて選択"
   }
 }

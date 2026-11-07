@@ -404,12 +404,13 @@ func (h *Handler) labrastroChangeSkillPlacement(w http.ResponseWriter, r *http.R
 	if detach {
 		err = q.LabrastroDetachSkill(ctx, db.LabrastroDetachSkillParams{WorkspaceID: a.ws, SkillID: id})
 	} else {
-		places, e := q.LabrastroListSkillPlacements(ctx, a.ws)
-		err = e
-		for _, p := range places {
-			if p.SkillID == id && p.PackageID.Valid {
-				err = labrastroSkillError(409, "managed_skill", "detach this skill from its package before moving it")
-			}
+		place, e := q.LabrastroGetSkillPlacement(ctx, db.LabrastroGetSkillPlacementParams{WorkspaceID: a.ws, SkillID: id})
+		switch {
+		case errors.Is(e, pgx.ErrNoRows):
+		case e != nil:
+			err = e
+		case place.PackageID.Valid:
+			err = labrastroSkillError(409, "managed_skill", "detach this skill from its package before moving it")
 		}
 		if err == nil {
 			err = labrastroCheckFolderParent(ctx, q, a.ws, folder, pgtype.UUID{})
@@ -491,14 +492,26 @@ func (h *Handler) LabrastroGetPackage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, labrastroPackageResponse(p))
 }
 
-func labrastroPackageImpact(ctx context.Context, q *db.Queries, a labrastroSkillActor, id pgtype.UUID) (db.LabrastroSkillPackage, []pgtype.UUID, []db.LabrastroSkillBindingImpactRow, string, error) {
+// labrastroPackageImpactSnapshot is the affected set and the token hash that guards it.
+type labrastroPackageImpactSnapshot struct {
+	pkg      db.LabrastroSkillPackage
+	skillIDs []pgtype.UUID
+	agents   []db.LabrastroSkillBindingImpactRow
+	// creators come from the same skill states the hash covers, so callers can
+	// check skill permissions without one query per affected skill.
+	creators map[pgtype.UUID]pgtype.UUID
+	hash     string
+}
+
+func labrastroPackageImpact(ctx context.Context, q *db.Queries, a labrastroSkillActor, id pgtype.UUID) (labrastroPackageImpactSnapshot, error) {
+	var out labrastroPackageImpactSnapshot
 	p, err := q.LabrastroGetSkillPackage(ctx, db.LabrastroGetSkillPackageParams{WorkspaceID: a.ws, ID: id})
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
 	}
 	places, err := q.LabrastroListSkillPlacements(ctx, a.ws)
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
 	}
 	ids := []pgtype.UUID{}
 	for _, p := range places {
@@ -508,22 +521,26 @@ func labrastroPackageImpact(ctx context.Context, q *db.Queries, a labrastroSkill
 	}
 	impact, err := q.LabrastroSkillBindingImpact(ctx, db.LabrastroSkillBindingImpactParams{WorkspaceID: a.ws, SkillIds: ids})
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
 	}
 	states, err := q.LabrastroListSkillStates(ctx, a.ws)
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
 	}
 	folders, err := q.LabrastroListSkillFolders(ctx, a.ws)
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
 	}
 	member, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: a.user, WorkspaceID: a.ws})
 	if err != nil {
-		return p, nil, nil, "", err
+		return out, err
+	}
+	creators := make(map[pgtype.UUID]pgtype.UUID, len(states))
+	for _, st := range states {
+		creators[st.ID] = st.CreatedBy
 	}
 	hash := labrastroJSONHash([]any{"delete", uuidToString(a.ws), uuidToString(a.user), p, ids, impact, states, folders, places, member})
-	return p, ids, impact, hash, nil
+	return labrastroPackageImpactSnapshot{pkg: p, skillIDs: ids, agents: impact, creators: creators, hash: hash}, nil
 }
 func (h *Handler) LabrastroPackageDeletePreview(w http.ResponseWriter, r *http.Request) {
 	a, ok := h.labrastroSkillActor(w, r)
@@ -534,29 +551,29 @@ func (h *Handler) LabrastroPackageDeletePreview(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	p, ids, impact, hash, err := labrastroPackageImpact(r.Context(), h.Queries, a, id)
+	impact, err := labrastroPackageImpact(r.Context(), h.Queries, a, id)
 	if err != nil {
 		labrastroWriteSkillError(w, err)
 		return
 	}
 	m, err := h.getWorkspaceMember(r.Context(), uuidToString(a.user), uuidToString(a.ws))
 	if err == nil {
-		err = labrastroRequirePackageOwner(p, a, m)
+		err = labrastroRequirePackageOwner(impact.pkg, a, m)
 	}
 	if err != nil {
 		labrastroWriteSkillError(w, err)
 		return
 	}
 	canDelete := true
-	for _, sid := range ids {
-		s, err := h.Queries.GetSkillInWorkspace(r.Context(), db.GetSkillInWorkspaceParams{ID: sid, WorkspaceID: a.ws})
-		if err != nil {
-			labrastroWriteSkillError(w, err)
+	for _, sid := range impact.skillIDs {
+		creator, ok := impact.creators[sid]
+		if !ok {
+			labrastroWriteSkillError(w, pgx.ErrNoRows)
 			return
 		}
-		canDelete = canDelete && labrastroCanManage(s.CreatedBy, a, m)
+		canDelete = canDelete && labrastroCanManage(creator, a, m)
 	}
-	writeJSON(w, 200, map[string]any{"preview_id": labrastroSignPreview(hash, time.Now().Add(15*time.Minute).Unix()), "skill_ids": ids, "affected_agents": impact, "can_delete": canDelete})
+	writeJSON(w, 200, map[string]any{"preview_id": labrastroSignPreview(impact.hash, time.Now().Add(15*time.Minute).Unix()), "skill_ids": impact.skillIDs, "affected_agents": impact.agents, "can_delete": canDelete})
 }
 func (h *Handler) LabrastroDissolvePackage(w http.ResponseWriter, r *http.Request) {
 	h.labrastroRemovePackage(w, r, false)
@@ -586,13 +603,14 @@ func (h *Handler) labrastroRemovePackage(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	defer tx.Rollback(ctx)
-	p, ids, _, hash, err := labrastroPackageImpact(ctx, q, a, id)
+	impact, err := labrastroPackageImpact(ctx, q, a, id)
 	if err == nil {
-		err = labrastroRequirePackageOwner(p, a, m)
+		err = labrastroRequirePackageOwner(impact.pkg, a, m)
 	}
-	if err == nil && !labrastroValidatePreview(req.PreviewID, hash) {
+	if err == nil && !labrastroValidatePreview(req.PreviewID, impact.hash) {
 		err = labrastroStalePreview()
 	}
+	ids := impact.skillIDs
 	if err != nil {
 		labrastroWriteSkillError(w, err)
 		return

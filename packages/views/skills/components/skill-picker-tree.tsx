@@ -8,7 +8,6 @@ import {
   Folder,
   FolderOpen,
   Inbox,
-  Package,
   Search,
 } from "@multica/ui/icons";
 import { SkillIcon } from "../lib/skill-icon";
@@ -17,16 +16,10 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { skillFolderTreeOptions } from "@multica/core/skills/package-queries";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import {
   buildPickerModel,
-  defaultCollapsedFolderIds,
   PICKER_UNCATEGORIZED_ID,
   searchPickerModel,
   type PickerRow,
@@ -42,7 +35,7 @@ export interface SkillPickerTreeProps {
   /** Skills to show. Callers filter (e.g. exclude already-attached
    *  skills in SkillAddDialog) before passing — this component just
    *  renders the rows. Folders prune to this set; package candidates that
-   *  were never imported show as gray, unbindable rows. */
+   *  were never imported are not listed (they cannot be bound). */
   skills: readonly SkillSummary[];
 
   /** Currently-toggled rows. Selected rows get a checked Checkbox and a
@@ -120,44 +113,6 @@ function SkillRowButton({
   );
 }
 
-function GrayRow({
-  name,
-  depth = 0,
-  pathLabel,
-}: {
-  name: string;
-  depth?: number;
-  pathLabel?: string;
-}) {
-  const { t } = useT("skill-packages");
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div
-            aria-disabled="true"
-            style={depth > 0 ? { paddingLeft: `${depth * 14 + 24}px` } : undefined}
-            className="flex w-full cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-faint-foreground"
-          >
-            <span className="size-4 shrink-0" aria-hidden="true" />
-            <Package className="h-3.5 w-3.5 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-body">{name}</div>
-              {pathLabel ? (
-                <div className="truncate text-caption">{pathLabel}</div>
-              ) : null}
-            </div>
-            <span className="shrink-0 rounded-xs bg-muted px-1 py-0.5 text-caption">
-              {t(($) => $.picker.not_imported)}
-            </span>
-          </div>
-        }
-      />
-      <TooltipContent side="right">{t(($) => $.picker.not_imported_hint)}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 export function SkillPickerTree({
   skills,
   selectedIds,
@@ -176,21 +131,10 @@ export function SkillPickerTree({
     skillFolderTreeOptions(wsId),
   );
   const [query, setQuery] = useState("");
-  const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   const trimmedQuery = query.trim().toLowerCase();
   const searching = trimmedQuery.length > 0;
-
-  const defaults = useMemo(
-    () => (folderTree ? defaultCollapsedFolderIds(folderTree, skills) : new Set<string>()),
-    [folderTree, skills],
-  );
-  const collapsed = useMemo(() => {
-    const set = new Set<string>();
-    for (const id of defaults) if (overrides.get(id) !== false) set.add(id);
-    for (const [id, value] of overrides) if (value) set.add(id);
-    return set;
-  }, [defaults, overrides]);
 
   const model = useMemo(
     () => (folderTree ? buildPickerModel(folderTree, skills, collapsed) : null),
@@ -205,9 +149,9 @@ export function SkillPickerTree({
   );
 
   const toggleFolder = (folderId: string) => {
-    setOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(folderId, !collapsed.has(folderId));
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(folderId)) next.add(folderId);
       return next;
     });
   };
@@ -234,15 +178,6 @@ export function SkillPickerTree({
         />
       );
     }
-    if (row.kind === "gray") {
-      return (
-        <GrayRow
-          key={`${row.candidate.packageId} ${row.candidate.path}`}
-          name={row.candidate.name}
-          depth={row.depth}
-        />
-      );
-    }
     const isCollapsed = collapsed.has(row.folderId);
     const name = row.folderId === PICKER_UNCATEGORIZED_ID
       ? tPkg(($) => $.picker.uncategorized)
@@ -262,20 +197,16 @@ export function SkillPickerTree({
         className="flex items-center rounded-md hover:bg-accent/50"
         style={{ paddingLeft: `${row.depth * 14 + 2}px` }}
       >
-        {row.expandable ? (
-          <button
-            type="button"
-            aria-label={tPkg(($) =>
-              isCollapsed ? $.tree.expand_folder : $.tree.collapse_folder, { name })}
-            aria-expanded={!isCollapsed}
-            onClick={() => toggleFolder(row.folderId)}
-            className="shrink-0 rounded-xs p-1 text-faint-foreground hover:text-foreground"
-          >
-            <ChevronIcon className="h-3 w-3" />
-          </button>
-        ) : (
-          <span className="w-5 shrink-0" aria-hidden="true" />
-        )}
+        <button
+          type="button"
+          aria-label={tPkg(($) =>
+            isCollapsed ? $.tree.expand_folder : $.tree.collapse_folder, { name })}
+          aria-expanded={!isCollapsed}
+          onClick={() => toggleFolder(row.folderId)}
+          className="shrink-0 rounded-xs p-1 text-faint-foreground hover:text-foreground"
+        >
+          <ChevronIcon className="h-3 w-3" />
+        </button>
         {onToggleMany && subtree.length > 0 && (
           <button
             type="button"
@@ -295,7 +226,7 @@ export function SkillPickerTree({
         )}
         <button
           type="button"
-          onClick={() => row.expandable && toggleFolder(row.folderId)}
+          onClick={() => toggleFolder(row.folderId)}
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-2 text-left text-caption text-muted-foreground"
         >
           <FolderIcon className="h-3.5 w-3.5 shrink-0" />
@@ -343,25 +274,16 @@ export function SkillPickerTree({
             ))}
           </>
         ) : searching ? (
-          searchResult && searchResult.skills.length + searchResult.gray.length > 0 ? (
-            <>
-              {searchResult.skills.map(({ skill, path }) => (
-                <SkillRowButton
-                  key={skill.id}
-                  skill={skill}
-                  selected={selectedIds.has(skill.id)}
-                  onToggle={onToggle}
-                  pathLabel={path}
-                />
-              ))}
-              {searchResult.gray.map(({ candidate, path }) => (
-                <GrayRow
-                  key={`${candidate.packageId} ${candidate.path}`}
-                  name={candidate.name}
-                  pathLabel={path}
-                />
-              ))}
-            </>
+          searchResult && searchResult.length > 0 ? (
+            searchResult.map(({ skill, path }) => (
+              <SkillRowButton
+                key={skill.id}
+                skill={skill}
+                selected={selectedIds.has(skill.id)}
+                onToggle={onToggle}
+                pathLabel={path}
+              />
+            ))
           ) : (
             <div className="py-6 text-center text-caption text-muted-foreground">{resolvedNoMatch}</div>
           )
