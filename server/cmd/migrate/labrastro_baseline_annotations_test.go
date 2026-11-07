@@ -39,7 +39,7 @@ func TestLabrastroAnnotationMigrationsFreshUpgradeAndRollback(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			versions := []string{"9059_labrastro_baseline_annotations", "9060_labrastro_baseline_review_client_key_index", "9061_labrastro_baseline_annotation_active_index", "9062_labrastro_baseline_annotation_ordinal_index", "9063_labrastro_baseline_review_batch_index"}
+			versions := []string{"9059_labrastro_baseline_annotations", "9060_labrastro_baseline_review_client_key_index", "9061_labrastro_baseline_annotation_active_index", "9062_labrastro_baseline_annotation_ordinal_index", "9063_labrastro_baseline_review_batch_index", "9064_labrastro_baseline_text_block_lines"}
 			opts := runOptions{Direction: "up", SchemaMigrationsTable: schema + ".schema_migrations", AdvisoryLockKey: int64(rand.Uint64()&0x7fffffffffffffff) | 1, Hooks: hooksForDirection("up")}
 			if upgrade {
 				opts.Files = realMigrationFiles(t, []string{"9039_labrastro_engineering_tables", "9048_labrastro_baseline_module_chapters"}, "up")
@@ -78,6 +78,14 @@ func TestLabrastroAnnotationMigrationsFreshUpgradeAndRollback(t *testing.T) {
 			for _, set := range []string{"ordinal=0", "ordinal=51", "note=''", "note=repeat('字',1001)", "quote=repeat('字',501)", "prefix=repeat('字',65)", "suffix=repeat('字',65)", "start=-1", "anchor_kind='lines'", "response='response'", "resolved_at=now()", "section_anchor=''"} {
 				if _, err := pool.Exec(ctx, "UPDATE project_baseline_annotation SET "+set); err == nil {
 					t.Fatalf("constraint accepted %s", set)
+				}
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO project_baseline_annotation (workspace_id,project_id,batch_id,review_id,ordinal,anchor_kind,target_revision_id,target_revision_number,section_anchor,line_start,line_end,note,created_by_type,created_by_id) SELECT workspace_id,project_id,batch_id,id,2,'text',reviewed_revision_id,1,'RULE-1',2,60,'text note','member',created_by_id FROM project_baseline_review`); err != nil {
+				t.Fatal(err)
+			}
+			for _, set := range []string{"line_end=NULL", "anchor_kind='lines'"} {
+				if _, err := pool.Exec(ctx, "UPDATE project_baseline_annotation SET "+set+" WHERE anchor_kind='text'"); err == nil {
+					t.Fatalf("text block constraint accepted %s", set)
 				}
 			}
 			if _, err := pool.Exec(ctx, `INSERT INTO project_baseline_annotation SELECT * FROM project_baseline_annotation`); err == nil {

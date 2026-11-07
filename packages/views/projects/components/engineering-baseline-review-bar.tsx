@@ -37,6 +37,9 @@ interface ReviewBarProps {
   pendingCount: number;
   activeBatch: BaselineAnnotationBatch | null;
   sourceIssueIdentifier?: string;
+  annotationCount: number;
+  annotationsVisible: boolean;
+  onAnnotationsVisibleChange: (visible: boolean) => void;
   onModeChange: (mode: BaselineReviewMode) => void;
   onCompareViewChange: (view: BaselineCompareView) => void;
   onJumpChange: (index: number) => void;
@@ -50,7 +53,7 @@ export function BaselineReviewBar(props: ReviewBarProps) {
   const formatRelativeDate = useFormatRelativeDate();
   const chapterLabel = useEngineeringChapterLabel(props.chapters);
   const { revision, activeBatch } = props;
-  const show = revision || props.pendingCount > 0 || activeBatch || !props.canDecide;
+  const show = revision || props.pendingCount > 0 || activeBatch || !props.canDecide || (props.mode === "base" && props.adopted);
   if (!show) return null;
   return (
     <section className="sticky top-0 z-20 mt-5 border-y bg-background py-3" aria-label={t(($) => $.baseline.reviewLabel)} data-baseline-revision-status={revision?.status}>
@@ -74,6 +77,11 @@ export function BaselineReviewBar(props: ReviewBarProps) {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {props.mode === "base" && props.adopted ? (
+            <Button type="button" role="switch" aria-checked={props.annotationsVisible} variant="ghost" size="sm" onClick={() => props.onAnnotationsVisibleChange(!props.annotationsVisible)}>
+              {t(($) => $.annotations.showAnnotations, { count: props.annotationCount })}
+            </Button>
+          ) : null}
           {revision ? (
             <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.baseline.reviewModeLabel)}>
               <button type="button" role="tab" aria-selected={props.mode === "base"} className={cn("rounded-sm px-3 py-1 text-caption", props.mode === "base" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => props.onModeChange("base")}>{t(($) => $.baseline.baseMode, { number: props.adopted?.revisionNumber ?? 0 })}</button>

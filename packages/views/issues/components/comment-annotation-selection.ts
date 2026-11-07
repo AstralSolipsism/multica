@@ -6,7 +6,7 @@ const BLOCKS = new Set(["P", "DIV", "LI", "PRE", "BLOCKQUOTE", "H1", "H2", "H3",
 /** A deterministic visible-text index shared by capture and source navigation.
  * Block boundaries and code newlines survive; renderer controls are excluded.
  */
-export function indexCommentText(root: HTMLElement, editable = false) {
+export function indexCommentText(root: HTMLElement, editable = false, excluded?: string) {
   let text = "";
   const nodes: { node: Text; start: number; end: number }[] = [];
   const newline = () => { if (text && !text.endsWith("\n")) text += "\n"; };
@@ -16,7 +16,7 @@ export function indexCommentText(root: HTMLElement, editable = false) {
       nodes.push({ node: node as Text, start: text.length, end: text.length + value.length });
       text += value;
     } else if (node instanceof HTMLElement) {
-      if (node.matches(EXCLUDED) || (!editable && node.matches('[contenteditable="true"]'))) return;
+      if (node.matches(EXCLUDED) || (excluded && node.matches(excluded)) || (!editable && node.matches('[contenteditable="true"]'))) return;
       if (node.tagName === "BR") { text += "\n"; return; }
       const block = BLOCKS.has(node.tagName);
       if (block) newline();

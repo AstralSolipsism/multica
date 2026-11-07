@@ -383,9 +383,11 @@ func writeThinkingDecision(w http.ResponseWriter, resp thinkingDecisionResponse)
 // all have to hold. startupEffort is the level the run started with — the
 // run-level decision's level, or "" when that decision fell back (anything
 // but no_candidates): the run still installs, the mod just starts with no
-// level. Returns the mod's environment; nil means the mod should not load.
+// level. Candidates come from the run's already-validated catalog so a failed
+// discovery is not repeated during startup. Returns the mod's environment;
+// nil means the mod should not load.
 func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, requestedLevel, startupEffort string,
-	runtimeCmd agent.Command, env *execenv.Environment, agentEnv map[string]string, log *slog.Logger) map[string]string {
+	candidates []agent.ThinkingLevel, env *execenv.Environment, agentEnv map[string]string, log *slog.Logger) map[string]string {
 	if provider != "claude" || requestedLevel != agent.ThinkingLevelAdapt || env == nil || env.MulticaConfigRoot == "" {
 		return nil
 	}
@@ -394,14 +396,6 @@ func (d *Daemon) prepareStepEffort(task Task, provider, model, cliVersion, reque
 			"claude_version", cliVersion, "minimum", agent.ClaudePerTurnEffortMinVersion)
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	catalog, err := listModels(ctx, provider, runtimeCmd)
-	if err != nil {
-		log.Info("thinking_level: catalog unavailable; step effort off", "error", err)
-		return nil
-	}
-	candidates := agent.ModelAdaptThinkingCandidates(catalog, provider, model)
 	if len(candidates) < 2 {
 		return nil
 	}

@@ -122,6 +122,15 @@ describe("ThinkingLevelBadge", () => {
     expect(tooltip).toHaveTextContent("Fixed level");
   });
 
+  it("exposes the decision details to keyboard users", async () => {
+    renderWithI18n(
+      <ThinkingLevelBadge messages={[message(1, { level: "high", mode: "fixed" })]} />,
+    );
+    await userEvent.tab();
+    expect(chip("high")).toHaveFocus();
+    expect(await screen.findByText("Fixed level")).toBeInTheDocument();
+  });
+
   it("details the decision on hover: level, confidence, latency, source, probabilities", async () => {
     renderWithI18n(
       <ThinkingLevelBadge

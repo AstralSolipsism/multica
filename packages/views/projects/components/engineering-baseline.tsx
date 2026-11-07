@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, History as FileClock, LoaderCircle, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
+import { AlertTriangle, ArrowLeft, CheckCircle2, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -55,8 +55,13 @@ import {
   BaselineAnnotateSectionButton,
   BaselineReadingAnnotations,
   BaselineStandaloneThreads,
-  createBaselineTextAnchor,
+  captureBaselineTextAnchor,
 } from "./engineering-baseline-reading-annotations";
+import { baselineReadingEntries } from "./engineering-baseline-reading-card";
+import { BaselineReadingRail } from "./engineering-baseline-reading-rail";
+import { BaselineReadingHighlights } from "./engineering-baseline-reading-highlights";
+import { baselineTextAnnotationAtPoint } from "./engineering-baseline-text-annotations";
+import { CommentSelectionBubble } from "../../issues/components/comment-selection-bubble";
 import { useBaselineAnnotationDrafts } from "./use-baseline-annotation-drafts";
 
 type DecisionAction = "adopt" | "reject";
@@ -345,6 +350,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [mode, setMode] = useState<BaselineReviewMode>(props.reviewRequested ? "compare" : "base");
   const [compareView, setCompareView] = useState<BaselineCompareView>("source");
   const [readingComposer, setReadingComposer] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor } | null>(null);
+  const [readingSelection, setReadingSelection] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor; range: Range; root: HTMLElement } | null>(null);
+  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [hoveredAnnotation, setHoveredAnnotation] = useState<string | null>(null);
+  const [inlineAnnotations, setInlineAnnotations] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches);
   const [reviewDialog, setReviewDialog] = useState<{ initialOutcome: BaselineReviewOutcome | null; candidateMode: boolean } | null>(null);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
@@ -406,7 +415,38 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   useEffect(() => {
     setCompareView("source");
     setReadingComposer(null);
+    setReadingSelection(null);
+    setHoveredAnnotation(null);
   }, [revision?.id, props.selectedChapter]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1279px)");
+    const update = () => setInlineAnnotations(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (!showAnnotations) {
+      setReadingComposer(null);
+      setReadingSelection(null);
+      setHoveredAnnotation(null);
+    }
+  }, [showAnnotations]);
+  useEffect(() => {
+    if (!readingSelection) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest("[data-baseline-selection-action]") && !readingSelection.root.contains(event.target)) setReadingSelection(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setReadingSelection(null);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [readingSelection]);
   useEffect(() => setBack(null), [lens]);
   useEffect(() => setSaveError(null), [props.selectedChapter]);
 
@@ -486,6 +526,55 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       };
     });
   }, [props.chapters, revision, mode, compareView]);
+  const readingSections = useMemo(() => displayChapters.find((chapter) => chapter.chapter === props.selectedChapter)?.sections.filter((section) => section.change !== "removed") ?? [], [displayChapters, props.selectedChapter]);
+  const readingSectionAnchors = useMemo(() => new Set(readingSections.map((section) => section.anchor)), [readingSections]);
+  const readingThreads = useMemo(() => annotationThreads.filter((thread) => readingSectionAnchors.has(thread.root.sectionAnchor)), [annotationThreads, readingSectionAnchors]);
+  const readingPendingItems = useMemo(() => currentPendingItems.filter((item) => readingSectionAnchors.has(item.sectionAnchor)), [currentPendingItems, readingSectionAnchors]);
+  const readingComposerAnchor = readingComposer && readingSections.some((section) => section.key === readingComposer.sectionKey) ? readingComposer.anchor : null;
+  const readingEntries = useMemo(
+    () => baselineReadingEntries(readingThreads, readingPendingItems, readingComposerAnchor),
+    [readingThreads, readingPendingItems, readingComposerAnchor],
+  );
+  const readingMode = mode === "base" && !!selectedAdopted;
+  const readingAnnotationsVisible = readingMode && showAnnotations;
+  const showReadingRail = readingAnnotationsVisible && !inlineAnnotations;
+  const readingAnnotationCount = readingEntries.filter((entry) => entry.kind !== "composer" && (entry.kind !== "thread" || entry.thread.root.state !== "resolved")).length;
+  useEffect(() => {
+    if (!readingAnnotationsVisible) return;
+    let frame = 0;
+    let pending: MouseEvent | null = null;
+    const move = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("[data-reading-annotations]")) {
+        pending = null;
+        return;
+      }
+      pending = event;
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const current = pending;
+        pending = null;
+        if (!current || !(current.target instanceof Element) || !current.target.isConnected) return;
+        const root = current.target.closest<HTMLElement>("[data-baseline-markdown]");
+        if (!root) {
+          if (current.target.closest("[data-baseline-section-key]")) setHoveredAnnotation(null);
+          return;
+        }
+        const article = root.closest<HTMLElement>("[data-baseline-section-key]");
+        const section = readingSections.find((item) => item.key === article?.dataset.baselineSectionKey);
+        if (!section) return;
+        const candidates = readingEntries.filter((entry) => entry.anchor.anchorKind === "text" && entry.anchor.sectionAnchor === section.anchor)
+          .map((entry) => ({ ...entry.anchor, id: entry.id }));
+        setHoveredAnnotation(baselineTextAnnotationAtPoint(root, current.clientX, current.clientY, candidates));
+      });
+    };
+    document.addEventListener("mousemove", move);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      document.removeEventListener("mousemove", move);
+    };
+  }, [readingAnnotationsVisible, readingEntries, readingSections]);
   const sectionEditTargets = useMemo(() => {
     const targets = new Map<string, BaselineSection>();
     for (const state of props.chapters) {
@@ -614,6 +703,20 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       : selectedAdopted ? [selectedAdopted.id] : [],
   );
   const dialogPendingItems = reviewDraftItems(annotationDrafts.items, dialogTargetIds, activeRootIds);
+  const captureReadingSelection = (article: HTMLElement, section: BaselineDisplaySection) => {
+    if (!selectedAdopted || !props.canDecide || !readingAnnotationsVisible || props.selectedChapter !== section.chapter) {
+      setReadingSelection(null);
+      return;
+    }
+    const captured = captureBaselineTextAnchor(article, section, selectedAdopted, t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }));
+    setReadingSelection(captured ? { sectionKey: section.key, ...captured } : null);
+  };
+  const changeReviewMode = (next: BaselineReviewMode) => {
+    setMode(next);
+    setReadingSelection(null);
+    setReadingComposer(null);
+    setHoveredAnnotation(null);
+  };
   const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
     <div key={chapter.chapter} className="mb-3">
       <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
@@ -672,7 +775,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             pendingCount={currentPendingItems.length}
             activeBatch={activeBatch}
             sourceIssueIdentifier={sourceIssue?.identifier}
-            onModeChange={setMode}
+            annotationCount={readingAnnotationCount}
+            annotationsVisible={readingAnnotationsVisible}
+            onAnnotationsVisibleChange={setShowAnnotations}
+            onModeChange={changeReviewMode}
             onCompareViewChange={setCompareView}
             onJumpChange={jumpChange}
             onOpenReview={(initialOutcome, candidateMode) => setReviewDialog({ initialOutcome, candidateMode })}
@@ -681,8 +787,16 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         ) : null}
         {props.annotations.loading ? <Skeleton className="mt-3 h-10 w-full" /> : null}
         {props.annotations.error ? <Alert className="mt-3" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
+        <BaselineReadingHighlights
+          articleRef={articleRef}
+          sections={readingSections}
+          entries={readingEntries}
+          enabled={readingAnnotationsVisible}
+          hoveredId={hoveredAnnotation}
+          contentKey={`${props.selectedChapter}:${selectedAdopted?.id ?? ""}`}
+        />
 
-        <div className="mt-7 grid gap-8 lg:grid-cols-[13rem_minmax(0,1fr)] xl:gap-12">
+        <div className={cn("mt-7 grid gap-8 lg:grid-cols-[13rem_minmax(0,1fr)]", showReadingRail ? "xl:grid-cols-[13rem_minmax(0,1fr)_20rem] xl:gap-8" : "xl:gap-12")}>
           <aside className="top-24 max-h-none overflow-y-auto lg:sticky lg:max-h-[calc(100vh-7rem)]" aria-label={t(($) => $.wiki.tocLabel)}>
             <label className="relative block">
               <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
@@ -787,9 +901,11 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     data-diff-kind={section.change !== "same" ? section.change : undefined}
                     className={cn("group/section mt-5 scroll-mt-32 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
                     onMouseUp={(event) => {
-                      if (!props.canDecide || mode !== "base" || props.selectedChapter !== chapter.chapter || !selectedAdopted) return;
-                      const anchor = createBaselineTextAnchor(event.currentTarget, section, selectedAdopted, t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }));
-                      if (anchor) setReadingComposer({ sectionKey: section.key, anchor });
+                      if (event.target instanceof Element && event.target.closest("button, input, textarea, [data-reading-annotations]")) return;
+                      captureReadingSelection(event.currentTarget, section);
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.shiftKey && event.key.startsWith("Arrow")) captureReadingSelection(event.currentTarget, section);
                     }}
                   >
                     <h3 className="flex flex-wrap items-center gap-2 text-title-sm font-medium">
@@ -802,17 +918,20 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                           if (target) openSectionEditor(target);
                         }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
                       ) : null}
-                      {props.canDecide && mode === "base" && props.selectedChapter === chapter.chapter && selectedAdopted && !editingChapter && !editingSection ? (
-                        <BaselineAnnotateSectionButton onClick={() => setReadingComposer({
-                          sectionKey: section.key,
-                          anchor: {
-                            anchorKind: "section",
-                            targetRevisionId: selectedAdopted.id,
-                            sectionAnchor: section.anchor,
-                            sectionTitle: section.title,
-                            targetLabel: t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }),
-                          },
-                        })} />
+                      {props.canDecide && readingAnnotationsVisible && props.selectedChapter === chapter.chapter && selectedAdopted && !editingChapter && !editingSection ? (
+                        <BaselineAnnotateSectionButton onClick={() => {
+                          setReadingSelection(null);
+                          setReadingComposer({
+                            sectionKey: section.key,
+                            anchor: {
+                              anchorKind: "section",
+                              targetRevisionId: selectedAdopted.id,
+                              sectionAnchor: section.anchor,
+                              sectionTitle: section.title,
+                              targetLabel: t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }),
+                            },
+                          });
+                        }} />
                       ) : null}
                     </h3>
                     {editingSection?.key === section.key ? (
@@ -854,7 +973,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                           </details>
                         ) : null}
                         <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
-                        {mode === "base" && props.selectedChapter === chapter.chapter && selectedAdopted ? (
+                        {readingAnnotationsVisible && inlineAnnotations && props.selectedChapter === chapter.chapter && selectedAdopted ? (
                           <BaselineReadingAnnotations
                             section={section}
                             adopted={selectedAdopted}
@@ -864,6 +983,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                             composer={readingComposer?.sectionKey === section.key ? readingComposer.anchor : null}
                             canDecide={props.canDecide}
                             limitReached={annotationDrafts.limitReached}
+                            hoveredId={hoveredAnnotation}
+                            onHover={setHoveredAnnotation}
                             onAddAnnotation={annotationDrafts.addAnnotation}
                             onCancelComposer={() => setReadingComposer(null)}
                             onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
@@ -876,7 +997,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     )}
                   </article>
                 )) : <p className="mt-4 text-body text-muted-foreground">{t(($) => $.wiki.emptyChapter)}</p>}
-                {mode === "base" && props.selectedChapter === chapter.chapter ? (
+                {readingAnnotationsVisible && props.selectedChapter === chapter.chapter ? (
                   <BaselineStandaloneThreads
                     title={t(($) => $.annotations.outdatedThreads)}
                     threads={annotationThreads.filter((thread) => !chapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
@@ -903,7 +1024,37 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
               <div className="mt-3"><BaselineHistoryList history={props.history} loading={props.historyLoading} error={props.historyError} onMore={props.onHistoryMore} /></div>
             </section>
           </div>
+          {showReadingRail && selectedAdopted ? (
+            <BaselineReadingRail
+              sections={readingSections}
+              entries={readingEntries}
+              adopted={selectedAdopted}
+              candidate={selectedCandidate ?? selectedAdopted}
+              canDecide={props.canDecide}
+              limitReached={annotationDrafts.limitReached}
+              hoveredId={hoveredAnnotation}
+              onHover={setHoveredAnnotation}
+              onAddAnnotation={annotationDrafts.addAnnotation}
+              onCancelComposer={() => setReadingComposer(null)}
+              onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+              onUpdatePending={annotationDrafts.update}
+              onDeletePending={annotationDrafts.remove}
+              onResolve={resolveAnnotation}
+            />
+          ) : null}
         </div>
+
+        {readingSelection && readingAnnotationsVisible ? (
+          <CommentSelectionBubble range={readingSelection.range} source={readingSelection.root} owner={`baseline-${props.projectId}`}>
+            <div className="bubble-menu" data-baseline-selection-action>
+              <Button type="button" variant="ghost" size="sm" onMouseDown={(event) => event.preventDefault()} onClick={() => {
+                setReadingComposer({ sectionKey: readingSelection.sectionKey, anchor: readingSelection.anchor });
+                setReadingSelection(null);
+                window.getSelection()?.removeAllRanges();
+              }}><MessageSquarePlus aria-hidden="true" />{t(($) => $.annotations.annotate)}</Button>
+            </div>
+          </CommentSelectionBubble>
+        ) : null}
 
         {moduleEditor ? (
           <BaselineModuleDialog
@@ -934,7 +1085,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             actions={props.annotations.actions}
             onDecision={props.onDecision}
             onClearPending={annotationDrafts.clear}
-            onReviewCandidate={() => { setMode("compare"); setCompareView("source"); }}
+            onReviewCandidate={() => { changeReviewMode("compare"); setCompareView("source"); }}
             onClose={() => setReviewDialog(null)}
           />
         ) : null}

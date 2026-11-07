@@ -333,6 +333,8 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
   - 本次运行有候选挡位，即运行级没有因 `no_candidates` 回退；
   - 本次运行的 `system/init` 报告 `per_turn_effort_active === true`，缺少这个字段视为 false。
 
+  运行级与步级使用同一次模型目录发现所得的已验证候选；安装 mod 不重新发现目录。目录不可用时本次运行不安装 mod，下一次运行仍可重新发现；Jev 决策失败但候选有效时仍安装 mod。
+
   目前 Sonnet 5、Opus 5 的 init 为 false，这两个模型只做运行级决策：在它们上面逐步换挡，每次首次切到一个挡位都要重写整个前缀（§0.2）。
 - **启用标记**：
   - 满足条件时，daemon 读到 init 后写入 `<task config>/effort/enabled`；
