@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,54 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 )
+
+func TestSourceDeliveryPagesOrderTiesWithinScope(t *testing.T) {
+	fx := newSourceFixture(t, "records-pagination")
+	routeID := fx.teamRoute(t, "records", RouteSourceComment, "oc_records", nil)
+	otherRoute := fx.teamRoute(t, "other", RouteSourceComment, "oc_other_records", nil)
+	stamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var want []string
+	for i := 1; i <= 10; i++ {
+		route, workspace, status := routeID, testWSID, DeliveryStatusSent
+		if i == 8 {
+			route = otherRoute
+		}
+		if i == 9 {
+			workspace = util.UUIDToString(dbid.NewV7())
+		}
+		if i == 10 {
+			status = DeliveryStatusFailed
+		}
+		id := testFx.Insert(t, "labrastro_message_delivery", testutil.Cols{
+			"id": dbid.NewV7(), "workspace_id": workspace, "route_id": route,
+			"installation_id": fx.install, "target_key": "group:oc_records",
+			"dedup_key":   fmt.Sprintf("records-%s-%d", routeID, i),
+			"source_kind": SourceKindComment, "source_scope": RouteSourceComment,
+			"source_ref_id": dbid.NewV7(), "status": status,
+			"content_snapshot": "{}", "target_snapshot": "{}", "created_at": stamp,
+		})
+		if i <= 7 {
+			want = append(want, id)
+		}
+	}
+	slices.Sort(want)
+	slices.Reverse(want)
+	var got []string
+	status := DeliveryStatusSent
+	svc := newTestService(nil, nil)
+	for offset := int32(0); offset < 9; offset += 3 {
+		rows, err := svc.ListRouteDeliveries(context.Background(), mustUUID(testWSID), mustUUID(routeID), &status, 3, offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			got = append(got, util.UUIDToString(row.ID))
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("paged same-time records = %v, want %v", got, want)
+	}
+}
 
 // srcFixture carries the shared rows one source test needs: an active
 // installation, an issue, a project and a second (non-admin) member.

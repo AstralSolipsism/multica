@@ -909,7 +909,7 @@ FROM labrastro_message_delivery d
 WHERE d.workspace_id = sqlc.arg('workspace_id')
   AND d.route_id = sqlc.arg('route_id')
   AND (sqlc.narg('status')::text IS NULL OR d.status = sqlc.narg('status')::text)
-ORDER BY d.created_at DESC
+ORDER BY d.created_at DESC, d.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
 -- ---- team target approvals (workspace-admin consent, OL-27 scope) ----

@@ -404,7 +404,7 @@ func messageDeliveryPaging(r *http.Request) (int32, int32) {
 		limit = int32(v)
 	}
 	offset := int32(0)
-	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+	if v, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 32); err == nil && v > 0 {
 		offset = int32(v)
 	}
 	return limit, offset
