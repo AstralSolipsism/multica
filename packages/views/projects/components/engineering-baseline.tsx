@@ -858,6 +858,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                           <BaselineReadingAnnotations
                             section={section}
                             adopted={selectedAdopted}
+                            candidate={selectedCandidate ?? selectedAdopted}
                             threads={annotationThreads.filter((thread) => thread.root.sectionAnchor === section.anchor)}
                             pendingItems={currentPendingItems.filter((item) => item.sectionAnchor === section.anchor)}
                             composer={readingComposer?.sectionKey === section.key ? readingComposer.anchor : null}
@@ -880,7 +881,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                     title={t(($) => $.annotations.outdatedThreads)}
                     threads={annotationThreads.filter((thread) => !chapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
                     baseRevisionId={selectedAdopted?.id ?? null}
-                    candidate={selectedAdopted ?? props.revision}
+                    candidate={selectedCandidate ?? selectedAdopted}
                     canDecide={props.canDecide}
                     limitReached={annotationDrafts.limitReached}
                     onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}

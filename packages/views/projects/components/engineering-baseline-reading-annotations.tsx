@@ -60,6 +60,8 @@ export function createBaselineTextAnchor(
 interface ReadingAnnotationsProps {
   section: BaselineDisplaySection;
   adopted: BaselineRevision;
+  /** The chapter's working candidate; placement falls back to the adopted revision. */
+  candidate: BaselineRevision | null;
   threads: readonly BaselineAnnotationThread[];
   pendingItems: readonly BaselineAnnotationDraftItem[];
   composer: BaselineComposerAnchor | null;
@@ -77,10 +79,11 @@ export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
   const { t } = useT("engineering");
   const pending = props.pendingItems.filter((item) => !isBaselineAnnotationReply(item));
   if (!props.threads.length && !pending.length && !props.composer) return null;
-  // Reading mode renders the adopted baseline only: line anchors exist for the
-  // adopted revision itself, anything else has no rendered lines to land on.
-  const placement = (root: BaselineAnnotationThread["root"]) => anchorPlacement(root, props.adopted.id, props.adopted);
-  const outdated = (root: BaselineAnnotationThread["root"]) => anchorOutdated(root, props.adopted.id, props.adopted);
+  // Reading mode renders the adopted baseline, but server location verdicts
+  // are computed against the working candidate — anchor placement must compare
+  // against that candidate, not the adopted revision being displayed.
+  const placement = (root: BaselineAnnotationThread["root"]) => anchorPlacement(root, props.adopted.id, props.candidate);
+  const outdated = (root: BaselineAnnotationThread["root"]) => anchorOutdated(root, props.adopted.id, props.candidate);
   return (
     <div className="mt-3 space-y-2 border-l-2 border-brand/30 pl-3" data-reading-annotations={props.section.anchor}>
       {props.threads.map((thread) => (

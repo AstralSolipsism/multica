@@ -38,8 +38,11 @@ export function useBaselineAnnotationDrafts(options: {
     const item = newBaselineAnnotation(draftAnchor, note.trim(), {
       id: createSafeId(), ownerId, projectId, chapter, createdAt: new Date().toISOString(),
     });
+    const before = store.draft.annotations.length + store.draft.replies.length;
     const next = addBaselineAnnotationDraft(store.draft, item);
-    if (next === store.draft) return false;
+    // The store normalizes into fresh containers, so a rejected add keeps the
+    // total count — compare counts, not references.
+    if (next.annotations.length + next.replies.length === before) return false;
     store.setDraft(next);
     return true;
   }, [canDecide, chapter, limitReached, ownerId, projectId]);
@@ -50,8 +53,9 @@ export function useBaselineAnnotationDrafts(options: {
     const item = newBaselineAnnotationReply(parent, note.trim(), {
       id: createSafeId(), ownerId, projectId, chapter, createdAt: new Date().toISOString(),
     });
+    const before = store.draft.annotations.length + store.draft.replies.length;
     const next = addBaselineAnnotationDraft(store.draft, item);
-    if (next === store.draft) return false;
+    if (next.annotations.length + next.replies.length === before) return false;
     store.setDraft(next);
     return true;
   }, [canDecide, chapter, limitReached, ownerId, projectId]);

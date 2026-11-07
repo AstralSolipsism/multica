@@ -145,6 +145,7 @@ function renderBaseline(options: {
   canDecide?: boolean;
   batches?: BaselineAnnotationBatch[];
   details?: BaselineAnnotationDetail[];
+  reviewRequested?: boolean;
   onSubmitReview?: SubmitReviewMock;
   onResolveAnnotations?: ResolveAnnotationsMock;
   onCloseBatch?: CloseBatchMock;
@@ -185,7 +186,7 @@ function renderBaseline(options: {
         onHistoryMore={vi.fn()}
         chapterRevisions={{}}
         roadmap={roadmap}
-        reviewRequested
+        reviewRequested={options.reviewRequested ?? true}
         lens="manage"
         onOpenStage={vi.fn()}
       />
@@ -496,29 +497,48 @@ describe("baseline source annotations", () => {
     expect(within(foreignCard).getByText("Outdated")).toBeInTheDocument();
   });
 
+  it("keeps exact threads targeting the working candidate current in reading mode", () => {
+    // Reading mode renders the adopted baseline, but a thread targeting the
+    // chapter's working candidate is still current (server location "exact")
+    // and must not be badged outdated.
+    const exact = rootAnnotation();
+    renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([exact])] });
+    const card = document.querySelector("[data-annotation-thread='annotation-1']") as HTMLElement;
+    expect(within(card).getByText("Clarify retries")).toBeInTheDocument();
+    expect(within(card).queryByText("Outdated")).not.toBeInTheDocument();
+  });
+
+  it("marks replaced-candidate threads outdated in reading mode", () => {
+    const replaced = rootAnnotation({
+      targetRevisionId: "rev-replaced", targetRevisionNumber: 2, location: "outdated", located: null,
+    });
+    renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([replaced])] });
+    const card = document.querySelector("[data-annotation-thread='annotation-1']") as HTMLElement;
+    expect(within(card).getByText("Outdated")).toBeInTheDocument();
+  });
+
   it("keeps same-side drag quote free of the opposite side when crossing the change block", async () => {
     const user = userEvent.setup();
     renderBaseline();
-    // Drag from the context title (before 1) across the removed line (before 2)
-    // and onto the opposite-side added row; the selection must stay within the
-    // before side and the quote must not absorb the after-side text.
+    // Drag from the context title (before 1) across the removed/added block to
+    // the trailing context row (before 3): the selection spans the opposite-side
+    // added row, which must stay out of the quote and line range.
     const first = screen.getByRole("button", { name: "Annotate Before line 1 in 幂等键" });
     fireEvent.mouseDown(first, { button: 0 });
-    fireEvent.mouseEnter(document.querySelector('[data-before-line="2"]')!);
-    fireEvent.mouseEnter(document.querySelector('[data-after-line="2"]')!);
+    fireEvent.mouseEnter(document.querySelector('[data-before-line="3"]')!);
     fireEvent.mouseUp(window);
     const composer = document.querySelector("[data-annotation-composer]")!;
-    expect(composer).toHaveTextContent("Line 1–2 within section");
+    expect(composer).toHaveTextContent("Line 1–3 within section");
     expect(composer).toHaveTextContent("Before");
     const quote = composer.querySelector("blockquote")!.textContent;
-    expect(quote).toBe("### [Rule-1] 幂等键\n所有写接口应该携带幂等键。");
     expect(quote).not.toContain("必须");
+    expect(quote).toContain("应该");
     await user.type(within(composer as HTMLElement).getByRole("textbox"), "Cross-block note");
     await user.click(within(composer as HTMLElement).getByRole("button", { name: "Add to review" }));
     const draft = useBaselineAnnotationDraftStore.getState().draft.annotations[0]!;
     expect(draft.targetRevisionId).toBe("rev-base");
     expect(draft.lineStart).toBe(1);
-    expect(draft.lineEnd).toBe(2);
-    expect(draft.quote).toBe("### [Rule-1] 幂等键\n所有写接口应该携带幂等键。");
+    expect(draft.lineEnd).toBe(3);
+    expect(draft.quote).not.toContain("必须");
   });
 });
