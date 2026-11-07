@@ -800,7 +800,7 @@ func init() {
 	// issue search
 	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return")
 	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
-	issueSearchCmd.Flags().String("project", "", "Filter results by project ID or ID prefix")
+	issueSearchCmd.Flags().String("project", "", "Filter by project ID")
 	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
 	issueSearchCmd.Flags().Bool("include-closed", true, "Include done and cancelled issues (default; kept for compatibility with older flag habits)")
 	issueSearchCmd.Flags().Bool("open-only", false, "Search only issues that are not done or cancelled (overrides --include-closed)")
@@ -3237,9 +3237,14 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 		params.Set("scope", scope)
 	}
 	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
+		if client.WorkspaceID == "" {
+			if _, err := requireWorkspaceID(cmd); err != nil {
+				return err
+			}
+		}
 		project, err := resolveProjectID(ctx, client, projectInput)
 		if err != nil {
-			return fmt.Errorf("resolve project: %w", err)
+			return err
 		}
 		params.Set("project_id", project.ID)
 	}
