@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
+import type { TaskCompletedPayload } from "../types";
 import { issueKeys } from "../issues/queries";
 import { getCurrentWsId } from "../platform/workspace-storage";
 
@@ -24,7 +25,10 @@ export function useWorkspaceUsageRealtimeSync(ws: WSClient | null): void {
       void qc.invalidateQueries({ queryKey: issueKeys.workspaceUsage(wsId) });
     };
 
-    const onTerminalTask = () => {
+    const onTerminalTask = (payload: unknown) => {
+      const task = payload as TaskCompletedPayload;
+      // Chat-only tasks cannot contribute to the issue-keyed usage aggregate.
+      if (task.chat_session_id && !task.issue_id) return;
       const wsId = getCurrentWsId();
       if (!wsId) return;
       pendingWsId = wsId;

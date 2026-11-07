@@ -589,8 +589,11 @@ func TestBuildSearchQuery_ProjectFilter(t *testing.T) {
 			unfilteredQuery, unfilteredArgs := buildSearchQuery(
 				tc.phrase, append([]string(nil), tc.terms...), tc.num, tc.hasNum, tc.includeClosed, tc.terminalKeys, pgtype.UUID{}, false,
 			)
-			if strings.Contains(unfilteredQuery, "i.project_id =") || strings.Contains(unfilteredQuery, "EXISTS (SELECT 1 FROM issue") {
+			if strings.Contains(unfilteredQuery, "i.project_id =") {
 				t.Fatalf("unfiltered query must not filter by project_id:\n%s", unfilteredQuery)
+			}
+			if tc.includeClosed && strings.Contains(unfilteredQuery, "EXISTS (SELECT 1 FROM issue") {
+				t.Fatalf("unfiltered all-status query must not add an issue lookup:\n%s", unfilteredQuery)
 			}
 
 			filteredQuery, filteredArgs := buildSearchQuery(
@@ -615,9 +618,13 @@ func TestBuildSearchQuery_ProjectFilter(t *testing.T) {
 			}
 
 			wantCommentExists := fmt.Sprintf(
-				"AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND i.workspace_id = $4 AND i.project_id = $%d)",
+				"AND EXISTS (SELECT 1 FROM issue i WHERE i.id = c.issue_id AND i.workspace_id = $4 AND i.project_id = $%d",
 				tc.wantProjectIdx,
 			)
+			if !tc.includeClosed {
+				wantCommentExists += fmt.Sprintf(" AND NOT (i.status = ANY($%d::text[]))", tc.wantProjectIdx-1)
+			}
+			wantCommentExists += ")"
 			if !strings.Contains(filteredQuery[commentCTEStart:], wantCommentExists) {
 				t.Fatalf("comment_matches CTE missing %q:\n%s", wantCommentExists, filteredQuery[commentCTEStart:])
 			}

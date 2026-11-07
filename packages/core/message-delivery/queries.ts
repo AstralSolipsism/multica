@@ -91,7 +91,7 @@ function isInFlight(status: string): boolean {
  * server", never as "no deliveries".
  *
  * Refresh: autopilot websocket events invalidate the shared prefix, and the
- * first page polls — fast while any row is in flight, slow otherwise —
+ * loaded pages poll — fast while the first page has an in-flight row, slow otherwise —
  * because worker write-backs do not emit their own events.
  */
 export function messageDeliveriesInfiniteOptions(

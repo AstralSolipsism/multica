@@ -798,9 +798,9 @@ func init() {
 	issueCommentUnresolveCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue search
-	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return")
+	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return (values outside 1-50 use 50)")
 	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
-	issueSearchCmd.Flags().String("project", "", "Filter by project ID")
+	issueSearchCmd.Flags().String("project", "", "Filter by project UUID or ID prefix")
 	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
 	issueSearchCmd.Flags().Bool("include-closed", true, "Include done and cancelled issues (default; kept for compatibility with older flag habits)")
 	issueSearchCmd.Flags().Bool("open-only", false, "Search only issues that are not done or cancelled (overrides --include-closed)")
@@ -2456,19 +2456,6 @@ func floatVal(m map[string]any, key string) float64 {
 // Comment commands
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
-
 	since, _ := cmd.Flags().GetString("since")
 	thread, _ := cmd.Flags().GetString("thread")
 	recent, _ := cmd.Flags().GetInt("recent")
@@ -2556,6 +2543,19 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if before != "" {
 		params.Set("before", before)
 		params.Set("before_id", beforeID)
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
 	}
 
 	path := "/api/issues/" + issueRef.ID + "/comments"
@@ -3199,6 +3199,12 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
+	if client.WorkspaceID == "" {
+		if _, err := requireWorkspaceID(cmd); err != nil {
+			return err
+		}
+	}
+
 	scope, _ := cmd.Flags().GetString("scope")
 	if scope != "all" && scope != "title_desc" {
 		return fmt.Errorf("invalid --scope %q: valid values are all, title_desc", scope)
@@ -3213,6 +3219,9 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	limit, _ := cmd.Flags().GetInt("limit")
 	offset, _ := cmd.Flags().GetInt("offset")
+	if offset < 0 {
+		return fmt.Errorf("--offset must be zero or greater")
+	}
 	// The server caps the page at 50; echo the effective limit so callers
 	// paging with offset += limit do not skip issues (OL-458 review #4).
 	if limit <= 0 || limit > issueSearchMaxLimit {
@@ -3237,11 +3246,6 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 		params.Set("scope", scope)
 	}
 	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
-		if client.WorkspaceID == "" {
-			if _, err := requireWorkspaceID(cmd); err != nil {
-				return err
-			}
-		}
 		project, err := resolveProjectID(ctx, client, projectInput)
 		if err != nil {
 			return err

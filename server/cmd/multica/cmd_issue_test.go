@@ -3245,18 +3245,9 @@ func TestRunIssueCommentResolution(t *testing.T) {
 //     modes; it may only combine with --since.
 //
 // These cases must fail before any HTTP round-trip — verified by an
-// httptest server that fatals if /api/issues/<key>/comments is hit.
+// httptest server that rejects every request, including issue resolution.
 func TestRunIssueCommentListFlagGuards(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// resolveIssueRef hits GET /api/issues/<ref>; everything else means
-		// the guard let an invalid combination through to the wire.
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
 		http.Error(w, "unexpected", http.StatusInternalServerError)
 	}))
@@ -3380,6 +3371,18 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantMsg)
 			}
 		})
+	}
+}
+
+func TestRunIssueCommentListFlagGuardsBeforeCredentials(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_ID", "test-agent")
+	t.Setenv("MULTICA_TOKEN", "invalid-task-token")
+	cmd := newIssueCommentListTestCmd()
+	if err := cmd.Flags().Set("recent", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIssueCommentList(cmd, []string{"MUL-1"}); err == nil || err.Error() != "--recent must be a positive integer" {
+		t.Fatalf("expected local flag error before credential lookup, got %v", err)
 	}
 }
 
@@ -6303,8 +6306,8 @@ func TestIssueSearchCommandRegistration(t *testing.T) {
 			t.Errorf("issue search missing --%s", name)
 		}
 	}
-	if flag := cmd.Flags().Lookup("project"); flag != nil && flag.Usage != "Filter by project ID" {
-		t.Errorf("--project usage = %q, want %q", flag.Usage, "Filter by project ID")
+	if flag := cmd.Flags().Lookup("project"); flag != nil && !strings.Contains(flag.Usage, "ID prefix") {
+		t.Errorf("--project usage = %q, want UUID prefix support documented", flag.Usage)
 	}
 	if def, _ := cmd.Flags().GetBool("include-closed"); !def {
 		t.Errorf("--include-closed default = false, want true (done issues searchable by default)")
