@@ -15,7 +15,8 @@ field on each eligible entry in `tasks`. Ordinary task APIs omit it.
 
 The version 1 context uses the shape in OL-187 B, implemented by
 `protocol.YouShouldKnowContext`. `anchor_comment_id` is a UUID or `null`;
-`existing_tips` and `known_topics` are always arrays. The latest non-deleted member
+`existing_tips` and `known_topics` are always arrays. Existing tips are valid tips
+from the same issue, newest first, up to 50. The latest non-deleted member
 comment is limited to 500 Unicode code points. Known topics belong to
 `attribution.initiator` (`accountable_user_id`), scoped to this workspace, newest
 first, up to 50. An unattributed run gets an empty array.

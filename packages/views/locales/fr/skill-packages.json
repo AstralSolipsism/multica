@@ -198,8 +198,6 @@
   },
   "picker": {
     "uncategorized": "Non classés",
-    "not_imported": "Non importé",
-    "not_imported_hint": "Importez ce skill depuis la page des skills avant de le lier.",
     "toggle_folder": "Tout sélectionner dans « {{name}} »"
   }
 }

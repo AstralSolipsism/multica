@@ -3,23 +3,21 @@ import type { SkillFolderTree } from "@multica/core/api/schemas";
 import {
   buildFolderNodes,
   folderDisplayPath,
-  grayCandidates,
   placementBySkillId,
   type FolderTreeNode,
-  type GrayCandidate,
 } from "./skill-folder-tree";
 
 // Tree model for the skill picker (OL-104): the folder tree pruned to the
-// caller-provided selectable skills plus the packages' not-yet-imported
-// (gray) candidates. Folders with neither visible skills nor gray rows are
-// not rendered at all — the picker only expands the caller's selectable set.
+// caller-provided selectable skills. Package candidates that were never
+// imported are not listed here: they cannot be bound, and the skills page
+// already surfaces them (OL-1267). Folders without visible skills are not
+// rendered at all, so every rendered folder starts expanded.
 
 export const PICKER_UNCATEGORIZED_ID = "__uncategorized__";
 
 export type PickerRow =
-  | { kind: "folder"; folderId: string; name: string; depth: number; expandable: boolean }
-  | { kind: "skill"; skill: SkillSummary; depth: number }
-  | { kind: "gray"; candidate: GrayCandidate; depth: number };
+  | { kind: "folder"; folderId: string; name: string; depth: number }
+  | { kind: "skill"; skill: SkillSummary; depth: number };
 
 export interface PickerModel {
   rows: PickerRow[];
@@ -30,36 +28,24 @@ export interface PickerModel {
 interface FolderContent {
   skills: SkillSummary[];
   children: { node: FolderTreeNode; content: FolderContent }[];
-  gray: GrayCandidate[];
   /** Visible skills in this folder's whole subtree (tri-state source). */
   subtree: SkillSummary[];
-  /** This folder or a descendant lists gray candidates. */
-  hasGray: boolean;
 }
 
 function buildContent(
   node: FolderTreeNode,
   skillsByFolder: Map<string, SkillSummary[]>,
-  grayByFolder: Map<string, GrayCandidate[]>,
 ): FolderContent {
   const skills = (skillsByFolder.get(node.folder.id) ?? [])
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
-  const gray = grayByFolder.get(node.folder.id) ?? [];
-  const allChildren = node.children.map((child) => ({
-    node: child,
-    content: buildContent(child, skillsByFolder, grayByFolder),
-  }));
-  const hasGray = gray.length > 0 || allChildren.some((child) => child.content.hasGray);
-  const children = allChildren.filter(
-    (child) => child.content.subtree.length > 0 || child.content.hasGray,
-  );
+  const children = node.children
+    .map((child) => ({ node: child, content: buildContent(child, skillsByFolder) }))
+    .filter((child) => child.content.subtree.length > 0);
   return {
     skills,
     children,
-    gray,
     subtree: [...skills, ...children.flatMap((child) => child.content.subtree)],
-    hasGray,
   };
 }
 
@@ -76,38 +62,13 @@ function prepare(tree: SkillFolderTree, skills: readonly SkillSummary[]) {
       skillsByFolder.set(folderId, list);
     }
   }
-  const grayByFolder = new Map<string, GrayCandidate[]>();
-  for (const candidate of grayCandidates(tree)) {
-    const list = grayByFolder.get(candidate.folderId) ?? [];
-    list.push(candidate);
-    grayByFolder.set(candidate.folderId, list);
-  }
   const roots = buildFolderNodes(tree.folders)
-    .map((node) => ({ node, content: buildContent(node, skillsByFolder, grayByFolder) }))
-    .filter((entry) => entry.content.subtree.length > 0 || entry.content.hasGray);
+    .map((node) => ({ node, content: buildContent(node, skillsByFolder) }))
+    .filter((entry) => entry.content.subtree.length > 0);
   return {
     roots,
     uncategorized: uncategorized.sort((a, b) => a.name.localeCompare(b.name)),
   };
-}
-
-/** Folders whose subtree holds no selectable skill start collapsed (they may
- *  still show gray candidates); every folder with selectable skills starts
- *  expanded so the caller's set is visible. */
-export function defaultCollapsedFolderIds(
-  tree: SkillFolderTree,
-  skills: readonly SkillSummary[],
-): Set<string> {
-  const { roots } = prepare(tree, skills);
-  const collapsed = new Set<string>();
-  const walk = (entries: { node: FolderTreeNode; content: FolderContent }[]) => {
-    for (const { node, content } of entries) {
-      if (content.subtree.length === 0) collapsed.add(node.folder.id);
-      walk(content.children);
-    }
-  };
-  walk(roots);
-  return collapsed;
 }
 
 export function buildPickerModel(
@@ -123,13 +84,10 @@ export function buildPickerModel(
     for (const { node, content } of entries) {
       const folderId = node.folder.id;
       subtreeSkills.set(folderId, content.subtree);
-      const expandable =
-        content.children.length > 0 || content.skills.length > 0 || content.gray.length > 0;
-      rows.push({ kind: "folder", folderId, name: node.folder.name, depth, expandable });
-      if (expandable && !collapsed.has(folderId)) {
+      rows.push({ kind: "folder", folderId, name: node.folder.name, depth });
+      if (!collapsed.has(folderId)) {
         emit(content.children, depth + 1);
         for (const skill of content.skills) rows.push({ kind: "skill", skill, depth: depth + 1 });
-        for (const candidate of content.gray) rows.push({ kind: "gray", candidate, depth: depth + 1 });
       }
     }
   };
@@ -137,13 +95,7 @@ export function buildPickerModel(
 
   if (uncategorized.length > 0) {
     subtreeSkills.set(PICKER_UNCATEGORIZED_ID, uncategorized);
-    rows.push({
-      kind: "folder",
-      folderId: PICKER_UNCATEGORIZED_ID,
-      name: "",
-      depth: 0,
-      expandable: true,
-    });
+    rows.push({ kind: "folder", folderId: PICKER_UNCATEGORIZED_ID, name: "", depth: 0 });
     if (!collapsed.has(PICKER_UNCATEGORIZED_ID)) {
       for (const skill of uncategorized) rows.push({ kind: "skill", skill, depth: 1 });
     }
@@ -152,38 +104,31 @@ export function buildPickerModel(
   return { rows, subtreeSkills };
 }
 
-export interface PickerSearchResult {
-  skills: { skill: SkillSummary; path: string }[];
-  gray: { candidate: GrayCandidate; path: string }[];
+export interface PickerSearchMatch {
+  skill: SkillSummary;
+  path: string;
 }
 
-/** Search flattens the tree: matching skills and gray candidates carry their
- *  folder path so the tree context stays visible. */
+/** Search flattens the tree: matching skills carry their folder path so the
+ *  tree context stays visible. */
 export function searchPickerModel(
   tree: SkillFolderTree,
   skills: readonly SkillSummary[],
   query: string,
   uncategorizedLabel: string,
-): PickerSearchResult {
+): PickerSearchMatch[] {
   const q = query.trim().toLowerCase();
-  if (!q) return { skills: [], gray: [] };
+  if (!q) return [];
   const placements = placementBySkillId(tree.placements);
   const pathFor = (skill: SkillSummary): string => {
     const folderId = placements.get(skill.id)?.folder_id;
     return folderId ? folderDisplayPath(tree.folders, folderId) : uncategorizedLabel;
   };
-  const matchedSkills = skills
+  return skills
     .filter((s) => {
       const name = s.name.toLowerCase();
       const description = s.description?.toLowerCase() ?? "";
       return name.includes(q) || description.includes(q);
     })
     .map((skill) => ({ skill, path: pathFor(skill) }));
-  const matchedGray = grayCandidates(tree)
-    .filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q))
-    .map((candidate) => ({
-      candidate,
-      path: folderDisplayPath(tree.folders, candidate.folderId),
-    }));
-  return { skills: matchedSkills, gray: matchedGray };
 }

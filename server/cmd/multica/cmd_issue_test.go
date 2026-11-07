@@ -6303,8 +6303,8 @@ func TestIssueSearchCommandRegistration(t *testing.T) {
 			t.Errorf("issue search missing --%s", name)
 		}
 	}
-	if flag := cmd.Flags().Lookup("project"); flag != nil && flag.Usage != "Filter by project ID" {
-		t.Errorf("--project usage = %q, want %q", flag.Usage, "Filter by project ID")
+	if flag := cmd.Flags().Lookup("project"); flag != nil && !strings.Contains(flag.Usage, "ID prefix") {
+		t.Errorf("--project usage = %q, want UUID prefix support documented", flag.Usage)
 	}
 	if def, _ := cmd.Flags().GetBool("include-closed"); !def {
 		t.Errorf("--include-closed default = false, want true (done issues searchable by default)")
