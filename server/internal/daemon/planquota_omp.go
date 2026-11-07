@@ -96,11 +96,13 @@ func newOmpUsageRunner(binPath string, timeout time.Duration) func(ctx context.C
 // --- omp usage --json payload (only the mapped fields) ---
 
 type ompUsagePayload struct {
-	GeneratedAt          int64                              `json:"generatedAt"`
-	Reports              []ompUsageReport                   `json:"reports"`
-	AccountsWithoutUsage []ompAccountIdentity               `json:"accountsWithoutUsage"`
-	DisabledCredentials  []ompDisabledCredentialSummary     `json:"disabledCredentials"`
-	Capacity             map[string][]ompProviderWindowStat `json:"capacity"`
+	GeneratedAt          int64                          `json:"generatedAt"`
+	Reports              []ompUsageReport               `json:"reports"`
+	AccountsWithoutUsage []ompAccountIdentity           `json:"accountsWithoutUsage"`
+	DisabledCredentials  []ompDisabledCredentialSummary `json:"disabledCredentials"`
+	// `capacity` is deliberately NOT decoded: the pool summaries derive from
+	// the per-account reports (means over the same data OMP aggregates),
+	// and an unused decode is dead weight.
 }
 
 type ompUsageReport struct {
@@ -161,14 +163,6 @@ type ompDisabledCredentialSummary struct {
 	Email     string `json:"email"`
 	AccountID string `json:"accountId"`
 	Cause     string `json:"cause"`
-}
-
-type ompProviderWindowStat struct {
-	Window            string  `json:"window"`
-	DurationMs        float64 `json:"durationMs"`
-	Accounts          int     `json:"accounts"`
-	UsedAccounts      float64 `json:"usedAccounts"`
-	RemainingAccounts float64 `json:"remainingAccounts"`
 }
 
 func (c *ompPlanQuotaCollector) collect(ctx context.Context) (*protocol.RuntimePlanQuota, error) {
@@ -254,7 +248,7 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 	// rather than crying "exhausted" (#4). ResumesAt is per-account "latest
 	// reset among its exhausted windows" (windows are AND inside an
 	// account), then the earliest account wins (#5).
-	anyLimited := false
+	limitedPools := 0
 	for _, id := range order {
 		pool := pools[id]
 		pool.TotalAccounts = len(pool.Accounts)
@@ -287,7 +281,7 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 			pool.Status = protocol.PlanQuotaStatusOK
 		} else {
 			pool.Status = protocol.PlanQuotaStatusLimited
-			anyLimited = true
+			limitedPools++
 			if earliest > 0 {
 				pool.ResumesAt = &earliest
 			}
@@ -307,7 +301,10 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 	sort.SliceStable(quota.AccountPools, func(i, j int) bool {
 		return quota.AccountPools[i].ID < quota.AccountPools[j].ID
 	})
-	if anyLimited {
+	// Runtime-level status mirrors the TS summary (evaluatePlanQuotaPools):
+	// OR across pools too — one dead vendor pool does not limit the runtime
+	// while a sibling vendor still serves.
+	if limitedPools > 0 && limitedPools == len(quota.AccountPools) {
 		quota.Status = protocol.PlanQuotaStatusLimited
 	}
 	return quota, nil

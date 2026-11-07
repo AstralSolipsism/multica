@@ -333,3 +333,60 @@ esac
 		t.Fatalf("quota = %+v", quota)
 	}
 }
+
+// #10: runtime-level status ORs across pools — one dead vendor pool must not
+// limit the runtime while a sibling vendor still serves (aligned with the
+// TS evaluatePlanQuotaPools summary).
+func TestOmpUsageToPlanQuota_RuntimeStatusORsAcrossPools(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	deadPool := map[string]any{
+		"provider": "zai",
+		"limits": []any{
+			ompLimitJSON("zai-5h", "5h", 18_000_000, ompReset5h, 1.0, "exhausted"),
+		},
+		"metadata": map[string]any{"email": "ze*"},
+	}
+	livePool := map[string]any{
+		"provider": "kimi-code",
+		"limits": []any{
+			ompLimitJSON("kimi-5h", "5h", 18_000_000, ompReset5h, 0.2, "ok"),
+		},
+		"metadata": map[string]any{"email": "19*"},
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"generatedAt": now.UnixMilli(),
+		"reports":     []any{deadPool, livePool},
+	})
+	quota, err := ompUsageToPlanQuota(raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quota.AccountPools) != 2 {
+		t.Fatalf("pools = %d", len(quota.AccountPools))
+	}
+	var deadLimited bool
+	for _, p := range quota.AccountPools {
+		if p.ID == "zai" {
+			deadLimited = p.Status == protocol.PlanQuotaStatusLimited
+		}
+	}
+	if !deadLimited {
+		t.Fatal("zai pool should be limited")
+	}
+	if quota.Status != protocol.PlanQuotaStatusOK {
+		t.Fatalf("runtime status = %q, want ok (sibling pool still serves)", quota.Status)
+	}
+
+	// Every pool dead -> runtime limited.
+	rawAll, _ := json.Marshal(map[string]any{
+		"generatedAt": now.UnixMilli(),
+		"reports":     []any{deadPool},
+	})
+	quotaAll, err := ompUsageToPlanQuota(rawAll, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quotaAll.Status != protocol.PlanQuotaStatusLimited {
+		t.Fatalf("all-dead runtime status = %q, want limited", quotaAll.Status)
+	}
+}

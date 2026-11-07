@@ -44,7 +44,9 @@
     "relogin_hint": "Identifiants OAuth invalides. Exécutez /login dans OMP sur l'hôte.",
     "pool_needs_relogin": "Reconnexion requise",
     "pool_all_unavailable": "Tous les comptes de ce pool fournisseur sont indisponibles. Les agents utilisant ses modèles seront limités.",
-    "idle_count": "+{{count}} pools inactifs",
+    "idle_count_one": "+{{count}} pool inactif",
+
+    "idle_count_other": "+{{count}} pools inactifs",
     "idle_title": "Pools fournisseurs inactifs",
     "idle_description": "Connectés, mais aucun agent de cet espace de travail ne les utilise.",
     "serving": "Utilisé",

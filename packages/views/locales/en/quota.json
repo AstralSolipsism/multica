@@ -44,7 +44,9 @@
     "relogin_hint": "OAuth credential failed. Run /login in OMP on the host.",
     "pool_needs_relogin": "Re-login required",
     "pool_all_unavailable": "All accounts in this provider pool are unavailable. Agents using its models will be rate limited.",
-    "idle_count": "+{{count}} idle pools",
+    "idle_count_one": "+{{count}} idle pool",
+
+    "idle_count_other": "+{{count}} idle pools",
     "idle_title": "Idle provider pools",
     "idle_description": "Signed in, but no agent in this workspace uses them.",
     "serving": "In use",
