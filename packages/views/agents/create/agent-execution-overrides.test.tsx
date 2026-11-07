@@ -71,6 +71,7 @@ function listResult(models: RuntimeModel[]): RuntimeModelListRequest {
 
 const baseDraft: AgentDraft = {
   qoderAgentId: "",
+  ompRuntimeConfig: {},
   name: "Fast Codex",
   description: "",
   instructions: "",

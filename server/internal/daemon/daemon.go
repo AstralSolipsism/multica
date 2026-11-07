@@ -8400,6 +8400,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// override throughout preparation and execution.
 		openclawModelOverride = strings.TrimSpace(task.ModelOverride)
 	}
+	// OMP role/advisor/execution knobs (OL-1261) follow the same fail-soft
+	// decode contract: a malformed payload logs and degrades to a plain
+	// launch instead of blocking dispatch.
+	var ompRuntime *agent.OmpRuntimeOpts
+	if task.Agent != nil && provider == "omp" {
+		ompRuntime = agent.DecodeOmpRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
+	}
 	var agentEnvOverrides map[string]string
 	var agentCustomArgs []string
 	if task.Agent != nil {
@@ -9227,6 +9234,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ServiceTier:            serviceTier,
 		OpenclawMode:           openclawMode,
 		OpenclawModelOverride:  openclawModelOverride,
+		OmpRuntime:             ompRuntime,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}

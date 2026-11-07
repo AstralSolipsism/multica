@@ -2423,6 +2423,7 @@ export const StoredAgentDraftSchema = z.object({
   member_ids: z.array(z.string()).catch([]),
   team_ids: z.array(z.string()).catch([]),
   qoder_agent_id: z.string().catch(""),
+  omp_runtime_config: z.record(z.string(), z.unknown()).optional().catch(undefined),
   applied_message_id: z.string().nullable().catch(null),
   dismissed_message_id: z.string().nullish().catch(null),
 }).loose();

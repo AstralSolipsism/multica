@@ -8,6 +8,7 @@ import {
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
 import { buildModelChangeUpdate, type ModelCatalog } from "./model-change-cleanup";
+import { stripOmpRuntimeConfig } from "@multica/core/agents";
 
 /**
  * Runtime and model editing shared by the properties panel and the General
@@ -75,16 +76,23 @@ export function useExecutionControls({
 
   // Model, thinking level, and service tier are runtime/model native. Clear
   // them together so the new runtime resolves its own defaults instead of
-  // inheriting incompatible tokens.
+  // inheriting incompatible tokens. OMP-only runtime_config keys are stripped
+  // too: the new runtime's CLI has no `--smol` / `--advisor` flags, and the
+  // omp daemon ignores the payload, so keeping it would only lie to the UI.
   const changeRuntime = useCallback(
-    (runtimeId: string) =>
-      update({
+    (runtimeId: string) => {
+      const payload: Record<string, unknown> = {
         runtime_id: runtimeId,
         model: "",
         thinking_level: "",
         service_tier: "",
-      }),
-    [update],
+      };
+      if (runtime?.provider === "omp") {
+        payload.runtime_config = stripOmpRuntimeConfig(agent.runtime_config);
+      }
+      return update(payload);
+    },
+    [agent.runtime_config, runtime?.provider, update],
   );
 
   return {

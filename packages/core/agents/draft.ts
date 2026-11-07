@@ -1,4 +1,9 @@
 import { qoderAgentId } from "./qoder-runtime-config";
+import {
+  parseOmpRuntimeConfig,
+  serializeOmpRuntimeConfig,
+  type OmpRuntimeConfig,
+} from "./omp-runtime-config";
 import { isRuntimeUsableForUser } from "../runtimes/access";
 import type {
   Agent,
@@ -38,6 +43,7 @@ export interface AgentDraft {
   avatarUrl: string | null;
   runtimeId: string;
   qoderAgentId: string;
+  ompRuntimeConfig: OmpRuntimeConfig;
   model: string;
   /** Runtime-native reasoning/effort token, scoped to `model`. */
   thinkingLevel: string;
@@ -58,6 +64,7 @@ export const EMPTY_AGENT_DRAFT: AgentDraft = {
   avatarUrl: null,
   runtimeId: "",
   qoderAgentId: "",
+  ompRuntimeConfig: {},
   model: "",
   thinkingLevel: "",
   serviceTier: "",
@@ -69,8 +76,9 @@ export const EMPTY_AGENT_DRAFT: AgentDraft = {
 
 /**
  * Draft fields whose only meaning comes from the currently selected
- * runtime + model pair. A runtime change invalidates all three; a model
- * change invalidates the two that hang off the exact model catalog. Keeping
+ * runtime + model pair. A runtime change clears runtime-native model,
+ * execution and provider-specific settings; a model change invalidates
+ * the two that hang off the exact model catalog. Keeping
  * them together is what stops an orphan `thinking_level` / `service_tier`
  * from being persisted for a model that never advertised it — the daemon
  * would silently fall back at execution time and the settings page would
@@ -84,6 +92,7 @@ export function applyDraftRuntimeChange(
     ...draft,
     runtimeId,
     qoderAgentId: "",
+    ompRuntimeConfig: {},
     model: "",
     thinkingLevel: "",
     serviceTier: "",
@@ -177,13 +186,11 @@ export function deriveDuplicateAccess(
 /**
  * Seeds the create draft from the agent being duplicated.
  *
- * `model` / `thinkingLevel` / `serviceTier` only mean something on the runtime
- * they were chosen for, so they ride along only when the copy stays on that
- * exact runtime. When the source runtime is gone, private to somebody else or
- * offline, the draft falls back to another runtime and the three are cleared
- * for the user to pick again — the same rule `multica agent copy` already
- * enforces server-side (cmd_agent_copy.go). Before MUL-5390 the fallback kept
- * the source `model` and silently persisted a cross-provider value.
+ * Runtime-bound model, execution overrides and OMP roles ride along only when
+ * the copy stays on the same usable runtime. When the source runtime is gone,
+ * private to somebody else or offline, the draft falls back to another runtime
+ * and clears those fields for the user to pick again. Before MUL-5390 the
+ * fallback kept the source `model` and silently persisted a cross-provider value.
  */
 export function buildDuplicateDraft(
   source: Agent,
@@ -194,13 +201,11 @@ export function buildDuplicateDraft(
     nameSuffix: string;
   },
 ): AgentDraft {
+  const sourceRuntime = options.runtimes.find(
+    (runtime) => runtime.id === source.runtime_id,
+  );
   const keepsRuntime =
-    !!source.runtime_id &&
-    options.runtimes.some(
-      (runtime) =>
-        runtime.id === source.runtime_id &&
-        isRuntimeUsableForUser(runtime, options.currentUserId),
-    );
+    !!sourceRuntime && isRuntimeUsableForUser(sourceRuntime, options.currentUserId);
   return {
     ...EMPTY_AGENT_DRAFT,
     name: `${source.name}${options.nameSuffix}`,
@@ -212,6 +217,10 @@ export function buildDuplicateDraft(
       ? (source.runtime_id as string)
       : options.fallbackRuntimeId,
     qoderAgentId: keepsRuntime ? qoderAgentId(source.runtime_config) : "",
+    ompRuntimeConfig:
+      keepsRuntime && sourceRuntime.provider === "omp"
+        ? parseOmpRuntimeConfig(source.runtime_config)
+        : {},
     model: keepsRuntime ? source.model ?? "" : "",
     thinkingLevel: keepsRuntime ? source.thinking_level ?? "" : "",
     serviceTier: keepsRuntime ? source.service_tier ?? "" : "",
@@ -250,6 +259,12 @@ export function buildCreateAgentRequest(options: {
     : runtimeProvider
       ? { ...options.draft, qoderAgentId: "" }
       : options.draft;
+  const runtimeConfig = {
+    ...(draft.qoderAgentId ? { qoder_agent_id: draft.qoderAgentId } : {}),
+    ...(runtimeProvider === "omp"
+      ? serializeOmpRuntimeConfig(draft.ompRuntimeConfig)
+      : {}),
+  };
   const request: CreateAgentRequest = {
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -264,7 +279,7 @@ export function buildCreateAgentRequest(options: {
       : {}),
     avatar_url: draft.avatarUrl ?? undefined,
     runtime_id: runtimeId,
-    ...(draft.qoderAgentId ? { runtime_config: { qoder_agent_id: draft.qoderAgentId } } : {}),
+    ...(Object.keys(runtimeConfig).length > 0 ? { runtime_config: runtimeConfig } : {}),
     model: draft.model.trim() || undefined,
     thinking_level: draft.thinkingLevel.trim() || undefined,
     service_tier: draft.serviceTier.trim() || undefined,

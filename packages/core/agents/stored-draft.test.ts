@@ -11,6 +11,11 @@ import {
 
 const draft = (): AgentDraft => ({
   qoderAgentId: "agent_qca",
+  ompRuntimeConfig: {
+    smolModel: "zai/glm-5.3-flash",
+    advisorEnabled: true,
+    advisorReviewMode: "agent-end",
+  },
   name: "Release manager",
   description: "Ships carefully",
   instructions: "# Role\nShip.",

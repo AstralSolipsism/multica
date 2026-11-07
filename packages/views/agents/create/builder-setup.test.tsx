@@ -56,6 +56,7 @@ const DRAFT: AgentDraft = {
   conversationStarters: [],
   avatarUrl: null,
   qoderAgentId: "",
+  ompRuntimeConfig: {},
   runtimeId: RUNTIME.id,
   model: "old-model",
   thinkingLevel: "_adapt",

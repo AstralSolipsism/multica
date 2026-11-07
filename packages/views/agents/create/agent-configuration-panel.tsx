@@ -33,6 +33,7 @@ import { QoderAgentSelect } from "../components/qoder-agent-select";
 import { RuntimePicker } from "../components/runtime-picker";
 import { SkillMultiSelect } from "../components/skill-multi-select";
 import { ConversationStartersEditor } from "../components/conversation-starters-editor";
+import { OmpRuntimeConfigPanel } from "../components/omp-runtime-config";
 
 const PERMISSION_SCOPES: AgentPermissionScope[] = [
   "private",
@@ -282,6 +283,19 @@ export function AgentConfigurationPanel({
           />
         </SettingsCard>
       </SettingsSection>
+
+      <OmpRuntimeConfigPanel
+        provider={selectedRuntime?.provider}
+        runtimeId={selectedRuntime?.id ?? null}
+        runtimeOnline={selectedRuntime?.status === "online"}
+        mainModel={draft.model}
+        value={draft.ompRuntimeConfig}
+        canEdit={!runtimeLocked}
+        onChange={(ompRuntimeConfig) =>
+          onChange({ ...draft, ompRuntimeConfig })
+        }
+        compact={compact}
+      />
 
       <SettingsSection
         title={t(($) => $.creation_studio.sections.access)}
