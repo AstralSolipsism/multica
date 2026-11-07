@@ -217,7 +217,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
           {showProgress
             ? <><RunActivityIndicator status={task.status} animate={animationVisibility.visible} />
                 <RunActivitySummary summary={summary} />
-                <ThinkingLevelBadge messages={data ?? NO_MESSAGES} /></>
+                <ThinkingLevelBadge messages={data ?? NO_MESSAGES} focusable={false} /></>
             : <span className={cn(showIdentity && "@max-[32rem]/run:sr-only")}>{activityLabel}</span>}
           {!showProgress && stepLabel && <span className="text-faint-foreground @max-[32rem]/run:hidden">· {stepLabel}</span>}
           <ChevronRight ref={state.disclosure.chevronRef} aria-hidden className={cn("size-3.5 shrink-0", expanded && "rotate-90")} />
