@@ -7213,10 +7213,6 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = $12
       AND t.agent_id = $13
-      -- A comment can only join a task with the same external authority.
-      AND t.conversation_root_task_id IS NOT DISTINCT FROM $14::uuid
-      AND ($14::uuid IS NULL
-           OR t.originator_user_id = $3::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id($1::uuid)
       AND (
           t.status = 'queued'
@@ -7228,34 +7224,30 @@ WHERE id = (
       -- into it would give a new-HEAD comment old-HEAD review coverage. Empty/
       -- absent head_sha (no linked PR) matches any task, preserving coalescing.
       AND (
-          COALESCE($15::text, '') = ''
-          OR t.context->>'head_sha' = $15::text
+          COALESCE($14::text, '') = ''
+          OR t.context->>'head_sha' = $14::text
       )
     ORDER BY t.created_at DESC
     LIMIT 1
 )
-AND conversation_root_task_id IS NOT DISTINCT FROM $14::uuid
-AND ($14::uuid IS NULL
-     OR originator_user_id = $3::uuid)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, branch_name, durable_work_dir, channel_context_revision, comment_thread_id, cancelled_by_type, cancelled_by_id, cancelled_by_name, dependency_admission, issue_snapshot, conversation_root_task_id, workflow_step
 `
 
 type MergeCommentIntoPendingTaskParams struct {
-	NewTriggerCommentID            pgtype.UUID `json:"new_trigger_comment_id"`
-	NewTriggerSummary              pgtype.Text `json:"new_trigger_summary"`
-	NewOriginatorUserID            pgtype.UUID `json:"new_originator_user_id"`
-	NewAccountableUserID           pgtype.UUID `json:"new_accountable_user_id"`
-	NewOriginatorSource            pgtype.Text `json:"new_originator_source"`
-	NewDelegatedFromTaskID         pgtype.UUID `json:"new_delegated_from_task_id"`
-	NewRuleVersionID               pgtype.UUID `json:"new_rule_version_id"`
-	NewTriggerEvidenceKind         pgtype.Text `json:"new_trigger_evidence_kind"`
-	NewTriggerEvidenceRefID        pgtype.UUID `json:"new_trigger_evidence_ref_id"`
-	NewRuntimeMcpOverlay           []byte      `json:"new_runtime_mcp_overlay"`
-	NewRuntimeConnectedApps        []byte      `json:"new_runtime_connected_apps"`
-	IssueID                        pgtype.UUID `json:"issue_id"`
-	AgentID                        pgtype.UUID `json:"agent_id"`
-	ExpectedConversationRootTaskID pgtype.UUID `json:"expected_conversation_root_task_id"`
-	HeadSha                        pgtype.Text `json:"head_sha"`
+	NewTriggerCommentID     pgtype.UUID `json:"new_trigger_comment_id"`
+	NewTriggerSummary       pgtype.Text `json:"new_trigger_summary"`
+	NewOriginatorUserID     pgtype.UUID `json:"new_originator_user_id"`
+	NewAccountableUserID    pgtype.UUID `json:"new_accountable_user_id"`
+	NewOriginatorSource     pgtype.Text `json:"new_originator_source"`
+	NewDelegatedFromTaskID  pgtype.UUID `json:"new_delegated_from_task_id"`
+	NewRuleVersionID        pgtype.UUID `json:"new_rule_version_id"`
+	NewTriggerEvidenceKind  pgtype.Text `json:"new_trigger_evidence_kind"`
+	NewTriggerEvidenceRefID pgtype.UUID `json:"new_trigger_evidence_ref_id"`
+	NewRuntimeMcpOverlay    []byte      `json:"new_runtime_mcp_overlay"`
+	NewRuntimeConnectedApps []byte      `json:"new_runtime_connected_apps"`
+	IssueID                 pgtype.UUID `json:"issue_id"`
+	AgentID                 pgtype.UUID `json:"agent_id"`
+	HeadSha                 pgtype.Text `json:"head_sha"`
 }
 
 // MUL-4195: fold a newly-arrived comment into an existing task for (issue,
@@ -7315,7 +7307,6 @@ func (q *Queries) MergeCommentIntoPendingTask(ctx context.Context, arg MergeComm
 		arg.NewRuntimeConnectedApps,
 		arg.IssueID,
 		arg.AgentID,
-		arg.ExpectedConversationRootTaskID,
 		arg.HeadSha,
 	)
 	var i AgentTaskQueue
@@ -8461,33 +8452,24 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = $2
       AND t.agent_id = $3
-      -- A comment can only join a task with the same external authority.
-      AND t.conversation_root_task_id IS NOT DISTINCT FROM $4::uuid
-      AND ($4::uuid IS NULL
-           OR t.originator_user_id = $5::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id($1::uuid)
       AND t.status IN ('dispatched', 'running', 'waiting_local_directory')
       AND (
-          COALESCE($6::text, '') = ''
-          OR t.context->>'head_sha' = $6::text
+          COALESCE($4::text, '') = ''
+          OR t.context->>'head_sha' = $4::text
       )
     ORDER BY t.created_at DESC
     LIMIT 1
 )
 AND status IN ('dispatched', 'running', 'waiting_local_directory')
-AND conversation_root_task_id IS NOT DISTINCT FROM $4::uuid
-AND ($4::uuid IS NULL
-     OR originator_user_id = $5::uuid)
 RETURNING id, coalesced_comment_ids
 `
 
 type RegisterPlannedCommentForActiveTaskParams struct {
-	CommentID                      pgtype.UUID `json:"comment_id"`
-	IssueID                        pgtype.UUID `json:"issue_id"`
-	AgentID                        pgtype.UUID `json:"agent_id"`
-	ExpectedConversationRootTaskID pgtype.UUID `json:"expected_conversation_root_task_id"`
-	ExpectedOriginatorUserID       pgtype.UUID `json:"expected_originator_user_id"`
-	HeadSha                        pgtype.Text `json:"head_sha"`
+	CommentID pgtype.UUID `json:"comment_id"`
+	IssueID   pgtype.UUID `json:"issue_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+	HeadSha   pgtype.Text `json:"head_sha"`
 }
 
 type RegisterPlannedCommentForActiveTaskRow struct {
@@ -8526,8 +8508,6 @@ func (q *Queries) RegisterPlannedCommentForActiveTask(ctx context.Context, arg R
 		arg.CommentID,
 		arg.IssueID,
 		arg.AgentID,
-		arg.ExpectedConversationRootTaskID,
-		arg.ExpectedOriginatorUserID,
 		arg.HeadSha,
 	)
 	var i RegisterPlannedCommentForActiveTaskRow

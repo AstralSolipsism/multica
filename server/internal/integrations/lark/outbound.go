@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -375,24 +374,6 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		// Revoked between trigger and event; nothing to patch.
 		return nil
 	}
-	cfg, configErr := channel.ParseConversationConfig(delivery.Config)
-	if configErr != nil {
-		return configErr
-	}
-	if cfg.Grant != nil {
-		checker, ok := p.queries.(interface {
-			AuthorizeConversationTask(context.Context, pgtype.UUID, pgtype.UUID) error
-		})
-		if !ok {
-			return channel.ErrConversationDenied
-		}
-		if err := checker.AuthorizeConversationTask(ctx, taskID, inst.WorkspaceID); err != nil {
-			if errors.Is(err, channel.ErrConversationDenied) {
-				return nil
-			}
-			return err
-		}
-	}
 	creds, err := p.installationCredentials(inst)
 	if err != nil {
 		return err
@@ -493,13 +474,8 @@ func mentionOpenID(binding ChatSessionBinding) string {
 }
 
 // sendChatReply combines the upstream delivery lease with verified native
-// mentions. External grants retain their existing text-only reply boundary.
+// mentions.
 func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, binding ChatSessionBinding, botOpenID string, workspaceID pgtype.UUID, payload any) error {
-	cfg, err := channel.ParseConversationConfig(binding.Config)
-	if err != nil {
-		return err
-	}
-	external := cfg.Grant != nil
 	content := chatDoneContent(payload)
 	literal := strings.ContainsAny(content, "<&")
 	mentions := p.replyMentionIDs(ctx, creds, binding, botOpenID)
@@ -514,7 +490,7 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 	// worker inherits this lease; duplicate events cannot repeat the text while
 	// waiting for the files or after the provider's UUID window has expired.
 	handedOff := false
-	if !external && p.objects != nil && p.media != nil && chatDoneMessageID(payload) != "" {
+	if p.objects != nil && p.media != nil && chatDoneMessageID(payload) != "" {
 		taskID, err := util.ParseUUID(chatDoneTaskID(payload))
 		if err != nil || !taskID.Valid {
 			return errors.New("lark reply missing task identity")
@@ -546,12 +522,12 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 		handedOff = p.deliverAttachmentsAsync(ctx, creds, binding, target, workspaceID, payload)
 		return nil
 	}
-	if !external && !literal {
+	if !literal {
 		content = p.linkReplyReferences(ctx, workspaceID, content)
 	}
 	// A plain answer with bound images also needs an updatable card. The
 	// bounded metadata probe does not read bytes or wait for an upload.
-	markdown := !literal && (containsMarkdown(content) || (!external && p.replyNeedsMediaCard(ctx, workspaceID, payload)))
+	markdown := !literal && (containsMarkdown(content) || p.replyNeedsMediaCard(ctx, workspaceID, payload))
 	markdownBody, textBody := content, content
 	for i := len(mentions) - 1; i >= 0; i-- {
 		markdownBody = prependMarkdownMention(mentions[i], markdownBody)
@@ -607,7 +583,7 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 	if err := sendWithReplyFallback(p.cfg.Logger, op, target, send); err != nil {
 		return err
 	}
-	if !external && markdown && p.objects != nil && p.media != nil {
+	if markdown && p.objects != nil && p.media != nil {
 		if cardID == "" {
 			return errors.New("lark reply card identity unconfirmed")
 		}

@@ -27,9 +27,6 @@
       "connect_docs_link": "手順ガイド：Labrastro エージェントを Telegram に接続する"
     }
   },
-  "lark": {
-    "conversation_description": "参加者に Labrastro アカウントは不要です。エージェントが意見を確認・整理し、自分の名前でコメントします。処理時間とモデル使用量が発生し、各メッセージがそのままタスクに転記されるわけではありません。"
-  },
   "common": {
     "lark_bind": {
       "needs_auth_description": "連携を完了するには Labrastro にログインしてください。リンク内のトークンが Lark アカウントを現在の Labrastro ユーザーに紐付けるため、先にログインが必要です。",

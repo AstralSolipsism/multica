@@ -707,7 +707,6 @@ function ActivityBlock({
   locale: string;
 }) {
   const wakeupText = useWakeupText();
-  const { t: tLark } = useT("lark");
   if (!expanded) {
     const count = entries.length;
     return (
@@ -820,7 +819,7 @@ function ActivityBlock({
                   <ActivityText
                     entry={entry}
                     text={isWakeup
-                      ? formatWakeupActivity(entry, t, tLark, wakeupText, getActorName)
+                      ? formatWakeupActivity(entry, t, wakeupText, getActorName)
                       : formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}
                   />
                 </span>

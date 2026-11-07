@@ -1,4 +1,4 @@
-import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, type IssueBatchUpdateResult, LarkInstallationsSchema, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
+import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, type IssueBatchUpdateResult, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
 export { ApiError, dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-api";
 import { IssueUsageListSchema } from "./schemas";
 import type { ZodType } from "zod";
@@ -402,6 +402,8 @@ import {
   MALFORMED_WECOM_INSTALL_STATUS_RESPONSE,
   EMPTY_WECOM_INSTALLATION,
   EMPTY_LIST_WECOM_INSTALLATIONS_RESPONSE,
+  ListLarkInstallationsResponseSchema,
+  EMPTY_LIST_LARK_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE,
   TelegramInstallationSchema,
   ListTelegramInstallationsResponseSchema,
@@ -5242,8 +5244,13 @@ export class ApiClient {
 
   // Lark integration
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations`);
-    return parseRequiredResponse(raw, LarkInstallationsSchema, "listLarkInstallations");
+    const endpoint = `/api/workspaces/${workspaceId}/lark/installations`;
+    return parseWithFallback(
+      await this.fetch(endpoint),
+      ListLarkInstallationsResponseSchema,
+      EMPTY_LIST_LARK_INSTALLATIONS_RESPONSE,
+      { endpoint },
+    );
   }
 
   async beginLarkInstall(

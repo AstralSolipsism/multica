@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -72,10 +71,6 @@ func chatDoneTaskID(payload any) string {
 // Admission precedes both goroutine creation and the database lookup. Pending
 // deliveries are bounded separately, after a lookup proves files exist.
 func (p *Patcher) deliverAttachmentsAsync(parent context.Context, creds InstallationCredentials, binding ChatSessionBinding, target ReplyTarget, workspaceID pgtype.UUID, payload any) bool {
-	config, err := channel.ParseConversationConfig(binding.Config)
-	if err != nil || config.Grant != nil {
-		return false
-	}
 	if p.objects == nil || p.media == nil {
 		return false
 	}

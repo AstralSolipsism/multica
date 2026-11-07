@@ -27,9 +27,6 @@
       "connect_docs_link": "Pas à pas : connecter votre agent Labrastro à Telegram"
     }
   },
-  "lark": {
-    "conversation_description": "People in these conversations can talk to this agent without a Labrastro account. The agent clarifies and summarizes feedback, then posts comments in its own name. This takes time and model usage; messages are not copied verbatim into tasks."
-  },
   "common": {
     "lark_bind": {
       "needs_auth_description": "Connectez-vous à Labrastro pour terminer l'association. Le jeton contenu dans le lien associe votre compte Lark à cet utilisateur Labrastro : vous devez donc être connecté au préalable.",

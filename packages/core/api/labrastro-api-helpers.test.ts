@@ -43,7 +43,7 @@ describe("fork API installation", () => {
     expect(typeof new ApiClient("https://example.test").importSkillParsed).toBe("function");
     expect(typeof ApiClient.prototype.getIssueGraph).toBe("function");
     expect(typeof ApiClient.prototype.getGlmQuota).toBe("function");
-    expect(typeof ApiClient.prototype.setLarkConversation).toBe("function");
+    expect(typeof ApiClient.prototype.getLarkTargetCapabilities).toBe("function");
     expect(typeof ApiClient.prototype.createMessageRoute).toBe("function");
     expect(typeof ApiClient.prototype.listIssueTips).toBe("function");
     expect(typeof ApiClient.prototype.connectGitHubInstallation).toBe("function");

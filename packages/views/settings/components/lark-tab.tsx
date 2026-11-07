@@ -41,7 +41,6 @@ import { api, ApiError } from "@multica/core/api";
 import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/types";
 import { docsLocalePrefix } from "../../common/docs-locale";
 import { useT } from "../../i18n";
-import { LarkConversationForm } from "./lark-conversation-form";
 import { LarkInstallationList, LarkReceiptGuidance } from "./lark-installation-list";
 import { TeamSubscriptionsSection } from "../../message-delivery";
 import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
@@ -121,8 +120,6 @@ export function LarkTab() {
         data={data}
         isLoading={isLoading}
         canManage={canManage}
-        conversationWritable={data?.conversation_supported === true && !isError && !isFetching}
-        workspaceId={wsId}
         onDisconnect={setDisconnectTarget}
       />
 
@@ -226,7 +223,7 @@ export function LarkAgentBindButton({
     null,
   );
 
-  const { data: listing, isError, isFetching } = useQuery({
+  const { data: listing } = useQuery({
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
@@ -265,13 +262,7 @@ export function LarkAgentBindButton({
         className={className}
       />
     ) : (
-      <div className={className}>
-        <LarkAgentBotConnectedBadge installation={existing} />
-        {(listing?.conversation_supported === true || existing.conversation != null) && (
-          <LarkConversationForm workspaceId={wsId} installation={existing}
-            disabled={listing?.conversation_supported !== true || isError || isFetching} />
-        )}
-      </div>
+      <LarkAgentBotConnectedBadge installation={existing} className={className} />
     );
   }
 

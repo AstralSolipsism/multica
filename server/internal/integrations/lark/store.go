@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -42,7 +41,6 @@ import (
 // (AppID, AppSecretEncrypted, TenantKey, BotOpenID, BotUnionID, Region) come
 // from the JSONB config; the rest are flat columns.
 type Installation struct {
-	Conversation           *channel.ConversationGrant
 	BindingGeneration      string
 	FirstMessageReceivedAt *time.Time
 	ID                     pgtype.UUID
@@ -137,15 +135,14 @@ type OutboundCardMessage struct {
 // rather than as a json []byte field, so MIME-wrapped base64 from the SQL
 // backfill round-trips too. omitempty mirrors the migration's jsonb_strip_nulls.
 type feishuInstallConfig struct {
-	Conversation           *channel.ConversationGrant `json:"conversation,omitempty"`
-	BindingGeneration      string                     `json:"binding_generation,omitempty"`
-	FirstMessageReceivedAt *time.Time                 `json:"first_message_received_at,omitempty"`
-	AppID                  string                     `json:"app_id"`
-	AppSecretEncrypted     string                     `json:"app_secret_encrypted,omitempty"`
-	TenantKey              string                     `json:"tenant_key,omitempty"`
-	BotOpenID              string                     `json:"bot_open_id,omitempty"`
-	BotUnionID             string                     `json:"bot_union_id,omitempty"`
-	Region                 string                     `json:"region,omitempty"`
+	BindingGeneration      string     `json:"binding_generation,omitempty"`
+	FirstMessageReceivedAt *time.Time `json:"first_message_received_at,omitempty"`
+	AppID                  string     `json:"app_id"`
+	AppSecretEncrypted     string     `json:"app_secret_encrypted,omitempty"`
+	TenantKey              string     `json:"tenant_key,omitempty"`
+	BotOpenID              string     `json:"bot_open_id,omitempty"`
+	BotUnionID             string     `json:"bot_union_id,omitempty"`
+	Region                 string     `json:"region,omitempty"`
 }
 
 // feishuBindingConfig is the JSON shape of channel_user_binding.config.
@@ -167,7 +164,6 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 		return Installation{}, fmt.Errorf("decode app_secret_encrypted: %w", err)
 	}
 	return Installation{
-		Conversation:           cfg.Conversation,
 		BindingGeneration:      cfg.BindingGeneration,
 		FirstMessageReceivedAt: cfg.FirstMessageReceivedAt,
 		ID:                     row.ID,
@@ -193,7 +189,6 @@ func installationFromRow(row db.ChannelInstallation) (Installation, error) {
 // feishu fields of an Installation. The secret is emitted as unwrapped base64.
 func encodeInstallConfig(inst Installation) ([]byte, error) {
 	cfg := feishuInstallConfig{
-		Conversation:           inst.Conversation,
 		BindingGeneration:      inst.BindingGeneration,
 		FirstMessageReceivedAt: inst.FirstMessageReceivedAt,
 		AppID:                  inst.AppID,

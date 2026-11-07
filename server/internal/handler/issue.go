@@ -3604,10 +3604,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 		return
 	}
-	if errors.Is(err, service.ErrConversationQuickCreateOrigin) {
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
 		return

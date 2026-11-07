@@ -12,7 +12,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -42,7 +41,6 @@ func (h *Handler) hydrateTaskSupplementMetadata(ctx context.Context, r *http.Req
 		byTask[uuidToString(row.TaskID)] = row
 	}
 
-	_, external := channel.ConversationTaskFromContext(ctx)
 	userID := requestUserID(r)
 	// can_supplement answers for the caller: an agent is judged as its
 	// steering comment would be, never as the member it runs for.
@@ -59,7 +57,7 @@ func (h *Handler) hydrateTaskSupplementMetadata(ctx context.Context, r *http.Req
 		}
 		resp[i].SupplementCapability = row.Capability
 		resp[i].SupplementCommentIDs = uuidsToStrings(row.CommentIds)
-		if external || task.Status != "running" || row.Capability != protocol.DaemonCapabilityTaskSupplementV1 || userID == "" {
+		if task.Status != "running" || row.Capability != protocol.DaemonCapabilityTaskSupplementV1 || userID == "" {
 			continue
 		}
 		agentID := uuidToString(task.AgentID)
@@ -188,9 +186,6 @@ func (h *Handler) agentMaySteer(ctx context.Context, target db.Agent, actorID, o
 // misdirects the comment. An agent author steers only agents it may invoke,
 // within the per-turn caps.
 func (h *Handler) steerCommentAgentTriggers(ctx context.Context, issue db.Issue, comment db.Comment, actorType, actorID, originatorUserID string, triggers []commentAgentTrigger, steer commentSteerRequest) ([]commentAgentTrigger, map[string]commentEnqueueResult) {
-	if _, external := channel.ConversationTaskFromContext(ctx); external {
-		return triggers, nil
-	}
 	if steer.empty() || len(triggers) == 0 || (actorType != "member" && actorType != "agent") {
 		return triggers, nil
 	}

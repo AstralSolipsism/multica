@@ -23,7 +23,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/inbox"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -502,7 +501,7 @@ func (s *TaskService) attributionFromComment(ctx context.Context, comment db.Com
 // points at the agent_task_queue row that created the issue. Other
 // agent/system origins, including autopilot, deliberately remain unattributed.
 func (s *TaskService) resolveOriginatorForIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID) pgtype.UUID {
-	return s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, pgtype.UUID{}, pgtype.UUID{}).UserID
+	return s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, pgtype.UUID{}).UserID
 }
 
 // attributionForIssueTask resolves the full attribution for an issue-backed
@@ -513,16 +512,7 @@ func (s *TaskService) resolveOriginatorForIssueTask(ctx context.Context, issue d
 // which now delegates here — so there is a single source of truth and
 // authorization is unaffected. agentAuthoredSource labels the agent-authored
 // trigger comment case (see attributionFromTriggerComment).
-func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, agentAuthoredSource attribution.Source, actorUserID, rerunOfTaskID pgtype.UUID) attribution.Result {
-	// An authenticated external assign/promote is a delegation, even when the
-	// existing issue belongs to a member. Ordinary comment triggers keep their
-	// comment evidence; only a rerun puts its frozen source ahead of inherited
-	// prompt context or the member requesting it.
-	if parent, ok := channel.ConversationTaskFromContext(ctx); ok && (!triggerCommentID.Valid || rerunOfTaskID.Valid) {
-		return attribution.Result{UserID: parent.OriginatorUserID, AccountableUserID: parent.OriginatorUserID,
-			Source: attribution.SourceDelegation, DelegatedFromTaskID: parent.ID,
-			EvidenceKind: attribution.EvidenceIssueAssignment, EvidenceRefID: issue.ID}
-	}
+func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, agentAuthoredSource attribution.Source, actorUserID pgtype.UUID) attribution.Result {
 	// A direct member action is the accountable human AND originator, ahead of any
 	// trigger comment, origin, or rule (MUL-4302 §4/§5). This covers assign/promote,
 	// a manual autopilot trigger, and a manual rerun — the last of which may INHERIT
@@ -1322,7 +1312,7 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 	// comment or direct member assignment is direct_human. attr.UserID is the
 	// same value the pre-MUL-4302 resolver produced, so overlay/authorization
 	// are unchanged; the extra fields are audit provenance.
-	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, actorUserID, rerunOfTaskID)
+	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceCommentSource, actorUserID)
 	// No precise human resolved → owner_fallback (accountable = agent owner), or
 	// refuse the enqueue if the workspace is fail-closed (MUL-4302 §3.5).
 	attr, err = s.applyAttributionFallback(ctx, attr, agent)
@@ -1497,7 +1487,7 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 	// agent-authored comment is a delegation (the parent task's human is
 	// copied); a member mention is direct_human. attr.UserID matches the
 	// pre-MUL-4302 value, so authorization is unchanged.
-	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceDelegation, actorUserID, rerunOfTaskID)
+	attr := s.attributionForIssueTask(ctx, issue, triggerCommentID, attribution.SourceDelegation, actorUserID)
 	// No precise human resolved → owner_fallback (accountable = agent owner), or
 	// refuse the enqueue if the workspace is fail-closed (MUL-4302 §3.5).
 	attr, err = s.applyAttributionFallback(ctx, attr, agent)
@@ -2100,30 +2090,6 @@ func (s *TaskService) enqueueChatTaskTx(
 		}
 	}
 
-	evidenceRef := chatSession.ID
-	if requireDelivery && bindingErr == nil && binding.ChannelType == string(channel.TypeFeishu) {
-		cfg, err := channel.ParseConversationConfig(binding.Config)
-		if err != nil {
-			return db.AgentTaskQueue{}, err
-		}
-		if cfg.Grant != nil {
-			inst, err := qtx.LockConversationInstallation(ctx, db.LockConversationInstallationParams{ID: binding.InstallationID, WorkspaceID: currentSession.WorkspaceID})
-			if err != nil {
-				return db.AgentTaskQueue{}, err
-			}
-			if inst.AgentID != chatSession.AgentID || cfg.Grant.AuthorizedBy != util.UUIDToString(initiatorUserID) {
-				return db.AgentTaskQueue{}, channel.ErrConversationDenied
-			}
-			if err := channel.AuthorizeConversation(ctx, qtx, inst, cfg.Grant, cfg.ChatID, binding.ChatType); err != nil {
-				return db.AgentTaskQueue{}, err
-			}
-			prepared.accountableUser = initiatorUserID
-			prepared.attrSource = pgtype.Text{String: channel.ConversationOrigin, Valid: true}
-			prepared.attrEvidenceKind = pgtype.Text{String: "channel_conversation", Valid: true}
-			evidenceRef = binding.ID
-		}
-	}
-
 	pendingFresh := false
 	if bindingErr == nil {
 		if contextRevision <= 0 {
@@ -2173,7 +2139,7 @@ func (s *TaskService) enqueueChatTaskTx(
 		RuntimeConnectedApps: prepared.runtimeOverlay.ConnectedApps,
 		OriginatorSource:     prepared.attrSource,
 		TriggerEvidenceKind:  prepared.attrEvidenceKind,
-		TriggerEvidenceRefID: evidenceRef,
+		TriggerEvidenceRefID: chatSession.ID,
 		ChannelContextRevision: pgtype.Int8{
 			Int64: contextRevision, Valid: contextRevision > 0,
 		},
@@ -6001,15 +5967,6 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		// action on a different status.
 		if IsTriageTask(sourceTask) {
 			return nil, ErrRerunSourceIsTriage
-		}
-		// A member may repeat external instructions without elevating them to
-		// that member's authority. Validate before clearing any pending slot.
-		if channel.IsConversationTask(sourceTask) {
-			if _, err := channel.AuthorizeConversationTask(ctx, s.Queries, sourceTask, issue.WorkspaceID); err != nil {
-				return nil, err
-			}
-			ctx = channel.WithConversationTask(ctx, sourceTask)
-			actorUserID = pgtype.UUID{}
 		}
 		agentID = sourceTask.AgentID
 		isLeader = sourceTask.IsLeaderTask

@@ -92,8 +92,6 @@ type InboundMessage struct {
 // inspects it to choose the Lark-side reply. Values mirror engine.Outcome.
 type Outcome string
 
-const OutcomeFeedback Outcome = "feedback"
-
 const (
 	// OutcomeDropped — not ingested (identity, dedup, group filter, …).
 	OutcomeDropped Outcome = "dropped"
@@ -118,7 +116,6 @@ const (
 // drive its outbound reply. The engine produces an engine.Result; the feishu
 // OutboundReplier adapter translates it into this shape.
 type DispatchResult struct {
-	FeedbackNotice string
 	Outcome        Outcome
 	DropReason     DropReason
 	InstallationID pgtype.UUID

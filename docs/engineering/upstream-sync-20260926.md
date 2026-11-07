@@ -13,7 +13,7 @@ For each future sync, complete the [upstream sync checklist](upstream-sync-check
 | Dispatch, claim, retry, recovery, lifecycle categories and wakeups | Adopt upstream behavior; remove fork prerequisite execution admission and one-shot early-dispatch approvals. |
 | Cross-project dependency graph and relationship editing | Retain as collaboration information, without preventing or authorizing execution. |
 | Provider plan quotas, reset times and host CPU/memory | Retain the implemented user-facing capability; upstream token/cost accounting is not a substitute for subscription quotas. |
-| Feishu conversations with people without platform accounts | Retain explicit conversation grants and the recorded grantor's execution authority. External speakers are source identities, not fabricated workspace members. |
+| Feishu conversations with people without platform accounts | Retired by OL-1274 (owner decision, 2026-11-07). Feishu chat uses upstream's member-binding flow; do not restore conversation grants, the external-route allowlist or wakeup conversation provenance. |
 | Automation result delivery to Feishu | Retain configured proactive delivery. |
 | Personal inbox forwarding to Feishu | Retain. |
 | Project activity/comment delivery to groups or topics | Retain. |
@@ -46,7 +46,9 @@ becomes `started`. This is the accepted upstream classification, not a renamed
 status or a fork execution mapping.
 
 Migration `551_channel_conversation_root` adds a derived conversation-root
-reference to external tasks and their retries/delegations. The existing frozen grant remains the sole consent
+reference to external tasks and their retries/delegations (its trigger was
+dropped again by `9066_labrastro_retire_conversation_provenance`; the column
+keeps historical values only). The existing frozen grant remains the sole consent
 record. Ordinary tasks retain upstream authority when an older parent task is
 deleted; external descendants still honor live revocation. The migration only
 backfills on first column creation, so replay cannot overwrite established

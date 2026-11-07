@@ -2,34 +2,9 @@
 
 Complete this checklist in the sync PR against explicit fork-base, upstream
 and resulting head SHAs. The [retained product decisions](upstream-sync-20260926.md)
-and [conversation authorization boundary](upstream-sync-20261002.md) remain
-acceptance criteria. A clean merge or a passing route inventory is insufficient.
-
-## Handler semantics
-
-- [ ] Enumerate every write route in
-  `server/internal/middleware/labrastro_conversation_policy.go`. Follow each
-  method/pattern through `server/cmd/server/router.go` to its handler, service,
-  queries and asynchronous dispatch paths. Include unchanged routes explicitly;
-  `POST /api/issues/query` is a read operation but still needs a semantics check.
-- [ ] For **each** route, record the old/new request fields, defaults, validation,
-  accepted actor/workspace identifiers and resulting side effects. Check issue
-  assignment/promotion, comment mentions and edits, child creation, dependency
-  updates, file writes and any new scheduling/configuration behavior. Existing
-  URLs with new fields can expand authority without changing the inventory.
-- [ ] Verify execution still uses the frozen grantor and persisted conversation
-  ancestry, including descendants, retries, wakeups and delayed dispatch. Live
-  grant revocation, workspace/ownership/invocation checks and denial on missing
-  evidence must still hold. The runtime owner is not a replacement principal.
-- [ ] Review new routes/methods as denied by default; add targeted authorization
-  regressions for changed semantics before accepting any allowlist change.
-  Run the real-router inventory and affected handler/dispatch regressions.
-
-Use one row per existing write route in the PR, not a single blanket approval:
-
-| Method / route | Handler and changed dependencies | Request/default changes | Side effects / authority | Regression evidence and review |
-| --- | --- | --- | --- | --- |
-| Every allowlisted write, including unchanged ones | Before/after locations | Fields or explicit no change | Writes, dispatch and principal | Test command/result and reviewer |
+remain acceptance criteria. A clean merge is insufficient. The external
+conversation boundary of [upstream-sync-20261002.md](upstream-sync-20261002.md)
+was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
 ## Migration identity and execution order
 
@@ -45,17 +20,15 @@ Use one row per existing write route in the PR, not a single blanket approval:
   record with OL-110 T14; do not silently restore upstream DML or rewrite a
   migration already recorded on an installed database.
 - [ ] Inventory upstream functions redefined by fork migrations, including
-  `9009_labrastro_wakeup_conversation_provenance.up.sql` and
-  `capture_issue_wakeup`. Run from `server/`:
-  `go test ./internal/migrations -run '^TestLabrastroWakeupCaptureMigrationInventory$' -count=1`.
+  `capture_issue_wakeup` (fork 9009/9028, restored to upstream 579 by 9066).
+  Run from `server/`:
+  `go test ./internal/migrations -run '^TestLabrastroWakeupCapture' -count=1`.
 - [ ] If that inventory fails after an upstream replacement, add a **new fork
-  migration** that reapplies conversation provenance to the updated function.
-  Do not merely update the expected filenames. Verify both a fresh install
-  (new upstream migration before the fork migrations) and an upgrade from a DB
-  that already ran 9009 (new upstream replacement after 9009, then the new fork
-  migration). Both orders must preserve source-task/grantor ancestry. Record
-  the tested starting schemas, migration order and final behavior before
-  updating the inventory expectation.
+  migration** after every existing 9xxx one that re-applies the newest
+  upstream definition verbatim; a fresh install runs 9009/9028/9066 after any
+  upstream migration and would otherwise end on the older body. Do not merely
+  update the expected filenames. Point `TestLabrastroWakeupCaptureMatchesUpstream`
+  at the new pair and verify both fresh-install and upgrade order.
 
 ## Go formatting scope
 

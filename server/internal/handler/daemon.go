@@ -24,7 +24,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -2888,12 +2887,6 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, issueSnapshot []byte, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
-	if _, err := channel.AuthorizeConversationTask(r.Context(), h.Queries, *task, parseUUID(runtimeWorkspaceID)); err != nil {
-		if !errors.Is(err, channel.ErrConversationDenied) {
-			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "conversation", "")
-		}
-		return resp, nil, nil, 0, 0, h.failClaimedTaskBeforeLaunch(r.Context(), task, "Conversation authorization is no longer available.", taskfailure.ReasonInvalidTaskIdentity, "conversation_unavailable", http.StatusConflict, "conversation unavailable")
-	}
 	if err := (&service.IssueWakeupService{Tasks: h.TaskService}).CheckClaim(r.Context(), *task); err != nil {
 		if !errors.Is(err, service.ErrWakeupForbidden) {
 			return resp, nil, nil, 0, 0, h.rejectClaimSourceLoad(r.Context(), task, err, "wakeup", resp.WakeupID)
@@ -2917,8 +2910,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// Agent-trigger plugin hooks, as tools. A failure here degrades to no
 	// tools rather than failing the claim: a plugin that cannot be listed must
 	// not stop an agent from working on the issue.
-	externalConversation := channel.IsConversationTask(*task)
-	if !externalConversation && h.PluginService != nil && h.pluginsV1Enabled(r.Context()) {
+	if h.PluginService != nil && h.pluginsV1Enabled(r.Context()) {
 		if tools, toolErr := h.PluginService.AgentHookTools(r.Context(), parseUUID(runtimeWorkspaceID)); toolErr != nil {
 			slog.Warn("plugins: could not list agent hook tools", "workspace_id", runtimeWorkspaceID, "error", toolErr)
 		} else {
@@ -2939,7 +2931,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// comment input. Comment tasks replace this with the ids actually embedded
 	// in the capability-aware response built below.
 	deliveredCommentIDs = []pgtype.UUID{}
-	composioMCPEnabled := !externalConversation && h.composioMCPAppsEnabled(r.Context())
+	composioMCPEnabled := h.composioMCPAppsEnabled(r.Context())
 	if composioMCPEnabled {
 		resp.ConnectedApps = parseRuntimeConnectedAppsForClaim(task.RuntimeConnectedApps, task.ID)
 	}
@@ -3108,9 +3100,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// place a claimed task's agent payload is assembled.
 	if agent.SystemKey.String == service.MikaSystemKey {
 		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
-	}
-	if externalConversation {
-		resp.Agent.Instructions += "\n\n" + conversationInstructions
 	}
 	if useSkillRefs {
 		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, agent.SystemKey.String, legacySkillRedirects)
@@ -3723,7 +3712,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if deliveryErr == nil {
 			resp.ChatChannelType = delivery.ChannelType
 			resp.ChatType = delivery.ChatType
-			resp.ChatChannelDeliversFiles = !channel.IsConversationTask(*task) && h.channelDeliversFiles(delivery.ChannelType)
+			resp.ChatChannelDeliversFiles = h.channelDeliversFiles(delivery.ChannelType)
 			if delivery.ChannelType == string(slack.TypeSlack) {
 				if reader, ok := h.SlackHistory.(slackTaskSourceReader); ok {
 					resp.ChatSource = reader.TaskSource(r.Context(), delivery, cs.WorkspaceID)
@@ -6655,13 +6644,6 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	// be indistinguishable from one that does not exist.
 	wsID := scope.WorkspaceID
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
-		writeError(w, http.StatusNotFound, "task not found")
-		return
-	}
-	// A workspace grant permits issue collaboration, not unrelated transcripts.
-	// Keep the same 404 as a missing task so other conversations stay private.
-	if caller, external := channel.ConversationTaskFromContext(r.Context()); external &&
-		(!caller.ConversationRootTaskID.Valid || task.ConversationRootTaskID != caller.ConversationRootTaskID) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -124,21 +123,6 @@ func (p *Patcher) currentMediaCredentials(ctx context.Context, original Installa
 		task, err := p.queries.GetAgentTask(ctx, owner.taskID)
 		if err != nil || (task.AgentID.Valid && task.AgentID != inst.AgentID) {
 			return InstallationCredentials{}, errors.New("attachment agent changed")
-		}
-		config, err := channel.ParseConversationConfig(delivery.Config)
-		if err != nil {
-			return InstallationCredentials{}, err
-		}
-		if channel.IsConversationTask(task) || config.Grant != nil {
-			checker, ok := p.queries.(interface {
-				AuthorizeConversationTask(context.Context, pgtype.UUID, pgtype.UUID) error
-			})
-			if !ok {
-				return InstallationCredentials{}, channel.ErrConversationDenied
-			}
-			if err := checker.AuthorizeConversationTask(ctx, task.ID, inst.WorkspaceID); err != nil {
-				return InstallationCredentials{}, err
-			}
 		}
 		// Re-prove the database owner before each external write, including
 		// timeout notices. A previous process must stop after takeover.

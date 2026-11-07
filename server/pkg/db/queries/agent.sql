@@ -1837,10 +1837,6 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = @issue_id
       AND t.agent_id = @agent_id
-      -- A comment can only join a task with the same external authority.
-      AND t.conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
-      AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
-           OR t.originator_user_id = sqlc.narg('new_originator_user_id')::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id(@new_trigger_comment_id::uuid)
       AND (
           t.status = 'queued'
@@ -1858,9 +1854,6 @@ WHERE id = (
     ORDER BY t.created_at DESC
     LIMIT 1
 )
-AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
-AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
-     OR originator_user_id = sqlc.narg('new_originator_user_id')::uuid)
 RETURNING *;
 
 -- name: RegisterPlannedCommentForActiveTask :one
@@ -1900,10 +1893,6 @@ WHERE id = (
     SELECT t.id FROM agent_task_queue t
     WHERE t.context->>'wakeup_id' IS NULL AND t.issue_id = @issue_id
       AND t.agent_id = @agent_id
-      -- A comment can only join a task with the same external authority.
-      AND t.conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
-      AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
-           OR t.originator_user_id = sqlc.narg('expected_originator_user_id')::uuid)
       AND t.comment_thread_id IS NOT DISTINCT FROM comment_thread_root_id(@comment_id::uuid)
       AND t.status IN ('dispatched', 'running', 'waiting_local_directory')
       AND (
@@ -1914,9 +1903,6 @@ WHERE id = (
     LIMIT 1
 )
 AND status IN ('dispatched', 'running', 'waiting_local_directory')
-AND conversation_root_task_id IS NOT DISTINCT FROM sqlc.narg('expected_conversation_root_task_id')::uuid
-AND (sqlc.narg('expected_conversation_root_task_id')::uuid IS NULL
-     OR originator_user_id = sqlc.narg('expected_originator_user_id')::uuid)
 RETURNING id, coalesced_comment_ids;
 
 -- name: MergeDelegatedFailureCommentIntoPendingTask :one

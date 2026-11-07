@@ -5,21 +5,25 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 )
 
-// A later upstream replacement runs AFTER 9009 on an upgraded database but
-// BEFORE it on a fresh one. Require an explicit fork rebase migration whenever
-// upstream changes this function, instead of letting install order set policy.
+var captureWakeupDefinition = regexp.MustCompile(`(?i)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?capture_issue_wakeup\s*\(`)
+
+// Fork migrations 9009/9028 replaced upstream's capture_issue_wakeup and run
+// AFTER any upstream migration on a fresh database. 9066 restores upstream's
+// definition, so a fresh install still ends on the newest upstream body only
+// while no later upstream migration redefines the function. A new upstream
+// definition needs a new fork migration that re-applies it verbatim.
 func TestLabrastroWakeupCaptureMigrationInventory(t *testing.T) {
-	definition := regexp.MustCompile(`(?i)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?capture_issue_wakeup\s*\(`)
 	var found []string
 	for _, path := range migrationFilesForLint(t, "*.up.sql") {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if definition.Match(body) {
+		if captureWakeupDefinition.Match(body) {
 			found = append(found, filepath.Base(path))
 		}
 	}
@@ -32,8 +36,26 @@ func TestLabrastroWakeupCaptureMigrationInventory(t *testing.T) {
 		"579_wakeup_skip_handed_to_agent.up.sql",
 		"9009_labrastro_wakeup_conversation_provenance.up.sql",
 		"9028_labrastro_wakeup_skip_handed_to_agent.up.sql",
+		"9066_labrastro_retire_conversation_provenance.up.sql",
 	}
 	if !reflect.DeepEqual(found, want) {
-		t.Fatalf("capture_issue_wakeup definitions changed: got %v want %v; add a new fork migration that reapplies conversation provenance to the updated upstream function, and verify both fresh and upgrade order before updating this inventory", found, want)
+		t.Fatalf("capture_issue_wakeup definitions changed: got %v want %v; add a new fork migration (after every 9xxx one) that re-applies the newest upstream definition verbatim, then update this inventory", found, want)
+	}
+}
+
+// The last fork definition must be the newest upstream body, byte for byte.
+func TestLabrastroWakeupCaptureMatchesUpstream(t *testing.T) {
+	definition := func(file string) string {
+		t.Helper()
+		body := readMigrationFile(t, file)
+		loc := captureWakeupDefinition.FindStringIndex(body)
+		if loc == nil {
+			t.Fatalf("%s does not define capture_issue_wakeup", file)
+		}
+		return strings.TrimSpace(body[loc[0]:])
+	}
+	upstream := definition("579_wakeup_skip_handed_to_agent.up.sql")
+	if got := definition("9066_labrastro_retire_conversation_provenance.up.sql"); got != upstream {
+		t.Fatal("9066 must restore upstream 579's capture_issue_wakeup verbatim")
 	}
 }

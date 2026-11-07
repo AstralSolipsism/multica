@@ -1,14 +1,9 @@
 # Feishu target discovery (OL-72)
 
-Read-only APIs for delivery group, message-anchor and conversation-grant pickers.
+Read-only APIs for delivery group and message-anchor pickers.
 Discovery does not save or approve targets. Existing source/project/issue/
 automation scope, installation, group-reachability and message-belongs-to-group
 checks remain on their save/send paths. OL-12 chat-only ingress is unchanged.
-
-Private-chat observations and explicit confirmation are specified separately in
-[PRIVATE-CHAT-DISCOVERY-CONTRACT.md](PRIVATE-CHAT-DISCOVERY-CONTRACT.md) (OL-75).
-That contract adds local candidate and optional identity-lookup capability fields;
-the group list below remains group-only.
 
 ## Endpoints and authorization
 
@@ -24,7 +19,7 @@ send the corresponding `X-Workspace-ID` header.
 | `GET /chats/{chat_id}/message-anchors` | `anchors_page` | `page_size` (1–50, default 20), `cursor` |
 
 Caller must be a human workspace member AND workspace owner/admin or the bound
-agent owner, matching installation/conversation management. Automation edit
+agent owner, matching installation management. Automation edit
 access, public-agent invocation, target approval and workspace membership alone
 do not grant bot-history read access. Task tokens and cloud agent PATs are
 refused even if they carry their runtime owner's human identity. Installation
@@ -32,7 +27,7 @@ lookup is workspace-bound; missing agents, revoked installations and archived
 agents are unusable. Every page repeats authorization.
 
 Responses use `Cache-Control: no-store`. No DB writes, sends, contact lookups,
-resource downloads, approval or conversation-grant mutations occur. A forbidden
+resource downloads or approval mutations occur. A forbidden
 picker should explain the management role required, not request raw IDs to
 bypass it. Existing saved targets retain their existing API behavior.
 
@@ -47,7 +42,7 @@ grants. Stub transport returns false; list calls then return 503. Provider
 permissions are checked on real list calls. Missing installation service gives
 503; inactive installation/agent gives 409. Forbidden users get 403 here too.
 On older servers a 404 may mean the endpoint is unavailable; do not infer these
-capabilities from `install_supported` or `conversation_supported`.
+capabilities from `install_supported`.
 
 ## Groups and name search
 
@@ -160,7 +155,7 @@ if (first.has_more === true) {
 const anchors = await read(`${base}/chats/${encodeURIComponent(selectedChat.chat_id)}/message-anchors?page_size=20`);
 // Selected IDs go into EXISTING save/approval requests:
 // group: target_chat_id; topic: target_chat_id + target_message_id
-// (+ optional target_thread_id); conversation: {chat_id, chat_type:"group"}.
+// (+ optional target_thread_id).
 ```
 
 Wire schema: `../integrations/lark/target-discovery.schema.json`, definitions

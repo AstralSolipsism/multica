@@ -14,15 +14,6 @@ vi.mock("@multica/core/api", async (importOriginal) => {
     listLarkInstallations: installations,
     deleteLarkInstallation: disconnect,
     listMembers: vi.fn(async () => [{ user_id: "owner", role: "owner" }]),
-    getLarkTargetCapabilities: vi.fn(async () => ({
-      chat_list_supported: false,
-      private_chat_candidates_supported: false,
-      message_anchor_list_supported: false,
-      region: "feishu",
-      scope_status: "not_checked",
-      max_chat_page_size: 100,
-      max_message_page_size: 50,
-    })),
   } };
 });
 vi.mock("@multica/core/auth", () => ({
@@ -41,7 +32,6 @@ vi.mock("../../message-delivery", () => ({ TeamSubscriptionsSection: () => null 
 const connected: ListLarkInstallationsResponse = {
   configured: true,
   install_supported: true,
-  conversation_supported: true,
   installations: [{
     id: "inst", workspace_id: "ws", agent_id: "agent", app_id: "app",
     bot_open_id: "bot", installer_user_id: "owner", status: "active",
@@ -86,41 +76,26 @@ it("shows not enabled only after a successful unconfigured response", async () =
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-it("keeps the cached installation and unsaved conversation draft mounted during a background refresh", async () => {
+it("keeps the cached installation mounted during a background refresh", async () => {
   installations.mockResolvedValueOnce(connected);
   renderWithI18n(<QueryClientProvider client={client}><LarkTab /></QueryClientProvider>);
-  expect(await screen.findByText("Connected agent")).toBeInTheDocument();
-  fireEvent.click(screen.getByText("Agent conversations"));
-  const draft = await screen.findByRole("textbox", { name: /^Group chat IDs/ });
-  fireEvent.change(draft, { target: { value: "oc_unsaved" } });
-  expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeEnabled();
+  const row = await screen.findByText("Connected agent");
 
   let resolveRefresh!: (value: ListLarkInstallationsResponse) => void;
   installations.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
   act(() => { void client.invalidateQueries({ queryKey: larkKeys.installations("ws") }); });
   await waitFor(() => expect(installations).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeDisabled());
   expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
-  expect(screen.getByText("Connected agent")).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: /^Group chat IDs/ })).toBe(draft);
-  expect(draft).toHaveValue("oc_unsaved");
+  expect(screen.getByText("Connected agent")).toBe(row);
 
   await act(async () => resolveRefresh(connected));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeEnabled());
-  expect(draft).toHaveValue("oc_unsaved");
+  expect(screen.getByText("Connected agent")).toBe(row);
 });
 
 it("keeps cached installations on refresh failure and disables retry while the retry is pending", async () => {
   installations.mockResolvedValueOnce(connected);
   renderWithI18n(<QueryClientProvider client={client}><LarkTab /></QueryClientProvider>);
   expect(await screen.findByText("Connected agent")).toBeInTheDocument();
-  fireEvent.click(screen.getByText("Agent conversations"));
-  const draft = await screen.findByRole("textbox", { name: /^Group chat IDs/ });
-  fireEvent.change(draft, { target: { value: "oc_unsaved" } });
-  const save = screen.getByRole("button", { name: "Authorize conversations" });
-  const revoke = screen.getByRole("button", { name: "Revoke conversations" });
-  expect(save).toBeEnabled();
-  expect(revoke).toBeEnabled();
 
   installations.mockRejectedValueOnce(new Error("Refresh failed"));
   await act(async () => { await client.invalidateQueries({ queryKey: larkKeys.installations("ws") }); });
@@ -128,9 +103,6 @@ it("keeps cached installations on refresh failure and disables retry while the r
   expect(screen.getByText("Connected agent")).toBeInTheDocument();
   expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
   expect(client.isFetching({ queryKey: larkKeys.installations("ws") })).toBe(0);
-  expect(save).toBeDisabled();
-  expect(revoke).toBeDisabled();
-  expect(draft).toHaveValue("oc_unsaved");
 
   let resolveRetry!: (value: ListLarkInstallationsResponse) => void;
   installations.mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
@@ -146,9 +118,6 @@ it("keeps cached installations on refresh failure and disables retry while the r
   await act(async () => resolveRetry(connected));
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   expect(screen.getByText("Connected agent")).toBeInTheDocument();
-  expect(save).toBeEnabled();
-  expect(revoke).toBeEnabled();
-  expect(draft).toHaveValue("oc_unsaved");
 });
 
 it("disconnects the selected installation when several bots are listed", async () => {
@@ -165,21 +134,4 @@ it("disconnects the selected installation when several bots are listed", async (
   fireEvent.click(within(confirmation).getByRole("button", { name: "Disconnect" }));
   await waitFor(() => expect(disconnect).toHaveBeenCalledExactlyOnceWith("ws", "inst-2"));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-});
-
-it("shows an existing conversation as read-only when an older server omits conversation_supported", async () => {
-  installations.mockResolvedValue({
-    configured: true,
-    install_supported: true,
-    installations: [{ ...connected.installations[0]!, conversation: {
-      id: "grant", authorized_by: "owner", scope: "workspace",
-      chats: [{ chat_id: "oc_existing", chat_type: "group" }],
-    } }],
-  });
-  renderWithI18n(<QueryClientProvider client={client}><LarkTab /></QueryClientProvider>);
-  fireEvent.click(await screen.findByText("Agent conversations"));
-  const groupChats = await screen.findByRole("textbox", { name: /^Group chat IDs/ });
-  expect(groupChats).toHaveValue("oc_existing");
-  expect(screen.getByRole("button", { name: "Authorize conversations" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Revoke conversations" })).toBeDisabled();
 });

@@ -2,10 +2,6 @@
 SELECT * FROM labrastro_message_receipt
 WHERE installation_id = $1 AND external_message_id = $2 AND workspace_id = $3;
 
--- name: GetLabrastroFeedback :one
-SELECT * FROM labrastro_message_feedback
-WHERE installation_id = $1 AND inbound_message_id = $2;
-
 -- name: IsRetiredLabrastroFeedbackComment :one
 SELECT EXISTS (SELECT 1 FROM labrastro_message_feedback WHERE comment_id = $1 AND status IN ('pending', 'retired'));
 
