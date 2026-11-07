@@ -20,14 +20,14 @@ func TestMessageRouteListingMigrationRoundTrip(t *testing.T) {
 			schema := createScratchSchema(t, ctx, admin, "message_route_listing_")
 			pool := openTestPoolWithSearchPath(t, schema)
 			if _, err := pool.Exec(ctx, `CREATE TABLE labrastro_message_delivery (
-				id uuid PRIMARY KEY, workspace_id uuid, route_id uuid, created_at timestamptz)`); err != nil {
+				id uuid PRIMARY KEY, workspace_id uuid, route_id uuid, autopilot_id uuid, created_at timestamptz)`); err != nil {
 				t.Fatal(err)
 			}
 			wantRows := 0
 			if populated {
 				wantRows = 1000
 				if _, err := pool.Exec(ctx, `INSERT INTO labrastro_message_delivery
-					SELECT gen_random_uuid(), gen_random_uuid(),
+					SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
 					CASE WHEN n%2=0 THEN gen_random_uuid() END, now()
 					FROM generate_series(1,1000) n`); err != nil {
 					t.Fatal(err)
@@ -52,6 +52,17 @@ func TestMessageRouteListingMigrationRoundTrip(t *testing.T) {
 				var rows int
 				if err := pool.QueryRow(ctx, `SELECT count(*) FROM labrastro_message_delivery`).Scan(&rows); err != nil || rows != wantRows {
 					t.Fatalf("%s changed history: rows=%d want=%d err=%v", direction, rows, wantRows, err)
+				}
+				if direction == "up" {
+					if _, err := pool.Exec(ctx, `ANALYZE labrastro_message_delivery`); err != nil {
+						t.Fatal(err)
+					}
+					var indexedRows int
+					if err := pool.QueryRow(ctx, `SELECT c.reltuples::bigint
+						FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+						WHERE n.nspname=$1 AND c.relname='idx_labrastro_message_delivery_route_listing'`, schema).Scan(&indexedRows); err != nil || indexedRows != wantRows/2 {
+						t.Fatalf("%s indexed rows=%d want=%d (exclude runs even with route_id); err=%v", direction, indexedRows, wantRows/2, err)
+					}
 				}
 			}
 		})

@@ -77,11 +77,26 @@
 
 发送最多 5 次，退避 1/2/4/8…秒、封顶 30 秒；每片发送和结果写都有独立超时；不确定发送进入 uncertain，不能为省行数去掉回执/人工确认。
 
-### EXPLAIN 实测方法与初始结果
+### 扫描频率与空转成本
 
-`evidence/ol1275-message-plans.mjs` 从当前 sqlc 生成文件读取原始参数化 SQL，在隔离 PostgreSQL 15.19 上创建 `LIKE … INCLUDING ALL` 临时表（保留列/check/index，不复制触发器），每来源 100,000 历史+20 最近记录、100,000 已投递运行、400,000 终态投递。ANALYZE 后采用默认 planner；执行 `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`，事务最终回滚。不是生产负载/真实飞书延迟，不将单次耗时当 P95 或 SLA；临时表报告 local buffers，不能冒称生产 shared-cache 命中率。
+发送领单与补偿扫描使用不同循环。`worker.go:24` 的 `defaultScanEvery` 为 **30 秒**，`scanLoop`/`runScanSchedule`（`:298-332`）共用一个串行调度循环；当前装配没有覆盖 `ScanEvery`。定时 `ScanOnce`（`:339-363`）先处理过期 claim 和三类 run repair，再调用 `decideMissing` 与三个来源扫描器。没有事件时，每实例约每分钟两轮 run 缺失集查询；扫描超过周期时 ticker 不积攒无限队列，因此这不是完成后固定再等 30 秒。
 
-初始结果：三个稳态来源读取 20 行，命中时间部分索引和 source-ref 反连接索引；空窗口各约 3 local buffer hit，未读历史行。首次/epoch 扫描需要读取全部 100,020 行，某些计划使用 hash anti join 并溢写临时文件。run 全已决策场景仍读取 100,000 run 和 100,000 ledger，约 0.6 秒；因此不能声称所有补偿均无空转。来源历史列表扫描 400,000 ledger，过滤掉 300,000、排序其余 100,000 后返回 100 行，初次测得约 152ms。
+事件路径由 `events.go:12-19` 订阅 `autopilot:run_done`、`inbox:new`、`activity:created`、`comment:created`。回调没有 workspace/source 过滤，任意工作区的这些事件都通过同一缓冲信号唤醒；`decideSourcesOnce`（`worker.go:389-397`）每次仍先扫全局 run 缺失集，再扫 inbox/activity/comment。事件合并只减少重复唤醒，不收窄 SQL 范围。`decideMinInterval` 为 **1 秒**，计时从上一轮执行结束后开始；持续事件流不会反复重置截止时间，仍保留末次补扫。定时与事件路径共用上述循环，不会在同一实例内并发执行两轮。
+
+用 10 万已决策 run 的单次实测 0.63 秒和审阅复现的 0.71 秒估算，仅这条无结果查询的单连接等价忙碌占比如下：
+
+| 事件条件 | 近似频率 | 单连接等价占比 |
+| --- | --- | --- |
+| 无事件，30 秒定时补偿 | 每分钟约 2 次 | `C / 30` ≈ **2.1%–2.4% / 实例** |
+| 持续每秒至少一个上述事件 | 每 `1 + C` 秒一轮，约 35–37 次/分钟 | `C / (1 + C)` ≈ **39%–42% / 实例** |
+
+这是只计 run 查询、假设其他步骤耗时较小的持续事件模型，不是生产 CPU 利用率、连接池占用率或严格上限；其他扫描、数据库竞争、30 秒 tick 与事件合并都会改变实际频率。多实例各自调度，历史 run 与可匹配目标增长还会增加单次工作量；现有 200 条返回限制不能限制缺失集反连接读取的历史行数。因此三类来源在空窗口没有全扫，不等于整个补偿系统无空转。OL-1097 将“按事件来源收窄唤醒、保留 30 秒全量补偿”列为优先非阻断优化；本轮不改调度器，其跨源事务、丢事件补偿和多副本游标行为需独立回归。
+
+### EXPLAIN 实测方法与结果
+
+`evidence/ol1275-message-plans.mjs` 从当前 sqlc 生成文件读取原始参数化 SQL，在隔离 PostgreSQL 15.19 上创建 `LIKE … INCLUDING ALL` 临时表（保留列/check/index，不复制触发器），每来源 100,000 历史+20 最近记录、100,000 已投递运行、400,000 终态投递。全部投递均按生产写入路径携带 route_id，其中 100,000 行有 autopilot_id，300,000 行为空。ANALYZE 后采用默认 planner；执行 `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`，事务最终回滚。不是生产负载/真实飞书延迟，不将单次耗时当 P95 或 SLA；临时表报告 local buffers，不能冒称生产 shared-cache 命中率。
+
+结果：三个稳态来源读取 20 行，命中时间部分索引和 source-ref 反连接索引；空窗口各约 3 local buffer hit，未读历史行。首次/epoch 扫描需要读取全部 100,020 行，某些计划使用 hash anti join 并溢写临时文件。run 全已决策场景仍读取 100,000 run 和 100,000 ledger，约 0.63 秒；因此不能声称所有补偿均无空转。没有专用索引时，来源历史列表扫描 400,000 ledger，过滤掉 300,000、排序其余 100,000 后返回 100 行，测得 164.767ms。
 
 ### 飞书调用
 
@@ -117,26 +132,38 @@ B 类：本次不裁剪功能、不删历史表、不合并授权范围、不改
 
 ### 修复后的执行计划
 
-新增 `9065_labrastro_message_delivery_route_listing_index`，只索引有 route_id 的投递，键顺序为 workspace、route、created_at DESC、id DESC；支持来源记录查询的范围与排序，避免对原有 run 账本增加这份索引。每条来源投递仍会新增一次索引维护，索引也占用磁盘。迁移 up/down 均为单条 concurrent DDL，纳入既有 invalid-index 清理机制。没有改写历史迁移或回填账本。
+新增 `9065_labrastro_message_delivery_route_listing_index`，谓词为 **`autopilot_id IS NULL`**，键顺序为 workspace、route、created_at DESC、id DESC；`ListLabrastroMessageDeliveriesByRoute` 显式使用同一谓词。`471_labrastro_message_source_scope` 的约束使 run 账本必须有 autopilot_id，而普通来源、来源测试发送及遗留 source_scope 为空的诊断记录均无 autopilot_id，因此它们仍在列表和索引范围内。每条非 run 投递增加一次索引维护和磁盘占用，run 投递不增加索引条目。迁移 up/down 均为单条 concurrent DDL，纳入既有 invalid-index 清理机制；9065 尚未发布，本轮直接修正其定义，没有改写已发布迁移或回填账本。
 
-| 相同规模 fixture 的查询 | 修复前执行时间 | 修复后执行时间 | 实际计划证据 |
+首审前的 `route_id IS NOT NULL` 谓词不能实现这个范围：当前 run 和来源写入都带 route_id，旧谓词会把 run 条目也收进去；原脚本漏填 run 的 route_id，掩盖了额外成本。该 fixture 及原先“避免 run 索引维护”的结论已更正。以下为修正 fixture 后的复测数据，替代原先未反映生产 run 形态的索引成本结论。
+
+| 同一 400,000 行 fixture 上的索引定义 | 收录总行数 | 其中 run 行 | 索引体积 |
 | --- | --- | --- | --- |
-| 来源 route 首页 100 行 | 152.141ms | 0.755ms | Seq Scan 400,000 行、过滤 300,000、排序 100,000 → Index Scan 100 行，无 Sort；local blocks 12,246 → 104 |
-| inbox 稳态 / 空窗口 | 0.462 / 0.068ms | 0.429 / 0.074ms | 稳态读取 20 个来源候选；空窗口 0 行、3 local hit |
-| activity 稳态 / 空窗口 | 0.441 / 0.141ms | 0.417 / 0.134ms | 同上，时间部分索引过滤历史 |
-| comment 稳态 / 空窗口 | 0.597 / 0.121ms | 0.527 / 0.110ms | 同上 |
-| 全部已决策的 run 补偿 | 638.213ms | 632.608ms | 仍读取 100,000 run 与对应投递；本次没有优化此路径 |
-| 空闲发送领单 | 0.060ms | 0.058ms | queued 索引，无符合行，1 local hit |
+| 原 `route_id IS NOT NULL` | 400,000 | 100,000 | 31,014,912 B（29.58 MiB） |
+| 新 `autopilot_id IS NULL` | 300,000 | 0 | 23,265,280 B（22.19 MiB） |
 
-三类来源首次/epoch 扫描仍为 466–534ms；activity/comment 的 hash anti join 产生约 2,300–2,436 个临时写块。以上为各一次实测，差异只说明计划和读取量，不代表生产吞吐或一般加速比。新列表索引对可选 status 仍需追加过滤，大 offset 也仍需先读取前面的索引条目。
+收录行数由实际谓词计数，JSON 中另保留 ANALYZE 的 `estimated_entries`，不能混用估计值。这里 run 占 25%，因此减少 100,000 个无读者条目和约 25% 体积；审阅使用的 300,000 run + 100,000 来源比例不同，得到约 75% 节省，两组百分比不能直接比较。
 
-复现：仓库依赖安装完成并通过 `make up` 获得已迁移的隔离数据库后，从仓库根目录执行 `node docs/engineering/evidence/ol1275-message-plans.mjs`，环境传入该库的 `DATABASE_URL`，stdout 为完整 JSON。修复前证据使用审视起点 SQL/未应用 9065 的 schema，修复后使用本 PR SQL/已应用 9065 的 schema；临时表克隆会重命名索引，所以证据中的列表索引名由列名自动生成。两份原始 JSON 随 OL-1275 交付附件保存。
+| 查询 / 索引条件 | 执行时间 | 实际计划证据 |
+| --- | --- | --- |
+| 来源首页 / 无专用索引 | 164.767ms | Seq Scan 400,000 行、过滤 300,000、排序 100,000；12,430 local blocks |
+| 来源首页 / 原谓词索引 | 0.331ms | Index Scan 100 行，无 Sort；104 local blocks |
+| 来源首页 / 新谓词索引 | 0.470ms | Index Scan 100 行，无 Sort；104 local blocks |
+| inbox 稳态 / 空窗口 | 0.398 / 0.091ms | 稳态读取 20 个来源候选；空窗口 0 行、3 local hit |
+| activity 稳态 / 空窗口 | 0.451 / 0.143ms | 同上，时间部分索引过滤历史 |
+| comment 稳态 / 空窗口 | 0.506 / 0.141ms | 同上 |
+| 全部已决策的 run 补偿 | 633.001ms | 仍读取 100,000 run 与对应投递；本次没有优化此路径 |
+| 空闲发送领单 | 0.051ms | queued 索引，无符合行，1 local hit |
+
+三类来源首次/epoch 扫描仍为 462–545ms；activity/comment 的 hash anti join 产生 2,310 / 2,437 个临时写块。索引对照使用同一份当前 SQL（含 `autopilot_id IS NULL`），只切换临时索引，隔离索引范围的成本；不是两个版本 SQL 的端到端对比。各次缓存状态不一致，单次亚毫秒差异不证明延迟回退或加速，稳定证据是读取 100 行、104 blocks 且无 Sort。新列表索引对可选 status 仍需追加过滤，大 offset 也仍需先读取前面的索引条目。
+
+复现：仓库依赖安装完成并通过 `make up` 获得已迁移的隔离数据库后，从仓库根目录执行 `node docs/engineering/evidence/ol1275-message-plans.mjs`，环境传入该库的 `DATABASE_URL`，stdout 为完整 JSON。脚本只在临时克隆表移除列表索引，依次测无索引、原谓词、新谓词；新定义直接读取 9065，因临时索引不支持 concurrent 而移除该关键字，其余 DDL 不变。复测原始 JSON 以 `ol1275-r1-message-plans.json` 随 OL-1275 回复附件保存。已应用本 PR 旧版 9065 的本地预览库须对该索引 down/up 后再检查新定义；本工作区已完成，生产未发布的迁移无需另造补丁版本。
 
 ### 验证与剩余工作
 
 - 修复前已复现：同时间来源记录跨页顺序错误、offset 溢出、折叠后迟到空页继续发请求。修复后均通过对应回归。
 - Go `messagedelivery` 与 `integrations/lark` 整包 race 测试、handler 的 Message/LarkDiscovery 定向 race 测试均通过。
 - 迁移验证覆盖新索引 fresh/populated 的 up/down/up、历史来源扫描迁移及 catalog/recovery 一致性；行数保持不变。隔离开发库实际升级成功，sqlc 已重新生成。
+- 首审修正复测：迁移用 1,000 条均带 route_id、其中 500 条有 autopilot_id 的记录断言索引仅收录 500 条；旧谓词明确变红，新谓词 up/down/up 通过。来源跨页回归加入普通记录、测试发送、遗留空 scope 诊断记录，均保持可见；MessageSourceRoutes/MessageDeliveries handler 定向 race 通过。前端未改，未重复首轮 476 项测试。
 - Views 的 lark/message-delivery 共 31 文件、291 测试通过；Core 同范围共 11 文件、185 测试通过；Views typecheck、变更 hook/test 的 ESLint 与 diff whitespace 检查通过。
 - 未运行全仓测试、浏览器 E2E 或真实飞书账号调用；UI 视觉与真实 provider 限流表现仍未验收。
 

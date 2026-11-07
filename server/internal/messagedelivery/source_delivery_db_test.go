@@ -30,6 +30,15 @@ func TestSourceDeliveryPagesOrderTiesWithinScope(t *testing.T) {
 	var want []string
 	for i := 1; i <= 10; i++ {
 		route, workspace, status := routeID, testWSID, DeliveryStatusSent
+		kind, scope := SourceKindComment, any(RouteSourceComment)
+		var sourceRef any = dbid.NewV7()
+		if i == 6 || i == 7 {
+			kind = SourceKindTestSend
+			sourceRef = nil
+		}
+		if i == 7 {
+			scope = nil // Historical diagnostic sends may predate a known source scope.
+		}
 		if i == 8 {
 			route = otherRoute
 		}
@@ -43,8 +52,8 @@ func TestSourceDeliveryPagesOrderTiesWithinScope(t *testing.T) {
 			"id": dbid.NewV7(), "workspace_id": workspace, "route_id": route,
 			"installation_id": fx.install, "target_key": "group:oc_records",
 			"dedup_key":   fmt.Sprintf("records-%s-%d", routeID, i),
-			"source_kind": SourceKindComment, "source_scope": RouteSourceComment,
-			"source_ref_id": dbid.NewV7(), "status": status,
+			"source_kind": kind, "source_scope": scope,
+			"source_ref_id": sourceRef, "status": status,
 			"content_snapshot": "{}", "target_snapshot": "{}", "created_at": stamp,
 		})
 		if i <= 7 {

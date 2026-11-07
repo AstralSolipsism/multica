@@ -14,10 +14,21 @@ const inst = "00000000-0000-4000-8000-000000000004";
 const ap = "00000000-0000-4000-8000-000000000005";
 const tables = ["workspace", "user", "member", "agent", "issue", "inbox_item", "activity_log", "comment", "autopilot", "autopilot_run", "agent_task_queue", "labrastro_message_route", "labrastro_message_delivery", "labrastro_message_approved_target"];
 const plans = {};
+const routeIndexes = {};
 async function explain(label, name, args = []) {
   if (!queries.has(name)) throw new Error(`Missing generated query ${name}`);
   const result = await client.query("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + queries.get(name), args);
   plans[label] = result.rows[0]["QUERY PLAN"][0];
+}
+async function measureRouteIndex(name) {
+  await client.query("ANALYZE labrastro_message_delivery");
+  const { rows: [index] } = await client.query(`SELECT c.reltuples::bigint AS estimated_entries,
+    pg_relation_size(c.oid) AS bytes, pg_get_expr(i.indpred,i.indrelid) AS predicate
+    FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.oid=to_regclass($1)`, [name]);
+  const { rows: [counts] } = await client.query(`SELECT count(*)::int AS entries,
+    count(*) FILTER (WHERE autopilot_id IS NOT NULL)::int AS run_entries
+    FROM labrastro_message_delivery WHERE ${index.predicate}`);
+  return { ...index, ...counts };
 }
 try {
   await client.connect();
@@ -46,13 +57,33 @@ try {
     SELECT $1,$2,'member',$3,'Fixture',${age} FROM generate_series(1,100020) n`, [ws,issue,user]);
   await client.query(`INSERT INTO autopilot_run(autopilot_id,source,status,completed_at)
     SELECT $1,'manual','completed',now()-interval '1 day' FROM generate_series(1,100000)`, [ap]);
-  await client.query(`INSERT INTO labrastro_message_delivery(id,workspace_id,autopilot_id,run_id,installation_id,target_key,dedup_key,source_kind,source_scope,status,content_snapshot,target_snapshot)
-    SELECT gen_random_uuid(),$1,$2,id,$3,'group:oc_fixture',id::text,'run_only','run','sent','{}','{}' FROM autopilot_run`, [ws,ap,inst]);
+  await client.query(`INSERT INTO labrastro_message_delivery(id,workspace_id,route_id,autopilot_id,run_id,installation_id,target_key,dedup_key,source_kind,source_scope,status,content_snapshot,target_snapshot)
+    SELECT gen_random_uuid(),$1,rt.id,$2,r.id,$3,'group:oc_fixture',r.id::text,'run_only','run','sent','{}','{}'
+    FROM autopilot_run r JOIN labrastro_message_route rt ON rt.source_kind='run'`, [ws,ap,inst]);
   for (const [scope, table] of [["inbox","inbox_item"],["activity","activity_log"],["comment","comment"]]) {
     await client.query(`INSERT INTO labrastro_message_delivery(id,workspace_id,route_id,installation_id,target_key,dedup_key,source_kind,source_scope,source_ref_id,status,content_snapshot,target_snapshot)
       SELECT gen_random_uuid(),$1,rt.id,$2,rt.target_key,s.id::text,$3,$3,s.id,'sent','{}','{}' FROM ${table} s JOIN labrastro_message_route rt ON rt.source_kind=$3 WHERE s.created_at < now()-interval '1 minute'`, [ws,inst,scope]);
   }
+  // Compare only the route-list index on the same rows/query. Cloned indexes
+  // have generated names, so identify this one by its four key columns.
+  const { rows: cloned } = await client.query(`SELECT c.relname FROM pg_index i
+    JOIN pg_class c ON c.oid=i.indexrelid
+    WHERE i.indrelid='pg_temp.labrastro_message_delivery'::regclass
+      AND pg_get_indexdef(i.indexrelid) LIKE '%(workspace_id, route_id, created_at DESC, id DESC)%'`);
+  for (const { relname } of cloned) await client.query(`DROP INDEX pg_temp."${relname.replaceAll('"', '""')}"`);
   for (const table of tables) await client.query(`ANALYZE "${table}"`);
+  const routeArgs = [ws,(await client.query("SELECT id FROM labrastro_message_route WHERE source_kind='comment'")).rows[0].id,null,0,100];
+  await explain("source-route-history-no-index", "listLabrastroMessageDeliveriesByRoute", routeArgs);
+  await client.query(`CREATE INDEX ol1275_route_prior ON labrastro_message_delivery
+    (workspace_id, route_id, created_at DESC, id DESC) WHERE route_id IS NOT NULL`);
+  routeIndexes.prior = await measureRouteIndex("pg_temp.ol1275_route_prior");
+  await explain("source-route-history-prior-index", "listLabrastroMessageDeliveriesByRoute", routeArgs);
+  await client.query("DROP INDEX pg_temp.ol1275_route_prior");
+  // PostgreSQL temporary indexes cannot be built concurrently. All other DDL
+  // comes verbatim from the new migration; persistent tables stay untouched.
+  const migration = readFileSync("server/migrations/9065_labrastro_message_delivery_route_listing_index.up.sql", "utf8");
+  await client.query(migration.replace("CONCURRENTLY ", ""));
+  routeIndexes.current = await measureRouteIndex("pg_temp.idx_labrastro_message_delivery_route_listing");
   const { rows: [times] } = await client.query("SELECT now()-interval '1 minute' AS start, now() AS finish");
   const args = [times.start, times.finish, "00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", 200];
   for (const scope of ["Inbox", "Activity", "Comment"]) {
@@ -62,8 +93,8 @@ try {
   }
   await explain("run-missing-set-idle", "listLabrastroMessageDeliveryCandidateRoutes", [null,200]);
   await explain("queue-idle", "claimDueLabrastroMessageDelivery");
-  await explain("source-route-history", "listLabrastroMessageDeliveriesByRoute", [ws,(await client.query("SELECT id FROM labrastro_message_route WHERE source_kind='comment'")).rows[0].id,null,0,100]);
-  console.log(JSON.stringify({ postgres: (await client.query("SHOW server_version")).rows[0].server_version, fixture: "100000 historical + 20 recent per source; 100000 settled runs; 400000 sent deliveries; default planner; temporary schema clones", plans }, null, 2));
+  await explain("source-route-history", "listLabrastroMessageDeliveriesByRoute", routeArgs);
+  console.log(JSON.stringify({ postgres: (await client.query("SHOW server_version")).rows[0].server_version, fixture: "100000 historical + 20 recent per source; 100000 settled runs; 400000 sent deliveries, all with route_id; default planner; temporary schema clones; same current query for all route-index comparisons", routeIndexes, plans }, null, 2));
 } finally {
   await client.query("ROLLBACK").catch(() => {});
   await client.end();
