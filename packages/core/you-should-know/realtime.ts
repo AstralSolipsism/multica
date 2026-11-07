@@ -72,15 +72,18 @@ function applySessionUpdateToDetail(qc: QueryClient, wsId: string, payload: Chat
  * Keeps the You Should Know caches in sync with WS events (OL-187 §13 H).
  *
  * - `issue_tip:created` / `issue_tip:updated`: each event carries the tip;
- *   invalidate that issue's tip lists (both status variants) plus the active
- *   list. These events broadcast workspace-wide, so scoping keeps other
- *   issues' mounted queries untouched. Without a usable `issue_id` in the
- *   payload, fall back to invalidating all YSK queries.
+ *   invalidate that issue's tip lists (both status variants) immediately,
+ *   and the workspace-wide active list on the shared debounce below (one
+ *   report publishes one event per tip). These events broadcast
+ *   workspace-wide, so scoping keeps other issues' mounted queries
+ *   untouched. Without a usable `issue_id` in the payload, fall back to
+ *   invalidating all YSK queries.
  * - `issue_tip_state:changed`: patch `user_state` in place when the payload
  *   carries `tip_id` + `state` (this is what makes a tip vanish in every
  *   other tab of the same user); otherwise invalidate.
  * - task lifecycle events: debounced active-list refresh — whenever an agent
- *   starts or stops working, the active tip set changes.
+ *   starts or stops working, the active tip set changes (tip events share
+ *   this debounce).
  * - `chat:session_updated` / `chat:session_deleted`: patch or drop a side
  *   chat's detail entry (applySessionUpdateToDetail).
  * - reconnect: invalidate everything (events may have been missed).
@@ -91,6 +94,21 @@ export function useYouShouldKnowRealtimeSync(ws: WSClient | null): void {
   useEffect(() => {
     if (!ws) return;
 
+    // One report creates or overturns several tips at once, and the server
+    // publishes one event per tip: without a debounce every event refetches
+    // the workspace-wide active list once per subscriber. The issue-scoped
+    // list is touched only by its own tips, so it stays immediate.
+    let activeTimer: ReturnType<typeof setTimeout> | null = null;
+    const invalidateActive = () => {
+      const wsId = getCurrentWsId();
+      if (!wsId) return;
+      if (activeTimer) clearTimeout(activeTimer);
+      activeTimer = setTimeout(() => {
+        activeTimer = null;
+        qc.invalidateQueries({ queryKey: youShouldKnowKeys.active(wsId) });
+      }, ACTIVE_REFRESH_DEBOUNCE_MS);
+    };
+
     const onTipChanged = (payload: unknown) => {
       const wsId = getCurrentWsId();
       if (!wsId) return;
@@ -100,7 +118,7 @@ export function useYouShouldKnowRealtimeSync(ws: WSClient | null): void {
         return;
       }
       qc.invalidateQueries({ queryKey: youShouldKnowKeys.issueAnyStatus(wsId, issueId) });
-      qc.invalidateQueries({ queryKey: youShouldKnowKeys.active(wsId) });
+      invalidateActive();
     };
 
     const onTipStateChanged = (payload: unknown) => {
@@ -115,15 +133,8 @@ export function useYouShouldKnowRealtimeSync(ws: WSClient | null): void {
       }
     };
 
-    let activeTimer: ReturnType<typeof setTimeout> | null = null;
     const onTaskLifecycle = () => {
-      const wsId = getCurrentWsId();
-      if (!wsId) return;
-      if (activeTimer) clearTimeout(activeTimer);
-      activeTimer = setTimeout(() => {
-        activeTimer = null;
-        qc.invalidateQueries({ queryKey: youShouldKnowKeys.active(wsId) });
-      }, ACTIVE_REFRESH_DEBOUNCE_MS);
+      invalidateActive();
     };
 
     const onChatSessionUpdated = (payload: unknown) => {

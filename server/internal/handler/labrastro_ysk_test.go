@@ -633,3 +633,31 @@ func TestLabrastroYSKPreferencesAndCleanup(t *testing.T) {
 		t.Fatal("workspace delete orphaned topics")
 	}
 }
+
+// The claim's existing-tips list feeds every light/heads-up fork prompt, so
+// it must stay bounded by the query itself: an issue with a long tip history
+// must not grow fork input linearly (OL-1270).
+func TestLabrastroYSKExistingTipsBounded(t *testing.T) {
+	f := newYSKFixture(t)
+	// 80 valid tips; per-task quota is bypassed here because the cap under
+	// test lives in the read, not the write.
+	f.Exec(t, `INSERT INTO labrastro_issue_tip(workspace_id,issue_id,task_id,agent_id,tag,line,title,explanation,created_at)
+		SELECT $1,$2,$3,$4,'you_should_know','history '||n,'Title','Explanation',now()-n*interval '1 second'
+		FROM generate_series(1,80) n`, f.WorkspaceID, f.issue, f.task, f.agent)
+	f.Exec(t, `INSERT INTO labrastro_issue_tip(workspace_id,issue_id,task_id,agent_id,tag,line,title,explanation)
+		VALUES ($1,$2,$3,$4,'you_should_know','overturned history','Title','Explanation')`, f.WorkspaceID, f.issue, f.task, f.agent)
+	f.Exec(t, `UPDATE labrastro_issue_tip SET status='overturned' WHERE line='overturned history'`)
+	tips, err := f.h.Queries.LabrastroYSKExistingTips(context.Background(), db.LabrastroYSKExistingTipsParams{
+		WorkspaceID: parseUUID(f.WorkspaceID), IssueID: parseUUID(f.issue),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tips) != 50 {
+		t.Fatalf("existing tips not bounded to 50: %d", len(tips))
+	}
+	// The newest valid tip leads: dedup still sees what viewers just got.
+	if tips[0].Line != "history 1" {
+		t.Fatalf("expected newest-first ordering, got %q", tips[0].Line)
+	}
+}
