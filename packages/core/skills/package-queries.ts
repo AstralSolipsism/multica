@@ -2,16 +2,15 @@ import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { workspaceKeys } from "../workspace/queries";
 
-// Skill package & folder-tree queries (Labrastro fork). Folder mutations
+// Skill folder-tree query (Labrastro fork). Folder and placement mutations
 // have no WebSocket events, so freshness comes from local invalidation after
-// writes plus window-focus refetches on these keys. The global
-// `staleTime: Infinity` means data never goes stale on its own, so the
-// focus refetch must be unconditional ("always") to fire at all.
+// writes, skill:* events (package writes also move skills) and window-focus
+// refetches. The global `staleTime: Infinity` means data never goes stale on
+// its own, so the focus refetch must be unconditional ("always") to fire.
+// The tree response already embeds every package, so there is no separate
+// package list/detail query.
 export const skillPackageKeys = {
   tree: (wsId: string) => ["workspaces", wsId, "skill-folders"] as const,
-  packages: (wsId: string) => ["workspaces", wsId, "skill-packages"] as const,
-  package: (wsId: string, packageId: string) =>
-    [...skillPackageKeys.packages(wsId), packageId] as const,
 };
 
 export function skillFolderTreeOptions(wsId: string) {
@@ -22,25 +21,9 @@ export function skillFolderTreeOptions(wsId: string) {
   });
 }
 
-export function skillPackageListOptions(wsId: string) {
-  return queryOptions({
-    queryKey: skillPackageKeys.packages(wsId),
-    queryFn: () => api.listSkillPackages(wsId),
-    refetchOnWindowFocus: "always",
-  });
-}
-
-export function skillPackageDetailOptions(wsId: string, packageId: string) {
-  return queryOptions({
-    queryKey: skillPackageKeys.package(wsId, packageId),
-    queryFn: () => api.getSkillPackage(wsId, packageId),
-    enabled: !!packageId,
-  });
-}
-
 /**
- * Invalidation after a folder/package/placement write. Tree and package
- * queries always refresh; `includeSkills` adds the skill and agent lists,
+ * Invalidation after a folder/package/placement write. The tree always
+ * refreshes; `includeSkills` adds the skill and agent lists,
  * which package apply/dissolve/delete and skill detach/move can change
  * (agents embed their skill bindings).
  */
@@ -49,10 +32,7 @@ export async function invalidateSkillPackageQueries(
   wsId: string,
   opts?: { includeSkills?: boolean },
 ): Promise<void> {
-  const invalidations = [
-    qc.invalidateQueries({ queryKey: skillPackageKeys.tree(wsId) }),
-    qc.invalidateQueries({ queryKey: skillPackageKeys.packages(wsId) }),
-  ];
+  const invalidations = [qc.invalidateQueries({ queryKey: skillPackageKeys.tree(wsId) })];
   if (opts?.includeSkills) {
     invalidations.push(
       qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) }),

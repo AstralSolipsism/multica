@@ -540,8 +540,10 @@ This cache/parallelism revision changes no SQL or sqlc inputs and does not regen
 files as a substitute for handler/contract verification.
 
 Folder mutations have no WebSocket events. Existing skill created/updated/
-deleted events remain. UI mutations invalidate workspace-specific skill/tree/
-package queries and refresh on window focus. Binding remains explicit use of
+deleted events remain and also refresh the folder tree, because package writes
+from another client only emit those events. UI mutations invalidate
+workspace-specific skill/tree queries and refresh on window focus; the tree
+response embeds packages, so there is no separate package query. Binding remains explicit use of
 the existing agent-skill endpoints and must respect caller-filtered skills.
 
 ## Rollback

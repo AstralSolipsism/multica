@@ -6,77 +6,58 @@ import { createQueryClient } from "../query-client";
 
 const apiMock = vi.hoisted(() => ({
   getSkillFolderTree: vi.fn(async () => null),
-  listSkillPackages: vi.fn(async () => null),
-  getSkillPackage: vi.fn(async () => null),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
 
 beforeEach(() => {
   apiMock.getSkillFolderTree.mockReset().mockResolvedValue(null);
-  apiMock.listSkillPackages.mockReset().mockResolvedValue(null);
-  apiMock.getSkillPackage.mockReset().mockResolvedValue(null);
 });
 
 import {
   invalidateSkillPackageQueries,
   skillFolderTreeOptions,
-  skillPackageDetailOptions,
   skillPackageKeys,
-  skillPackageListOptions,
 } from "./package-queries";
 
 describe("skillPackageKeys", () => {
-  it("scopes every key by workspace id", () => {
+  it("scopes the tree key by workspace id", () => {
     expect(skillPackageKeys.tree("ws-1")).toEqual(["workspaces", "ws-1", "skill-folders"]);
-    expect(skillPackageKeys.packages("ws-1")).toEqual(["workspaces", "ws-1", "skill-packages"]);
-    expect(skillPackageKeys.package("ws-1", "p1")).toEqual(["workspaces", "ws-1", "skill-packages", "p1"]);
     expect(skillPackageKeys.tree("ws-1")).not.toEqual(skillPackageKeys.tree("ws-2"));
   });
 });
 
-describe("skill package query options", () => {
-  it("calls the workspace-pinned api methods", async () => {
+describe("skill folder tree query options", () => {
+  it("calls the workspace-pinned api method", async () => {
     const call = (options: { queryFn?: unknown }) =>
       (options.queryFn as (ctx: unknown) => Promise<unknown>)({});
     await call(skillFolderTreeOptions("ws-1"));
     expect(apiMock.getSkillFolderTree).toHaveBeenCalledWith("ws-1");
-    await call(skillPackageListOptions("ws-1"));
-    expect(apiMock.listSkillPackages).toHaveBeenCalledWith("ws-1");
-    await call(skillPackageDetailOptions("ws-1", "pkg-1"));
-    expect(apiMock.getSkillPackage).toHaveBeenCalledWith("ws-1", "pkg-1");
   });
 
-  it("refreshes tree and packages on window focus (no folder WebSocket events)", () => {
+  it("refreshes the tree on window focus (no folder WebSocket events)", () => {
     // "always" is required: the global staleTime is Infinity, so plain
     // `true` would never fire a focus refetch.
     expect(skillFolderTreeOptions("ws-1").refetchOnWindowFocus).toBe("always");
-    expect(skillPackageListOptions("ws-1").refetchOnWindowFocus).toBe("always");
-  });
-
-  it("only enables the detail query with a package id", () => {
-    expect(skillPackageDetailOptions("ws-1", "").enabled).toBe(false);
-    expect(skillPackageDetailOptions("ws-1", "pkg-1").enabled).toBe(true);
   });
 });
 
 describe("invalidateSkillPackageQueries", () => {
-  it("invalidates tree and package keys, and skill/agent lists only when asked", async () => {
+  it("invalidates the tree, and skill/agent lists only when asked", async () => {
     const qc = new QueryClient();
     const spy = vi.spyOn(qc, "invalidateQueries");
 
     await invalidateSkillPackageQueries(qc, "ws-1");
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: readonly unknown[] }).queryKey);
-    expect(keys).toContainEqual(skillPackageKeys.tree("ws-1"));
-    expect(keys).toContainEqual(skillPackageKeys.packages("ws-1"));
-    expect(keys).toHaveLength(2);
+    expect(keys).toEqual([skillPackageKeys.tree("ws-1")]);
 
     spy.mockClear();
     await invalidateSkillPackageQueries(qc, "ws-1", { includeSkills: true });
     const allKeys = spy.mock.calls.map((c) => (c[0] as { queryKey: readonly unknown[] }).queryKey);
     expect(allKeys).toContainEqual(["workspaces", "ws-1", "skills"]);
     expect(allKeys).toContainEqual(["workspaces", "ws-1", "agents"]);
-    expect(allKeys).toHaveLength(4);
+    expect(allKeys).toContainEqual(skillPackageKeys.tree("ws-1"));
+    expect(allKeys).toHaveLength(3);
   });
 });
 
