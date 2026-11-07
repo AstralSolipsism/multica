@@ -2156,8 +2156,9 @@ SELECT
 FROM labrastro_message_delivery d
 WHERE d.workspace_id = $1
   AND d.route_id = $2
+  AND d.autopilot_id IS NULL
   AND ($3::text IS NULL OR d.status = $3::text)
-ORDER BY d.created_at DESC
+ORDER BY d.created_at DESC, d.id DESC
 LIMIT $5 OFFSET $4
 `
 
