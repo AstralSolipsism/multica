@@ -55,7 +55,7 @@ export function captureBaselineTextRange(article: HTMLElement, selection: Select
   if (!root) return null;
   const range = selection.getRangeAt(0);
   if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-  const { text, nodes } = indexCommentText(root);
+  const { text, nodes } = indexCommentText(root, false, "[data-reading-annotations]");
   const selected = nodes.filter(({ node }) => range.intersectsNode(node));
   const first = selected[0];
   const last = selected.at(-1);
@@ -81,11 +81,12 @@ export function captureBaselineTextRange(article: HTMLElement, selection: Select
   };
 }
 
-export function locateBaselineTextAnnotation(root: HTMLElement, annotation: BaselineTextAnchor): BaselineTextLocation {
+type BaselineTextIndex = ReturnType<typeof indexCommentText>;
+
+function locateBaselineTextInIndex(index: BaselineTextIndex, annotation: BaselineTextAnchor): BaselineTextLocation {
   const quote = annotation.quote ?? "";
   if (!quote) return { location: "section_only", range: null, start: null };
-  const { text, nodes } = indexCommentText(root);
-  const start = locateReplyAnnotation(text, {
+  const start = locateReplyAnnotation(index.text, {
     id: "baseline",
     sourceCommentId: "baseline",
     sourceActorName: "baseline",
@@ -97,13 +98,17 @@ export function locateBaselineTextAnnotation(root: HTMLElement, annotation: Base
   });
   if (start === null) return { location: "section_only", range: null, start: null };
   const end = start + quote.length;
-  const first = nodes.find((node) => node.start <= start && node.end > start);
-  const last = nodes.find((node) => node.start < end && node.end >= end);
+  const first = index.nodes.find((node) => node.start <= start && node.end > start);
+  const last = index.nodes.find((node) => node.start < end && node.end >= end);
   if (!first || !last) return { location: "section_only", range: null, start: null };
   const range = document.createRange();
   range.setStart(first.node, start - first.start);
   range.setEnd(last.node, end - last.start);
   return { location: start === annotation.start ? "exact" : "moved", range, start };
+}
+
+export function locateBaselineTextAnnotation(root: HTMLElement, annotation: BaselineTextAnchor): BaselineTextLocation {
+  return locateBaselineTextInIndex(indexCommentText(root, false, "[data-reading-annotations]"), annotation);
 }
 
 export function baselineTextAnnotationAtPoint(
@@ -121,12 +126,12 @@ export function baselineTextAnnotationAtPoint(
   const node = position?.offsetNode ?? caret?.startContainer;
   const offset = position?.offset ?? caret?.startOffset;
   if (!node || offset === undefined || !root.contains(node)) return null;
-  const { nodes } = indexCommentText(root);
-  const indexed = nodes.find((item) => item.node === node);
+  const textIndex = indexCommentText(root, false, "[data-reading-annotations]");
+  const indexed = textIndex.nodes.find((item) => item.node === node);
   if (!indexed) return null;
   const point = indexed.start + offset;
   for (const annotation of annotations) {
-    const location = locateBaselineTextAnnotation(root, annotation);
+    const location = locateBaselineTextInIndex(textIndex, annotation);
     if (location.start !== null && point >= location.start && point < location.start + (annotation.quote?.length ?? 0)) return annotation.id;
   }
   return null;

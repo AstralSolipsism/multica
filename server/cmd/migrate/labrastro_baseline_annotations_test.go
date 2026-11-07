@@ -91,9 +91,6 @@ func TestLabrastroAnnotationMigrationsFreshUpgradeAndRollback(t *testing.T) {
 			if _, err := pool.Exec(ctx, `INSERT INTO project_baseline_annotation SELECT * FROM project_baseline_annotation`); err == nil {
 				t.Fatal("duplicate ordinal accepted")
 			}
-			if _, err := pool.Exec(ctx, `DELETE FROM project_baseline_annotation WHERE anchor_kind='text'`); err != nil {
-				t.Fatal(err)
-			}
 			reverse := slices.Clone(versions)
 			slices.Reverse(reverse)
 			opts.Direction, opts.Files, opts.Hooks = "down", realMigrationFiles(t, reverse, "down"), hooksForDirection("down")

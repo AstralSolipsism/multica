@@ -538,25 +538,42 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const readingMode = mode === "base" && !!selectedAdopted;
   const readingAnnotationsVisible = readingMode && showAnnotations;
   const showReadingRail = readingAnnotationsVisible && !inlineAnnotations;
-  const readingAnnotationCount = readingEntries.filter((entry) => entry.kind !== "composer").length;
+  const readingAnnotationCount = readingEntries.filter((entry) => entry.kind !== "composer" && (entry.kind !== "thread" || entry.thread.root.state !== "resolved")).length;
   useEffect(() => {
     if (!readingAnnotationsVisible) return;
+    let frame = 0;
+    let pending: MouseEvent | null = null;
     const move = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
-      const root = event.target.closest<HTMLElement>("[data-baseline-markdown]");
-      if (!root) {
-        if (event.target.closest("[data-baseline-section-key]")) setHoveredAnnotation(null);
+      if (event.target.closest("[data-reading-annotations]")) {
+        pending = null;
         return;
       }
-      const article = root.closest<HTMLElement>("[data-baseline-section-key]");
-      const section = readingSections.find((item) => item.key === article?.dataset.baselineSectionKey);
-      if (!section) return;
-      const candidates = readingEntries.filter((entry) => entry.anchor.anchorKind === "text" && entry.anchor.sectionAnchor === section.anchor)
-        .map((entry) => ({ ...entry.anchor, id: entry.id }));
-      setHoveredAnnotation(baselineTextAnnotationAtPoint(root, event.clientX, event.clientY, candidates));
+      pending = event;
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const current = pending;
+        pending = null;
+        if (!current || !(current.target instanceof Element) || !current.target.isConnected) return;
+        const root = current.target.closest<HTMLElement>("[data-baseline-markdown]");
+        if (!root) {
+          if (current.target.closest("[data-baseline-section-key]")) setHoveredAnnotation(null);
+          return;
+        }
+        const article = root.closest<HTMLElement>("[data-baseline-section-key]");
+        const section = readingSections.find((item) => item.key === article?.dataset.baselineSectionKey);
+        if (!section) return;
+        const candidates = readingEntries.filter((entry) => entry.anchor.anchorKind === "text" && entry.anchor.sectionAnchor === section.anchor)
+          .map((entry) => ({ ...entry.anchor, id: entry.id }));
+        setHoveredAnnotation(baselineTextAnnotationAtPoint(root, current.clientX, current.clientY, candidates));
+      });
     };
     document.addEventListener("mousemove", move);
-    return () => document.removeEventListener("mousemove", move);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      document.removeEventListener("mousemove", move);
+    };
   }, [readingAnnotationsVisible, readingEntries, readingSections]);
   const sectionEditTargets = useMemo(() => {
     const targets = new Map<string, BaselineSection>();

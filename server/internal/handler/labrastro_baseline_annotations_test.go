@@ -598,4 +598,10 @@ func TestBaselineAnnotationTextBlockLines(t *testing.T) {
 		}
 		testutil.Call(t, testHandler.LabrastroSubmitBaselineReview, f.request("POST", "/baseline/reviews", invalid, "session")).Want(400)
 	}
+	outOfRange := reviewBody(f, revision)
+	annotation := outOfRange["annotations"].([]map[string]any)[0]
+	annotation["anchor_kind"] = "text"
+	annotation["line_start"] = 2
+	annotation["line_end"] = 5
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroSubmitBaselineReview, f.request("POST", "/baseline/reviews", outOfRange, "session")).Want(400), "invalid_annotation_lines")
 }

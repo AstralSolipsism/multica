@@ -1,3 +1,4 @@
+UPDATE project_baseline_annotation SET line_start=NULL, line_end=NULL WHERE anchor_kind='text';
 ALTER TABLE project_baseline_annotation DROP CONSTRAINT IF EXISTS baseline_annotation_line_range;
 ALTER TABLE project_baseline_annotation DROP CONSTRAINT IF EXISTS baseline_annotation_anchor_lines;
 ALTER TABLE project_baseline_annotation ADD CONSTRAINT project_baseline_annotation_check CHECK ((anchor_kind = 'lines') = (line_start IS NOT NULL AND line_end IS NOT NULL));

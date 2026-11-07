@@ -106,7 +106,7 @@ stateDiagram-v2
 - `project_baseline_review`：一次完成审阅，含幂等键 `client_key`、总体说明（≤500 字）、唤醒评论 `wake_comment_id`。
 - `project_baseline_annotation`：批注，`ordinal`（批内 1–50）、`anchor_kind ∈ text/lines/section`、目标版本、小节锚点、行号（`lines` 必填、`text` 可选）、`quote/prefix/suffix/start`、正文 `note`、`response`、解决信息；人的回复是 `parent_annotation_id` 指向父批注的行，锚点字段从父批注复制。
 
-并发索引各占一个迁移：`9060_labrastro_baseline_review_client_key_index`（`review (workspace_id, project_id, client_key)` 唯一，提交幂等）、`9061_labrastro_baseline_annotation_active_index`（`batch (workspace_id, project_id, chapter) WHERE closed_at IS NULL` 唯一，I3）、`9062_labrastro_baseline_annotation_ordinal_index`（`annotation (workspace_id, batch_id, ordinal)` 唯一）、`9063_labrastro_baseline_review_batch_index`（`review (workspace_id, batch_id, created_at)`）。`9064_labrastro_baseline_text_block_lines` 调整锚点约束：`lines` 必须有行号且单次最多选择 50 行，`text` 可记录块行号，`section` 不得携带行号。
+并发索引各占一个迁移：`9060_labrastro_baseline_review_client_key_index`（`review (workspace_id, project_id, client_key)` 唯一，提交幂等）、`9061_labrastro_baseline_annotation_active_index`（`batch (workspace_id, project_id, chapter) WHERE closed_at IS NULL` 唯一，I3）、`9062_labrastro_baseline_annotation_ordinal_index`（`annotation (workspace_id, batch_id, ordinal)` 唯一）、`9063_labrastro_baseline_review_batch_index`（`review (workspace_id, batch_id, created_at)`）。`9064_labrastro_baseline_text_block_lines` 调整锚点约束：`lines` 必须有行号且单次最多选择 50 行，`text` 可记录块行号，`section` 不得携带行号。回滚该迁移时会先将 `text` 的块行号置空，再恢复旧约束；旧 schema 不保留这部分数据。
 
 锚点模型与重新定位（`server/internal/engineering/annotations.go`）：
 

@@ -13,7 +13,8 @@ import { renderWithI18n } from "../../test/i18n";
 import { EngineeringBaseline } from "./engineering-baseline";
 import { buildEngineeringRoadmap } from "./engineering-utils";
 import type { BaselineAnnotationActions } from "./engineering-baseline-annotation-model";
-import { baselineTextAnnotationAtPoint, captureBaselineTextRange } from "./engineering-baseline-text-annotations";
+import { baselineTextAnnotationAtPoint, captureBaselineTextRange, locateBaselineTextAnnotation } from "./engineering-baseline-text-annotations";
+import { indexCommentText } from "../../issues/components/comment-annotation-selection";
 
 type SubmitReviewMock = ReturnType<typeof vi.fn<BaselineAnnotationActions["onSubmitReview"]>>;
 type ResolveAnnotationsMock = ReturnType<typeof vi.fn<BaselineAnnotationActions["onResolveAnnotations"]>>;
@@ -147,6 +148,7 @@ function renderBaseline(options: {
   batches?: BaselineAnnotationBatch[];
   details?: BaselineAnnotationDetail[];
   reviewRequested?: boolean;
+  adoptedContent?: string;
   onSubmitReview?: SubmitReviewMock;
   onResolveAnnotations?: ResolveAnnotationsMock;
   onCloseBatch?: CloseBatchMock;
@@ -156,6 +158,7 @@ function renderBaseline(options: {
   const onResolveAnnotations = options.onResolveAnnotations ?? vi.fn(async () => ({ updated: 1 }));
   const onCloseBatch = options.onCloseBatch ?? vi.fn(async () => ({ batch: reviewResult().batch }));
   const onDecision = options.onDecision ?? vi.fn(async () => true);
+  const chapterState = options.adoptedContent === undefined ? chapter : { ...chapter, adopted: { ...adopted, contentMarkdown: options.adoptedContent } };
   const result = renderWithI18n(
     <NavigationProvider value={navigation}>
       <EngineeringBaseline
@@ -163,7 +166,7 @@ function renderBaseline(options: {
         workspaceId="ws-1"
         projectId="project-1"
         projectTitle="Project"
-        chapters={[chapter]}
+        chapters={[chapterState]}
         selectedChapter="domain_rules"
         onChapterChange={vi.fn()}
         revision={candidate}
@@ -550,6 +553,31 @@ describe("baseline source annotations", () => {
 });
 
 describe("baseline Word-style reading annotations", () => {
+  it("marks blocks with original section lines across blank lines and extracted rationale", () => {
+    renderBaseline({
+      reviewRequested: false,
+      adoptedContent: [
+        "### [Rule-1] 幂等键",
+        "",
+        "第一段。",
+        "",
+        "为什么：这段只在小节说明里展开。",
+        "",
+        "",
+        "第二段。",
+        "",
+        "### 保留小节",
+        "保留内容。",
+      ].join("\n"),
+    });
+    const article = document.querySelector('[data-baseline-section-key="domain_rules:Rule-1"]')!;
+    const blocks = article.querySelectorAll("p[data-source-start]");
+    expect(Array.from(blocks).map((block) => [block.textContent, block.getAttribute("data-source-start")])).toEqual([
+      ["第一段。", "3"],
+      ["第二段。", "8"],
+    ]);
+  });
+
   it("annotates rendered block lines through a selection bubble without a single-send action", async () => {
     const user = userEvent.setup();
     const { onSubmitReview } = renderBaseline({ reviewRequested: false });
@@ -604,6 +632,14 @@ describe("baseline Word-style reading annotations", () => {
     expect(screen.getByText("Clarify retries")).toBeInTheDocument();
   });
 
+  it("counts unresolved threads and pending items but not resolved threads", () => {
+    seed([pending({ id: "reading-pending", targetRevisionId: "rev-base" })]);
+    const resolved = rootAnnotation({ state: "resolved", targetRevisionId: "rev-base" });
+    renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([resolved])] });
+    expect(screen.getByRole("switch", { name: "Show annotations (1)" })).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-reading-annotation]")).toHaveLength(2);
+  });
+
   it("emphasizes the card when the pointer hits its highlighted source text", async () => {
     const root = rootAnnotation({
       anchorKind: "text", targetRevisionId: "rev-base", targetRevisionNumber: 2, side: "before",
@@ -642,6 +678,58 @@ describe("baseline Word-style reading annotations", () => {
       expect(document.querySelector("[data-reading-rail]")).not.toBeInTheDocument();
       expect(screen.getByRole("switch", { name: "Show annotations (1)" })).toBeInTheDocument();
     } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
+  it("keeps narrow text anchors, later selections, and card hover isolated from inline card content", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(max-width: 1279px)", media: query, onchange: null,
+      addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      const annotation = rootAnnotation({
+        anchorKind: "text", targetRevisionId: "rev-base", targetRevisionNumber: 2, side: "before",
+        lineStart: 3, lineEnd: 5, quote: "重试。\n\n第二段", prefix: "第一段", suffix: "。\n\n第三段定位。\n", start: 3,
+      });
+      renderBaseline({
+        reviewRequested: false,
+        batches: [batch()],
+        details: [detail([annotation])],
+        adoptedContent: "### [Rule-1] 幂等键\n\n第一段重试。\n\n第二段。\n\n第三段定位。\n\n### 保留小节\n保留内容。",
+      });
+      await waitFor(() => expect(document.querySelector('[data-reading-annotations="Rule-1"]')).toBeInTheDocument());
+      const article = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-1"]')!;
+      const markdown = article.querySelector<HTMLElement>("[data-baseline-markdown]")!;
+      expect(indexCommentText(markdown, false, "[data-reading-annotations]").text).toBe("第一段重试。\n\n第二段。\n\n第三段定位。\n");
+      const location = locateBaselineTextAnnotation(markdown, annotation);
+      expect(location.location).toBe("exact");
+      expect(location.range?.toString()).toBe("重试。\n第二段");
+
+      const later = article.querySelector<HTMLElement>('p[data-source-start="7"]')!;
+      const text = later.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, 3);
+      range.setEnd(text, 5);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(captureBaselineTextRange(article, selection)).toMatchObject({
+        quote: "定位",
+        start: 17,
+        prefix: "第一段重试。\n\n第二段。\n\n第三段",
+        lineStart: 7,
+        lineEnd: 7,
+      });
+
+      const inline = document.querySelector<HTMLElement>('[data-reading-annotations="Rule-1"]')!;
+      const card = document.querySelector<HTMLElement>('[data-reading-annotation="annotation-1"]')!;
+      fireEvent.mouseEnter(card);
+      fireEvent.mouseMove(inline);
+      expect(card).toHaveAttribute("data-annotation-hovered");
+    } finally {
+      window.getSelection()?.removeAllRanges();
       window.matchMedia = originalMatchMedia;
     }
   });

@@ -104,16 +104,18 @@ function createReferencePlugin(options: {
 
 const SOURCE_LINE_BLOCKS = new Set(["p", "div", "li", "pre", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "table", "ul", "ol"]);
 
-function annotateSourceLines(tree: Root, lineOffset: number) {
+function annotateSourceLines(tree: Root, sourceLineMap: readonly number[]) {
   const visit = (node: Parent) => {
     for (const child of node.children) {
       if (child.type !== "element") continue;
       const element = child as Element;
-      if (SOURCE_LINE_BLOCKS.has(element.tagName) && element.position?.start.line && element.position.end.line) {
+      const sourceStart = element.position ? sourceLineMap[element.position.start.line - 1] : undefined;
+      const sourceEnd = element.position ? sourceLineMap[element.position.end.line - 1] : undefined;
+      if (SOURCE_LINE_BLOCKS.has(element.tagName) && sourceStart !== undefined && sourceEnd !== undefined) {
         element.properties = {
           ...element.properties,
-          dataSourceStart: element.position.start.line + lineOffset,
-          dataSourceEnd: element.position.end.line + lineOffset,
+          dataSourceStart: sourceStart,
+          dataSourceEnd: sourceEnd,
         };
       }
       visit(element);
@@ -211,11 +213,10 @@ function BaselineReferenceLink({ reference, children }: { reference: BaselineRef
   );
 }
 
-export function BaselineMarkdown({ content, currentSection, chapter, sourceLineOffset = 1 }: {
+export function BaselineMarkdown({ content, currentSection, chapter }: {
   content: string;
   currentSection: BaselineSection;
   chapter?: BaselineChapter;
-  sourceLineOffset?: number;
 }) {
   const { lens, sections, nodes, stages } = useBaselineWiki();
   const references = useMemo(() => {
@@ -241,7 +242,7 @@ export function BaselineMarkdown({ content, currentSection, chapter, sourceLineO
     stages,
     conceptsOnly: lens === "understand",
   }), [sections, currentSection.key, nodes, stages, lens]);
-  const sourceLinePlugin = useMemo(() => () => (tree: Root) => annotateSourceLines(tree, sourceLineOffset), [sourceLineOffset]);
+  const sourceLinePlugin = useMemo(() => () => (tree: Root) => annotateSourceLines(tree, currentSection.sourceLineMap), [currentSection.sourceLineMap]);
   const components = useMemo(() => ({
     "baseline-reference": ({ referenceId: id, children }: { referenceId?: string; children?: ReactNode }) => {
       const reference = id ? references.get(id) : undefined;

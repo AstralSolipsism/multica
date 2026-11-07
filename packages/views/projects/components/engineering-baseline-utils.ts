@@ -17,6 +17,7 @@ export interface BaselineSection {
   level: number;
   markdown: string;
   body: string;
+  sourceLineMap: readonly number[];
   firstParagraph: string;
   why: string;
   example: string;
@@ -99,21 +100,33 @@ export function plainBaselineText(markdown: string): string {
     .trim();
 }
 
-function labeledParagraphs(body: string): { body: string; why: string; example: string } {
-  const kept: string[] = [];
+function labeledParagraphs(body: string, sourceLines: readonly number[]): { body: string; sourceLineMap: number[]; why: string; example: string } {
+  const kept: { text: string; sourceLines: number[] }[] = [];
   let why = "";
   let example = "";
+  let cursor = 0;
   for (const paragraph of body.split(/\n\s*\n/)) {
+    const offset = body.indexOf(paragraph, cursor);
+    cursor = offset + paragraph.length;
+    const bodyLine = body.slice(0, offset).split("\n").length - 1;
     const match = paragraph.match(/^\s*(?:[-*]\s+)?(?:\*\*)?(为什么这样规定|为什么|Why|例|示例|Example)(?:\*\*)?\s*[:：]\s*([\s\S]*)$/i);
     if (match) {
       const value = match[2]?.trim() ?? "";
       if (/^(为什么这样规定|为什么|Why)$/i.test(match[1] ?? "")) why = value;
       else example = value;
     } else if (paragraph.trim()) {
-      kept.push(paragraph);
+      kept.push({
+        text: paragraph,
+        sourceLines: paragraph.split("\n").map((_, index) => sourceLines[bodyLine + index] ?? sourceLines[bodyLine] ?? 1),
+      });
     }
   }
-  return { body: kept.join("\n\n"), why, example };
+  const sourceLineMap: number[] = [];
+  kept.forEach((paragraph, index) => {
+    if (index) sourceLineMap.push(paragraph.sourceLines[0] ?? 1);
+    sourceLineMap.push(...paragraph.sourceLines);
+  });
+  return { body: kept.map((paragraph) => paragraph.text).join("\n\n"), sourceLineMap, why, example };
 }
 
 export function parseBaselineChapter(chapter: BaselineChapter, markdown: string): BaselineChapterDocument {
@@ -126,9 +139,13 @@ export function parseBaselineChapter(chapter: BaselineChapter, markdown: string)
   let hasHeadings = false;
   const seen = new Set<string>();
   const flush = () => {
-    const rawBody = current.lines.join("\n").trim();
+    const sourceBody = current.lines.join("\n");
+    const rawBody = sourceBody.trim();
     if (!current.title && !rawBody) return;
-    const labeled = labeledParagraphs(rawBody);
+    const leadingLines = sourceBody.slice(0, sourceBody.length - sourceBody.trimStart().length).split("\n").length - 1;
+    const firstSourceLine = current.level > 0 ? current.startLine + 2 : 1;
+    const sourceLines = rawBody.split("\n").map((_, index) => firstSourceLine + leadingLines + index);
+    const labeled = labeledParagraphs(rawBody, sourceLines);
     sections.push({
       key: `${chapter}:${current.anchor}`,
       chapter,
@@ -137,6 +154,7 @@ export function parseBaselineChapter(chapter: BaselineChapter, markdown: string)
       level: current.level,
       startLine: current.startLine,
       body: labeled.body,
+      sourceLineMap: labeled.sourceLineMap,
       firstParagraph: plainBaselineText(labeled.body.split(/\n\s*\n/)[0] ?? ""),
       why: labeled.why,
       example: labeled.example,
