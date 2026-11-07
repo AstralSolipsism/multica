@@ -72,6 +72,44 @@ export interface RuntimePlanQuotaWindow {
   group?: string | null;
 }
 
+/** Per-account status inside a gateway provider pool (OMP). */
+export type PlanQuotaAccountStatus =
+  | "ok"
+  | "warning"
+  | "exhausted"
+  | "reserve"
+  | "disabled"
+  | "unknown";
+
+/**
+ * One redacted account inside a provider pool. `label` is the reporter's
+ * masked identifier ("19*") — never an email; a snapshot whose labels carry
+ * identity strings is dropped by the sanitizer.
+ */
+export interface RuntimePlanQuotaAccount {
+  label: string;
+  status: PlanQuotaAccountStatus;
+  windows: RuntimePlanQuotaWindow[];
+  note: string | null;
+}
+
+/**
+ * One vendor's account pool inside a gateway runtime: every logged-in
+ * (redacted) account with its own windows, plus counts. Pool health is an
+ * OR across accounts: `status` stays "ok" while at least one account is
+ * usable; "limited" means every account is unavailable and `resumes_at`
+ * (unix seconds) is the earliest reset among them.
+ */
+export interface RuntimePlanQuotaAccountPool {
+  id: string;
+  total_accounts: number;
+  available_accounts: number;
+  disabled_accounts: number;
+  status: "ok" | "limited";
+  resumes_at: number | null;
+  accounts: RuntimePlanQuotaAccount[];
+}
+
 /**
  * A point-in-time snapshot of a runtime's plan quota (`observed_at` is unix
  * seconds). `status: "limited"` means the provider rate-limited / exhausted
@@ -85,6 +123,12 @@ export interface RuntimePlanQuota {
   windows: RuntimePlanQuotaWindow[];
   observed_at: number;
   source: string;
+  /**
+   * Multi-account provider pools for gateway runtimes (OMP): every vendor
+   * the gateway is logged into, each with its redacted account breakdown.
+   * Single-account providers omit it; older backends never send it.
+   */
+  account_pools?: RuntimePlanQuotaAccountPool[];
 }
 
 /**

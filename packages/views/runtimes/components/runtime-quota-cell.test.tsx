@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SupportedLocale } from "@multica/core/i18n";
 import type {
+  Agent,
   AgentRuntime,
   RuntimeThinkingAdapt,
 } from "@multica/core/types";
@@ -88,6 +89,66 @@ function kimiRuntime(): AgentRuntime {
   });
 }
 
+function ompAccount(
+  label: string,
+  status: string,
+  remaining5h: number,
+  remaining7d: number,
+  note: string | null = null,
+) {
+  return {
+    label,
+    status,
+    note,
+    windows: status === "disabled" ? [] : [
+      { name: "5h", used_percent: 100 - remaining5h, window_minutes: 300, resets_at: NOW_SEC + HOUR },
+      { name: "7d", used_percent: 100 - remaining7d, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+    ],
+  };
+}
+
+function ompPool(id: string, accounts: ReturnType<typeof ompAccount>[]) {
+  const available = accounts.filter((account) => ["ok", "warning", "reserve"].includes(account.status)).length;
+  return {
+    id,
+    total_accounts: accounts.length,
+    available_accounts: available,
+    disabled_accounts: accounts.filter((account) => account.status === "disabled").length,
+    status: available === 0 ? "limited" : "ok",
+    resumes_at: null,
+    accounts,
+  };
+}
+
+function ompRuntime(): AgentRuntime {
+  return quotaRuntime("omp", {
+    account_pools: [
+      ompPool("kimi-code", [
+        ompAccount("19*", "exhausted", 0, 65),
+        ompAccount("as*", "ok", 85, 80),
+        ompAccount("de*", "ok", 100, 95),
+      ]),
+      ompPool("anthropic", [
+        ompAccount("ca*9*", "ok", 72, 60),
+        ompAccount("di*7*", "disabled", 0, 0, "oauth refresh failed"),
+      ]),
+      ompPool("openai-codex", [ompAccount("7f*", "ok", 55, 70)]),
+      ompPool("zai", [ompAccount("mo*", "ok", 100, 100)]),
+    ],
+  });
+}
+
+function quotaAgent(model: string, overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: `agent-${model}`,
+    runtime_id: "runtime-omp",
+    model,
+    custom_args: [],
+    archived_at: null,
+    ...overrides,
+  } as Agent;
+}
+
 function adaptSnapshot(
   status: string,
   overrides: Partial<RuntimeThinkingAdapt> = {},
@@ -104,10 +165,14 @@ function adaptSnapshot(
   };
 }
 
-function renderChips(runtime: AgentRuntime, locale: SupportedLocale = "en") {
+function renderChips(
+  runtime: AgentRuntime,
+  locale: SupportedLocale = "en",
+  agents: Agent[] = [],
+) {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
-  return renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />, { locale });
+  return renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} agents={agents} />, { locale });
 }
 
 function chipTrigger(label: RegExp) {
@@ -146,8 +211,8 @@ describe("a used-up pool next to an untouched one (antigravity)", () => {
     const tooltip = (await screen.findByText("Claude + GPT · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
     const rows = within(tooltip);
     expect(rows.getByText("Claude + GPT · 5h").parentElement).toHaveTextContent("Not applicable now");
-    expect(rows.getByText("Claude + GPT · wk").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 2 * DAY)}`);
-    expect(rows.getByText("Gemini · wk").parentElement).toHaveTextContent("100%");
+    expect(rows.getByText("Claude + GPT · 7d").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 2 * DAY)}`);
+    expect(rows.getByText("Gemini · 7d").parentElement).toHaveTextContent("100%");
   });
 });
 
@@ -202,7 +267,7 @@ describe("windows set aside by a limited pool", () => {
     const rows = within(tooltip);
     expect(rows.getByText("5h").parentElement).toHaveTextContent(/^5hNot applicable now$/);
     expect(rows.getByText("1d").parentElement).toHaveTextContent(/^1dNot applicable now$/);
-    expect(rows.getByText("wk").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 3 * DAY)}`);
+    expect(rows.getByText("7d").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 3 * DAY)}`);
   });
 });
 
@@ -354,6 +419,197 @@ describe("unmeasured windows", () => {
     runtime.plan_quota = null;
     renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
     expect(screen.getByText("Not reported")).toBeInTheDocument();
+  });
+});
+
+describe("OMP account pools", () => {
+  const servingAgents = () => [
+    quotaAgent("kimi-code/k2.5"),
+    quotaAgent("anthropic/claude-sonnet-4-6"),
+  ];
+
+  it("filters the list to serving providers and renders aggregate balances and counts", () => {
+    renderWithI18n(
+      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+    );
+
+    expect(screen.getByText("Kimi Code")).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+    expect(screen.queryByText("Z.AI")).not.toBeInTheDocument();
+    expect(screen.getByText("+2 idle pools")).toBeInTheDocument();
+    expect(screen.getByText("2/3")).toBeInTheDocument();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByText("62%")).toBeInTheDocument();
+    expect(screen.getByText("80%")).toBeInTheDocument();
+    expect(screen.getAllByText("7d")).toHaveLength(2);
+  });
+
+  it.each([
+    ["no bound agents", []],
+    ["a default model", [quotaAgent("k2.5")]],
+    ["no reported provider intersection", [quotaAgent("other/model")]],
+    ["only archived agents", [quotaAgent("kimi-code/k2.5", { archived_at: new Date(NOW).toISOString() })]],
+  ])("falls back to every pool with %s", (_label, agents) => {
+    renderWithI18n(<RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={agents} />);
+
+    expect(screen.getByText("Kimi Code")).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.getByText("Z.AI")).toBeInTheDocument();
+    expect(screen.queryByText(/idle pools/)).not.toBeInTheDocument();
+  });
+
+  it("reads an OMP model override from custom args", () => {
+    const agent = quotaAgent("", {
+      custom_args: ["--model", "anthropic/claude-sonnet-4-6"],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={[agent]} />);
+
+    expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByText("+3 idle pools")).toBeInTheDocument();
+  });
+
+  it("summarizes idle pools in their tooltip", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+    );
+
+    await user.hover(screen.getByText("+2 idle pools"));
+    const tooltip = (await screen.findByText("Signed in, but no agent in this workspace uses them."))
+      .closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    expect(within(tooltip).getByText("Codex")).toBeInTheDocument();
+    expect(within(tooltip).getByText("Z.AI")).toBeInTheDocument();
+    expect(within(tooltip).getAllByText(/^1\/1 available/)).toHaveLength(2);
+  });
+
+  it("labels a fully disabled pool as needing re-login rather than exhausted", () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("zai", [ompAccount("di*", "disabled", 0, 0, "oauth refresh failed")]),
+      ],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+
+    expect(screen.getByText("Re-login required")).toBeInTheDocument();
+    expect(screen.queryByText("Rate limited")).not.toBeInTheDocument();
+  });
+
+  it("keeps OMP balances neutral when collection is interrupted", () => {
+    const runtime = ompRuntime();
+    runtime.plan_quota!.observed_at = NOW_SEC - 2 * HOUR;
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+
+    expect(screen.getByText("62%")).toHaveClass("text-faint-foreground");
+    expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 2 * HOUR)}`)).toBeInTheDocument();
+  });
+
+  it("opens redacted account details on hover and closes on Escape", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={ompRuntime()}
+        now={NOW}
+        agents={[quotaAgent("kimi-code/k2.5")]}
+      />,
+    );
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+
+    await user.hover(trigger);
+    const tooltip = (await screen.findByText("#1 (19*)")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    expect(within(tooltip).getByText("Cooling down")).toBeInTheDocument();
+    expect(within(tooltip).getByText("#2 (as*)")).toBeInTheDocument();
+    expect(within(tooltip).getByText("#3 (de*)")).toBeInTheDocument();
+    expect(within(tooltip).getAllByText("7d")).toHaveLength(3);
+    expect(within(tooltip).getAllByText("resets in 1h").length).toBeGreaterThan(0);
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByText("#1 (19*)")).not.toBeInTheDocument());
+  });
+
+  it("opens the same account details for keyboard focus", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <RuntimeQuotaCell
+        runtime={ompRuntime()}
+        now={NOW}
+        agents={[quotaAgent("kimi-code/k2.5")]}
+      />,
+    );
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+    await user.tab();
+    expect(trigger).toHaveFocus();
+
+    const tooltip = (await screen.findByText("#1 (19*)")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
+    expect(within(tooltip).getByText("85%")).toBeInTheDocument();
+  });
+
+  it("applies the same serving filter and account tooltip to machine chips", async () => {
+    const user = userEvent.setup();
+    renderChips(ompRuntime(), "en", servingAgents());
+
+    expect(screen.getAllByText("Kimi Code").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Claude").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+    expect(screen.getByText("+2 idle pools")).toBeInTheDocument();
+    const trigger = chipTrigger(/Kimi Code: 2 of 3 accounts available/);
+    await user.hover(trigger);
+    expect(await screen.findByText("#1 (19*)")).toBeInTheDocument();
+  });
+
+  it("shows the full detail matrix, expands idle pools, and surfaces re-login guidance", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithI18n(
+      <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+    );
+
+    expect(container.querySelectorAll("[data-account-pool-matrix]")).toHaveLength(4);
+    expect(screen.getAllByText("In use")).toHaveLength(2);
+    expect(screen.getAllByText("Idle")).toHaveLength(2);
+    expect(screen.getByText("(19*)")).toBeInTheDocument();
+    expect(screen.getByText("(di*7*)")).toBeInTheDocument();
+    expect(screen.getByText(/oauth refresh failed/)).toHaveTextContent("/login");
+    expect(screen.queryByText("(7f*)")).not.toBeInTheDocument();
+    expect(screen.queryByText("(mo*)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show or hide Codex accounts" }));
+    expect(screen.getByText("(7f*)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand all" }));
+    expect(screen.getByText("(mo*)")).toBeInTheDocument();
+    expect(screen.getAllByText("7d window")).toHaveLength(4);
+  });
+
+  it("expands every detail pool without serving or idle labels when filtering is unavailable", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={ompRuntime()} now={NOW} />);
+
+    expect(screen.getByText("(19*)")).toBeInTheDocument();
+    expect(screen.getByText("(7f*)")).toBeInTheDocument();
+    expect(screen.getByText("(mo*)")).toBeInTheDocument();
+    expect(screen.queryByText("In use")).not.toBeInTheDocument();
+    expect(screen.queryByText("Idle")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand all" })).not.toBeInTheDocument();
+  });
+
+  it("shows the earliest recovering account and the all-unavailable warning", () => {
+    const first = ompAccount("19*", "exhausted", 0, 65);
+    const second = ompAccount("as*", "exhausted", 0, 12);
+    first.windows[0]!.resets_at = NOW_SEC + 4320;
+    second.windows[0]!.resets_at = NOW_SEC + HOUR;
+    const runtime = quotaRuntime("omp", {
+      account_pools: [ompPool("kimi-code", [first, second])],
+    });
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+
+    expect(screen.getByText("Earliest recovery in 1h (#2)")).toBeInTheDocument();
+    expect(screen.getByText(/All accounts in this provider pool are unavailable/)).toBeInTheDocument();
+  });
+
+  it.each(["en", "zh-Hans", "fr", "ja", "ko"] as const)("uses the 7d label in %s", (locale) => {
+    renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />, { locale });
+
+    expect(screen.getByText("7d")).toBeInTheDocument();
   });
 });
 
