@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -452,6 +454,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	var args []string
 	if label == "omp" {
 		args = buildOmpArgs(sessionPath, sessionDir, opts, b.cfg.Logger)
+		if extension := b.cfg.Env[ompYouShouldKnowExtensionEnv]; extension != "" {
+			args = append(args, "--extension", extension)
+		}
 	} else {
 		args = buildPiArgs(sessionPath, opts, b.cfg.Logger)
 	}
@@ -465,6 +470,11 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		cmd.Dir = opts.Cwd
 	}
 	cmd.Env = buildEnv(b.cfg.Env)
+	if label == "omp" && b.cfg.Env[ompYouShouldKnowExtensionEnv] != "" {
+		// Use the effective launch flags, including managed runtime_config and
+		// per-agent overrides. The extension drops this variable on startup.
+		cmd.Env = replaceEnvValue(cmd.Env, "MULTICA_OMP_YSK_ADVISOR", strconv.FormatBool(slices.Contains(args, "--advisor")))
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -616,6 +626,9 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 			}
 			var evt piStreamEvent
 			if err := json.Unmarshal([]byte(line), &evt); err != nil {
+				continue
+			}
+			if label == "omp" && consumeOmpYouShouldKnowLog(evt.Type, line, opts) {
 				continue
 			}
 			if rpcMode {

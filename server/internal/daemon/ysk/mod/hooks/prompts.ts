@@ -15,15 +15,10 @@ function preamble(): string {
   ].join('\n')
 }
 
-function subjectRule(agentName: string): string {
-  const [zh, en] = agentName === '' ? ['这个智能体', 'the agent'] : [`${agentName}智能体`, `the ${agentName} agent`]
-  return `- Write in a neutral third person and always name the subject. When the agent doing this work is the subject, call it "${zh}" in Chinese or "${en}" in English, for example "${zh}把检查放到了功能开关后面". Never write "I", "we" or "you" for the agent.`
-}
-
-function styleRules(agentName: string): string {
+function styleRules(): string {
   return [
     '- Use plain words and assume the reader knows nothing about this task. Explain a term or avoid it.',
-    subjectRule(agentName),
+    '- Make the concrete mechanism, module or consequence the subject of the tip.',
     '- Write in the language of the latest human comment below. If it is empty, use the language of the issue.',
     '- Never include secrets (tokens, keys, passwords, connection strings) or personal information (email addresses, phone numbers, home addresses).',
   ].join('\n')
@@ -55,16 +50,26 @@ function reference(ctx: YskContext, earlier: readonly Tip[]): string {
  * The first batch: up to `light_tip_count` tips, plus which shown tips no
  * longer hold. `earlier` is what this run has already sent.
  */
-export function lightPrompt(ctx: YskContext, agentName: string, earlier: readonly Tip[] = []): string {
+export function lightPrompt(ctx: YskContext, earlier: readonly Tip[] = []): string {
   return [
     preamble(),
     '',
     '## What to write',
-    `Up to ${ctx.lightTipCount} tips for someone who has not followed this task: the background they need, what the important terms mean, and the key points of what this run is doing. Use only what you can already see in this conversation.`,
+    `Up to ${ctx.lightTipCount} tips, like useful game loading-screen tips. Ground each tip in specific code, data structures, call chains or diagnostic evidence already visible in this conversation. Extract new understanding from these four dimensions:`,
+    '- Principle and root cause (Why / Mechanism): why this bug occurs or how the specific mechanism works.',
+    '- Architecture and module relationships (Architecture & Context): the upstream/downstream contracts or coupling involved.',
+    '- Substantive changes and trade-offs (What Changed & Trade-off): which mechanism changes and why that choice matters.',
+    '- Boundaries and caveats for the owner (Boundaries & Caveats): uncovered cases, rollout constraints or follow-up decisions.',
+    '',
+    '## Forbidden anti-patterns',
+    '- Never restate the task scope or assignment instructions, such as "审阅专家只复核 #9 的修复" or "本次任务负责处理 OL-xxx".',
+    '- Never narrate an activity log, such as "智能体先读取了配置文件，接下来准备运行测试".',
+    '- Never give generic advice detached from this project, such as "编写 SQL 时需要注意索引". Name the actual table, field or mechanism and explain the observed consequence.',
+    '- If there is no substantive new evidence yet, return {"tips":[],"overturned":[]} rather than inventing tips.',
     '',
     '- Leave out what the reader already has: the tips already shown for this issue or during this run and the topics already known (all listed below), and anything the people on the issue have already discussed and settled.',
     '- Leave out trivia. Fewer tips are better than weak ones, and an empty list is a good answer when nothing is worth saying.',
-    styleRules(agentName),
+    styleRules(),
     '',
     'Each tip has:',
     fieldRules(ctx),
@@ -81,7 +86,7 @@ export function lightPrompt(ctx: YskContext, agentName: string, earlier: readonl
 }
 
 /** A later check: at most one heads-up, and usually none. */
-export function headsUpPrompt(ctx: YskContext, agentName: string, earlier: readonly Tip[] = []): string {
+export function headsUpPrompt(ctx: YskContext, earlier: readonly Tip[] = []): string {
   return [
     preamble(),
     '',
@@ -96,7 +101,7 @@ export function headsUpPrompt(ctx: YskContext, agentName: string, earlier: reado
     '',
     '- Do not repeat the tips already shown for this issue or during this run, or the topics already known (all listed below), or anything the people on the issue have already discussed or clearly understand.',
     '- Nothing minor.',
-    styleRules(agentName),
+    styleRules(),
     '',
     'A heads-up has:',
     fieldRules(ctx),

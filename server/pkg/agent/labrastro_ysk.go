@@ -99,3 +99,24 @@ func youShouldKnowBatch(text string) (json.RawMessage, error) {
 	}
 	return json.RawMessage(text), nil
 }
+
+const ompYouShouldKnowExtensionEnv = "MULTICA_OMP_YSK_EXTENSION"
+
+// OMP extension frames belong exclusively to the tips callback, including
+// malformed frames or runs whose callback is absent. They never enter chat.
+func consumeOmpYouShouldKnowLog(eventType, line string, opts ExecOptions) bool {
+	if eventType != "labrastro_ysk" {
+		return false
+	}
+	var frame struct {
+		Batch json.RawMessage `json:"batch"`
+	}
+	if json.Unmarshal([]byte(line), &frame) != nil {
+		return true
+	}
+	batch, err := youShouldKnowBatch(string(frame.Batch))
+	if err == nil && opts.OnYouShouldKnow != nil {
+		opts.OnYouShouldKnow(batch)
+	}
+	return true
+}

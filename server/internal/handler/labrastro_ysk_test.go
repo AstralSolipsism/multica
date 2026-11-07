@@ -99,6 +99,33 @@ func (f *yskFixture) report(t *testing.T, body any) {
 	testutil.Call(t, f.h.LabrastroReportTaskTips, f.request("POST", body, "taskId", f.task)).Want(204)
 }
 
+func TestLabrastroYSKReportProviderEligibility(t *testing.T) {
+	for _, provider := range []string{"claude", "omp", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			f := newYSKFixture(t)
+			f.Exec(t, `UPDATE agent_runtime SET provider=$1 WHERE id=$2`, provider, f.runtime)
+			var created []events.Event
+			f.h.Bus.SubscribeAll(func(e events.Event) {
+				if e.Type == protocol.EventIssueTipCreated {
+					created = append(created, e)
+				}
+			})
+			f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 5, Tips: []labrastroYSKInputTip{yskInput("Cache expiry duplicates refreshes")}})
+			f.report(t, labrastroYSKReport{Version: 1, Kind: "heads_up", Step: 11, Tips: []labrastroYSKInputTip{{Tag: "heads_up", Line: "Concurrent refresh loses updates", Title: "Refresh race", Explanation: "No single-flight lock."}}})
+			want := 2
+			if provider == "codex" {
+				want = 0
+			}
+			if count := f.Count(t, `SELECT count(*) FROM labrastro_issue_tip WHERE task_id=$1`, f.task); count != want {
+				t.Fatalf("persisted tips = %d, want %d", count, want)
+			}
+			if tips := f.list(t, true, false, testUserID); len(tips) != want || len(created) != want {
+				t.Fatalf("active tips = %d, created events = %d, want %d", len(tips), len(created), want)
+			}
+		})
+	}
+}
+
 func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 	for _, tc := range []struct {
 		name, settings, provider, capability string
@@ -111,6 +138,8 @@ func TestLabrastroYSKClaimGatesAndIsolation(t *testing.T) {
 		{"old daemon", `{"you_should_know_enabled":true}`, "claude", "", false},
 		{"substring", `{"you_should_know_enabled":true}`, "claude", "x-you-should-know-v1", false},
 		{"no issue", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, false},
+		{"omp enabled", `{"you_should_know_enabled":true}`, "omp", protocol.DaemonCapabilityYouShouldKnowV1, true},
+		{"omp off", `{"you_should_know_enabled":false}`, "omp", protocol.DaemonCapabilityYouShouldKnowV1, false},
 		{"enabled", `{"you_should_know_enabled":true}`, "claude", protocol.DaemonCapabilityYouShouldKnowV1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -20,7 +20,7 @@ const CONTEXT = JSON.stringify({
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 const LIGHT_REPLY = JSON.stringify({
-  tips: [{ title: 'SMS login', line: 'The Engineer agent adds SMS codes', explanation: 'Users sign in with a code.' }],
+  tips: [{ title: 'SMS login', line: 'SMS codes expire after one use', explanation: 'Users sign in with a code.' }],
   overturned: [{ tip_id: 'tip-1', reason: 'Passwords are being replaced.' }],
 })
 
@@ -33,6 +33,7 @@ type World = {
   stopFile: 'missing' | 'present' | 'unreadable'
   /** Tool calls the next main-thread response asks for. */
   tools: number
+  tool: { name: string; input: Record<string, unknown> }
   /** How the next fork answers; a pending promise models a slow fork. */
   answer: (prompt: string) => ModelForkResult | Promise<ModelForkResult>
   /** Lets unawaited work (a fork's answer, its log line) run to the end. */
@@ -48,6 +49,7 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
     stopReads: [],
     stopFile: 'missing',
     tools: 1,
+    tool: { name: 'Read', input: { file_path: 'server/login.go' } },
     answer: () => ({ isAnswered: true, text: '{"heads_up":null}', usage: USAGE }),
     settle: async () => {},
   }
@@ -80,7 +82,7 @@ function setUp(on: On, options: { env?: Record<string, string>; context?: string
   })
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('turn.step', async function* ($, e) {
-    const toolUses = Array.from({ length: e.agentId === undefined ? world.tools : 0 }, () => ({ name: 'Bash', input: {} }))
+    const toolUses = Array.from({ length: e.agentId === undefined ? world.tools : 0 }, () => world.tool)
     return { turnId: e.turnId, index: e.index, answer: '', toolUses, stopReason: toolUses.length > 0 ? 'tool_use' : 'end_turn', usage: null }
   })
   return world
@@ -107,11 +109,13 @@ describe('labrastro-ysk hooks', () => {
     await start($)
     await step($, 0)
     await step($, 1)
+    await step($, 2)
+    await step($, 3)
     expect(world.stopReads).toEqual([])
-    expect((await step($, 2)).index).toBe(2)
+    expect((await step($, 4)).index).toBe(4)
     // Removing the marker cannot re-enable this run.
     world.stopFile = 'missing'
-    for (let i = 3; i < 40; i++) await step($, i)
+    for (let i = 5; i < 42; i++) await step($, i)
     expect(world.stopReads).toEqual(['/task/multica-config/ysk/stop'])
     expect(world.forks).toEqual([])
   })
@@ -121,16 +125,16 @@ describe('labrastro-ysk hooks', () => {
     let release: (result: ModelForkResult) => void = () => {}
     world.answer = () => new Promise<ModelForkResult>((resolve) => { release = resolve })
     await start($)
-    for (let i = 0; i <= 2; i++) await step($, i)
+    for (let i = 0; i <= 4; i++) await step($, i)
     world.stopFile = 'present'
-    // At step 32 the old fork is stale, so this would start a new fork.
-    for (let i = 3; i <= 32; i++) await step($, i)
+    // At step 34 the old fork is stale, so this would start a new fork.
+    for (let i = 5; i <= 34; i++) await step($, i)
     expect(world.stopReads).toHaveLength(2)
     expect(world.forks).toHaveLength(1)
     release({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await world.settle()
     expect(kinds(world.logs)).toEqual(['light'])
-    for (let i = 33; i < 40; i++) await step($, i)
+    for (let i = 35; i < 42; i++) await step($, i)
     expect(world.stopReads).toHaveLength(2)
     expect(world.forks).toHaveLength(1)
   })
@@ -139,14 +143,14 @@ describe('labrastro-ysk hooks', () => {
     const world = setUp(on)
     world.stopFile = 'unreadable'
     await start($)
-    for (let i = 0; i <= 5; i++) {
+    for (let i = 0; i <= 7; i++) {
       expect((await step($, i)).index).toBe(i)
       await world.settle()
     }
     expect(world.forks).toHaveLength(2)
     expect(world.stopReads).toHaveLength(2)
     world.stopFile = 'present'
-    for (let i = 6; i <= 11; i++) await step($, i)
+    for (let i = 8; i <= 13; i++) await step($, i)
     expect(world.forks).toHaveLength(2)
     expect(world.stopReads).toHaveLength(3)
   })
@@ -155,7 +159,7 @@ describe('labrastro-ysk hooks', () => {
     const world = setUp(on, { env: { MULTICA_YSK_CONTEXT_FILE: 'C:\\task\\ysk\\context.json' } })
     world.stopFile = 'present'
     await start($)
-    for (let i = 0; i <= 2; i++) await step($, i)
+    for (let i = 0; i <= 4; i++) await step($, i)
     expect(world.stopReads).toHaveLength(1)
     // The Linux test engine resolves Windows spellings relative to the mod.
     expect(world.stopReads[0]?.endsWith('C:\\task\\ysk\\stop')).toBe(true)
@@ -210,30 +214,33 @@ describe('labrastro-ysk hooks', () => {
     expect(pluginDirsWithout('/opt/a::', '/task/ysk/plugin')).toBe('/opt/a')
   })
 
-  test('the light batch waits until a fork can see the first tool result', async ($, on) => {
+  test('metadata alone waits for the eighth-step fallback', async ($, on) => {
+    const world = setUp(on)
+    world.tool = { name: 'Bash', input: { command: 'multica issue get x --output json' } }
+    world.answer = () => ({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
+    await start($)
+    for (let i = 0; i < 7; i++) await step($, i)
+    await world.settle()
+    expect(world.forks).toEqual([])
+    await step($, 7)
+    await world.settle()
+    expect(world.forks).toHaveLength(1)
+    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'light', step: 7 })
+  })
+
+  test('light waits for three exploration rounds and fork-visible results', async ($, on) => {
     const world = setUp(on)
     world.answer = () => ({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await start($)
-
-    world.tools = 0
-    await step($, 0) // a reply without tools: nothing for a fork to see yet
-    world.tools = 1
-    await step($, 1) // the first tool call
-    await step($, 2) // its result is in this request, not yet in a fork's view
+    for (let i = 0; i < 4; i++) await step($, i)
     await world.settle()
     expect(world.forks).toEqual([])
-
-    await step($, 3)
+    await step($, 4)
     await world.settle()
     expect(world.forks).toHaveLength(1)
-    expect(world.forks[0]).toContain('Up to 3 tips')
-    expect(world.logs.map((line) => JSON.parse(line))).toEqual([{
-      ysk: 1,
-      kind: 'light',
-      tips: [{ tag: 'you_should_know', line: 'The Engineer agent adds SMS codes', title: 'SMS login', explanation: 'Users sign in with a code.' }],
-      overturned: [{ tip_id: 'tip-1', reason: 'Passwords are being replaced.' }],
-      step: 3,
-    }])
+    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'light', step: 4,
+      tips: [{ tag: 'you_should_know', line: 'SMS codes expire after one use' }],
+      overturned: [{ tip_id: 'tip-1', reason: 'Passwords are being replaced.' }] })
   })
 
   test('heads-up checks start dense and back off until one is found', async ($, on) => {
@@ -251,16 +258,16 @@ describe('labrastro-ysk hooks', () => {
     for (let i = 0; i < 40; i++) {
       await step($, i)
       await world.settle()
-      if (i >= 11) {
+      if (i >= 13) {
         expect(world.forks).toHaveLength(3)
         expect(headsUpChecks).toBe(2)
       }
     }
-    // Light at step 2, then checks at 5 (gap 3) and 11 (gap doubled to 6);
-    // the one at 11 finds a heads-up, preventing later checks at 23 and 35.
+    // Light at step 4, then checks at 7 (gap 3) and 13 (gap doubled to 6);
+    // the one at 13 finds a heads-up, preventing later checks at 25 and 37.
     expect(world.forks.map((prompt) => (prompt.includes('Up to 3 tips') ? 'light' : 'heads_up'))).toEqual(['light', 'heads_up', 'heads_up'])
     expect(kinds(world.logs)).toEqual(['heads_up'])
-    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'heads_up', step: 11, overturned: [], tips: [{ tag: 'heads_up', title: 'Cost' }] })
+    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'heads_up', step: 13, overturned: [], tips: [{ tag: 'heads_up', title: 'Cost' }] })
   })
 
   test('the heads-up check gap doubles each round and caps at 4x', async ($, on) => {
@@ -274,7 +281,7 @@ describe('labrastro-ysk hooks', () => {
     // Which main step each new fork appeared on, snapshotted after its settle.
     const forkSteps: number[] = []
     let seen = 0
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 62; i++) {
       await step($, i)
       await world.settle()
       if (world.forks.length > seen) {
@@ -282,9 +289,9 @@ describe('labrastro-ysk hooks', () => {
         forkSteps.push(i)
       }
     }
-    // With check_every_steps=3: light at 2, then checks at 5, 11, 23, 35, 47, 59
+    // With check_every_steps=3: light at 4, then checks at 7, 13, 25, 37, 49, 61
     // (gaps 3, 6, 12, 12, 12, 12 — doubling capped at 4x = 12).
-    expect(forkSteps).toEqual([2, 5, 11, 23, 35, 47, 59])
+    expect(forkSteps).toEqual([4, 7, 13, 25, 37, 49, 61])
     expect(world.logs).toEqual([])
   })
 
@@ -295,18 +302,20 @@ describe('labrastro-ysk hooks', () => {
     await start($)
     await step($, 0)
     await step($, 1)
-    const response = await step($, 2) // starts the light fork, which hangs
-    expect(response.index).toBe(2)
+    await step($, 2)
+    await step($, 3)
+    const response = await step($, 4) // starts the light fork, which hangs
+    expect(response.index).toBe(4)
     expect(world.forks).toHaveLength(1)
 
     // While it hangs, later steps go on and no second fork starts.
-    for (let i = 3; i < 9; i++) await step($, i)
+    for (let i = 5; i < 11; i++) await step($, i)
     expect(world.forks).toHaveLength(1)
 
     release({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await world.settle()
     expect(kinds(world.logs)).toEqual(['light'])
-    await step($, 9)
+    await step($, 11)
     await world.settle()
     expect(world.forks).toHaveLength(2)
   })
@@ -315,22 +324,22 @@ describe('labrastro-ysk hooks', () => {
     const world = setUp(on)
     world.answer = () => new Promise<ModelForkResult>(() => {})
     await start($)
-    for (let i = 0; i < 40; i++) await step($, i)
-    // The light fork at step 2 never settles; the next check waits until step 32.
+    for (let i = 0; i < 42; i++) await step($, i)
+    // The light fork at step 4 never settles; the next check waits until step 34.
     expect(world.forks.map((prompt) => (prompt.includes('Up to 3 tips') ? 'light' : 'heads_up'))).toEqual(['light', 'heads_up'])
   })
 
   test('an answer from a given-up fork is ignored, so a run sends one heads-up at most', async ($, on) => {
     const world = setUp(on)
     await start($)
-    for (let i = 0; i <= 2; i++) {
+    for (let i = 0; i <= 4; i++) {
       await step($, i)
       await world.settle()
     }
     const releases: Array<(result: ModelForkResult) => void> = []
     world.answer = () => new Promise<ModelForkResult>((resolve) => { releases.push(resolve) })
-    // The check at step 5 hangs; at step 35 it is given up and step 35 checks again.
-    for (let i = 3; i <= 35; i++) await step($, i)
+    // The check at step 7 hangs; at step 37 it is given up and step 37 checks again.
+    for (let i = 5; i <= 37; i++) await step($, i)
     expect(releases).toHaveLength(2)
     const headsUp = (title: string, line: string) => ({ isAnswered: true as const, text: JSON.stringify({ heads_up: { title, line, explanation: 'It matters.' } }), usage: USAGE })
     releases[1]?.(headsUp('Cost', 'The agent reruns the full suite'))
@@ -345,7 +354,7 @@ describe('labrastro-ysk hooks', () => {
     const releases: Array<(result: ModelForkResult) => void> = []
     world.answer = () => new Promise<ModelForkResult>((resolve) => { releases.push(resolve) })
     await start($)
-    for (let i = 0; i <= 32; i++) await step($, i) // light at 2, given up at 32 by a heads-up check
+    for (let i = 0; i <= 34; i++) await step($, i) // light at 4, given up at 34 by a heads-up check
     expect(releases).toHaveLength(2)
     releases[0]?.({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await world.settle()
@@ -357,7 +366,7 @@ describe('labrastro-ysk hooks', () => {
     let release: (result: ModelForkResult) => void = () => {}
     world.answer = () => new Promise<ModelForkResult>((resolve) => { release = resolve })
     await start($)
-    for (let i = 0; i <= 40; i++) await step($, i) // no heads-up checks, so nothing replaces the light fork
+    for (let i = 0; i <= 42; i++) await step($, i) // no heads-up checks, so nothing replaces the light fork
     expect(world.forks).toHaveLength(1)
     release({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await world.settle()
@@ -370,17 +379,17 @@ describe('labrastro-ysk hooks', () => {
       isAnswered: true,
       text: prompt.includes('Up to 3 tips')
         ? LIGHT_REPLY
-        : JSON.stringify({ heads_up: { title: 'SMS login', line: 'The Engineer agent adds SMS codes', explanation: 'Users sign in with a code.' } }),
+        : JSON.stringify({ heads_up: { title: 'SMS login', line: 'SMS codes expire after one use', explanation: 'Users sign in with a code.' } }),
       usage: USAGE,
     })
     await start($)
-    for (let i = 0; i <= 5; i++) {
+    for (let i = 0; i <= 7; i++) {
       await step($, i)
       await world.settle()
     }
     expect(kinds(world.logs)).toEqual(['light'])
     expect(world.forks[0]).toContain('Tips already shown during this run, as JSON: []')
-    expect(world.forks[1]).toContain('Tips already shown during this run, as JSON: [{"tag":"you_should_know","line":"The Engineer agent adds SMS codes"}]')
+    expect(world.forks[1]).toContain('Tips already shown during this run, as JSON: [{"tag":"you_should_know","line":"SMS codes expire after one use"}]')
   })
 
   test('fork failures produce no tips and leave the steps alone', async ($, on) => {
@@ -393,12 +402,12 @@ describe('labrastro-ysk hooks', () => {
     ]
     world.answer = () => (failures.shift() ?? (() => ({ isAnswered: false, reason: 'aborted', usage: USAGE })))()
     await start($)
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 26; i++) {
       const response = await step($, i)
       expect(response.index).toBe(i)
       await world.settle()
     }
-    // Backoff cadence: light at 2, then checks at 5, 11 and 23 all fail.
+    // Backoff cadence: light at 4, then checks at 7, 13 and 25 all fail.
     expect(world.forks.length).toBeGreaterThan(3)
     expect(world.logs).toEqual([])
   })
@@ -408,11 +417,13 @@ describe('labrastro-ysk hooks', () => {
     world.answer = () => ({ isAnswered: true, text: LIGHT_REPLY, usage: USAGE })
     await start($)
     await step($, 0)
-    for (let i = 0; i < 10; i++) await step($, i, 'agent-7')
+    for (let i = 0; i < 12; i++) await step($, i, 'agent-7')
     await world.settle()
     expect(world.forks).toEqual([])
     await step($, 1)
     await step($, 2)
+    await step($, 3)
+    await step($, 4)
     await world.settle()
     expect(world.forks).toHaveLength(1)
   })

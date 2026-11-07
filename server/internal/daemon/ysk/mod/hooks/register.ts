@@ -1,4 +1,5 @@
 import type { EngineInterface, ModelForkResult, Register } from 'claude-code'
+import { Schedule, isExploration } from './schedule'
 import { parseContext, type YskContext } from './context'
 import { headsUpPrompt, lightPrompt } from './prompts'
 import { headsUpOutcome, lightBatch, type Batch, type Tip } from './reply'
@@ -12,93 +13,6 @@ import { headsUpOutcome, lightBatch, type Batch, type Tip } from './reply'
 // tool-less, read from its prompt cache and never written to the transcript.
 // A fork is never awaited inside a hook and every failure is swallowed, so
 // the agent's own work is untouched whatever happens here.
-
-// A fork answers within a step or two. One still open after this many main
-// steps is given up: the next check may start, and once it has, the old
-// fork's answer is ignored.
-const FORK_STALE_STEPS = 30
-
-/**
- * When to ask, counted in main-thread model requests (`turn.step` without an
- * `agentId`), the unit Claude Code's own "You should know" uses.
- *
- * A fork sees the main thread's last request plus the text of its reply, so
- * at step `n` it sees the tool results the reply to step `n - 2` asked for.
- * The light batch therefore waits for the first step whose fork can see a
- * tool result: on a fresh session the prompt only names the issue, and its
- * content arrives as the result of the agent's first tool call.
- *
- * Heads-up checks start dense and back off (OL-1270): most issues worth a
- * heads-up show early, so the first checks keep `checkEverySteps`, then the
- * gap doubles each round up to 4x — with checkEverySteps=6, one 120-step run
- * asks at most 7 times (1 light + 6 heads-up) instead of 20. A found heads-up
- * still stops the checks for good.
- */
-const BACKOFF_FACTOR = 4
-
-export class Schedule {
-  private steps = 0
-  private firstToolStep = -1
-  private lightStep = -1
-  private nextCheck = Number.POSITIVE_INFINITY
-  private checkGap = 0
-  private headsUpFound = false
-  private fork: { id: number; step: number } | undefined
-  private forks = 0
-
-  constructor(private readonly checkEverySteps: number) {}
-
-  /** Called as each main step starts; returns the step's index from 0. */
-  begin(): number {
-    return this.steps++
-  }
-
-  /** Which question, if any, to ask as main step `step` starts. */
-  decide(step: number): 'light' | 'heads_up' | undefined {
-    if (this.fork !== undefined && step - this.fork.step < FORK_STALE_STEPS) return undefined
-    if (this.lightStep < 0) {
-      if (this.firstToolStep < 0 || step < this.firstToolStep + 2) return undefined
-      this.lightStep = step
-      if (this.checkEverySteps > 0) {
-        this.checkGap = this.checkEverySteps
-        this.nextCheck = step + this.checkGap
-      }
-      return 'light'
-    }
-    if (this.headsUpFound || step < this.nextCheck) return undefined
-    // Dense early, sparser later: double the gap each round, capped at 4x.
-    this.checkGap = Math.min(this.checkGap * 2, this.checkEverySteps * BACKOFF_FACTOR)
-    this.nextCheck = step + this.checkGap
-    return 'heads_up'
-  }
-
-  /** Called when main step `step`'s response is in. */
-  end(step: number, toolUses: number): void {
-    if (this.firstToolStep < 0 && toolUses > 0) this.firstToolStep = step
-  }
-
-  /** Marks a fork started at `step` as running; the returned id settles it. */
-  forkStarted(step: number): number {
-    const id = ++this.forks
-    this.fork = { id, step }
-    return id
-  }
-
-  /**
-   * Called when fork `id` answers. Returns whether its answer still counts:
-   * false when a newer fork has started since, which happens only after this
-   * one was given up.
-   */
-  forkSettled(id: number): boolean {
-    if (this.fork?.id !== id) return false
-    this.fork = undefined
-    return true
-  }
-
-  foundHeadsUp(): void {
-    this.headsUpFound = true
-  }
-}
 
 /**
  * `CLAUDE_CODE_PLUGIN_DIRS` without this mod's folder, or undefined when
@@ -183,7 +97,6 @@ function settle($: EngineInterface, ctx: YskContext, plan: Schedule, sent: Tip[]
 
 export const register: Register = (on) => {
   let context: YskContext | undefined
-  let agentName = ''
   let schedule: Schedule | undefined
   let stopFile: string | undefined
   let stopped = false
@@ -197,7 +110,6 @@ export const register: Register = (on) => {
       context = loaded?.context
       stopFile = loaded?.stopFile
       stopped = false
-      agentName = ((await $.env.get('MULTICA_AGENT_NAME')) ?? '').trim()
       schedule = context === undefined ? undefined : new Schedule(context.checkEverySteps)
       if (context === undefined) debug($, 'no usable run context; staying off')
     } catch (error) {
@@ -220,7 +132,7 @@ export const register: Register = (on) => {
       const ask = plan.decide(step)
       if (ask !== undefined) stopped = await stopRequested($, stopFile)
       if (ask !== undefined && !stopped) {
-        const prompt = ask === 'light' ? lightPrompt(ctx, agentName, sent) : headsUpPrompt(ctx, agentName, sent)
+        const prompt = ask === 'light' ? lightPrompt(ctx, sent) : headsUpPrompt(ctx, sent)
         const fork = plan.forkStarted(step)
         // Not awaited: the main thread's request goes out at once, and the
         // answer is logged whenever it arrives.
@@ -248,7 +160,7 @@ export const register: Register = (on) => {
 
     const response = yield* next(e)
     try {
-      plan.end(step, response.toolUses.length)
+      plan.end(step, response.toolUses.some((tool) => isExploration(tool.name, tool.input)))
     } catch {
       // Bookkeeping only.
     }

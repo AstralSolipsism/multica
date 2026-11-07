@@ -29,6 +29,10 @@ func labrastroYSKEnabled(settings []byte) bool {
 	return json.Unmarshal(settings, &s) == nil && s.Enabled
 }
 
+func labrastroYSKProviderSupported(provider string) bool {
+	return provider == "claude" || provider == "omp"
+}
+
 func labrastroYSKPreferenceDefaults(prefs map[string]string) map[string]string {
 	if prefs == nil {
 		prefs = map[string]string{}
@@ -42,7 +46,7 @@ func labrastroYSKPreferenceDefaults(prefs map[string]string) map[string]string {
 // Called only by the shared claim builder, after its workspace/source gates.
 // taskToResponse and all human/agent-readable task projections leave this nil.
 func (h *Handler) labrastroYSKClaimContext(r *http.Request, task db.AgentTaskQueue, runtime db.AgentRuntime, settings []byte, identifier string) *protocol.YouShouldKnowContext {
-	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || runtime.Provider != "claude" ||
+	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || !labrastroYSKProviderSupported(runtime.Provider) ||
 		!requestHasClientCapability(r, protocol.DaemonCapabilityYouShouldKnowV1) || !labrastroYSKEnabled(settings) {
 		return nil
 	}
@@ -306,7 +310,7 @@ func (h *Handler) LabrastroReportTaskTips(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || runtime.Provider != "claude" {
+	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid || !labrastroYSKProviderSupported(runtime.Provider) {
 		drop("ineligible task")
 		return
 	}
