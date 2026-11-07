@@ -106,6 +106,8 @@
     "./projects/queries": "./projects/queries.ts",
     "./projects/mutations": "./projects/mutations.ts",
     "./projects/engineering-candidate": "./projects/engineering-candidate.ts",
+    "./projects/baseline-annotation-draft-store": "./projects/baseline-annotation-draft-store.ts",
+    "./projects/baseline-source-diff": "./projects/baseline-source-diff.ts",
     "./projects/config": "./projects/config.ts",
     "./plugins": "./plugins/index.ts",
     "./plugins/queries": "./plugins/queries.ts",

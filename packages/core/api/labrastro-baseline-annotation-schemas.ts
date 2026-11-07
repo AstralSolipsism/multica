@@ -67,6 +67,13 @@ export const BaselineReviewSubmittedSchema = z.object({
 export const BaselineAnnotationsUpdatedSchema = z.object({ updated: z.number().int().min(1).max(50) });
 export const BaselineAnnotationBatchClosedSchema = z.object({ batch: BaselineAnnotationBatchRowSchema });
 
+export type BaselineAnnotationBatchRow = z.infer<typeof BaselineAnnotationBatchRowSchema>;
 export type BaselineAnnotationBatch = z.infer<typeof BaselineAnnotationBatchSchema>;
+export type BaselineAnnotationBatches = z.infer<typeof BaselineAnnotationBatchesSchema>;
+export type BaselineReview = z.infer<typeof BaselineReviewSchema>;
 export type BaselineAnnotation = z.infer<typeof BaselineAnnotationSchema>;
 export type BaselineAnnotationDetail = z.infer<typeof BaselineAnnotationDetailSchema>;
+export type BaselineAnnotationSection = BaselineAnnotationDetail["sections"][number];
+export type BaselineReviewSubmitted = z.infer<typeof BaselineReviewSubmittedSchema>;
+export type BaselineAnnotationsUpdated = z.infer<typeof BaselineAnnotationsUpdatedSchema>;
+export type BaselineAnnotationBatchClosed = z.infer<typeof BaselineAnnotationBatchClosedSchema>;

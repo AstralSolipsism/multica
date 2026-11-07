@@ -15,6 +15,7 @@ import {
 } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
 import type { Agent, Issue, TimelineEntry } from "@multica/core/types";
+import { useBaselineAnnotationDraftStore } from "@multica/core/projects/baseline-annotation-draft-store";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { EngineeringOverview } from "./engineering-overview";
@@ -52,6 +53,7 @@ let timelineEntries: TimelineEntry[];
 let decideProjectBaseline: ReturnType<typeof vi.fn>;
 let proposeProjectBaseline: ReturnType<typeof vi.fn>;
 let updateProjectEngineering: ReturnType<typeof vi.fn>;
+let submitProjectBaselineReview: ReturnType<typeof vi.fn>;
 let queryClient: QueryClient;
 
 function revision(
@@ -195,6 +197,7 @@ beforeEach(() => {
     config = { ...config, ...data };
     return { engineering: config };
   });
+  submitProjectBaselineReview = vi.fn(async () => ({ batch: {}, review: {}, carrier: {}, woke: {} }));
   setApiInstance({
     getProject: async () => ({ id: PROJECT, title: "Project", lead_type: null, lead_id: null }),
     listMembers: async () => [
@@ -207,15 +210,19 @@ beforeEach(() => {
       ...emptyHistory(),
       revisions: (histories[chapter] ?? []).slice(0, options.limit ?? 50),
     }),
+    getProjectBaselineAnnotationBatches: async () => ({ batches: [] }),
+    getProjectBaselineAnnotationBatch: async () => null,
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,
     proposeProjectBaseline,
     decideProjectBaseline,
     updateProjectEngineering,
+    submitProjectBaselineReview,
   } as unknown as ApiClient);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   Element.prototype.scrollIntoView = vi.fn();
   window.localStorage.clear();
+  useBaselineAnnotationDraftStore.getState().clearDraft();
 });
 
 afterEach(() => {
@@ -244,6 +251,11 @@ function renderOverview(search = "", currentLocale?: SupportedLocale) {
     return render(<I18nProvider locale={currentLocale} resources={{ [currentLocale]: RESOURCES[currentLocale] }}>{ui}</I18nProvider>);
   }
   return renderWithI18n(ui);
+}
+
+async function confirmBaselineDecision(user: ReturnType<typeof userEvent.setup>, name = "Adopt") {
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name }));
 }
 
 describe("EngineeringOverview waiting decisions", () => {
@@ -508,6 +520,7 @@ describe("EngineeringOverview baseline navigation", () => {
     renderOverview();
     await user.click(await screen.findByText("Baseline revision v2 needs confirmation"));
     await user.click(await screen.findByRole("button", { name: "Adopt" }));
+    await confirmBaselineDecision(user);
 
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
@@ -554,6 +567,7 @@ describe("EngineeringOverview baseline navigation", () => {
     const user = userEvent.setup();
     renderOverview(`candidate=${RULES_CANDIDATE}`);
     await user.click(await screen.findByRole("button", { name: "Adopt" }));
+    await confirmBaselineDecision(user);
     await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalled());
     await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
@@ -758,6 +772,39 @@ describe("EngineeringOverview baseline editing", () => {
     expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "candidate");
     expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("## Goal\nKeep candidate.");
+  });
+
+  it("submits a baseline section annotation through one review mutation", async () => {
+    const user = userEvent.setup();
+    const current = {
+      ...revision("adopted-rules", "domain_rules", 1, "Rules", "adopted", "2026-10-29T00:00:00Z", "session"),
+      contentMarkdown: "## Rules\nFirst.\n\n## Other\nSecond.",
+    };
+    chapters = chapters.map((chapter) => chapter.chapter === "domain_rules" ? { ...chapter, adopted: current } : chapter);
+    agents = [{ id: "agent-1", name: "Backend", archived_at: null } as Agent];
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
+    await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
+    const article = document.querySelector('[data-baseline-section-key="domain_rules:Rules"]') as HTMLElement;
+    await user.click(within(article).getByRole("button", { name: "Annotate section" }));
+    await user.type(within(article).getByRole("textbox", { name: "Write a change request" }), "Clarify the rule");
+    await user.click(within(article).getByRole("button", { name: "Add to review" }));
+    expect(submitProjectBaselineReview).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Finish review" }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+
+    await waitFor(() => expect(submitProjectBaselineReview).toHaveBeenCalledTimes(1));
+    const input = submitProjectBaselineReview.mock.calls[0]![2];
+    expect(input).toMatchObject({
+      chapter: "domain_rules",
+      reviewedRevisionId: "adopted-rules",
+      assignee: { type: "agent", id: "agent-1" },
+      annotations: [{ anchorKind: "section", targetRevisionId: "adopted-rules", sectionAnchor: "Rules", note: "Clarify the rule" }],
+    });
+    expect(input.clientKey).toEqual(expect.any(String));
+    expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toEqual([]);
   });
 });
 

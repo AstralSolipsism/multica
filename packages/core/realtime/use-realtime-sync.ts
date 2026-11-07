@@ -1483,6 +1483,14 @@ export function useRealtimeSync(
       }
     });
 
+    const unsubProjectBaselineAnnotationChanged = ws.on("project_baseline_annotation:changed", (p) => {
+      const { project_id } = p as import("../types/events").ProjectBaselineAnnotationChangedPayload;
+      const wsId = getCurrentWsId();
+      if (wsId && project_id) {
+        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
+      }
+    });
+
     // --- Side-effect handlers (toast, navigation) ---
 
     // After the current workspace disappears (deleted or we were kicked out),
@@ -2020,6 +2028,7 @@ export function useRealtimeSync(
       unsubSubscriberRemoved();
       unsubProjectEngineeringUpdated();
       unsubProjectBaselineChanged();
+      unsubProjectBaselineAnnotationChanged();
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();

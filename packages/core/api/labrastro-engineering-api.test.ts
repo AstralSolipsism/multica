@@ -16,6 +16,21 @@ it("sends exact reviewed revision IDs and workspace, and does not retry a confli
   expect(JSON.parse(String(init.body))).toEqual({ action: "adopt", revisions: [{ revision_id: "reviewed", expected_adopted_revision_id: "base" }] });
 });
 
+it("adds an annotation batch action only when requested", async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
+  vi.stubGlobal("fetch", fetcher);
+  const api = new ApiClient("https://example.test");
+  const revisions = [{ revisionId: "reviewed", expectedAdoptedRevisionId: null }];
+
+  await api.decideProjectBaseline("workspace", "project", "reject", revisions, { annotationBatchAction: "keep" });
+
+  expect(JSON.parse(String(fetcher.mock.calls[0]?.[1].body))).toEqual({
+    action: "reject",
+    revisions: [{ revision_id: "reviewed", expected_adopted_revision_id: null }],
+    annotation_batch_action: "keep",
+  });
+});
+
 it("returns null for malformed baseline responses through the installed client", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ engineering: null, chapters: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
   expect(await new ApiClient("https://example.test").getProjectEngineering("workspace", "project")).toBeNull();

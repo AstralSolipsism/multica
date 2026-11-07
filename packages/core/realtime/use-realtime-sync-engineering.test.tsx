@@ -69,3 +69,39 @@ it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
   expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);
   qc.clear();
 });
+
+it("project_baseline_annotation:changed invalidates every list and detail for the affected project", () => {
+  const qc = new QueryClient();
+  const ws = createMockWs();
+  const stores = {
+    authStore: { getState: () => ({ user: { id: "user-1" } }) },
+  } as unknown as RealtimeSyncStores;
+  const listKey = projectKeys.baselineAnnotationBatches("ws-1", "project-1", {
+    chapter: "domain_rules", state: "active",
+  });
+  const detailKey = projectKeys.baselineAnnotationBatch("ws-1", "project-1", "batch-1", {
+    state: "all", withSections: true,
+  });
+  const otherProjectKey = projectKeys.baselineAnnotationBatches("ws-1", "project-2");
+  const otherWorkspaceKey = projectKeys.baselineAnnotationBatches("ws-2", "project-1");
+  for (const key of [listKey, detailKey, otherProjectKey, otherWorkspaceKey]) qc.setQueryData(key, null);
+  renderHook(() => useRealtimeSync(ws, stores), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    ),
+  });
+  const handler = vi.mocked(ws.on).mock.calls.find(([event]) => event === "project_baseline_annotation:changed")?.[1];
+  expect(handler).toBeDefined();
+
+  act(() => {
+    (handler as (payload: unknown) => void)({
+      project_id: "project-1", chapter: "domain_rules", batch_id: "batch-1",
+    });
+  });
+
+  expect(qc.getQueryState(listKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(detailKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(otherProjectKey)?.isInvalidated).toBe(false);
+  expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);
+  qc.clear();
+});

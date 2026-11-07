@@ -46,10 +46,12 @@ const labrastroEngineeringApi = {
     }) });
     return parseWithFallback<z.infer<typeof BaselineRevisionSchema> | null>(raw, BaselineRevisionSchema, null, { endpoint });
   },
-  async decideProjectBaseline(this: ApiClient, workspaceId: string, projectId: string, action: "adopt" | "reject", revisions: { revisionId: string; expectedAdoptedRevisionId: string | null }[]) {
+  async decideProjectBaseline(this: ApiClient, workspaceId: string, projectId: string, action: "adopt" | "reject", revisions: { revisionId: string; expectedAdoptedRevisionId: string | null }[], options: { annotationBatchAction?: "close" | "keep" } = {}) {
     const endpoint = `${projectPath(projectId)}/baseline/decisions`;
     const raw = await clientFetch<unknown>(this, endpoint, { method: "POST", headers: headers(workspaceId), body: JSON.stringify({
-      action, revisions: revisions.map((v) => ({ revision_id: v.revisionId, expected_adopted_revision_id: v.expectedAdoptedRevisionId })),
+      action,
+      revisions: revisions.map((v) => ({ revision_id: v.revisionId, expected_adopted_revision_id: v.expectedAdoptedRevisionId })),
+      ...(options.annotationBatchAction ? { annotation_batch_action: options.annotationBatchAction } : {}),
     }) });
     return parseWithFallback<z.infer<typeof BaselineDecisionSchema> | null>(raw, BaselineDecisionSchema, null, { endpoint });
   },

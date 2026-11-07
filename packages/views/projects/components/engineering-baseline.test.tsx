@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import type { BaselineDecision, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
+import { useBaselineAnnotationDraftStore } from "@multica/core/projects/baseline-annotation-draft-store";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { renderWithI18n } from "../../test/i18n";
 import { EngineeringBaseline } from "./engineering-baseline";
@@ -91,6 +92,19 @@ const baseProps = {
   decisionPending: false,
   decisionError: false,
   decisionResult: null,
+  annotations: {
+    batches: [],
+    details: [],
+    loading: false,
+    error: false,
+    actions: {
+      ownerId: "user-1",
+      agents: [],
+      onSubmitReview: vi.fn(async () => null),
+      onResolveAnnotations: vi.fn(async () => null),
+      onCloseBatch: vi.fn(async () => null),
+    },
+  },
   savePending: false,
   onSave: vi.fn(),
   history: null,
@@ -110,6 +124,7 @@ function renderBaseline(ui: ReactElement) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  useBaselineAnnotationDraftStore.getState().clearDraft();
   vi.clearAllMocks();
   window.scrollTo = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
@@ -118,10 +133,11 @@ beforeEach(() => {
 describe("EngineeringBaseline review", () => {
   it("renders changes in the Wiki context and decides only the reviewed revision", async () => {
     const user = userEvent.setup();
-    const onDecision = vi.fn();
+    const onDecision = vi.fn(async () => true);
     const current = revision();
     renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(current, adopted())]} revision={current} currentCandidate reviewRequested onDecision={onDecision} />);
 
+    await user.click(screen.getByRole("tab", { name: "Rendered view" }));
     await waitFor(() => expect(document.querySelector('[data-diff-kind="modified"]')).toHaveTextContent("所有写接口必须携带幂等键"));
     expect(document.querySelector("[data-diff-before]")).toHaveTextContent("所有写接口应该携带幂等键");
     expect(document.querySelector('[data-diff-kind="added"]')).toHaveTextContent("预占快照");
@@ -130,7 +146,9 @@ describe("EngineeringBaseline review", () => {
     expect(screen.getByText(/Agent agent-1/)).toBeInTheDocument();
     expect(screen.queryByText("Source task")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Adopt" }));
-    expect(onDecision).toHaveBeenCalledWith("adopt", current);
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Adopt" }));
+    await waitFor(() => expect(onDecision).toHaveBeenCalledWith("adopt", current));
   });
 
   it("keeps a historical withdrawn revision read-only", () => {
