@@ -61,6 +61,7 @@ func TestLabrastroWakeupCaptureMigrationOrders(t *testing.T) {
 				);
 				CREATE TABLE channel_installation (id uuid, channel_type text, config jsonb, updated_at timestamptz);
 				CREATE TABLE task_token (task_id uuid, token_hash text);
+				CREATE TABLE comment (id uuid, source_task_id uuid, author_type text, type text, recovery_settled_at timestamptz);
 				CREATE TABLE issue_wakeup (
 					id uuid, workspace_id uuid, issue_id uuid, agent_id uuid,
 					enabled boolean, kind text, event_types text[], revision bigint,
@@ -186,11 +187,21 @@ func seedConversationRetirement(t *testing.T, exec func(string, ...any)) convers
 			VALUES ($1,'{}',$2,NULLIF($3,'')::uuid,$4)`, row.id, row.source, row.root, row.status)
 		exec("INSERT INTO task_token VALUES ($1,$2)", row.id, "token-"+row.id)
 	}
+	// Failed workers with a persisted delegated-failure recovery signal: the
+	// external one (delegated by the external root) and a member one.
+	exec(`INSERT INTO agent_task_queue (id, context, originator_source, conversation_root_task_id, delegated_from_task_id, status) VALUES
+		('00000000-0000-0000-0000-0000000000a7','{}','delegation','00000000-0000-0000-0000-0000000000a1','00000000-0000-0000-0000-0000000000a1','failed'),
+		('00000000-0000-0000-0000-0000000000a8','{}','delegation',NULL,'00000000-0000-0000-0000-0000000000a6','failed')`)
+	exec(`INSERT INTO comment (id, source_task_id, author_type, type) VALUES
+		('00000000-0000-0000-0000-0000000000c1','00000000-0000-0000-0000-0000000000a7','system','progress_update'),
+		('00000000-0000-0000-0000-0000000000c2','00000000-0000-0000-0000-0000000000a8','system','progress_update')`)
 	const rule = "00000000-0000-0000-0000-0000000000b0"
 	exec(`INSERT INTO issue_wakeup (id, enabled, kind, event_types, revision) VALUES ($1,true,'event',ARRAY['comment.created'],1)`, rule)
 	exec(`INSERT INTO issue_wakeup_receipt (id, wakeup_id, revision, event_key, event_type, payload) VALUES
-		(gen_random_uuid(),$1,1,'external','comment.created','{"conversation_root_task_id":"00000000-0000-0000-0000-0000000000a1"}'),
-		(gen_random_uuid(),$1,1,'first-party','comment.created','{"conversation_root_task_id":null}')`, rule)
+		(gen_random_uuid(),$1,1,'external-root','comment.created','{"conversation_root_task_id":"00000000-0000-0000-0000-0000000000a1"}'),
+		(gen_random_uuid(),$1,1,'external-source','comment.created','{"source_task_id":"00000000-0000-0000-0000-0000000000a2"}'),
+		(gen_random_uuid(),$1,1,'external-hint','condition.met','{"source_task_ids":["not-a-uuid","00000000-0000-0000-0000-0000000000a5"]}'),
+		(gen_random_uuid(),$1,1,'first-party','comment.created','{"conversation_root_task_id":null,"source_task_id":"00000000-0000-0000-0000-0000000000a6","source_task_ids":["bad"]}')`, rule)
 	return conversationRetirement{install: install}
 }
 
@@ -225,6 +236,7 @@ func (c conversationRetirement) assert(t *testing.T, ctx context.Context, tx pgx
 		"a1": "cancelled/system=true/token=false", "a2": "cancelled/system=true/token=false",
 		"a3": "cancelled/system=true/token=false", "a4": "cancelled/system=true/token=false",
 		"a5": "completed/system=false/token=false", "a6": "queued/system=false/token=true",
+		"a7": "failed/system=false/token=false", "a8": "failed/system=false/token=false",
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("task retirement = %v, want %v", got, want)
@@ -246,5 +258,23 @@ func (c conversationRetirement) assert(t *testing.T, ctx context.Context, tx pgx
 	}
 	if fmt.Sprint(pending) != "[first-party]" {
 		t.Fatalf("pending wakeup inputs after retirement = %v, want only the first-party one", pending)
+	}
+	var unsettled []string
+	rows, err = tx.Query(ctx, "SELECT id::text FROM comment WHERE recovery_settled_at IS NULL ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		unsettled = append(unsettled, id[len(id)-2:])
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(unsettled) != "[c2]" {
+		t.Fatalf("unsettled recovery signals after retirement = %v, want only the member one", unsettled)
 	}
 }

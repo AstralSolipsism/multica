@@ -11,9 +11,11 @@
 --    never retried, so nothing re-enters the queue.
 -- 4. Delete their task tokens; the token user is the runtime owner, which the
 --    removed policy used to replace with the grantor inside a sandbox.
--- 5. Consume pending wakeup inputs captured from external work so they do not
---    later dispatch as their rule creator.
--- Audit data (task rows, roots, frozen delivery snapshots) is kept.
+-- 5. Settle durable inputs that would otherwise replay external work as a new
+--    task without a root: delegated-failure recovery signals whose failed
+--    worker or coordinator is external, and pending wakeup inputs captured
+--    from external work (by recorded root or source task).
+-- Audit data (task rows, roots, frozen delivery snapshots, comments) is kept.
 UPDATE channel_installation
 SET config = config - 'conversation' - 'private_chat_candidates', updated_at = now()
 WHERE channel_type = 'feishu' AND (config ? 'conversation' OR config ? 'private_chat_candidates');
@@ -31,8 +33,30 @@ DELETE FROM task_token t USING agent_task_queue q
 WHERE t.task_id = q.id
   AND (q.conversation_root_task_id IS NOT NULL OR q.originator_source = 'channel_integration');
 
-UPDATE issue_wakeup_receipt SET processed_at = now()
-WHERE processed_at IS NULL AND payload->>'conversation_root_task_id' IS NOT NULL;
+UPDATE comment recovery SET recovery_settled_at = now()
+FROM agent_task_queue failed
+LEFT JOIN agent_task_queue coordinator ON coordinator.id = failed.delegated_from_task_id
+WHERE recovery.source_task_id = failed.id
+  AND recovery.author_type = 'system' AND recovery.type = 'progress_update'
+  AND recovery.recovery_settled_at IS NULL
+  AND (failed.conversation_root_task_id IS NOT NULL OR failed.originator_source = 'channel_integration'
+       OR coordinator.conversation_root_task_id IS NOT NULL OR coordinator.originator_source = 'channel_integration');
+
+UPDATE issue_wakeup_receipt receipt SET processed_at = now()
+WHERE receipt.processed_at IS NULL
+  AND (receipt.payload->>'conversation_root_task_id' IS NOT NULL OR EXISTS (
+      SELECT 1 FROM agent_task_queue source
+      WHERE (source.conversation_root_task_id IS NOT NULL OR source.originator_source = 'channel_integration')
+        AND source.id IN (
+          -- Payload references are server-written; skip anything that is not a UUID.
+          SELECT CASE WHEN ref ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                      THEN ref::uuid END
+          FROM (
+            SELECT receipt.payload->>'source_task_id' AS ref
+            UNION ALL
+            SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(receipt.payload->'source_task_ids') = 'array'
+                                                  THEN receipt.payload->'source_task_ids' ELSE '[]'::jsonb END)
+          ) refs)));
 
 -- The function below is upstream 579's capture_issue_wakeup, byte for byte,
 -- replacing the 9009/9028 variants that also recorded conversation roots.
