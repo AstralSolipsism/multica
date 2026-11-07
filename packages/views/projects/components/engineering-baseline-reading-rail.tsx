@@ -24,18 +24,22 @@ export function layoutBaselineReadingRail(items: readonly BaselineRailLayoutItem
   return positions;
 }
 
-function sectionArticle(sections: readonly BaselineDisplaySection[], sectionAnchor: string): HTMLElement | null {
-  const key = sections.find((section) => section.anchor === sectionAnchor)?.key;
-  if (!key) return null;
-  return Array.from(document.querySelectorAll<HTMLElement>("[data-baseline-section-key]"))
-    .find((element) => element.dataset.baselineSectionKey === key) ?? null;
+function sectionArticles(sections: readonly BaselineDisplaySection[]): Map<string, HTMLElement> {
+  const byKey = new Map<string, HTMLElement>();
+  for (const element of document.querySelectorAll<HTMLElement>("[data-baseline-section-key]")) {
+    const key = element.dataset.baselineSectionKey!;
+    if (!byKey.has(key)) byKey.set(key, element);
+  }
+  const articles = new Map<string, HTMLElement>();
+  for (const section of sections) {
+    const article = byKey.get(section.key);
+    if (article) articles.set(section.anchor, article);
+  }
+  return articles;
 }
 
-function entryAnchorTop(entry: BaselineReadingEntry, sections: readonly BaselineDisplaySection[], railTop: number, exact: boolean): number {
-  const article = sectionArticle(sections, entry.anchor.sectionAnchor);
-  const heading = article?.querySelector<HTMLElement>("h3");
-  if (!article || !heading) return 0;
-  const fallback = heading.getBoundingClientRect().top - railTop;
+function entryAnchorTop(entry: BaselineReadingEntry, article: HTMLElement | undefined, railTop: number, fallback: number, exact: boolean): number {
+  if (!article) return 0;
   if (!exact) return fallback;
   const root = article.querySelector<HTMLElement>("[data-baseline-markdown]");
   if (!root) return fallback;
@@ -72,28 +76,30 @@ export function BaselineReadingRail(props: BaselineReadingRailProps) {
     const layout = () => {
       frame = 0;
       const railTop = rail.getBoundingClientRect().top;
+      const articles = sectionArticles(sections);
+      const entries = new Map(props.entries.map((entry) => [entry.id, entry]));
       const cards = Array.from(rail.querySelectorAll<HTMLElement>(":scope > [data-reading-rail-item]"));
       const items = cards.map((card, order) => {
-        const entry = props.entries.find((item) => item.id === card.dataset.readingRailItem);
-        const article = entry ? sectionArticle(sections, entry.anchor.sectionAnchor) : null;
-        const headingTop = article?.querySelector("h3")?.getBoundingClientRect().top ?? 0;
+        const entry = entries.get(card.dataset.readingRailItem!);
+        const article = entry ? articles.get(entry.anchor.sectionAnchor) : undefined;
+        const heading = article?.querySelector("h3");
+        const headingTop = heading?.getBoundingClientRect().top ?? 0;
         const near = headingTop >= window.innerHeight * -2 && headingTop <= window.innerHeight * 3;
-        return { card, entry, order, near, headingTop };
+        return {
+          card, id: card.dataset.readingRailItem!, order,
+          idealTop: entry && heading ? entryAnchorTop(entry, article, railTop, headingTop - railTop, near) : 0,
+          height: card.offsetHeight,
+        };
       });
-      const measured = [...items.filter((item) => item.near), ...items.filter((item) => !item.near)].map((item) => ({
-        id: item.card.dataset.readingRailItem!,
-        order: item.order,
-        idealTop: item.entry ? entryAnchorTop(item.entry, sections, railTop, item.near) : item.headingTop - railTop,
-        height: item.card.offsetHeight,
-      }));
-      measured.sort((a, b) => a.idealTop - b.idealTop || a.order - b.order);
-      const positions = layoutBaselineReadingRail(measured);
+      const positions = layoutBaselineReadingRail([...items].sort((a, b) => a.idealTop - b.idealTop || a.order - b.order));
       let bottom = 0;
+      // Finish every geometry read before changing styles, including heights
+      // used for the rail extent, to avoid a forced layout for each card.
       for (const item of items) {
-        const top = positions[item.card.dataset.readingRailItem!] ?? 0;
+        const top = positions[item.id] ?? 0;
         item.card.style.top = `${top}px`;
         item.card.dataset.layoutTop = String(top);
-        bottom = Math.max(bottom, top + item.card.offsetHeight);
+        bottom = Math.max(bottom, top + item.height);
       }
       rail.style.minHeight = `${Math.max(192, bottom + 8)}px`;
     };
@@ -104,10 +110,7 @@ export function BaselineReadingRail(props: BaselineReadingRailProps) {
     const observer = new ResizeObserver(schedule);
     observer.observe(rail);
     for (const card of rail.querySelectorAll(":scope > [data-reading-rail-item]")) observer.observe(card);
-    for (const section of sections) {
-      const article = sectionArticle(sections, section.anchor);
-      if (article) observer.observe(article);
-    }
+    for (const article of sectionArticles(sections).values()) observer.observe(article);
     window.addEventListener("resize", schedule);
     document.addEventListener("scroll", schedule, { passive: true, capture: true });
     schedule();

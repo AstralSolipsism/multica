@@ -1,6 +1,10 @@
 -- name: LabrastroListAnnotationBatches :many
 SELECT * FROM project_baseline_annotation_batch WHERE workspace_id=$1 AND project_id=$2 ORDER BY created_at, id;
 
+-- name: LabrastroListActiveAnnotationBatches :many
+SELECT * FROM project_baseline_annotation_batch
+WHERE workspace_id=$1 AND project_id=$2 AND chapter=$3 AND closed_at IS NULL;
+
 -- name: LabrastroGetAnnotationBatch :one
 SELECT * FROM project_baseline_annotation_batch WHERE workspace_id=$1 AND project_id=$2 AND id=$3;
 

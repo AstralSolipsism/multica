@@ -214,7 +214,7 @@ func (h *Handler) LabrastroSubmitBaselineReview(w http.ResponseWriter, r *http.R
 			return
 		}
 		candidate := revision.ID == doc.CandidateRevisionID
-		batches, err := s.q.LabrastroListAnnotationBatches(ctx, db.LabrastroListAnnotationBatchesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID})
+		batches, err := s.q.LabrastroListActiveAnnotationBatches(ctx, db.LabrastroListActiveAnnotationBatchesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: req.Chapter})
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
@@ -222,9 +222,6 @@ func (h *Handler) LabrastroSubmitBaselineReview(w http.ResponseWriter, r *http.R
 		var batch db.ProjectBaselineAnnotationBatch
 		closedBatches := []db.ProjectBaselineAnnotationBatch{}
 		for _, b := range batches {
-			if b.Chapter != req.Chapter || b.ClosedAt.Valid {
-				continue
-			}
 			b, err = s.effectiveAnnotationBatch(ctx, b, true)
 			if err != nil {
 				writeEngineeringError(w, err)

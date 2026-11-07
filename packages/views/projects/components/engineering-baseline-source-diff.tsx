@@ -350,12 +350,13 @@ function BaselineDiffSection({
   const [dragRange, setDragRange] = useState<{ start: number; end: number; side: BaselineAnnotationSide } | null>(null);
   const dragRef = useRef<{ start: number; end: number; side: BaselineAnnotationSide } | null>(null);
   const suppressClickRef = useRef(false);
-  const before = findBaselineSourceSection(beforeContent, section.anchor);
-  const after = findBaselineSourceSection(afterContent, section.anchor);
+  const before = useMemo(() => findBaselineSourceSection(beforeContent, section.anchor), [beforeContent, section.anchor]);
+  const after = useMemo(() => findBaselineSourceSection(afterContent, section.anchor), [afterContent, section.anchor]);
   const rows = useMemo(
     () => diffBaselineSourceLines(before?.ownMarkdown ?? "", after?.ownMarkdown ?? ""),
     [before?.ownMarkdown, after?.ownMarkdown],
   );
+  const rowIndexes = useMemo(() => new Map(rows.map((row, index) => [row, index])), [rows]);
   const added = rows.filter((row) => row.kind === "added").length;
   const removed = rows.filter((row) => row.kind === "removed").length;
   const annotationsByRow = new Map<number, DisplayAnnotation[]>();
@@ -479,7 +480,7 @@ function BaselineDiffSection({
                   </tr>
                 );
               }
-              const originalIndex = rows.indexOf(displayRow);
+              const originalIndex = rowIndexes.get(displayRow)!;
               const annotations = annotationsByRow.get(originalIndex) ?? [];
               const showComposer = composer?.anchorKind === "lines" && composer.endRowIndex === originalIndex;
               return (

@@ -135,6 +135,41 @@ func TestBaselineAnnotationsCarrierAndSingleWake(t *testing.T) {
 	}
 }
 
+func TestBaselineAnnotationsActiveBatchScope(t *testing.T) {
+	f := annotationFixture(t)
+	revision := f.propose("domain_rules", "## [RULE-1] Rules\nsecret-quote\n", nil, nil)
+	body := reviewBody(f, revision)
+	first := submitReview(t, f, body)
+	for _, scope := range []string{"closed", "chapter", "project", "workspace"} {
+		cols := testutil.Cols{
+			"workspace_id": testWorkspaceID, "project_id": f.project, "chapter": "domain_rules",
+			"carrier_kind": "revision_issue", "agent_id": f.agent,
+			"created_by_type": "member", "created_by_id": testUserID,
+		}
+		switch scope {
+		case "closed":
+			cols["closed_at"], cols["close_reason"] = testutil.Raw("now()"), "manual"
+		case "chapter":
+			cols["chapter"] = "architecture"
+		case "project":
+			cols["project_id"] = uuid.NewString()
+		case "workspace":
+			cols["workspace_id"] = uuid.NewString()
+		}
+		dbfx.Insert(t, "project_baseline_annotation_batch", cols)
+	}
+	rows, err := testHandler.Queries.LabrastroListActiveAnnotationBatches(t.Context(), db.LabrastroListActiveAnnotationBatchesParams{
+		WorkspaceID: parseUUID(testWorkspaceID), ProjectID: parseUUID(f.project), Chapter: "domain_rules",
+	})
+	if err != nil || len(rows) != 1 || rows[0].ID != first.Batch.ID {
+		t.Fatalf("active batch scope: rows=%v err=%v", rows, err)
+	}
+	body["client_key"] = uuid.NewString()
+	if next := submitReview(t, f, body); next.Batch.ID != first.Batch.ID {
+		t.Fatal("history or unrelated scope changed the review carrier")
+	}
+}
+
 func TestBaselineAnnotationsValidationRepliesAndPermissions(t *testing.T) {
 	f := annotationFixture(t)
 	revision := f.propose("domain_rules", "## [RULE-1] Rules\nsecret-quote\n### Child\nnot parent lines\n", nil, nil)
