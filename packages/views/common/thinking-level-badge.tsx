@@ -72,6 +72,7 @@ function BadgeShell({
         <TooltipTrigger
           render={
             <span
+              tabIndex={0}
               className={cn(
                 "inline-flex shrink-0 cursor-default items-center gap-0.5 rounded-full border bg-muted/60 px-1.5 py-px font-mono text-micro leading-4 text-muted-foreground",
                 className,
