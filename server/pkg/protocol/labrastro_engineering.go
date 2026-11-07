@@ -1,6 +1,7 @@
 package protocol
 
 const (
-	EventProjectEngineeringUpdated = "project_engineering:updated"
-	EventProjectBaselineChanged    = "project_baseline:changed"
+	EventProjectBaselineAnnotationChanged = "project_baseline_annotation:changed"
+	EventProjectEngineeringUpdated        = "project_engineering:updated"
+	EventProjectBaselineChanged           = "project_baseline:changed"
 )

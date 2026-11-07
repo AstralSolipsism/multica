@@ -71,12 +71,18 @@ FROM issue i WHERE i.workspace_id = $1 AND i.project_id = $2 AND i.status = ANY(
 ORDER BY i.created_at, i.id LIMIT 201;
 
 -- name: LabrastroDeleteProjectEngineering :exec
-WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
+WITH annotations AS (DELETE FROM project_baseline_annotation WHERE workspace_id = $1 AND project_id = $2),
+reviews AS (DELETE FROM project_baseline_review WHERE workspace_id = $1 AND project_id = $2),
+batches AS (DELETE FROM project_baseline_annotation_batch WHERE workspace_id = $1 AND project_id = $2),
+revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
 docs AS (DELETE FROM project_baseline_doc WHERE project_baseline_doc.workspace_id = $1 AND project_baseline_doc.project_id = $2)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND project_engineering.project_id = $2;
 
 -- name: LabrastroDeleteWorkspaceEngineering :exec
-WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
+WITH annotations AS (DELETE FROM project_baseline_annotation WHERE workspace_id = $1),
+reviews AS (DELETE FROM project_baseline_review WHERE workspace_id = $1),
+batches AS (DELETE FROM project_baseline_annotation_batch WHERE workspace_id = $1),
+revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
 docs AS (DELETE FROM project_baseline_doc WHERE project_baseline_doc.workspace_id = $1)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1;
 

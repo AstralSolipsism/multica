@@ -139,6 +139,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"project_engineering":                workspaceDelete,
 	"project_baseline_doc":               workspaceDelete,
 	"project_baseline_revision":          workspaceDelete,
+	"project_baseline_annotation_batch":  workspaceDelete,
+	"project_baseline_review":            workspaceDelete,
+	"project_baseline_annotation":        workspaceDelete,
 	"project_resource":                   workspaceDelete,
 	"quick_action":                       workspaceDelete,
 	"quota_source":                       workspaceDeleteKeep, // user-scoped subscription credentials, no workspace_id

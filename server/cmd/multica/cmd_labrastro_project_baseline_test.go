@@ -716,6 +716,45 @@ func TestLabrastroBaselineExport(t *testing.T) {
 	}
 }
 
+func TestLabrastroBaselineExportAnnotationIsolation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	state := baselineTestState(baselineTestRevision("domain_rules", 1, "adopted"), nil)
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) { json.NewEncoder(w).Encode(state) })
+	export := func() map[string]string {
+		out, stderr, code := executeBaseline(t, "export", baselineTestProject, "--output", "json")
+		if code != 0 {
+			t.Fatalf("export: %d %s", code, stderr)
+		}
+		files := map[string]string{}
+		for _, file := range baselineJSON(t, out)["files"].([]any) {
+			path := file.(string)
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files[path] = string(body)
+		}
+		return files
+	}
+	before := export()
+	// Even an accidental future field on the broadcast endpoint must never
+	// enter a repository snapshot. The server separately pins a byte-identical
+	// response before/after storing annotations.
+	state["annotations"] = []map[string]string{{"note": "PRIVATE-ANNOTATION-NOTE", "quote": "PRIVATE-ANNOTATION-QUOTE"}}
+	state["annotation_batches"] = []map[string]string{{"id": "PRIVATE-BATCH"}}
+	after := export()
+	for path, body := range before {
+		if after[path] != body {
+			t.Fatalf("annotations changed exported file %s", path)
+		}
+	}
+	for _, call := range calls() {
+		if strings.Contains(call.Path, "annotation") {
+			t.Fatal("export fetched annotation data")
+		}
+	}
+}
+
 func TestLabrastroBaselineMalformedResponses(t *testing.T) {
 	for _, response := range []any{map[string]any{}, map[string]any{"chapters": []any{}}, map[string]any{"chapters": []any{map[string]any{"chapter": "domain_rules", "adopted": map[string]any{"id": "bogus"}}}}} {
 		t.Run(fmt.Sprint(response), func(t *testing.T) {
