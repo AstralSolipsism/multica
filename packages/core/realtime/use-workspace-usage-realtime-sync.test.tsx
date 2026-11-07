@@ -138,4 +138,12 @@ describe("useWorkspaceUsageRealtimeSync", () => {
     act(() => ws.emit("task:completed", { issue_id: "issue-1", chat_session_id: "chat-1" }));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: issueKeys.workspaceUsage("ws-1") });
   });
+
+  it("refreshes a quick-create completion before its event carries an issue ID", () => {
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    mount();
+    act(() => ws.emit("task:completed", { issue_id: "" }));
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: issueKeys.workspaceUsage("ws-1") });
+  });
 });
