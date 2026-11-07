@@ -130,6 +130,39 @@ func TestIssueSearch_HasMoreAndOffset(t *testing.T) {
 	}
 }
 
+func TestIssueSearch_PaginationParameterFallbacks(t *testing.T) {
+	token := "pagebounds" + uuid.NewString()[:8]
+	for i := 0; i < 52; i++ {
+		dbfx.Issue(t, fmt.Sprintf("%s %d", token, i))
+	}
+	for _, tc := range []struct {
+		params string
+		count  int
+		more   bool
+	}{
+		{"", 20, true},
+		{"&limit=1", 1, true},
+		{"&limit=50", 50, true},
+		{"&limit=51", 50, true},
+		{"&limit=0", 20, true},
+		{"&limit=-1", 20, true},
+		{"&limit=invalid", 20, true},
+		{"&limit=9999999999999999999999", 20, true},
+		{"&offset=-1", 20, true},
+		{"&offset=invalid", 20, true},
+		{"&offset=9999999999999999999999", 20, true},
+		{"&limit=20&offset=32", 20, false},
+		{"&offset=52", 0, false},
+	} {
+		t.Run(tc.params, func(t *testing.T) {
+			payload, _ := callIssueSearch(t, "q="+token+"&scope=title_desc&include_closed=true"+tc.params)
+			if len(payload.Issues) != tc.count || payload.HasMore != tc.more {
+				t.Fatalf("count/has_more = %d/%t, want %d/%t", len(payload.Issues), payload.HasMore, tc.count, tc.more)
+			}
+		})
+	}
+}
+
 func TestIssueSearch_TitleDescScopeIgnoresComments(t *testing.T) {
 	token := "titledesc" + uuid.NewString()[:8]
 	titleHit := dbfx.Issue(t, token+" title carries it", testutil.Cols{})

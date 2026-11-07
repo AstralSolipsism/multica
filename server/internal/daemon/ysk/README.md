@@ -34,10 +34,11 @@ Measured on Claude Code 2.1.292 in the daemon's `-p` stream-json mode:
   step `n - 2` asked for. The light batch therefore waits for the first step
   whose fork can see a tool result, normally step 2, where the issue the agent
   read with its first tool call is visible.
-- After that a heads-up check runs every `check_every_steps` main steps until
-  one is found. A new fork starts only when the previous one has answered or
-  has been open for 30 main steps; once a newer fork has started, the older
-  one's answer is ignored, so a run sends one heads-up at most.
+- After that heads-up checks back off geometrically (OL-1270): the first
+  check keeps `check_every_steps`, then the gap doubles each round up to 4x,
+  until a heads-up is found. A new fork starts only when the previous one has
+  answered or has been open for 30 main steps; once a newer fork has started,
+  the older one's answer is ignored, so a run sends one heads-up at most.
 - Tips the run has sent join the issue's tips and the person's known topics:
   later questions list them, and an answer repeating any of them (ignoring
   width, case and whitespace) is dropped.

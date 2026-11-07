@@ -146,7 +146,7 @@ describe('labrastro-ysk hooks', () => {
     expect(world.forks).toHaveLength(2)
     expect(world.stopReads).toHaveLength(2)
     world.stopFile = 'present'
-    for (let i = 6; i <= 8; i++) await step($, i)
+    for (let i = 6; i <= 11; i++) await step($, i)
     expect(world.forks).toHaveLength(2)
     expect(world.stopReads).toHaveLength(3)
   })
@@ -236,7 +236,7 @@ describe('labrastro-ysk hooks', () => {
     }])
   })
 
-  test('heads-up checks run every check_every_steps steps until one is found', async ($, on) => {
+  test('heads-up checks start dense and back off until one is found', async ($, on) => {
     const world = setUp(on)
     let headsUpChecks = 0
     world.answer = (prompt) => {
@@ -248,14 +248,44 @@ describe('labrastro-ysk hooks', () => {
       return { isAnswered: true, text, usage: USAGE }
     }
     await start($)
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 40; i++) {
       await step($, i)
       await world.settle()
+      if (i >= 11) {
+        expect(world.forks).toHaveLength(3)
+        expect(headsUpChecks).toBe(2)
+      }
     }
-    // Light at step 2, then checks at 5 and 8; the one at 8 finds a heads-up.
+    // Light at step 2, then checks at 5 (gap 3) and 11 (gap doubled to 6);
+    // the one at 11 finds a heads-up, preventing later checks at 23 and 35.
     expect(world.forks.map((prompt) => (prompt.includes('Up to 3 tips') ? 'light' : 'heads_up'))).toEqual(['light', 'heads_up', 'heads_up'])
     expect(kinds(world.logs)).toEqual(['heads_up'])
-    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'heads_up', step: 8, overturned: [], tips: [{ tag: 'heads_up', title: 'Cost' }] })
+    expect(JSON.parse(world.logs[0] ?? '{}')).toMatchObject({ kind: 'heads_up', step: 11, overturned: [], tips: [{ tag: 'heads_up', title: 'Cost' }] })
+  })
+
+  test('the heads-up check gap doubles each round and caps at 4x', async ($, on) => {
+    const world = setUp(on)
+    world.answer = (prompt) => ({
+      isAnswered: true,
+      text: prompt.includes('Up to 3 tips') ? '{"tips":[],"overturned":[]}' : '{"heads_up":null}',
+      usage: USAGE,
+    })
+    await start($)
+    // Which main step each new fork appeared on, snapshotted after its settle.
+    const forkSteps: number[] = []
+    let seen = 0
+    for (let i = 0; i < 60; i++) {
+      await step($, i)
+      await world.settle()
+      if (world.forks.length > seen) {
+        seen = world.forks.length
+        forkSteps.push(i)
+      }
+    }
+    // With check_every_steps=3: light at 2, then checks at 5, 11, 23, 35, 47, 59
+    // (gaps 3, 6, 12, 12, 12, 12 — doubling capped at 4x = 12).
+    expect(forkSteps).toEqual([2, 5, 11, 23, 35, 47, 59])
+    expect(world.logs).toEqual([])
   })
 
   test('a fork is never awaited by the step that started it', async ($, on) => {
@@ -363,11 +393,12 @@ describe('labrastro-ysk hooks', () => {
     ]
     world.answer = () => (failures.shift() ?? (() => ({ isAnswered: false, reason: 'aborted', usage: USAGE })))()
     await start($)
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 24; i++) {
       const response = await step($, i)
       expect(response.index).toBe(i)
       await world.settle()
     }
+    // Backoff cadence: light at 2, then checks at 5, 11 and 23 all fail.
     expect(world.forks.length).toBeGreaterThan(3)
     expect(world.logs).toEqual([])
   })

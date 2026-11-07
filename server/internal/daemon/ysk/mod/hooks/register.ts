@@ -27,12 +27,21 @@ const FORK_STALE_STEPS = 30
  * The light batch therefore waits for the first step whose fork can see a
  * tool result: on a fresh session the prompt only names the issue, and its
  * content arrives as the result of the agent's first tool call.
+ *
+ * Heads-up checks start dense and back off (OL-1270): most issues worth a
+ * heads-up show early, so the first checks keep `checkEverySteps`, then the
+ * gap doubles each round up to 4x — with checkEverySteps=6, one 120-step run
+ * asks at most 7 times (1 light + 6 heads-up) instead of 20. A found heads-up
+ * still stops the checks for good.
  */
+const BACKOFF_FACTOR = 4
+
 export class Schedule {
   private steps = 0
   private firstToolStep = -1
   private lightStep = -1
   private nextCheck = Number.POSITIVE_INFINITY
+  private checkGap = 0
   private headsUpFound = false
   private fork: { id: number; step: number } | undefined
   private forks = 0
@@ -50,11 +59,16 @@ export class Schedule {
     if (this.lightStep < 0) {
       if (this.firstToolStep < 0 || step < this.firstToolStep + 2) return undefined
       this.lightStep = step
-      if (this.checkEverySteps > 0) this.nextCheck = step + this.checkEverySteps
+      if (this.checkEverySteps > 0) {
+        this.checkGap = this.checkEverySteps
+        this.nextCheck = step + this.checkGap
+      }
       return 'light'
     }
     if (this.headsUpFound || step < this.nextCheck) return undefined
-    this.nextCheck = step + this.checkEverySteps
+    // Dense early, sparser later: double the gap each round, capped at 4x.
+    this.checkGap = Math.min(this.checkGap * 2, this.checkEverySteps * BACKOFF_FACTOR)
+    this.nextCheck = step + this.checkGap
     return 'heads_up'
   }
 
