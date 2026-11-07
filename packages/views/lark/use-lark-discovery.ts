@@ -122,6 +122,7 @@ export function useLarkTargetChats(
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [session, setSession] = useState(0);
+  const enabled = (options?.enabled ?? true) && !!wsId && !!installationId;
 
   // Debounce keystrokes into the normalized query the server binds into its
   // cursor scope (trim + case-insensitive substring, ≤100 chars enforced
@@ -143,10 +144,10 @@ export function useLarkTargetChats(
   // skipped automatically so "no matches" is only ever shown once pagination
   // really finished (has_more === false), never on an intermediate page.
   useEffect(() => {
-    if (!lastPage || lastPage.items.length > 0) return;
+    if (!enabled || !lastPage || lastPage.items.length > 0) return;
     if (isError || !hasNextPage || isFetchingNextPage) return;
     void fetchNextPage();
-  }, [lastPage, isError, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [enabled, lastPage, isError, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const restart = useCallback(() => setSession((s) => s + 1), []);
   const retry = useRetryRestart(
