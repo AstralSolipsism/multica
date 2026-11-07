@@ -7,7 +7,7 @@ import {
   planQuotaState,
   type QuotaTone,
 } from "@multica/core/runtimes";
-import type { AgentRuntime } from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import {
   Tooltip,
   TooltipContent,
@@ -15,8 +15,13 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { runtimeRowLabel, type MachineQuotaChip, type RuntimeMachine } from "./runtime-machines";
 import {
+  AccountPoolMachineChip,
+  AccountPoolTooltip,
+  accountPoolAriaLabel,
   displayRemainingPercent,
+  evaluateRuntimeAccountPools,
   formatQuotaWindowLabel,
+  IdleAccountPoolsTooltip,
   MiniMeterBar,
   MUTED_BAR_CLASS,
   quotaGroupLabel,
@@ -27,6 +32,7 @@ import {
 import { ProviderLogo } from "./provider-logo";
 import { useQuotaTimeFormatter } from "./quota-time";
 import { useT } from "../../i18n";
+import { partitionAccountPools } from "./account-pool-filter";
 
 const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
   ok: "bg-success/10 text-success",
@@ -43,12 +49,30 @@ const CHIP_GAP_PX = 6;
 export function MachineQuotaChips({
   machine,
   now,
+  agents = [],
 }: {
   machine: RuntimeMachine;
   now: number;
+  agents?: Agent[];
 }) {
-  const runtimeChips = machine.quotaChips;
-  const { containerRef, ghostRef, visibleCount } = useChipFlow(runtimeChips.length);
+  const { t } = useT("quota");
+  const partitions = new Map<string, ReturnType<typeof partitionAccountPools>>();
+  for (const runtime of machine.runtimes) {
+    const summary = evaluateRuntimeAccountPools(runtime, now);
+    if (summary) {
+      partitions.set(runtime.id, partitionAccountPools(summary.pools, agents, runtime.id));
+    }
+  }
+  const runtimeChips = machine.quotaChips.filter((chip) => {
+    if (chip.accountPoolId == null) return true;
+    const partition = partitions.get(chip.runtimeId);
+    return partition != null && (
+      !partition.filtered || partition.serving.some((pool) => pool.id === chip.accountPoolId)
+    );
+  });
+  const idlePools = Array.from(partitions.values()).flatMap((partition) => partition.idle);
+  const idleRef = useRef<HTMLSpanElement | null>(null);
+  const { containerRef, ghostRef, visibleCount } = useChipFlow(runtimeChips.length, idleRef);
   if (runtimeChips.length === 0) return null;
 
   // Keep the machine's runtime order so quota changes never reshuffle the row.
@@ -85,7 +109,7 @@ export function MachineQuotaChips({
       {hiddenCount > 0 && (
         <Tooltip>
           <TooltipTrigger render={<OverflowPill count={hiddenCount} />} />
-          <TooltipContent>
+          <TooltipContent className={hiddenChips.some((chip) => chip.accountPoolId != null) ? "w-80 max-w-[calc(100vw-2rem)] p-3" : undefined}>
             <span className="flex flex-col items-start gap-2">
               {chipsByRuntime(hiddenChips).map(({ runtimeId, chips }) => {
                 const runtime = machine.runtimes.find((r) => r.id === runtimeId);
@@ -108,13 +132,39 @@ export function MachineQuotaChips({
                         />
                       ))}
                     </span>
-                    <span className="text-xs">
-                      <QuotaChipTooltip runtime={runtime} label={label} now={now} />
+                    <span className="w-full text-xs">
+                      {chips.some((chip) => chip.accountPoolId != null) ? (
+                        chips.map((chip) => (
+                          <QuotaChipTooltip key={chip.key} runtime={runtime} label={label} now={now} chip={chip} />
+                        ))
+                      ) : (
+                        <QuotaChipTooltip runtime={runtime} label={label} now={now} />
+                      )}
                     </span>
                   </span>
                 );
               })}
             </span>
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {idlePools.length > 0 && (
+        <Tooltip>
+          <TooltipTrigger
+            closeOnClick={false}
+            render={
+              <span
+                ref={idleRef}
+                tabIndex={0}
+                aria-label={t(($) => $.account_pools.idle_count, { count: idlePools.length })}
+                className="inline-flex shrink-0 items-center rounded-full border border-dashed border-muted-foreground/40 px-2 py-0.5 text-micro text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {t(($) => $.account_pools.idle_count, { count: idlePools.length })}
+              </span>
+            }
+          />
+          <TooltipContent className="w-72 max-w-[calc(100vw-2rem)] p-3">
+            <IdleAccountPoolsTooltip pools={idlePools} />
           </TooltipContent>
         </Tooltip>
       )}
@@ -143,7 +193,10 @@ function chipsByRuntime(
 // COLUMN, never the collapsed content — otherwise every collapse shrinks
 // the container, the observer refires on the smaller budget, and the row
 // spirals down to "+N"-only.
-function useChipFlow(itemCount: number) {
+function useChipFlow(
+  itemCount: number,
+  trailingRef: React.RefObject<HTMLSpanElement | null>,
+) {
   const containerRef = useRef<HTMLSpanElement | null>(null);
   const ghostRef = useRef<HTMLSpanElement | null>(null);
   const [visibleCount, setVisibleCount] = useState(itemCount);
@@ -158,17 +211,21 @@ function useChipFlow(itemCount: number) {
       if (kids.length === 0 || !overflowGhost) return;
       const widths = kids.slice(0, -1).map((k) => k.getBoundingClientRect().width);
       const pillCost = overflowGhost.getBoundingClientRect().width + CHIP_GAP_PX;
-      setVisibleCount(
-        fitChipCount(container.clientWidth, widths, CHIP_GAP_PX, pillCost),
+      const trailingWidth = trailingRef.current?.getBoundingClientRect().width ?? 0;
+      const available = Math.max(
+        0,
+        container.clientWidth - (trailingWidth > 0 ? trailingWidth + CHIP_GAP_PX : 0),
       );
+      setVisibleCount(fitChipCount(available, widths, CHIP_GAP_PX, pillCost));
     };
     compute();
     const ro = new ResizeObserver(compute);
     if (containerRef.current) ro.observe(containerRef.current);
     // Freshness text can change width without changing the number of chips.
     if (ghostRef.current) ro.observe(ghostRef.current);
+    if (trailingRef.current) ro.observe(trailingRef.current);
     return () => ro.disconnect();
-  }, [itemCount]);
+  }, [itemCount, trailingRef]);
 
   return { containerRef, ghostRef, visibleCount };
 }
@@ -232,6 +289,11 @@ function QuotaChip({
   const { t } = useT("quota");
   const runtime = machine.runtimes.find((r) => r.id === chip.runtimeId);
   const label = runtime ? runtimeRowLabel(runtime, machine.title) : chip.provider;
+  const accountPools = runtime && chip.accountPoolId != null
+    ? evaluateRuntimeAccountPools(runtime, now)
+    : null;
+  const accountPool = accountPools?.pools.find((pool) => pool.id === chip.accountPoolId);
+  if (chip.accountPoolId != null && !accountPool) return null;
   const poolLabel = chip.group != null ? quotaGroupLabel(chip.group, t) : null;
   // The chip reads as [logo] [pool] [remaining bar] [remaining %]: the bar
   // fills with what is LEFT of the tightest constraint (fill drains as the
@@ -252,10 +314,20 @@ function QuotaChip({
       ? t(($) => $.remaining, { percent: displayRemainingPercent(state.percent) })
       : text;
   const interruptedText = chip.interrupted ? t(($) => $.collection_interrupted) : null;
-  const ariaLabel = `${poolLabel != null ? `${label} · ${poolLabel}` : label}: ${ariaValue}${
-    interruptedText != null ? ` · ${interruptedText}` : ""
-  }`;
-  const pill = (
+  const ariaLabel = accountPool
+    ? `${accountPoolAriaLabel(accountPool, t)}${interruptedText ? ` · ${interruptedText}` : ""}`
+    : `${poolLabel != null ? `${label} · ${poolLabel}` : label}: ${ariaValue}${
+        interruptedText != null ? ` · ${interruptedText}` : ""
+      }`;
+  const pill = accountPool ? (
+    <span
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={ariaLabel}
+      className="inline-flex shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <AccountPoolMachineChip pool={accountPool} interrupted={chip.interrupted} />
+    </span>
+  ) : (
     <span
       aria-label={ariaLabel}
       className={`inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-micro font-medium tabular-nums ${chip.interrupted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[chip.tone]}`}
@@ -283,9 +355,9 @@ function QuotaChip({
   if (!interactive) return pill;
   return (
     <Tooltip>
-      <TooltipTrigger render={pill} />
-      <TooltipContent>
-        <QuotaChipTooltip runtime={runtime} label={label} now={now} />
+      <TooltipTrigger render={pill} closeOnClick={accountPool ? false : undefined} />
+      <TooltipContent className={accountPool ? "w-80 max-w-[calc(100vw-2rem)] p-3" : undefined}>
+        <QuotaChipTooltip runtime={runtime} label={label} now={now} chip={chip} />
       </TooltipContent>
     </Tooltip>
   );
@@ -295,13 +367,24 @@ function QuotaChipTooltip({
   runtime,
   label,
   now,
+  chip,
 }: {
   runtime: AgentRuntime | undefined;
   label: string;
   now: number;
+  chip?: MachineQuotaChip;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
+  const accountPools = runtime && chip?.accountPoolId != null
+    ? evaluateRuntimeAccountPools(runtime, now)
+    : null;
+  const accountPool = accountPools?.pools.find((pool) => pool.id === chip?.accountPoolId);
+  if (chip?.accountPoolId != null) {
+    return accountPool ? (
+      <AccountPoolTooltip pool={accountPool} now={now} interrupted={chip.interrupted} />
+    ) : null;
+  }
   const state = runtime ? planQuotaState(runtime.plan_quota, now) : null;
   if (!state) return null;
   return (

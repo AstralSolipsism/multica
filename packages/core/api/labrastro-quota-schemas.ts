@@ -100,7 +100,7 @@ export const RuntimePlanQuotaSchema = z.object({
   observed_at: z.number().default(0),
   source: z.string().default(""),
   // Multi-account provider pools (OMP gateways). Older backends omit them.
-  account_pools: z.array(z.unknown()).catch([]),
+  account_pools: z.array(z.unknown()).catch([]).optional(),
 }).loose();
 
 export type QuotaSourceKind = "glm" | "zenmux";

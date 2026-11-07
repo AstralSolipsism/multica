@@ -858,7 +858,7 @@ export function RuntimeList({
                 {pending ? (
                   <span className="text-caption text-faint-foreground">—</span>
                 ) : (
-                  <RuntimeQuotaCell runtime={row.runtime} now={now} />
+                  <RuntimeQuotaCell runtime={row.runtime} now={now} agents={agents} />
                 )}
               </ListGridCell>
               <ListGridCell className="hidden @2xl:flex">

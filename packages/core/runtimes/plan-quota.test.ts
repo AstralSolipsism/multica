@@ -439,7 +439,7 @@ describe("formatCompactDuration", () => {
 
 // The antigravity probe reports two quota pools (gemini, claude_gpt), each
 // with a 5h and a weekly window — four buckets a flat list would leave
-// ambiguous once the short "5h"/"wk" labels repeat.
+// ambiguous once the short "5h"/"7d" labels repeat.
 describe("quota window groups", () => {
   const antigravityWindows: RuntimePlanQuotaWindow[] = [
     { name: "gemini_weekly", used_percent: 50, window_minutes: 10080, resets_at: null, group: "gemini" },
@@ -591,7 +591,8 @@ describe("multi-account provider pools (OMP)", () => {
     expect(pool.availableAccounts).toBe(2);
     expect(pool.totalAccounts).toBe(3);
     expect(pool.exhausted).toBe(false);
-    expect(pool.tone).toBe("warning");
+    expect(pool.tone).toBe("ok");
+    expect(pool.windows[0]).toMatchObject({ windowMinutes: 300, remainingPercent: 60, tone: "ok" });
     expect(pool.accounts.map((a) => a.label)).toEqual(["19*", "as*", "de*"]);
   });
 
@@ -609,8 +610,9 @@ describe("multi-account provider pools (OMP)", () => {
     ]))!;
     const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
     expect(pools.pools[0]!.exhausted).toBe(false);
+    expect(pools.pools[0]!.windows[0]!.remainingPercent).toBe(5);
     expect(pools.exhausted).toBe(false);
-    expect(pools.tone).toBe("warning");
+    expect(pools.tone).toBe("destructive");
   });
 
   it("all accounts exhausted: pool is exhausted and resumes at the earliest reset", () => {

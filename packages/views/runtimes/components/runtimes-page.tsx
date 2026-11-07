@@ -44,7 +44,7 @@ import {
   agentListOptions,
   memberListOptions,
 } from "@multica/core/workspace/queries";
-import type { AgentRuntime, MemberWithUser } from "@multica/core/types";
+import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import type { QoderConnection } from "@multica/core/runtimes/qoder";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
@@ -396,6 +396,7 @@ export function RuntimesPage({
                       bootstrapping={bootstrapping}
                       currentUserId={currentUserId ?? null}
                       members={members}
+                      agents={agents}
                       agentCount={machine.runtimes.reduce(
                         (sum, runtime) =>
                           sum + (agentCountByRuntime.get(runtime.id) ?? 0),
@@ -828,6 +829,7 @@ function MachineRow({
   bootstrapping,
   currentUserId,
   members,
+  agents,
   agentCount,
 }: {
   machine: RuntimeMachine;
@@ -835,6 +837,7 @@ function MachineRow({
   bootstrapping?: boolean;
   currentUserId: string | null;
   members: MemberWithUser[];
+  agents: Agent[];
   agentCount: number;
 }) {
   const { t } = useT("runtimes");
@@ -909,7 +912,7 @@ function MachineRow({
         <EmptyCell />
       )}
       <ListGridCell className={cn(METRICS_CELL, "gap-1.5")}>
-        <MachineQuotaChips machine={machine} now={now} />
+        <MachineQuotaChips machine={machine} now={now} agents={agents} />
       </ListGridCell>
       <ListGridCell className={METRICS_CELL}>
         <HostMetricsBars

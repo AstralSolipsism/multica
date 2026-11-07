@@ -435,7 +435,7 @@ function resetsLater(a: number | null, b: number | null): boolean {
 }
 
 /** Structured short label for a quota window: 300 → {unit:"hours",value:5}
- *  ("5h"), 10080 → {unit:"weekly"} ("wk"/"周"); generic fallback minutes /
+ *  ("5h"), 10080 → {unit:"weekly"} ("7d"); generic fallback minutes /
  *  hours / days. Null when the window carries no duration — the caller falls
  *  back to the window's own name. Presentation-neutral: the views layer maps
  *  the descriptor to its i18n strings. */
@@ -503,6 +503,8 @@ export interface QuotaAccountState {
 export interface QuotaAccountPoolState {
   id: string;
   accounts: QuotaAccountState[];
+  /** Pool-level balances aggregated across non-disabled accounts. */
+  windows: QuotaWindowState[];
   totalAccounts: number;
   availableAccounts: number;
   disabledAccounts: number;
@@ -511,6 +513,8 @@ export interface QuotaAccountPoolState {
   /** The pool's recovery time when exhausted: the earliest upcoming reset
    *  among its accounts (null when unknown or not exhausted). */
   resumesAt: number | null;
+  /** Zero-based account index owning resumesAt, for the recovery label. */
+  resumesAccountIndex: number | null;
   tone: QuotaTone;
 }
 
@@ -571,17 +575,60 @@ function evaluateQuotaAccount(
   };
 }
 
-/** Earliest upcoming reset among a pool's accounts' windows; null when none
- *  is known (unknown resets never block the known-earliest answer). */
-function earliestAccountReset(accounts: QuotaAccountState[]): number | null {
-  let earliest: number | null = null;
+/** Aggregate matching account windows by duration. Disabled credentials carry
+ *  no live balance and stay out of the mean; unknown values stay unknown
+ *  instead of being counted as zero. */
+function aggregateAccountPoolWindows(
+  accounts: QuotaAccountState[],
+): QuotaWindowState[] {
+  const groups = new Map<string, QuotaWindowState[]>();
   for (const account of accounts) {
+    if (account.status === "disabled") continue;
     for (const window of account.windows) {
-      if (window.resetsAt != null && (earliest == null || window.resetsAt < earliest)) {
-        earliest = window.resetsAt;
-      }
+      const key = window.windowMinutes != null
+        ? `duration:${window.windowMinutes}`
+        : `name:${window.name}`;
+      const group = groups.get(key) ?? [];
+      group.push(window);
+      groups.set(key, group);
     }
   }
+  return Array.from(groups.values()).map((windows) => {
+    const first = windows[0]!;
+    const measured = windows.filter((window) => window.remainingPercent != null);
+    const remainingPercent = measured.length > 0
+      ? measured.reduce((sum, window) => sum + window.remainingPercent!, 0) / measured.length
+      : null;
+    const resets = windows
+      .map((window) => window.resetsAt)
+      .filter((reset): reset is number => reset != null);
+    return {
+      name: first.name,
+      group: null,
+      windowMinutes: first.windowMinutes,
+      remainingPercent,
+      resetsAt: resets.length > 0 ? Math.min(...resets) : null,
+      resetPassedAt: null,
+      exhausted: remainingPercent === 0,
+      notApplicable: false,
+      tone: quotaTone(remainingPercent),
+    };
+  });
+}
+
+/** Earliest upcoming reset among a pool's accounts' windows; null when none
+ *  is known (unknown resets never block the known-earliest answer). */
+function earliestAccountReset(
+  accounts: QuotaAccountState[],
+): { at: number; accountIndex: number } | null {
+  let earliest: { at: number; accountIndex: number } | null = null;
+  accounts.forEach((account, accountIndex) => {
+    for (const window of account.windows) {
+      if (window.resetsAt != null && (earliest == null || window.resetsAt < earliest.at)) {
+        earliest = { at: window.resetsAt, accountIndex };
+      }
+    }
+  });
   return earliest;
 }
 
@@ -598,16 +645,20 @@ function evaluateQuotaAccountPool(
   // for what is on screen.
   const totalAccounts = Math.max(pool.total_accounts, accounts.length);
   const exhausted = availableAccounts === 0 && accounts.length > 0;
-  const resumesAt = exhausted ? earliestAccountReset(accounts) : null;
+  const recovery = exhausted ? earliestAccountReset(accounts) : null;
+  const windows = aggregateAccountPoolWindows(accounts);
+  const binding = tightest(windows);
   return {
     id: pool.id,
     accounts,
+    windows,
     totalAccounts,
     availableAccounts,
     disabledAccounts,
     exhausted,
-    resumesAt,
-    tone: exhausted ? "destructive" : availableAccounts < totalAccounts ? "warning" : "ok",
+    resumesAt: recovery?.at ?? null,
+    resumesAccountIndex: recovery?.accountIndex ?? null,
+    tone: exhausted ? "destructive" : quotaTone(binding?.remainingPercent ?? null),
   };
 }
 
@@ -628,7 +679,7 @@ export function evaluatePlanQuotaPools(
     .map((pool) => pool.resumesAt)
     .filter((at): at is number => at != null);
   const resumesAt = exhausted && resumes.length > 0 ? Math.min(...resumes) : null;
-  const tone: QuotaTone = exhausted
+  const tone: QuotaTone = exhausted || evaluated.some((pool) => pool.tone === "destructive")
     ? "destructive"
     : evaluated.some((pool) => pool.tone === "warning")
       ? "warning"

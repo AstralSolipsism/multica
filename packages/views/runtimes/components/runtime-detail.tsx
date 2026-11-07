@@ -191,7 +191,7 @@ export function RuntimeDetail({
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
-            {canReadRuntime && <RuntimeQuotaCard runtime={runtime} now={now} />}
+            {canReadRuntime && <RuntimeQuotaCard runtime={runtime} now={now} agents={agents} />}
             {canReadRuntime && <UsageSection runtime={runtime} />}
           </div>
 
