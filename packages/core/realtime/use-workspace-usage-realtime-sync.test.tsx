@@ -13,7 +13,7 @@ vi.mock("../platform/workspace-storage", () => ({
   registerForWorkspaceRehydration: () => {},
 }));
 
-type Handler = () => void;
+type Handler = (payload: Record<string, string>) => void;
 
 function createMockWs() {
   const handlers = new Map<string, Handler>();
@@ -22,7 +22,8 @@ function createMockWs() {
       handlers.set(event, handler);
       return () => handlers.delete(event);
     }),
-    emit: (event: string) => handlers.get(event)?.(),
+    emit: (event: string, payload: Record<string, string> = { issue_id: "issue-1" }) =>
+      handlers.get(event)?.(payload),
     subscribedEvents: () => [...handlers.keys()],
   };
 }
@@ -110,5 +111,31 @@ describe("useWorkspaceUsageRealtimeSync", () => {
       vi.advanceTimersByTime(30_000);
     });
     expect(invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores chat-only completions without consuming the issue refresh window", () => {
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    mount();
+    act(() => {
+      for (const event of ["task:completed", "task:failed", "task:cancelled"]) {
+        ws.emit(event, { issue_id: "", chat_session_id: "chat-1" });
+      }
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+    act(() => ws.emit("task:completed"));
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    act(() => {
+      ws.emit("task:completed", { issue_id: "", chat_session_id: "chat-1" });
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes a task linked to an issue even when it also carries chat context", () => {
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    mount();
+    act(() => ws.emit("task:completed", { issue_id: "issue-1", chat_session_id: "chat-1" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: issueKeys.workspaceUsage("ws-1") });
   });
 });
