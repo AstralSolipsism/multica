@@ -155,6 +155,19 @@ func TestLabrastroBaselineAnnotationsCommand(t *testing.T) {
 			t.Fatalf("text output missing %q:\n%s", want, out)
 		}
 	}
+	// exact annotations never carry a relocation note even though the server
+	// returns located lines for them (review #16); the empty first-review
+	// summary must not render a bare 总体说明 line (review #18).
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "定位 exact") && strings.Contains(line, "重新定位") {
+			t.Fatalf("exact annotation rendered a relocation note: %s", line)
+		}
+		// The fixture's first review has an empty summary, so the only
+		// legitimate summary line is the numbered second review's.
+		if strings.HasPrefix(strings.TrimSpace(line), "总体说明：") {
+			t.Fatalf("empty first-review summary rendered a line: %q", line)
+		}
+	}
 	if strings.Contains(out, "--with-sections") {
 		t.Fatal("sections appended without --with-sections")
 	}
@@ -232,10 +245,12 @@ func TestLabrastroBaselineRespondCommand(t *testing.T) {
 	}
 	var posted map[string]any
 	var fetchedQuery string
+	postCount := 0
 	_, _ = serveBaseline(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
 		switch {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/annotations/responses"):
 			posted = body
+			postCount++
 			json.NewEncoder(w).Encode(map[string]any{"updated": 2})
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/annotation-batches/"):
 			fetchedQuery = r.URL.RawQuery
@@ -266,7 +281,24 @@ func TestLabrastroBaselineRespondCommand(t *testing.T) {
 		t.Fatalf("ordinal not resolved to UUID: %v", first)
 	}
 
+	// Uppercase batch and annotation UUIDs (accepted by the regexp, returned
+	// lowercase by the server) must still resolve (review #17).
+	if err := os.WriteFile("upper.json", []byte(`[{"annotation":"`+strings.ToUpper(baselineTestAnnotationID)+`","response":"大写批次与引用"}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code = executeBaseline(t, "respond", baselineTestProject, "--batch", strings.ToUpper(baselineTestBatch), "--responses-file", "./upper.json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("uppercase UUIDs failed: code=%d stderr=%s", code, stderr)
+	}
+	upper := posted["responses"].([]any)[0].(map[string]any)
+	if upper["annotation_id"] != baselineTestAnnotationID {
+		t.Fatalf("uppercase reference not normalized: %v", upper)
+	}
+
 	// Rejection: missing flags, non-UUID batch, outside file, bad references.
+	// Success POSTs so far: 2 (responses.json) + 1 (upper.json). Edge cases
+	// below must not add any POST.
+	postsBefore := postCount
 	outside := filepath.Join(t.TempDir(), "outside.json")
 	if err := os.WriteFile(outside, []byte(`[]`), 0600); err != nil {
 		t.Fatal(err)
@@ -312,8 +344,8 @@ func TestLabrastroBaselineRespondCommand(t *testing.T) {
 			t.Fatalf("%s: code=%d stderr=%s", tc.name, code, stderr)
 		}
 	}
-	if posted != nil && len(posted["responses"].([]any)) != 2 {
-		t.Fatal("edge cases must not reach the server")
+	if postCount != postsBefore {
+		t.Fatalf("edge cases must not reach the server: %d extra POST(s)", postCount-postsBefore)
 	}
 }
 

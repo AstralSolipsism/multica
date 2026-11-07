@@ -254,11 +254,15 @@ func baselinePrintAnnotations(ctx context.Context, cmd *cobra.Command, client *c
 				fmt.Fprintf(&head, " · %s v%d 第 %d 行", side, a.TargetRevisionNumber, start)
 			}
 			head.WriteString(" · 定位 " + a.Location)
-			if relocatedStart, relocatedEnd, ok := baselineLocatedLines(a); ok {
-				if relocatedEnd > relocatedStart {
-					fmt.Fprintf(&head, "（已在 v%d 第 %d–%d 行重新定位）", a.Located.RevisionNumber, relocatedStart, relocatedEnd)
-				} else {
-					fmt.Fprintf(&head, "（已在 v%d 第 %d 行重新定位）", a.Located.RevisionNumber, relocatedStart)
+			// The server also returns located lines for exact same-version
+			// annotations; only moved ones carry the relocation note (5.2).
+			if a.Location == "moved" {
+				if relocatedStart, relocatedEnd, ok := baselineLocatedLines(a); ok {
+					if relocatedEnd > relocatedStart {
+						fmt.Fprintf(&head, "（已在 v%d 第 %d–%d 行重新定位）", a.Located.RevisionNumber, relocatedStart, relocatedEnd)
+					} else {
+						fmt.Fprintf(&head, "（已在 v%d 第 %d 行重新定位）", a.Located.RevisionNumber, relocatedStart)
+					}
 				}
 			}
 		case "text":
@@ -331,10 +335,11 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 			return baselineFailure(2, "each response must contain 1–1000 characters of UTF-8 text")
 		}
 	}
-	batch := strings.TrimSpace(mustString(cmd, "batch"))
+	batch := strings.ToLower(strings.TrimSpace(mustString(cmd, "batch")))
 	// Always read the batch once: ordinal resolution needs it, and UUID
 	// references must be checked against this batch so a cross-batch UUID
-	// fails locally instead of being written blind.
+	// fails locally instead of being written blind. The regexp accepts
+	// uppercase; the server returns lowercase.
 	var raw json.RawMessage
 	path := "/api/projects/" + project + "/baseline/annotation-batches/" + batch + "?state=all"
 	if err := client.GetJSON(ctx, path, &raw); err != nil {
@@ -353,7 +358,7 @@ func baselineRespond(ctx context.Context, cmd *cobra.Command, client *cli.APICli
 	}
 	responses := make([]map[string]string, 0, len(entries))
 	for _, e := range entries {
-		id := strings.TrimSpace(e.Annotation)
+		id := strings.ToLower(strings.TrimSpace(e.Annotation))
 		if !uuidRegexp.MatchString(id) {
 			n, _ := baselineAnnotationOrdinal(id)
 			id = ordinals[n]
