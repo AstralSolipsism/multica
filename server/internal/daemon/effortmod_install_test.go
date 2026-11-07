@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,9 +12,67 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/effortmod"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/jev"
 	"github.com/multica-ai/multica/server/internal/daemon/ysk"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
+
+func TestAdaptiveStartupDiscoversCatalogOnce(t *testing.T) {
+	for _, scenario := range []string{"success", "decision fallback", "discovery error", "unverified catalog"} {
+		t.Run(scenario, func(t *testing.T) {
+			reads := 0
+			original := listModels
+			listModels = func(context.Context, string, agent.Command) (agent.Catalog, error) {
+				reads++
+				if scenario == "discovery error" {
+					return agent.Catalog{}, errors.New("discovery unavailable")
+				}
+				catalog := adaptTestCatalog()
+				catalog.Fallback = scenario == "unverified catalog"
+				return catalog, nil
+			}
+			t.Cleanup(func() { listModels = original })
+			client := &countingThinkingClient{decision: jev.Decision{Level: "high"}}
+			if scenario == "decision fallback" {
+				client.err = &jev.FallbackError{Reason: jev.ReasonTimeout}
+			}
+			task := Task{ID: "startup-once"}
+			thinking := &thinkingRun{Client: client, Task: task}
+			selection := resolveTaskModelSelection(t.Context(), "claude", agent.Command{},
+				taskModelSelection{Model: "test/model", ThinkingLevel: agent.ThinkingLevelAdapt}, quietTaskLog(), thinking)
+			d := &Daemon{logger: quietTaskLog()}
+			env := &execenv.Environment{MulticaConfigRoot: t.TempDir()}
+			vars := d.prepareStepEffort(task, "claude", selection.Model, "2.1.304", agent.ThinkingLevelAdapt, selection.ThinkingLevel,
+				thinking.Candidates, env, nil, d.logger)
+			defer d.stepEffort.remove(task.ID)
+			if reads != 1 {
+				t.Errorf("startup discovered the catalog %d times, want 1", reads)
+			}
+			wantInstalled := scenario == "success" || scenario == "decision fallback"
+			if (vars != nil) != wantInstalled {
+				t.Errorf("step mod installed = %v, want %v", vars != nil, wantInstalled)
+			}
+			if wantInstalled {
+				run, ok := d.stepEffort.get(task.ID)
+				if !ok || len(run.Candidates) != len(client.request.Options) {
+					t.Fatal("step candidates differ from the run decision")
+				}
+				for i, level := range run.Candidates {
+					if level.Value != client.request.Options[i].Value {
+						t.Fatal("step candidate order differs from the run decision")
+					}
+				}
+			}
+			wantLevel := ""
+			if scenario == "success" {
+				wantLevel = "high"
+			}
+			if selection.ThinkingLevel != wantLevel {
+				t.Errorf("startup level = %q, want %q", selection.ThinkingLevel, wantLevel)
+			}
+		})
+	}
+}
 
 // TestEffortModInstallAndCoexistence locks the install contract: the mod and
 // its context land under the task config root with 0600, a stale enablement
@@ -113,22 +172,12 @@ func TestPrepareStepEffortGates(t *testing.T) {
 	env := &execenv.Environment{MulticaConfigRoot: configRoot}
 	task := Task{ID: "task-gate"}
 
-	orig := listModels
-	listModels = func(_ context.Context, _ string, _ agent.Command) (agent.Catalog, error) {
-		return agent.Catalog{Models: []agent.Model{{
-			ID:      "claude-sonnet-5-5",
-			Default: true,
-			Thinking: &agent.ModelThinking{SupportedLevels: []agent.ThinkingLevel{
-				{Value: "low"}, {Value: "medium"}, {Value: "high"},
-			}},
-		}}}, nil
-	}
-	t.Cleanup(func() { listModels = orig })
+	candidates := []agent.ThinkingLevel{{Value: "low"}, {Value: "medium"}, {Value: "high"}}
 
 	task = Task{ID: "task-gate", ThreadName: "修复调度器竞态", IssueDescription: "高并发下任务偶发被领取两次。"}
 	// Old CLI.
 	if vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.269", agent.ThinkingLevelAdapt, "low",
-		agent.Command{}, env, map[string]string{}, d.logger); vars != nil {
+		candidates, env, map[string]string{}, d.logger); vars != nil {
 		t.Fatalf("old CLI installed the mod: %v", vars)
 	}
 	if _, ok := d.stepEffort.get("task-gate"); ok {
@@ -136,13 +185,13 @@ func TestPrepareStepEffortGates(t *testing.T) {
 	}
 	// Fixed level.
 	if vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.304", "high", "high",
-		agent.Command{}, env, map[string]string{}, d.logger); vars != nil {
+		candidates, env, map[string]string{}, d.logger); vars != nil {
 		t.Fatalf("fixed level installed the mod: %v", vars)
 	}
 	// Run-level fallback (empty startup effort): the mod still installs and
 	// starts with no level.
 	vars := d.prepareStepEffort(task, "claude", "claude-sonnet-5-5", "2.1.304", agent.ThinkingLevelAdapt, "",
-		agent.Command{}, env, map[string]string{}, d.logger)
+		candidates, env, map[string]string{}, d.logger)
 	if vars == nil {
 		t.Fatal("run-level fallback kept the mod off")
 	}
@@ -162,15 +211,10 @@ func TestPrepareStepEffortGates(t *testing.T) {
 		t.Fatalf("goal is not plain-text title+description: %q", run.Goal)
 	}
 	// A single candidate keeps the mod off (adapt needs >= 2).
-	listModels = func(_ context.Context, _ string, _ agent.Command) (agent.Catalog, error) {
-		return agent.Catalog{Models: []agent.Model{{
-			ID: "claude-sonnet-5-5", Thinking: &agent.ModelThinking{SupportedLevels: []agent.ThinkingLevel{{Value: "low"}}},
-		}}}, nil
-	}
 	configRoot2 := t.TempDir()
 	env2 := &execenv.Environment{MulticaConfigRoot: configRoot2}
 	if vars := d.prepareStepEffort(Task{ID: "task-gate-2"}, "claude", "claude-sonnet-5-5", "2.1.304", agent.ThinkingLevelAdapt, "low",
-		agent.Command{}, env2, map[string]string{}, d.logger); vars != nil {
+		candidates[:1], env2, map[string]string{}, d.logger); vars != nil {
 		t.Fatalf("single candidate installed the mod: %v", vars)
 	}
 }

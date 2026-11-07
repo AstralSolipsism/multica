@@ -9180,11 +9180,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	ctx = context.WithValue(ctx, thinkingRunKey{}, thinking)
 
 	// Per-step adaptive effort (contract §6): when the run asked for _adapt,
-	// the run-level decision landed, and this Claude can rewrite per-turn
+	// the run-level candidates are available, and this Claude can rewrite per-turn
 	// effort, install the labrastro-effort mod and serve its decisions. The
 	// mod loads through the same CLAUDE_CODE_PLUGIN_DIRS as labrastro-ysk.
 	if vars := d.prepareStepEffort(task, provider, model, resolvedVersion, requestedThinkingLevel, thinkingLevel,
-		agent.NewCommand(entry.Path, profileFixedArgs), env, agentEnv, taskLog); vars != nil {
+		thinking.Candidates, env, agentEnv, taskLog); vars != nil {
 		for key, value := range vars {
 			agentEnv[key] = value
 		}
