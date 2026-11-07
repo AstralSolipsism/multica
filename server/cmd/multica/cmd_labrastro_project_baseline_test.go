@@ -128,7 +128,7 @@ func writeBaselineInput(t *testing.T) string {
 }
 
 func TestLabrastroBaselineRegistration(t *testing.T) {
-	for _, action := range []string{"get", "propose", "diff", "adopt", "export"} {
+	for _, action := range []string{"get", "propose", "diff", "adopt", "export", "annotations", "respond"} {
 		cmd, _, err := rootCmd.Find([]string{"project", "baseline", action})
 		if err != nil || cmd.Name() != action {
 			t.Fatalf("%s is not registered", action)

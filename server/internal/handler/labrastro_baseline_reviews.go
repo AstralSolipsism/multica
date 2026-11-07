@@ -498,7 +498,7 @@ func baselineReviewTicket(b db.ProjectBaselineAnnotationBatch, review db.Project
 	if appendReview {
 		return out.String()
 	}
-	fmt.Fprintf(&out, "\n### 处理规程\n1. 只修改被批注的小节；需要更多上下文时用 `get --section`，不要拉整章。\n2. 提交：`multica project baseline propose %s --chapter %s --section \"<anchor>\" --content-file … --source-issue <本任务> --base-current`；第二个及以后的小节加 `--replaces <候选号>`。\n", project, b.Chapter)
+	fmt.Fprintf(&out, "\n### 处理规程\n1. 只修改被批注的小节；需要更多上下文时用 `get --section`，不要拉整章。\n2. 提交：`multica project baseline propose %s --chapter %s --section \"<anchor>\" --content-file … --summary \"<变更说明>\" --source-issue <本任务> --base-current`；第二个及以后的小节加 `--replaces <候选号>`。\n", project, b.Chapter)
 	if revision.Status == "candidate" {
 		fmt.Fprintf(&out, "   审阅版本本身是候选，首次提交也必须加 `--replaces %d`。\n", revision.RevisionNumber)
 	}
