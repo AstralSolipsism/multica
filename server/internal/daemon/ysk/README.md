@@ -13,7 +13,7 @@ people watching an agent work. The interface contract is OL-187 section 13.
    `CLAUDE_CODE_PLUGIN_DIRS` and `MULTICA_YSK_CONTEXT_FILE` (13 C). Otherwise
    it writes and sets nothing for Claude. For OMP the daemon writes the same
    modules and context, and `piBackend` passes `hooks/omp.ts` via `--extension`.
-   The extension uses `ctx.runEphemeralTurn({ promptText, tools: false })` and
+   The extension uses `ctx.runEphemeralTurn({ promptText, tools: false, minimizeEffort: true })` and
    emits private `labrastro_ysk` JSONL frames; `piBackend` consumes them before
    transcript handling and forwards batches through `OnYouShouldKnow`.
    No side-turn message is appended to OMP history or task chat.
@@ -21,7 +21,8 @@ people watching an agent work. The interface contract is OL-187 section 13.
    their environment variables, so nested CLIs do not inherit them. Claude
    filters `agentId`; OMP filters `ctx.agent.kind === "main"`, including clones
    and Advisor tool calls. OMP side-turn failures are silent, with a 30-second
-   abort signal and cancellation at `session_shutdown`.
+   abort signal and cancellation at `session_shutdown`. Side turns request the
+   minimum reasoning effort where the provider can preserve the prompt cache.
 4. On main-thread `turn.step`s it asks `$.model.fork` (never awaited) and logs
    each batch with `$.ui.log` (13 D). `pkg/agent/labrastro_ysk.go` takes those
    `ui_log` lines out of the stream and the daemon posts them to

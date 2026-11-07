@@ -51,6 +51,21 @@ function setup(advisor = false) {
 }
 
 describe('shared exploration schedule', () => {
+  it.each([
+    { rounds: [0], lightStep: 7 },
+    { rounds: [0, 2], lightStep: 7 },
+    { rounds: [0, 2, 3], lightStep: 5 },
+  ])('waits for enough sparse exploration rounds: $rounds', ({ rounds, lightStep }) => {
+    const plan = new Schedule(0)
+    const asked: number[] = []
+    for (let step = 0; step < 12; step++) {
+      expect(plan.begin()).toBe(step)
+      if (plan.decide(step) === 'light') asked.push(step)
+      plan.end(step, rounds.includes(step))
+    }
+    expect(asked).toEqual([lightStep])
+  })
+
   it('excludes platform metadata and directory setup, including mixed commands', () => {
     for (const command of ['multica issue get x --output json', 'multica issue get x | head -20', 'multica issue comment list x', 'multica repo checkout x', 'pwd && ls', 'git status --short']) {
       expect(isExploration('bash', { command })).toBe(false)
@@ -86,7 +101,7 @@ describe('OMP extension', () => {
     }
     expect(asked).toEqual([6, 12, 24, 48])
     expect(w.frames).toMatchObject([{ kind: 'light', step: 6, overturned: [{ tip_id: 'old' }] }])
-    for (const [request] of w.ctx.runEphemeralTurn.mock.calls) expect(request).toMatchObject({ tools: false, signal: expect.any(AbortSignal) })
+    for (const [request] of w.ctx.runEphemeralTurn.mock.calls) expect(request).toMatchObject({ tools: false, minimizeEffort: true, signal: expect.any(AbortSignal) })
     for (const name of ['MULTICA_YSK_CONTEXT_FILE', 'MULTICA_OMP_YSK_EXTENSION', 'MULTICA_OMP_YSK_ADVISOR']) expect(process.env[name]).toBeUndefined()
   })
 
@@ -116,6 +131,16 @@ describe('OMP extension', () => {
     expect(w.ctx.runEphemeralTurn).toHaveBeenCalledTimes(1)
     expect(w.frames.flatMap((batch) => batch.tips)).toHaveLength(3)
     expect(w.frames.at(-1)?.overturned).toEqual([{ tip_id: 'old', reason: 'The contract changed.' }])
+  })
+
+  it('stops heads-up polling when Advisor is first discovered during the session', async () => {
+    const w = setup(false)
+    for (let i = 0; i < 6; i++) await w.turn()
+    expect(w.ctx.runEphemeralTurn).toHaveBeenCalledTimes(1)
+    w.notes([{ severity: 'nit', note: 'The index excludes archived rows.' }])
+    for (let i = 6; i < 80; i++) await w.turn()
+    expect(w.ctx.runEphemeralTurn).toHaveBeenCalledTimes(1)
+    expect(w.frames.map((batch) => batch.kind)).toEqual(['light', 'light'])
   })
 
   it('a delivered Advisor warning takes the quota before an older side answer settles', async () => {

@@ -64,7 +64,7 @@ export default function (pi: ExtensionAPI): void {
       // Fire and forget within the runtime. The extension handler never holds
       // the main turn open, and shutdown/timeout only cancel this side request.
       void ctx.runEphemeralTurn({
-        promptText, tools: false,
+        promptText, tools: false, minimizeEffort: true,
         signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(30_000)]),
       }).then((result) => {
         if (!schedule.forkSettled(fork) || stopped) return
