@@ -781,3 +781,133 @@ describe("multi-account provider pools (OMP)", () => {
     expect(isQuotaCollectionInterrupted(quota, NOW_MS)).toBe(true);
   });
 });
+
+describe("multi-account provider pools (review regressions)", () => {
+  const pool = (accounts: unknown[], overrides: Record<string, unknown> = {}) => ({
+    id: "kimi-code",
+    total_accounts: accounts.length,
+    available_accounts: 0,
+    disabled_accounts: 0,
+    status: "ok",
+    resumes_at: null,
+    accounts,
+    ...overrides,
+  });
+  const quotaOf = (pools: unknown[]) =>
+    parsePlanQuota({
+      provider: "omp",
+      status: "ok",
+      windows: [],
+      observed_at: NOW_SEC - 60,
+      source: "daemon",
+      account_pools: pools,
+    })!;
+
+  // #3: reserve is not usable (OMP stops routing to inside-reserve accounts).
+  it("reserve accounts are excluded from available", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "reserve", windows: [{ name: "5h", used_percent: 93, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+        { label: "as*", status: "ok", windows: [{ name: "5h", used_percent: 30, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+      ]),
+    ]), NOW_MS)!;
+    const p = pools.pools[0]!;
+    expect(p.availableAccounts).toBe(1);
+    expect(p.accounts[0]!.usable).toBe(false);
+    expect(p.exhausted).toBe(false);
+  });
+
+  // #4: unknown-only pool is missing evidence, not exhaustion.
+  it("a pool of only unknown accounts is not exhausted", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([{ label: "ze*", status: "unknown", windows: [], note: null }]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(false);
+    expect(pools.pools[0]!.tone).not.toBe("destructive");
+    expect(pools.exhausted).toBe(false);
+    expect(pools.tone).not.toBe("destructive");
+  });
+
+  // Mixed: unknown sibling must not flip an otherwise-exhausted pool either.
+  it("an unknown account alongside exhausted ones does not mask exhaustion", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "exhausted", windows: [{ name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+        { label: "ze*", status: "unknown", windows: [], note: null },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.exhausted).toBe(true);
+  });
+
+  // #5: recovery waits for the account's LATEST exhausted window (serial
+  // windows), then the earliest account wins.
+  it("pool recovery uses the slowest exhausted window per account", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "ca*",
+          status: "exhausted",
+          windows: [
+            { name: "5h", used_percent: 30, window_minutes: 300, resets_at: NOW_SEC + 2 * 3600 },
+            { name: "7d", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * 24 * 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    const p = pools.pools[0]!;
+    expect(p.exhausted).toBe(true);
+    // 3 days (the exhausted 7d window), NOT 2 hours (the healthy 5h one).
+    expect(p.resumesAt).toBe(NOW_SEC + 3 * 24 * 3600);
+  });
+
+  // #7: OMP-judged exhausted survives when no reset has passed (a reached
+  // spend cap below 100% is still a denial).
+  it("snapshot exhausted stands when no reset has passed", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "co*",
+          status: "exhausted",
+          windows: [
+            { name: "5h", used_percent: 97, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    const acc = pools.pools[0]!.accounts[0]!;
+    expect(acc.status).toBe("exhausted");
+    expect(acc.usable).toBe(false);
+    expect(pools.pools[0]!.exhausted).toBe(true);
+  });
+
+  // #14 (m7): a window at exactly 100% used is exhausted even when the
+  // snapshot status says ok.
+  it("a 100% window marks the account exhausted regardless of snapshot status", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        {
+          label: "19*",
+          status: "ok",
+          windows: [
+            { name: "5h", used_percent: 100, window_minutes: 300, resets_at: NOW_SEC + 3600 },
+          ],
+          note: null,
+        },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.accounts[0]!.status).toBe("exhausted");
+  });
+
+  // #14 (t1): warning accounts count as available.
+  it("warning accounts remain usable", () => {
+    const pools = evaluatePlanQuotaPools(quotaOf([
+      pool([
+        { label: "19*", status: "warning", windows: [{ name: "5h", used_percent: 85, window_minutes: 300, resets_at: NOW_SEC + 3600 }], note: null },
+      ]),
+    ]), NOW_MS)!;
+    expect(pools.pools[0]!.availableAccounts).toBe(1);
+    expect(pools.pools[0]!.exhausted).toBe(false);
+  });
+});

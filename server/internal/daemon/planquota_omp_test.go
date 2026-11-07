@@ -105,7 +105,7 @@ func TestOmpUsageToPlanQuota_MultiProviderMultiAccount(t *testing.T) {
 
 func TestOmpUsageToPlanQuota_AllAccountsExhausted(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	soon := float64((now.Unix() + 4320) * 1000)  // 1h12m
+	soon := float64((now.Unix() + 4320) * 1000) // 1h12m
 	later := float64((now.Unix() + 90000) * 1000)
 	acc := func(label string, resetMs float64) map[string]any {
 		return map[string]any{
@@ -161,7 +161,7 @@ func TestOmpUsageToPlanQuota_DisabledCredentialsAndUnknownAccounts(t *testing.T)
 		}},
 		"disabledCredentials": []any{map[string]any{
 			"provider": "anthropic", "type": "oauth", "email": "di*7*",
-			"cause":    "oauth refresh failed",
+			"cause": "oauth refresh failed",
 		}},
 	})
 	quota, err := ompUsageToPlanQuota(raw, now)
@@ -181,7 +181,7 @@ func TestOmpUsageToPlanQuota_DisabledCredentialsAndUnknownAccounts(t *testing.T)
 	if disabled == nil {
 		t.Fatalf("no disabled account in %+v", pool.Accounts)
 	}
-	if disabled.Label != "di*7*" || disabled.Note != "oauth refresh failed" {
+	if disabled.Label != "di*7*" || disabled.Note != "credential disabled; re-login required" {
 		t.Fatalf("disabled = %+v", disabled)
 	}
 }

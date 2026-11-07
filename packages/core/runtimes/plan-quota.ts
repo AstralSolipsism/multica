@@ -485,9 +485,11 @@ export function formatCompactDuration(ms: number): string {
 // then it recovers at the earliest reset among them.
 // ---------------------------------------------------------------------------
 
-/** An account is usable unless it is exhausted, disabled, or unknown. */
+/** An account is usable only in its healthy states. "reserve" (inside its
+ *  Usage Reserve) and "unknown" are NOT usable, but they are also not
+ *  evidence of exhaustion — see evaluateQuotaAccountPool. */
 export function planQuotaAccountUsable(status: PlanQuotaAccountStatus): boolean {
-  return status === "ok" || status === "warning" || status === "reserve";
+  return status === "ok" || status === "warning";
 }
 
 /** One account's display state inside a pool. */
@@ -560,10 +562,16 @@ function evaluateQuotaAccount(
   let status = account.status;
   if (anyExhausted && status !== "disabled") {
     status = "exhausted";
-  } else if (status === "exhausted" && !anyExhausted) {
-    // The snapshot said exhausted, but every used-up window has since
-    // refilled: the account recovers with its windows (same refill rule
-    // as the flat list).
+  } else if (
+    status === "exhausted" &&
+    !anyExhausted &&
+    windows.some((window) => window.resetPassedAt != null)
+  ) {
+    // The snapshot said exhausted and every used-up window has since
+    // refilled (a reset passed): the account recovers with its windows.
+    // Without a passed reset the snapshot's exhausted stands — OMP denies
+    // accounts below 100% too (e.g. a reached spend cap), and only OMP
+    // knows that.
     status = "ok";
   }
   return {
@@ -616,20 +624,22 @@ function aggregateAccountPoolWindows(
   });
 }
 
-/** Earliest upcoming reset among a pool's accounts' windows; null when none
- *  is known (unknown resets never block the known-earliest answer). */
-function earliestAccountReset(
-  accounts: QuotaAccountState[],
-): { at: number; accountIndex: number } | null {
-  let earliest: { at: number; accountIndex: number } | null = null;
-  accounts.forEach((account, accountIndex) => {
-    for (const window of account.windows) {
-      if (window.resetsAt != null && (earliest == null || window.resetsAt < earliest.at)) {
-        earliest = { at: window.resetsAt, accountIndex };
-      }
+/** Recovery time of ONE account: the LATEST reset among its exhausted
+ *  windows — an account's windows are serial (AND), so it is unusable until
+ *  the last of them resets. Null when no exhausted window discloses a
+ *  reset. */
+function accountRecovery(
+  account: QuotaAccountState,
+): number | null {
+  let latest: number | null = null;
+  for (const window of account.windows) {
+    if (!window.exhausted) continue;
+    if (window.resetsAt == null) continue;
+    if (latest == null || window.resetsAt > latest) {
+      latest = window.resetsAt;
     }
-  });
-  return earliest;
+  }
+  return latest;
 }
 
 /** OR-evaluate one provider pool. */
@@ -644,8 +654,28 @@ function evaluateQuotaAccountPool(
   // or an account failed sanitization; the evaluated list stays the truth
   // for what is on screen.
   const totalAccounts = Math.max(pool.total_accounts, accounts.length);
-  const exhausted = availableAccounts === 0 && accounts.length > 0;
-  const recovery = exhausted ? earliestAccountReset(accounts) : null;
+  // Unknown accounts are missing evidence, not exhaustion: a pool whose
+  // every account is unknown (usage endpoint failed, nothing measured)
+  // renders neutral, never "exhausted". A pool is exhausted only when it
+  // has accounts and every one of them is KNOWN-unavailable.
+  const knownAccounts = accounts.filter((account) => account.status !== "unknown").length;
+  const exhausted =
+    accounts.length > 0 &&
+    knownAccounts > 0 &&
+    availableAccounts === 0;
+  // Pool recovery: earliest per-account recovery (each account waits for
+  // its own latest exhausted-window reset).
+  let resumesAt: number | null = null;
+  let resumesAccountIndex: number | null = null;
+  if (exhausted) {
+    accounts.forEach((account, index) => {
+      const recovery = accountRecovery(account);
+      if (recovery != null && (resumesAt == null || recovery < resumesAt)) {
+        resumesAt = recovery;
+        resumesAccountIndex = index;
+      }
+    });
+  }
   const windows = aggregateAccountPoolWindows(accounts);
   const binding = tightest(windows);
   return {
@@ -656,8 +686,8 @@ function evaluateQuotaAccountPool(
     availableAccounts,
     disabledAccounts,
     exhausted,
-    resumesAt: recovery?.at ?? null,
-    resumesAccountIndex: recovery?.accountIndex ?? null,
+    resumesAt,
+    resumesAccountIndex,
     tone: exhausted ? "destructive" : quotaTone(binding?.remainingPercent ?? null),
   };
 }

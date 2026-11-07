@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -25,15 +26,23 @@ import (
 // this process, and a final "@" guard in the parser plus the protocol
 // validator keep the snapshot clean by construction.
 //
-// Output shape (omp usage-cli.ts, verified against @oh-my-pi 17.x): one
-// `report` is one ACCOUNT of one vendor (a vendor with 3 logins has 3
+// Output shape (omp usage-cli.ts, verified against @oh-my-pi 17.x/18.x):
+// one `report` is one ACCOUNT of one vendor (a vendor with 3 logins has 3
 // reports). `accountsWithoutUsage` lists stored credentials no report was
 // attributed to; `disabledCredentials` lists actionable OAuth tombstones;
-// `capacity` aggregates per-vendor per-window account capacity.
+// `capacity` aggregates per-vendor per-window account capacity. Since 18.13
+// a report may carry `policy` with `state: eligible | inside-reserve |
+// exhausted | unknown` — the account-routing view of the same limits, which
+// maps onto the protocol's account statuses (inside-reserve → reserve,
+// i.e. NOT usable: OMP keeps the remainder as reserve and stops routing).
+// `window` is OPTIONAL on a limit (cursor omits it conditionally; kimi's
+// weekly window carries resetsAt but no durationMs).
 //
 // Failure semantics follow the shared collector loop: fail-soft, log, keep
-// the last snapshot. The subprocess gets a hard timeout and a clean
-// environment.
+// the last snapshot. The subprocess gets a hard timeout and inherits the
+// daemon environment — omp is often a bun-installed `#!/usr/bin/env bun`
+// shim that needs PATH (and vendors need proxy vars), and quota collection
+// never runs untrusted code beyond the omp binary the daemon already runs.
 const (
 	ompQuotaProvider = "omp"
 	// ompUsageTimeout bounds the `omp usage` subprocess (it may hit every
@@ -45,46 +54,62 @@ const (
 var errOmpQuotaShape = errors.New("omp quota: unusable output")
 
 // ompPlanQuotaCollector runs `omp usage --json --redact` and normalizes the
-// payload. runCommand is injectable for tests.
+// payload. runCommand is injectable for tests; timeout too, so the
+// fail-soft timeout path is testable without real sleeps.
 type ompPlanQuotaCollector struct {
 	runCommand func(ctx context.Context) ([]byte, error)
 }
 
 func newOmpPlanQuotaCollector(binPath string) *ompPlanQuotaCollector {
 	return &ompPlanQuotaCollector{
-		runCommand: func(ctx context.Context) ([]byte, error) {
-			ctx, cancel := context.WithTimeout(ctx, ompUsageTimeout)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, binPath, "usage", "--json", "--redact")
-			// Clean environment: OMP resolves its own home; nothing else
-			// may influence (or leak into) the subprocess.
-			cmd.Env = []string{}
-			var stdout bytes.Buffer
-			cmd.Stdout = &stdout
-			// stderr carries progress chatter; discard it.
-			cmd.Stderr = io.Discard
-			if err := cmd.Run(); err != nil {
-				return nil, fmt.Errorf("omp usage: %w", err)
-			}
-			return stdout.Bytes(), nil
-		},
+		runCommand: newOmpUsageRunner(binPath, ompUsageTimeout),
+	}
+}
+
+// newOmpUsageRunner builds the exec runner as a separate value so tests can
+// exercise the REAL exec path (a fake omp executable) with a short timeout.
+func newOmpUsageRunner(binPath string, timeout time.Duration) func(ctx context.Context) ([]byte, error) {
+	return func(ctx context.Context) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binPath, "usage", "--json", "--redact")
+		// Inherit the daemon environment: a bun-installed omp is a
+		// `#!/usr/bin/env bun` shim that cannot resolve bun on an empty
+		// PATH (exit 127), and vendor usage endpoints may need proxy
+		// variables. Mirrors how the daemon launches omp elsewhere
+		// (pkg/agent/omp_skills.go).
+		cmd.Env = os.Environ()
+		// A killed omp may leave children holding the stdout pipe; bound
+		// how long Wait keeps draining after the kill.
+		cmd.WaitDelay = 2 * time.Second
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		// stderr carries progress chatter; discard it.
+		cmd.Stderr = io.Discard
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("omp usage: %w", err)
+		}
+		return stdout.Bytes(), nil
 	}
 }
 
 // --- omp usage --json payload (only the mapped fields) ---
 
 type ompUsagePayload struct {
-	GeneratedAt          int64                           `json:"generatedAt"`
-	Reports              []ompUsageReport                `json:"reports"`
-	AccountsWithoutUsage []ompAccountIdentity            `json:"accountsWithoutUsage"`
-	DisabledCredentials  []ompDisabledCredentialSummary  `json:"disabledCredentials"`
+	GeneratedAt          int64                              `json:"generatedAt"`
+	Reports              []ompUsageReport                   `json:"reports"`
+	AccountsWithoutUsage []ompAccountIdentity               `json:"accountsWithoutUsage"`
+	DisabledCredentials  []ompDisabledCredentialSummary     `json:"disabledCredentials"`
 	Capacity             map[string][]ompProviderWindowStat `json:"capacity"`
 }
 
 type ompUsageReport struct {
-	Provider string           `json:"provider"`
-	Limits   []ompUsageLimit  `json:"limits"`
-	Metadata *ompReportMeta   `json:"metadata"`
+	Provider string          `json:"provider"`
+	Limits   []ompUsageLimit `json:"limits"`
+	Metadata *ompReportMeta  `json:"metadata"`
+	// Policy is the per-account routing view omp ≥18.13 attaches to
+	// policy-configured accounts; nil on older omp or unconfigured ones.
+	Policy *ompUsagePolicy `json:"policy"`
 }
 
 type ompReportMeta struct {
@@ -92,17 +117,23 @@ type ompReportMeta struct {
 	AccountID string `json:"accountId"`
 }
 
+type ompUsagePolicy struct {
+	// State: eligible | inside-reserve | exhausted | unknown.
+	State string `json:"state"`
+}
+
 type ompUsageLimit struct {
 	ID     string          `json:"id"`
 	Label  string          `json:"label"`
 	Scope  ompUsageScope   `json:"scope"`
-	Window *ompUsageWindow `json:"window"`
+	Window *ompUsageWindow `json:"window"` // OPTIONAL
 	Amount ompUsageAmount  `json:"amount"`
 	Status string          `json:"status"`
 }
 
 type ompUsageScope struct {
 	AccountID string `json:"accountId"`
+	WindowID  string `json:"windowId"`
 }
 
 type ompUsageWindow struct {
@@ -197,7 +228,9 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 			Windows: windows,
 		})
 	}
-	// Stored credentials with no usage report: unknown-state accounts.
+	// Stored credentials with no usage report: unknown-state accounts. A
+	// fetch failure or an API-key-only vendor lands here; "unknown" is NOT
+	// "unavailable", so it never flips a pool to limited by itself (#4).
 	for _, account := range payload.AccountsWithoutUsage {
 		pool := poolOf(account.Provider)
 		pool.Accounts = append(pool.Accounts, protocol.RuntimePlanQuotaAccount{
@@ -211,13 +244,16 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 		pool.Accounts = append(pool.Accounts, protocol.RuntimePlanQuotaAccount{
 			Label:  ompIdentityLabel(disabled.Email, disabled.AccountID, len(pool.Accounts)),
 			Status: protocol.PlanQuotaAccountDisabled,
-			Note:   ompDisabledNote(disabled.Cause),
+			Note:   ompDisabledNote(),
 		})
 	}
 
-	// Pool counts and OR status: a pool is limited only when EVERY account
-	// is unavailable; then ResumesAt is the earliest upcoming reset among
-	// its exhausted accounts.
+	// Pool counts and OR status. A pool is limited only when it has at
+	// least one account AND every KNOWN-state account is unavailable — an
+	// unknown-only pool (usage endpoint failed, nothing measured) stays ok
+	// rather than crying "exhausted" (#4). ResumesAt is per-account "latest
+	// reset among its exhausted windows" (windows are AND inside an
+	// account), then the earliest account wins (#5).
 	anyLimited := false
 	for _, id := range order {
 		pool := pools[id]
@@ -226,21 +262,28 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 		for j := range pool.Accounts {
 			acc := &pool.Accounts[j]
 			switch acc.Status {
-			case protocol.PlanQuotaAccountOK, protocol.PlanQuotaAccountWarning, protocol.PlanQuotaAccountReserve:
+			case protocol.PlanQuotaAccountOK, protocol.PlanQuotaAccountWarning:
 				pool.AvailableAccounts++
 			case protocol.PlanQuotaAccountDisabled:
 				pool.DisabledAccounts++
 			}
-			if acc.Status != protocol.PlanQuotaAccountExhausted {
+			if acc.Status != protocol.PlanQuotaAccountExhausted && acc.Status != protocol.PlanQuotaAccountReserve {
 				continue
 			}
+			// The account recovers only after its LATEST exhausted-window
+			// reset (serial windows inside one account).
+			latest := int64(-1)
 			for k := range acc.Windows {
-				if r := acc.Windows[k].ResetsAt; r != nil && *r > observedAt.Unix() && (earliest < 0 || *r < earliest) {
-					earliest = *r
+				if r := acc.Windows[k].ResetsAt; r != nil && *r > observedAt.Unix() && *r > latest {
+					latest = *r
 				}
 			}
+			if latest > 0 && (earliest < 0 || latest < earliest) {
+				earliest = latest
+			}
 		}
-		if pool.AvailableAccounts > 0 {
+		known := pool.TotalAccounts - countAccounts(pool, protocol.PlanQuotaAccountUnknown)
+		if pool.AvailableAccounts > 0 || known == 0 {
 			pool.Status = protocol.PlanQuotaStatusOK
 		} else {
 			pool.Status = protocol.PlanQuotaStatusLimited
@@ -268,6 +311,16 @@ func ompUsageToPlanQuota(out []byte, observedAt time.Time) (*protocol.RuntimePla
 		quota.Status = protocol.PlanQuotaStatusLimited
 	}
 	return quota, nil
+}
+
+func countAccounts(pool *protocol.RuntimePlanQuotaAccountPool, status string) int {
+	n := 0
+	for i := range pool.Accounts {
+		if pool.Accounts[i].Status == status {
+			n++
+		}
+	}
+	return n
 }
 
 // ompReportLabel picks the account's redacted label: metadata.email >
@@ -302,22 +355,30 @@ func ompIdentityLabel(email, accountID string, index int) string {
 // ompAccountWindows maps one report's limits to protocol windows, bucketed
 // like OMP's own capacity view: one window per distinct duration (or window
 // id when the duration is unknown), the most-burned meter winning inside a
-// bucket. Returns the account's overall status too: exhausted when any
-// window is fully used, else the worst limit status OMP named (mapped to
-// the protocol's account statuses).
+// bucket. Returns the account's overall status too: the report-level policy
+// state wins when present (it is the routing truth); otherwise exhausted
+// when any window is fully used, else the worst limit status OMP named.
 func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol.RuntimePlanQuotaWindow, string) {
 	type bucket struct {
-		window     protocol.RuntimePlanQuotaWindow
-		usedFrac   float64
-		hasFrac    bool
-		exhausted  bool
+		window    protocol.RuntimePlanQuotaWindow
+		usedFrac  float64
+		hasFrac   bool
+		exhausted bool
 	}
 	buckets := make(map[string]*bucket)
 	var order []string
 	worst := ""
 	for i := range report.Limits {
 		limit := &report.Limits[i]
-		key := limit.Window.ID
+		// window is OPTIONAL: key by window id, else scope.windowId,
+		// else the limit's own id.
+		key := ""
+		if limit.Window != nil {
+			key = limit.Window.ID
+		}
+		if key == "" {
+			key = limit.Scope.WindowID
+		}
 		if key == "" {
 			key = limit.ID
 		}
@@ -325,16 +386,18 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 		b, ok := buckets[key]
 		if !ok {
 			w := protocol.RuntimePlanQuotaWindow{Name: ompWindowName(limit)}
-			if limit.Window != nil && limit.Window.DurationMs > 0 {
-				minutes := int64(limit.Window.DurationMs / 60000)
-				if minutes > 0 {
-					w.WindowMinutes = &minutes
-				}
+			if limit.Window != nil {
+				// resetsAt is independent of durationMs (kimi's weekly
+				// window carries only a reset time).
 				if limit.Window.ResetsAt > 0 {
 					unix := int64(limit.Window.ResetsAt / 1000)
 					if unix > observedAt.Unix() {
 						w.ResetsAt = &unix
 					}
+				}
+				minutes := ompWindowMinutes(limit.Window)
+				if minutes > 0 {
+					w.WindowMinutes = &minutes
 				}
 			}
 			b = &bucket{window: w}
@@ -363,6 +426,19 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 		}
 		windows = append(windows, b.window)
 	}
+	// Policy state is the routing truth (>=18.13): map it directly.
+	if report.Policy != nil {
+		switch report.Policy.State {
+		case "exhausted":
+			return windows, protocol.PlanQuotaAccountExhausted
+		case "inside-reserve":
+			return windows, protocol.PlanQuotaAccountReserve
+		case "eligible":
+			return windows, protocol.PlanQuotaAccountOK
+		case "unknown":
+			return windows, protocol.PlanQuotaAccountUnknown
+		}
+	}
 	if exhausted {
 		return windows, protocol.PlanQuotaAccountExhausted
 	}
@@ -370,6 +446,27 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 		worst = protocol.PlanQuotaAccountOK
 	}
 	return windows, worst
+}
+
+// ompWindowMinutes resolves a window's duration: explicit durationMs, else
+// the canonical ids (5h/300m, 7d, 30d) — kimi's weekly window reports no
+// durationMs but a canonical id.
+func ompWindowMinutes(window *ompUsageWindow) int64 {
+	if window.DurationMs > 0 {
+		minutes := int64(window.DurationMs / 60000)
+		if minutes > 0 {
+			return minutes
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(window.ID)) {
+	case "5h", "300m":
+		return 300
+	case "7d":
+		return 10080
+	case "30d":
+		return 43200
+	}
+	return 0
 }
 
 // ompLimitUsedFraction mirrors OMP's resolveUsedFraction precedence:
@@ -387,12 +484,19 @@ func ompLimitUsedFraction(limit *ompUsageLimit) (float64, bool) {
 	return f, true
 }
 
-// ompWindowName prefers the window id, then the label, then the limit's own
-// id, capped to the wire bound.
+// ompWindowName prefers the window id, then the label, then the scope's
+// window id, then the limit's own id, capped to the wire bound. Safe on a
+// nil window.
 func ompWindowName(limit *ompUsageLimit) string {
-	name := limit.Window.ID
-	if name == "" && limit.Window != nil {
-		name = limit.Window.Label
+	name := ""
+	if limit.Window != nil {
+		name = limit.Window.ID
+		if name == "" {
+			name = limit.Window.Label
+		}
+	}
+	if name == "" {
+		name = limit.Scope.WindowID
 	}
 	if name == "" {
 		name = limit.ID
@@ -435,16 +539,12 @@ func ompWorseAccountStatus(candidate, current string) bool {
 	return rank[candidate] > rank[current]
 }
 
-// ompDisabledNote compresses the tombstone cause to a bounded note.
-func ompDisabledNote(cause string) string {
-	note := strings.TrimSpace(cause)
-	if note == "" {
-		return "credential disabled; re-login required"
-	}
-	if len(note) > protocol.PlanQuotaMaxAccountNote {
-		note = note[:protocol.PlanQuotaMaxAccountNote]
-	}
-	return note
+// ompDisabledNote is a FIXED note for disabled credentials. OMP stores the
+// disable cause verbatim (unredacted upstream text); forwarding it would
+// let an identity-bearing cause reject the whole snapshot or leak org
+// names, so the protocol carries a stable message instead.
+func ompDisabledNote() string {
+	return "credential disabled; re-login required"
 }
 
 // ompPlanQuotaLoop is the daemon-loop entry point for the OMP collector.

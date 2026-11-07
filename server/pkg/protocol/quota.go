@@ -68,8 +68,10 @@ const (
 	PlanQuotaMaxAccountNote = 128
 )
 
-// Per-account status values inside a provider pool. "reserve" is accepted for
-// reporters that flag a reserve/threshold state OMP has not shipped yet.
+// Per-account status values inside a provider pool. "reserve" marks an
+// account inside its Usage Reserve (omp policy.state "inside-reserve"):
+// OMP keeps the remainder reserved and stops routing to it, so it is NOT
+// usable.
 const (
 	PlanQuotaAccountOK        = "ok"
 	PlanQuotaAccountWarning   = "warning"
