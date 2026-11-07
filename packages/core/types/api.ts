@@ -590,8 +590,7 @@ export interface ListIssuesCache {
 }
 
 export interface SearchIssueResult extends Issue {
-  /** "number" only appears with scope=title_desc, where a number-only hit has no comment fallback. */
-  match_source: "title" | "description" | "comment" | "number";
+  match_source: "title" | "description" | "comment";
   matched_snippet?: string;
   matched_description_snippet?: string;
   matched_comment_snippet?: string;

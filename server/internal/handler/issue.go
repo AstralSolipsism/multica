@@ -1082,14 +1082,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		ELSE 7
 	END`
 
-	// Under scope=title_desc there is no comment fallback; a number-only hit
-	// is neither a title nor a description match, so label it "number" rather
-	// than misleading "description" (which would also attach a description
-	// snippet that does not contain the query).
 	matchSourceParts := []string{"WHEN im.title_phrase THEN 'title'"}
-	if titleDescOnly && hasNum {
-		matchSourceParts = append(matchSourceParts, "WHEN im.number_exact THEN 'number'")
-	}
 	if len(termContainsParams) > 1 {
 		var titleTerms []string
 		for index := range termContainsParams {

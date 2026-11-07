@@ -6070,8 +6070,7 @@ func newIssueSearchTestCmd() *cobra.Command {
 	cmd.Flags().Int("offset", 0, "")
 	cmd.Flags().String("project", "", "")
 	cmd.Flags().String("scope", "all", "")
-	cmd.Flags().Bool("include-closed", true, "")
-	cmd.Flags().Bool("open-only", false, "")
+	cmd.Flags().Bool("include-closed", false, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
@@ -6097,6 +6096,7 @@ func TestRunIssueSearchSendsExpectedParams(t *testing.T) {
 	cmd := newIssueSearchTestCmd()
 	_ = cmd.Flags().Set("project", projectUUID)
 	_ = cmd.Flags().Set("scope", "title_desc")
+	_ = cmd.Flags().Set("include-closed", "true")
 	_ = cmd.Flags().Set("limit", "5")
 	_ = cmd.Flags().Set("offset", "10")
 	stderr := captureStderr(t)
@@ -6108,12 +6108,11 @@ func TestRunIssueSearchSendsExpectedParams(t *testing.T) {
 		t.Fatalf("runIssueSearch: %v", err)
 	}
 
-	// CLI defaults to include_closed=true (OL-458) and forwards every filter.
 	if gotQuery.Get("q") != "needle" {
 		t.Fatalf("q = %q", gotQuery.Get("q"))
 	}
 	if gotQuery.Get("include_closed") != "true" {
-		t.Fatalf("include_closed = %q, want true by default", gotQuery.Get("include_closed"))
+		t.Fatalf("include_closed = %q, want true when --include-closed is set", gotQuery.Get("include_closed"))
 	}
 	if gotQuery.Get("project_id") != projectUUID {
 		t.Fatalf("project_id = %q", gotQuery.Get("project_id"))
@@ -6137,7 +6136,7 @@ func TestRunIssueSearchSendsExpectedParams(t *testing.T) {
 	}
 }
 
-func TestRunIssueSearchOpenOnlyOmitsIncludeClosed(t *testing.T) {
+func TestRunIssueSearchDefaultOmitsIncludeClosedAndScope(t *testing.T) {
 	chdirWithDaemonTaskMarker(t)
 	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -6149,8 +6148,7 @@ func TestRunIssueSearchOpenOnlyOmitsIncludeClosed(t *testing.T) {
 	t.Setenv("MULTICA_TOKEN", "mat_test-token")
 
 	cmd := newIssueSearchTestCmd()
-	_ = cmd.Flags().Set("open-only", "true")
-	// Default scope must not be sent explicitly.
+	// Default scope and default include-closed=false must not be sent explicitly.
 	_ = cmd.Flags().Set("output", "table")
 	if _, err := captureStdout(t, func() error {
 		return runIssueSearch(cmd, []string{"needle"})
@@ -6158,7 +6156,7 @@ func TestRunIssueSearchOpenOnlyOmitsIncludeClosed(t *testing.T) {
 		t.Fatalf("runIssueSearch: %v", err)
 	}
 	if gotQuery.Get("include_closed") != "" {
-		t.Fatalf("include_closed = %q, want absent with --open-only", gotQuery.Get("include_closed"))
+		t.Fatalf("include_closed = %q, want absent by default", gotQuery.Get("include_closed"))
 	}
 	if gotQuery.Get("scope") != "" {
 		t.Fatalf("scope = %q, want absent for default all", gotQuery.Get("scope"))
@@ -6301,15 +6299,21 @@ func TestIssueSearchCommandRegistration(t *testing.T) {
 	if cmd != issueSearchCmd {
 		t.Fatalf("found command = %q, want issue search", cmd.CommandPath())
 	}
-	for _, name := range []string{"limit", "offset", "project", "scope", "include-closed", "open-only", "output"} {
+	for _, name := range []string{"limit", "offset", "project", "scope", "include-closed", "output"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("issue search missing --%s", name)
 		}
 	}
+	if cmd.Flags().Lookup("open-only") != nil {
+		t.Errorf("issue search should not register --open-only")
+	}
 	if flag := cmd.Flags().Lookup("project"); flag != nil && !strings.Contains(flag.Usage, "ID prefix") {
 		t.Errorf("--project usage = %q, want UUID prefix support documented", flag.Usage)
 	}
-	if def, _ := cmd.Flags().GetBool("include-closed"); !def {
-		t.Errorf("--include-closed default = false, want true (done issues searchable by default)")
+	if def, _ := cmd.Flags().GetBool("include-closed"); def {
+		t.Errorf("--include-closed default = true, want false (aligned with upstream)")
+	}
+	if !strings.Contains(cmd.Long, `"description" with --scope title_desc`) {
+		t.Errorf("issue search help Long missing scope=title_desc match_source fallback description:\n%s", cmd.Long)
 	}
 }

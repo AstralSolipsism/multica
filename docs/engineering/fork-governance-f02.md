@@ -12,11 +12,11 @@
 | 项目范围 | ListIssues 原生支持 project_id；SearchIssues 基线不支持 | 搜索补齐 project，OL-1263 已将项目条件下推到评论 CTE；不能把列表已有能力当作搜索重复功能 |
 | scope=title_desc | 基线不支持 | 明确跳过评论匹配，避免过程噪声；仍允许词项分布在标题与描述，保留 |
 | offset / has_more | SearchIssues API 原生解析 offset，但 CLI 未暴露，也不返回 has_more | CLI 透传 offset，服务端 limit+1 后切片；没有精确 COUNT 开销，保留 |
-| include_closed / open-only | 基线已有 include_closed，API 与旧 CLI 默认排除终态 | Fork CLI 默认包含终态，与前端调用一致；open-only 显式关闭，API 缺省仍排除，保留此兼容边界 |
+| include_closed | 基线已有 include_closed，API 与 CLI 默认排除终态 | 收敛对齐上游：CLI `--include-closed` 保持默认 `false`（移除分叉 `--open-only`），前端 picker 显式传 `include_closed: true` |
 | 普通列表 | project、分页、open_only、自定义状态展开、排序等主要来自上游 | `ListIssues` 本体在两个固定提交间无 F02 新增查询分支；仍检查真实 SQL，不归功于 Fork |
 | picker Query | 上游没有本次依赖编辑器的 issueSearchOptions | 已确认依赖关系可引用完成项，因此包含终态有具体调用方；limit 必须进入 Query 身份 |
 
-没有线上采用率或查询频率遥测，不将任何子能力描述为“低频应删除”。编号命中不校验前缀、默认 scope 下编号单独命中显示 comment、title_desc 下显示 number，均已有帮助与回归契约，本次不改变排名或提示含义。
+没有线上采用率或查询频率遥测，不将任何子能力描述为“低频应删除”。编号命中不校验前缀、默认 scope 下编号单独命中回退显示 comment、title_desc 下回退显示 description（移除分叉 `"number"` 枚举），与上游 PR 标准保持一致。
 
 ## ② 侵入面与克制性
 
@@ -32,7 +32,7 @@ F02 运行时代码边界为 **7 个文件（3 Go、4 TS）**，数据库迁移 
 | `packages/core/issues/queries.ts` | picker 搜索沿用 TanStack Query；发现 queryFn 使用 limit，但 queryKey 忽略 limit，30s 内另一页大小会错用缓存 |
 | `packages/core/api/client.ts` | searchIssues 透传 project/scope、AbortSignal，保持 parseWithFallback |
 | `packages/core/api/schemas.ts` | has_more 可选以兼容老服务端；match_source 是 string，能接收 number，没有枚举解析退化 |
-| `packages/core/types/api.ts` | has_more 可选；number 明确加入 match_source 类型，无破坏性改名 |
+| `packages/core/types/api.ts` | has_more 可选；match_source 保持 `"title" \| "description" \| "comment"` 与上游一致 |
 | `search_test.go` / `search_candidate_parity_test.go` | SQL 结构、绑定顺序及上游历史结果等价测试；后者验证排序、跨字段、跨评论、通配符转义 |
 | `search_ol458_test.go` / `cmd_issue_test.go` | 项目、scope、中英文多词、编号、终态、满页尾页、offset、project 错误前缀与 workspace guard |
 | `apps/docs/content/docs/cli{,.zh,.fr,.ja,.ko}.mdx` | 扩展命令示例；本次不改变该示例契约 |
@@ -82,7 +82,7 @@ F02 运行时代码边界为 **7 个文件（3 Go、4 TS）**，数据库迁移 
 | scope | 非 all/title_desc 提前报错；all 不发 | 仅 title_desc 特殊处理，未知值沿用 all，这是已发布的容错契约，未擅改成400 |
 | limit | list 1–100 越界报错；search 默认20，<=0 或 >50 截为50，JSON回显有效值；本次补帮助描述 | search 默认20/max50，list默认100/max100；非法/非正数回默认，超上限截断，保持历史行为 |
 | offset | list 拒负数；search 原先负数不发但回显负数，本次在 project 解析前拒绝 | 非法/负数回0，非负整数生效；open_only 列表无分页 |
-| include-closed / open-only | 默认包含；open-only 优先于 include-closed；显式 include-closed=false 同样排终态 | 只有字面 true 包含终态；否则批量展开 done/closed 类，含自定义及归档状态 |
+| include-closed | 默认 `false`（对齐上游，排除终态並触发终态评论剪枝）；传 `--include-closed` 时发送 `include_closed=true` | 只有字面 true 包含终态；否则批量展开 done/closed 类，含自定义及归档状态 |
 | list sort/direction | 白名单或 property:name/id；position 不接受 direction | Handler 支持更多 UI 排序字段；无效 sort 400，position 忽略 direction；CLI 子集不是遗漏接口 |
 | list status/priority | 字符串转交，未知过滤值可能为空；不是写入状态的校验路径 | UUID/actor 类型/日期/元数据/属性先校验；open_only 分支使用原生静态过滤子集 |
 

@@ -500,17 +500,15 @@ var issueSearchCmd = &cobra.Command{
 	Short: "Search issues by title, description, or comments",
 	Long: "Search issues in the current workspace. The query matches issue titles,\n" +
 		"descriptions, and comment bodies, so a conclusion that only lives in a\n" +
-		"comment thread is still findable. Use --scope title_desc to match only\n" +
-		"titles and descriptions and skip the long comment threads.\n\n" +
-		"Done and cancelled issues are included by default; use --open-only to\n" +
-		"search only issues that are still open.\n\n" +
+		"comment thread is still findable. Pass --scope title_desc to skip comments\n" +
+		"when comment threads add too much noise or slow down large workspaces.\n\n" +
 		"A bare number or an identifier-shaped query (\"412\", \"AGE-412\") matches\n" +
 		"the issue with that number. The prefix is not validated, and number\n" +
 		"matches rank first, so pasting an identifier from another tracker can\n" +
 		"put an unrelated local issue at the top of the results.\n\n" +
 		"The MATCH column (match_source in --output json) reports the strongest\n" +
 		"field that matched — title, description, or comment — and falls back to\n" +
-		"\"comment\" for a number-only hit (\"number\" with --scope title_desc,\n" +
+		"\"comment\" for a number-only hit (\"description\" with --scope title_desc,\n" +
 		"where comments are skipped). Treat it as a display hint, not a\n" +
 		"filter.\n\n" +
 		"Results are paginated: --output json reports has_more, and --offset\n" +
@@ -802,8 +800,7 @@ func init() {
 	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
 	issueSearchCmd.Flags().String("project", "", "Filter by project UUID or ID prefix")
 	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
-	issueSearchCmd.Flags().Bool("include-closed", true, "Include done and cancelled issues (default; kept for compatibility with older flag habits)")
-	issueSearchCmd.Flags().Bool("open-only", false, "Search only issues that are not done or cancelled (overrides --include-closed)")
+	issueSearchCmd.Flags().Bool("include-closed", false, "Include done and cancelled issues")
 	issueSearchCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue subscriber list
@@ -3209,12 +3206,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	if scope != "all" && scope != "title_desc" {
 		return fmt.Errorf("invalid --scope %q: valid values are all, title_desc", scope)
 	}
-	if scope == "all" {
-		// Never send the default explicitly; the server treats absence as all.
-		scope = ""
-	}
 
-	openOnly, _ := cmd.Flags().GetBool("open-only")
 	includeClosed, _ := cmd.Flags().GetBool("include-closed")
 
 	limit, _ := cmd.Flags().GetInt("limit")
@@ -3236,13 +3228,10 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	if offset > 0 {
 		params.Set("offset", fmt.Sprintf("%d", offset))
 	}
-	// Terminal issues are searchable by default (matching the frontend's
-	// include_closed: true); --open-only is the opt-out, and --include-closed
-	// keeps working for callers that pass it explicitly.
-	if !openOnly && includeClosed {
+	if includeClosed {
 		params.Set("include_closed", "true")
 	}
-	if scope != "" {
+	if scope == "title_desc" {
 		params.Set("scope", scope)
 	}
 	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
