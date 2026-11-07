@@ -209,6 +209,38 @@ func TestIssueSearch_TitleDescScopeMultiWordQueries(t *testing.T) {
 	if got := searchIDs(t, projPayload); len(got) != 1 || got[0] != inProject {
 		t.Fatalf("multi-word + project title_desc search = %v, want only %s", got, inProject)
 	}
+
+	// Terms split across title and description must still match under
+	// scope=title_desc, while missing a term or relying on a comment for the
+	// second term must not match under scope=title_desc.
+	splitA := "splitalpha" + uuid.NewString()[:8]
+	splitB := "splitbeta" + uuid.NewString()[:8]
+	crossField := dbfx.Issue(t, splitA+" in title only", testutil.Cols{
+		"description": "description carries " + splitB,
+	})
+	missingSecond := dbfx.Issue(t, splitA+" without the other term", testutil.Cols{
+		"description": "unrelated description body",
+	})
+	commentCarriesSecond := dbfx.Issue(t, splitA+" in title", testutil.Cols{
+		"description": "unrelated description body",
+	})
+	dbfx.Comment(t, commentCarriesSecond, "comment carries "+splitB)
+
+	splitTitleDesc, _ := callIssueSearch(t, "q="+url.QueryEscape(splitA+" "+splitB)+"&scope=title_desc&include_closed=true&limit=50")
+	gotSplitTitleDesc := searchIDs(t, splitTitleDesc)
+	if len(gotSplitTitleDesc) != 1 || gotSplitTitleDesc[0] != crossField {
+		t.Fatalf("cross-field multi-word title_desc search = %v, want only [%s] (excluding missing=%s and comment-complement=%s)",
+			gotSplitTitleDesc, crossField, missingSecond, commentCarriesSecond)
+	}
+
+	splitAll, _ := callIssueSearch(t, "q="+url.QueryEscape(splitA+" "+splitB)+"&include_closed=true&limit=50")
+	gotSplitAll := searchIDs(t, splitAll)
+	if !searchOL458Contains(gotSplitAll, crossField) || !searchOL458Contains(gotSplitAll, commentCarriesSecond) {
+		t.Fatalf("default scope multi-word search = %v, want both %s and %s", gotSplitAll, crossField, commentCarriesSecond)
+	}
+	if searchOL458Contains(gotSplitAll, missingSecond) {
+		t.Fatalf("default scope multi-word search unexpectedly matched %s: %v", missingSecond, gotSplitAll)
+	}
 }
 
 func TestIssueSearch_TitleDescScopeNumberHitMatchSource(t *testing.T) {

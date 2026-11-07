@@ -6313,4 +6313,7 @@ func TestIssueSearchCommandRegistration(t *testing.T) {
 	if def, _ := cmd.Flags().GetBool("include-closed"); def {
 		t.Errorf("--include-closed default = true, want false (aligned with upstream)")
 	}
+	if !strings.Contains(cmd.Long, `"description" with --scope title_desc`) {
+		t.Errorf("issue search help Long missing scope=title_desc match_source fallback description:\n%s", cmd.Long)
+	}
 }

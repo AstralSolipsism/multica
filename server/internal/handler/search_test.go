@@ -661,6 +661,10 @@ func TestBuildSearchQuery_TitleDescScopeDropsComments(t *testing.T) {
 	if !strings.Contains(query, "im.title_phrase") || !strings.Contains(query, "im.description_phrase") {
 		t.Fatalf("title_desc scope dropped title/description eligibility:\n%s", query)
 	}
+	const wantMultiTermEligible = "((im.title_term_0 OR im.description_term_0) AND (im.title_term_1 OR im.description_term_1))"
+	if !strings.Contains(query, wantMultiTermEligible) {
+		t.Fatalf("title_desc scope missing cross-title/description multi-term eligibility %q:\n%s", wantMultiTermEligible, query)
+	}
 
 	// Default scope keeps comments.
 	all, _ := buildSearchQuery("foo bar", []string{"foo", "bar"}, 0, false, false, nil, pgtype.UUID{}, false)

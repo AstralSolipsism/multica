@@ -508,7 +508,8 @@ var issueSearchCmd = &cobra.Command{
 		"put an unrelated local issue at the top of the results.\n\n" +
 		"The MATCH column (match_source in --output json) reports the strongest\n" +
 		"field that matched — title, description, or comment — and falls back to\n" +
-		"\"comment\" for a number-only hit. Treat it as a display hint, not a\n" +
+		"\"comment\" for a number-only hit (\"description\" with --scope title_desc,\n" +
+		"where comments are skipped). Treat it as a display hint, not a\n" +
 		"filter.\n\n" +
 		"Results are paginated: --output json reports has_more, and --offset\n" +
 		"advances by the number of issues in that same response.",
