@@ -19,6 +19,8 @@ describe("parseOmpRuntimeConfig", () => {
         advisor_enabled: true,
         advisor_review_mode: "agent-end",
         execution_mode: "plan_yolo",
+        memory_backend: "mnemopi",
+        autolearn_enabled: true,
       }),
     ).toEqual({
       smolModel: "zai/glm-5.3-flash",
@@ -28,6 +30,8 @@ describe("parseOmpRuntimeConfig", () => {
       advisorEnabled: true,
       advisorReviewMode: "agent-end",
       executionMode: "plan_yolo",
+      memoryBackend: "mnemopi",
+      autolearnEnabled: true,
     });
   });
 
@@ -44,6 +48,15 @@ describe("parseOmpRuntimeConfig", () => {
     expect(parseOmpRuntimeConfig({ execution_mode: "standard" })).toEqual({});
   });
 
+  it("normalizes the off memory backend away and rejects unknown values", () => {
+    expect(parseOmpRuntimeConfig({ memory_backend: "off" })).toEqual({});
+    expect(parseOmpRuntimeConfig({ memory_backend: "sqlite" })).toEqual({});
+    expect(parseOmpRuntimeConfig({ memory_backend: "sharpshooter" })).toEqual({
+      memoryBackend: "sharpshooter",
+    });
+    expect(parseOmpRuntimeConfig({ autolearn_enabled: false })).toEqual({});
+  });
+
   it("keeps an explicitly disabled advisor out of the parsed state", () => {
     expect(
       parseOmpRuntimeConfig({ advisor_enabled: false, execution_mode: "prewalk" }),
@@ -57,12 +70,17 @@ describe("parseOmpRuntimeConfig", () => {
       advisor_review_mode: "turn",
       execution_mode: "prewalk",
       handoff_model: "zai/glm-5.3",
+      memory_backend: "mnemopi",
+      autolearn_enabled: true,
     };
     expect(
       serializeOmpRuntimeConfig(parseOmpRuntimeConfig(original)),
     ).toEqual(original);
     // Defaults serialize to an empty payload.
     expect(serializeOmpRuntimeConfig({})).toEqual({});
+    expect(
+      serializeOmpRuntimeConfig({ memoryBackend: "off", autolearnEnabled: false }),
+    ).toEqual({});
   });
 });
 
@@ -82,6 +100,12 @@ describe("ompRuntimeConfigEquals", () => {
     expect(
       ompRuntimeConfigEquals({ executionMode: "standard" }, { executionMode: "prewalk" }),
     ).toBe(false);
+    expect(
+      ompRuntimeConfigEquals({ memoryBackend: "off" }, { memoryBackend: "mnemopi" }),
+    ).toBe(false);
+    expect(
+      ompRuntimeConfigEquals({ autolearnEnabled: true }, { autolearnEnabled: false }),
+    ).toBe(false);
   });
 });
 
@@ -92,6 +116,8 @@ describe("stripOmpRuntimeConfig", () => {
         qoder_agent_id: "agent_1",
         smol_model: "zai/glm-5.3-flash",
         advisor_enabled: true,
+        memory_backend: "mnemopi",
+        autolearn_enabled: true,
         mode: "gateway",
       }),
     ).toEqual({ qoder_agent_id: "agent_1", mode: "gateway" });

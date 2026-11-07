@@ -384,7 +384,17 @@
       "handoff_required": "この実行モードでは引き継ぎ先モデルを選択してください。",
       "same_main_model": "メインモデルと同じため、この追加ロールでは作業を分担できません。",
       "model_inherit_main": "メインモデルを継承",
-      "create_section": "OMP 連携（任意）"
+      "create_section": "OMP 連携（任意）",
+      "memory": "メモリーと自動学習",
+      "memory_backend": "メモリーバックエンド",
+      "memory_off": "オフ",
+      "memory_off_hint": "経験メモリーなし。実行ごとにゼロから始まります。",
+      "memory_sharpshooter": "Sharpshooter",
+      "memory_sharpshooter_hint": "ロールバックと修正の教訓のみを記録します。",
+      "memory_mnemopi": "Mnemopi",
+      "memory_mnemopi_hint": "多言語検索対応の完全なローカル経験ストア。",
+      "autolearn_enabled": "スキルの自動学習",
+      "autolearn_hint": "再利用可能なフローを管理スキルとして抽出することを許可します。"
     },
     "inspector": {
       "title": "連携戦略",
@@ -397,7 +407,10 @@
       "execution_plan_yolo": "Plan-Yolo → {{model}}",
       "execution_prewalk": "Prewalk → {{model}}",
       "plan": "計画: {{model}}",
-      "handoff_missing": "未設定"
+      "handoff_missing": "未設定",
+      "memory_sharpshooter": "メモリー: Sharpshooter",
+      "memory_mnemopi": "メモリー: Mnemopi",
+      "autolearn": "自動学習: オン"
     }
   },
   "conversation_starters": {

@@ -63,12 +63,13 @@ function renderPanel({
 afterEach(cleanup);
 
 describe("OmpRuntimeConfigPanel", () => {
-  it("renders exactly the three configuration groups for OMP", () => {
+  it("renders exactly the four configuration groups for OMP", () => {
     renderPanel();
 
     expect(screen.getByText("Model roles")).toBeInTheDocument();
     expect(screen.getByText("Advisor reviewer")).toBeInTheDocument();
     expect(screen.getByText("Execution mode")).toBeInTheDocument();
+    expect(screen.getByText("Memory & auto-learn")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Plan model (optional)" })).toBeNull();
   });
 
@@ -153,6 +154,39 @@ describe("OmpRuntimeConfigPanel", () => {
     expect(screen.getAllByRole("note")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("switches the memory backend and normalizes off away", () => {
+    const { onChange } = renderPanel();
+
+    expect(screen.getByRole("radio", { name: /^Off/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Sharpshooter/ }));
+
+    expect(onChange).toHaveBeenCalledWith({ memoryBackend: "sharpshooter" });
+  });
+
+  it("normalizes a selected memory backend back to off", () => {
+    const { onChange } = renderPanel({ value: { memoryBackend: "mnemopi" } });
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Off/ }));
+
+    expect(onChange).toHaveBeenCalledWith({ memoryBackend: undefined });
+  });
+
+  it("enables auto-learn from the switch", () => {
+    const { onChange } = renderPanel();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Auto-learn managed skills" }));
+
+    expect(onChange).toHaveBeenCalledWith({ autolearnEnabled: true });
+  });
+
+  it("normalizes a disabled auto-learn switch away", () => {
+    const { onChange } = renderPanel({ value: { autolearnEnabled: true } });
+
+    fireEvent.click(screen.getByRole("switch", { name: "Auto-learn managed skills" }));
+
+    expect(onChange).toHaveBeenCalledWith({ autolearnEnabled: undefined });
+  });
 });
 
 describe("OmpRuntimeConfigSummary", () => {
@@ -179,6 +213,25 @@ describe("OmpRuntimeConfigSummary", () => {
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+  });
+
+  it("renders memory and auto-learn chips when enabled", () => {
+    const { rerender } = renderWithI18n(
+      <OmpRuntimeConfigSummary
+        config={{ memoryBackend: "mnemopi", autolearnEnabled: true }}
+      />,
+    );
+
+    expect(screen.getByText("Memory: Mnemopi")).toBeInTheDocument();
+    expect(screen.getByText("Auto-Learn: On")).toBeInTheDocument();
+
+    rerender(
+      <OmpRuntimeConfigSummary
+        config={{ memoryBackend: "sharpshooter", autolearnEnabled: false }}
+      />,
+    );
+    expect(screen.getByText("Memory: Sharpshooter")).toBeInTheDocument();
+    expect(screen.queryByText(/Auto-Learn/)).toBeNull();
   });
 
   it("omits inactive roles and renders the empty state", () => {

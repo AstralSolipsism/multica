@@ -67,7 +67,7 @@ func TestBuildOmpArgsRuntimeMapping(t *testing.T) {
 		ExecutionMode:     "plan_yolo",
 	}}
 	args := buildOmpArgs("", dir, opts, slog.Default())
-	overlay := filepath.Join(dir, ompAdvisorOverlayName)
+	overlay := filepath.Join(dir, ompSettingsOverlayName)
 	want := []string{
 		"-p", "--mode", "json", "--session-dir", dir,
 		"--smol", "zai/glm-5.3-flash",
@@ -105,7 +105,7 @@ func TestBuildOmpArgsPrewalkAndResume(t *testing.T) {
 		AdvisorEnabled:    true,
 		AdvisorReviewMode: "turn",
 	}}, slog.Default())
-	if i := slices.Index(adv, "--config"); i < 0 || adv[i+1] != filepath.Join(filepath.Dir(resume), ompAdvisorOverlayName) {
+	if i := slices.Index(adv, "--config"); i < 0 || adv[i+1] != filepath.Join(filepath.Dir(resume), ompSettingsOverlayName) {
 		t.Fatalf("resume overlay path wrong: %v", adv)
 	}
 }
@@ -120,7 +120,7 @@ func TestBuildOmpArgsCustomArgsOverride(t *testing.T) {
 			AdvisorEnabled: true,
 		},
 		CustomArgs: []string{
-			"--smol=kimi-code/k2.5",         // inline-value form wins
+			"--smol=kimi-code/k2.5",                  // inline-value form wins
 			"--plan-yolo-into", "openai/gpt-6-astra", // separate-value form wins
 			"--tools", "read",
 		},
@@ -159,11 +159,98 @@ func TestBuildOmpArgsNilRuntimeUnchanged(t *testing.T) {
 	}
 }
 
-func TestPrepareOmpAdvisorOverlaySkips(t *testing.T) {
-	if path, err := prepareOmpAdvisorOverlay("", "", nil); err != nil || path != "" {
+func TestPrepareOmpSettingsOverlaySkips(t *testing.T) {
+	if path, err := prepareOmpSettingsOverlay("", "", nil); err != nil || path != "" {
 		t.Fatalf("nil opts: %q, %v", path, err)
 	}
-	if path, err := prepareOmpAdvisorOverlay("", t.TempDir(), &OmpRuntimeOpts{AdvisorEnabled: true}); err != nil || path != "" {
+	if path, err := prepareOmpSettingsOverlay("", t.TempDir(), &OmpRuntimeOpts{AdvisorEnabled: true}); err != nil || path != "" {
 		t.Fatalf("advisor without review mode must not write an overlay: %q, %v", path, err)
+	}
+	if path, err := prepareOmpSettingsOverlay("", t.TempDir(), &OmpRuntimeOpts{MemoryBackend: ""}); err != nil || path != "" {
+		t.Fatalf("memory off must not write an overlay: %q, %v", path, err)
+	}
+}
+
+func TestPrepareOmpSettingsOverlayMemoryAndAutolearn(t *testing.T) {
+	readOverlay := func(t *testing.T, dir string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dir, ompSettingsOverlayName))
+		if err != nil {
+			t.Fatalf("overlay missing: %v", err)
+		}
+		return string(data)
+	}
+
+	t.Run("sharpshooter", func(t *testing.T) {
+		dir := t.TempDir()
+		path, err := prepareOmpSettingsOverlay("", dir, &OmpRuntimeOpts{MemoryBackend: "sharpshooter"})
+		if err != nil || path == "" {
+			t.Fatalf("overlay: %q, %v", path, err)
+		}
+		if got := readOverlay(t, dir); got != "memory:\n  backend: sharpshooter\n" {
+			t.Fatalf("overlay = %q", got)
+		}
+	})
+
+	t.Run("mnemopi", func(t *testing.T) {
+		dir := t.TempDir()
+		path, err := prepareOmpSettingsOverlay("", dir, &OmpRuntimeOpts{MemoryBackend: "mnemopi"})
+		if err != nil || path == "" {
+			t.Fatalf("overlay: %q, %v", path, err)
+		}
+		want := "memory:\n  backend: mnemopi\nmnemopi:\n  scoping: per-project-tagged\n  embeddingVariant: multilingual\n"
+		if got := readOverlay(t, dir); got != want {
+			t.Fatalf("overlay = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("autolearn and advisor combined", func(t *testing.T) {
+		dir := t.TempDir()
+		path, err := prepareOmpSettingsOverlay("", dir, &OmpRuntimeOpts{
+			AdvisorEnabled:    true,
+			AdvisorReviewMode: "turn",
+			AutolearnEnabled:  true,
+		})
+		if err != nil || path == "" {
+			t.Fatalf("overlay: %q, %v", path, err)
+		}
+		want := "advisor:\n  reviewMode: turn\nautolearn:\n  enabled: true\n  autoContinue: true\n"
+		if got := readOverlay(t, dir); got != want {
+			t.Fatalf("overlay = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("full stack rides one --config", func(t *testing.T) {
+		dir := t.TempDir()
+		args := buildOmpArgs("", dir, ExecOptions{OmpRuntime: &OmpRuntimeOpts{
+			AdvisorEnabled:    true,
+			AdvisorReviewMode: "agent-end",
+			MemoryBackend:     "mnemopi",
+			AutolearnEnabled:  true,
+		}}, slog.Default())
+		if strings.Count(strings.Join(args, " "), "--config") != 1 {
+			t.Fatalf("expected exactly one --config: %v", args)
+		}
+	})
+}
+
+func TestDecodeOmpRuntimeConfigMemory(t *testing.T) {
+	logger := slog.Default()
+	cfg := DecodeOmpRuntimeConfig(json.RawMessage(`{
+		"memory_backend":"mnemopi",
+		"autolearn_enabled":true
+	}`), logger)
+	if cfg == nil || cfg.MemoryBackend != "mnemopi" || !cfg.AutolearnEnabled {
+		t.Fatalf("decode: %+v", cfg)
+	}
+	// "off" and unknown backends normalize away; a bare autolearn flag still
+	// keeps the config alive.
+	off := DecodeOmpRuntimeConfig(json.RawMessage(`{"memory_backend":"off","autolearn_enabled":false}`), logger)
+	if off != nil {
+		t.Fatalf("all-default payload must decode to nil: %+v", off)
+	}
+	bad := DecodeOmpRuntimeConfig(json.RawMessage(`{"memory_backend":"sqlite"}`), logger)
+	if bad != nil {
+		t.Fatalf("unknown memory_backend must degrade to nil: %+v", bad)
 	}
 }

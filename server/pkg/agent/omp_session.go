@@ -34,7 +34,7 @@ func buildOmpArgs(sessionPath, sessionDir string, opts ExecOptions, logger *slog
 	// above only drops daemon-owned session flags, never the role flags.
 	// The advisor overlay is written next to buildOmpArgs so argv and file
 	// stay in lockstep even on resume runs.
-	overlayPath, err := prepareOmpAdvisorOverlay(sessionPath, sessionDir, opts.OmpRuntime)
+	overlayPath, err := prepareOmpSettingsOverlay(sessionPath, sessionDir, opts.OmpRuntime)
 	if err != nil {
 		if logger != nil {
 			logger.Warn("omp runtime_config: advisor overlay unavailable; launching without review-mode override", "error", err)

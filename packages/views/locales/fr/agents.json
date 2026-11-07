@@ -558,7 +558,17 @@
       "handoff_required": "Sélectionnez un modèle de relais pour ce mode d'exécution.",
       "same_main_model": "Ce modèle est identique au modèle principal ; ce rôle supplémentaire ne délèguera pas le travail.",
       "model_inherit_main": "Hériter du modèle principal",
-      "create_section": "Collaboration OMP (facultatif)"
+      "create_section": "Collaboration OMP (facultatif)",
+      "memory": "Mémoire et apprentissage",
+      "memory_backend": "Backend de mémoire",
+      "memory_off": "Désactivée",
+      "memory_off_hint": "Aucune mémoire d'expérience ; chaque exécution repart de zéro.",
+      "memory_sharpshooter": "Sharpshooter",
+      "memory_sharpshooter_hint": "N'enregistre que les leçons de rollback et de correction.",
+      "memory_mnemopi": "Mnemopi",
+      "memory_mnemopi_hint": "Base d'expérience locale complète avec recherche multilingue.",
+      "autolearn_enabled": "Apprentissage automatique des skills",
+      "autolearn_hint": "Permet à l'agent de distiller des flux réutilisables en skills gérés."
     },
     "inspector": {
       "title": "Collaboration",
@@ -571,7 +581,10 @@
       "execution_plan_yolo": "Plan-Yolo → {{model}}",
       "execution_prewalk": "Prewalk → {{model}}",
       "plan": "Plan : {{model}}",
-      "handoff_missing": "Non défini"
+      "handoff_missing": "Non défini",
+      "memory_sharpshooter": "Mémoire : Sharpshooter",
+      "memory_mnemopi": "Mémoire : Mnemopi",
+      "autolearn": "Auto-Learn : activé"
     }
   },
   "conversation_starters": {

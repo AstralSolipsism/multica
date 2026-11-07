@@ -542,7 +542,17 @@
       "handoff_required": "该模式需要指定换手施工模型。",
       "same_main_model": "与主模型相同，无法起到分流或换手的作用。",
       "model_inherit_main": "继承主模型",
-      "create_section": "OMP 协同策略（可选）"
+      "create_section": "OMP 协同策略（可选）",
+      "memory": "记忆与技能沉淀",
+      "memory_backend": "经验记忆模式",
+      "memory_off": "关闭",
+      "memory_off_hint": "不沉淀经验记忆，每次运行从零开始。",
+      "memory_sharpshooter": "仅记录踩坑与纠偏教训",
+      "memory_sharpshooter_hint": "摩擦门控错题本，仅记录回滚与纠偏教训。",
+      "memory_mnemopi": "全量本地经验知识库",
+      "memory_mnemopi_hint": "本地语义经验库，支持跨项目与中文检索。",
+      "autolearn_enabled": "自动提炼与演进技能",
+      "autolearn_hint": "允许智能体提炼可复用流程并创建受管技能。"
     },
     "inspector": {
       "title": "协同策略",
@@ -555,7 +565,10 @@
       "execution_plan_yolo": "Plan-Yolo → {{model}}",
       "execution_prewalk": "Prewalk → {{model}}",
       "plan": "规划：{{model}}",
-      "handoff_missing": "未设置"
+      "handoff_missing": "未设置",
+      "memory_sharpshooter": "Memory：Sharpshooter",
+      "memory_mnemopi": "Memory：Mnemopi",
+      "autolearn": "Auto-Learn：开启"
     }
   },
   "conversation_starters": {

@@ -254,6 +254,50 @@ export function OmpRuntimeConfigPanel({
           ) : null}
         </SettingsCard>
       </SettingsSection>
+
+      <SettingsSection title={t(($) => $.omp.panel.memory)}>
+        <SettingsCard>
+          <SettingsRow
+            label={t(($) => $.omp.panel.memory_backend)}
+            size="none"
+            align="start"
+          >
+            <div
+              role="radiogroup"
+              aria-label={t(($) => $.omp.panel.memory_backend)}
+              className="grid min-w-0 gap-2 sm:w-96"
+            >
+              {(["off", "sharpshooter", "mnemopi"] as const).map((backend) => (
+                <Choice
+                  key={backend}
+                  name={`${id}-memory-backend`}
+                  value={backend}
+                  selected={(value.memoryBackend ?? "off") === backend}
+                  title={t(($) => $.omp.panel[`memory_${backend}`])}
+                  description={t(($) => $.omp.panel[`memory_${backend}_hint`])}
+                  disabled={!canEdit}
+                  onSelect={() =>
+                    set({ memoryBackend: backend === "off" ? undefined : backend })
+                  }
+                />
+              ))}
+            </div>
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.omp.panel.autolearn_enabled)}
+            description={t(($) => $.omp.panel.autolearn_hint)}
+          >
+            <Switch
+              checked={value.autolearnEnabled === true}
+              disabled={!canEdit}
+              aria-label={t(($) => $.omp.panel.autolearn_enabled)}
+              onCheckedChange={(autolearnEnabled) =>
+                set({ autolearnEnabled: autolearnEnabled || undefined })
+              }
+            />
+          </SettingsRow>
+        </SettingsCard>
+      </SettingsSection>
     </div>
   );
 }
@@ -412,6 +456,19 @@ export function OmpRuntimeConfigSummary({ config }: { config: OmpRuntimeConfig }
       const model = config.planModel;
       chips.push(t(($) => $.omp.inspector.plan, { model: shortModel(model) }));
     }
+  }
+  if (config.memoryBackend === "sharpshooter" || config.memoryBackend === "mnemopi") {
+    chips.push(
+      t(
+        ($) =>
+          config.memoryBackend === "sharpshooter"
+            ? $.omp.inspector.memory_sharpshooter
+            : $.omp.inspector.memory_mnemopi,
+      ),
+    );
+  }
+  if (config.autolearnEnabled) {
+    chips.push(t(($) => $.omp.inspector.autolearn));
   }
   if (chips.length === 0) {
     return (

@@ -558,7 +558,17 @@
       "handoff_required": "Select a handoff model for this execution mode.",
       "same_main_model": "This matches the main model, so the extra role will not offload work.",
       "model_inherit_main": "Inherit main model",
-      "create_section": "OMP collaboration (optional)"
+      "create_section": "OMP collaboration (optional)",
+      "memory": "Memory & auto-learn",
+      "memory_backend": "Memory backend",
+      "memory_off": "Off",
+      "memory_off_hint": "No experience memory; every run starts fresh.",
+      "memory_sharpshooter": "Sharpshooter",
+      "memory_sharpshooter_hint": "Record only rollback and correction lessons.",
+      "memory_mnemopi": "Mnemopi",
+      "memory_mnemopi_hint": "Full local experience store with multilingual retrieval.",
+      "autolearn_enabled": "Auto-learn managed skills",
+      "autolearn_hint": "Let the agent distill reusable flows into managed skills."
     },
     "inspector": {
       "title": "Collaboration",
@@ -571,7 +581,10 @@
       "execution_plan_yolo": "Plan-Yolo → {{model}}",
       "execution_prewalk": "Prewalk → {{model}}",
       "plan": "Plan: {{model}}",
-      "handoff_missing": "Not set"
+      "handoff_missing": "Not set",
+      "memory_sharpshooter": "Memory: Sharpshooter",
+      "memory_mnemopi": "Memory: Mnemopi",
+      "autolearn": "Auto-Learn: On"
     }
   },
   "conversation_starters": {

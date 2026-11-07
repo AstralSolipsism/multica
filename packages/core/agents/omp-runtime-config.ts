@@ -7,6 +7,7 @@
 
 export type OmpAdvisorReviewMode = "turn" | "agent-end";
 export type OmpExecutionMode = "standard" | "plan_yolo" | "prewalk";
+export type OmpMemoryBackend = "off" | "sharpshooter" | "mnemopi";
 
 export interface OmpRuntimeConfig {
   /** Cheap model for lightweight internal work (`--smol`). */
@@ -22,6 +23,10 @@ export interface OmpRuntimeConfig {
   executionMode?: OmpExecutionMode;
   /** Handoff target for plan_yolo / prewalk (`--plan-yolo-into` / `--prewalk-into`). */
   handoffModel?: string;
+  /** Memory backend; "off" is the default and normalized away on parse. */
+  memoryBackend?: OmpMemoryBackend;
+  /** Allow the agent to distill reusable flows into managed skills. */
+  autolearnEnabled?: boolean;
 }
 
 const ompWireKeys = [
@@ -32,10 +37,13 @@ const ompWireKeys = [
   "advisor_enabled",
   "advisor_review_mode",
   "execution_mode",
+  "memory_backend",
+  "autolearn_enabled",
 ] as const;
 
 const advisorReviewModes: readonly OmpAdvisorReviewMode[] = ["turn", "agent-end"];
 const executionModes: readonly OmpExecutionMode[] = ["standard", "plan_yolo", "prewalk"];
+const memoryBackends: readonly OmpMemoryBackend[] = ["off", "sharpshooter", "mnemopi"];
 
 function parseModelField(root: Record<string, unknown>, key: string): string | undefined {
   const value = root[key];
@@ -67,6 +75,14 @@ export function parseOmpRuntimeConfig(raw: unknown): OmpRuntimeConfig {
   ) {
     out.executionMode = root.execution_mode as OmpExecutionMode;
   }
+  if (
+    typeof root.memory_backend === "string" &&
+    memoryBackends.includes(root.memory_backend as OmpMemoryBackend) &&
+    root.memory_backend !== "off"
+  ) {
+    out.memoryBackend = root.memory_backend as OmpMemoryBackend;
+  }
+  if (root.autolearn_enabled === true) out.autolearnEnabled = true;
   return out;
 }
 
@@ -86,6 +102,10 @@ export function serializeOmpRuntimeConfig(
   if (cfg.executionMode && cfg.executionMode !== "standard") {
     out.execution_mode = cfg.executionMode;
   }
+  if (cfg.memoryBackend && cfg.memoryBackend !== "off") {
+    out.memory_backend = cfg.memoryBackend;
+  }
+  if (cfg.autolearnEnabled) out.autolearn_enabled = true;
   return out;
 }
 
@@ -102,7 +122,9 @@ export function ompRuntimeConfigEquals(
     (a.handoffModel ?? "") === (b.handoffModel ?? "") &&
     Boolean(a.advisorEnabled) === Boolean(b.advisorEnabled) &&
     (a.advisorReviewMode ?? "") === (b.advisorReviewMode ?? "") &&
-    (a.executionMode ?? "") === (b.executionMode ?? "")
+    (a.executionMode ?? "") === (b.executionMode ?? "") &&
+    (a.memoryBackend ?? "") === (b.memoryBackend ?? "") &&
+    Boolean(a.autolearnEnabled) === Boolean(b.autolearnEnabled)
   );
 }
 

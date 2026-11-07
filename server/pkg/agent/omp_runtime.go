@@ -22,6 +22,8 @@ type OmpRuntimeOpts struct {
 	AdvisorEnabled    bool   `json:"advisor_enabled"`
 	AdvisorReviewMode string `json:"advisor_review_mode"` // "" | "turn" | "agent-end"
 	ExecutionMode     string `json:"execution_mode"`      // "" | "standard" | "plan_yolo" | "prewalk"
+	MemoryBackend     string `json:"memory_backend"`      // "" | "off" | "sharpshooter" | "mnemopi"
+	AutolearnEnabled  bool   `json:"autolearn_enabled"`
 }
 
 // DecodeOmpRuntimeConfig extracts the omp-specific knobs from an agent's
@@ -62,6 +64,16 @@ func DecodeOmpRuntimeConfig(raw json.RawMessage, logger *slog.Logger) *OmpRuntim
 			logger.Warn("omp runtime_config: unrecognized execution_mode; using standard", "value", cfg.ExecutionMode)
 		}
 		cfg.ExecutionMode = ""
+	}
+	switch cfg.MemoryBackend {
+	case "", "off":
+		cfg.MemoryBackend = ""
+	case "sharpshooter", "mnemopi":
+	default:
+		if logger != nil {
+			logger.Warn("omp runtime_config: unrecognized memory_backend; using off", "value", cfg.MemoryBackend)
+		}
+		cfg.MemoryBackend = ""
 	}
 	if cfg == (OmpRuntimeOpts{}) {
 		return nil
@@ -173,18 +185,19 @@ func appendOmpRuntimeArgs(args []string, opts *OmpRuntimeOpts, advisorConfigPath
 	return args
 }
 
-// ompAdvisorOverlayName is the OMP settings-overlay file the daemon writes
-// per run to carry advisor.reviewMode (--config is repeatable in OMP and
-// later overlays override earlier ones; a dedicated run-scoped file keeps the
-// cadence setting isolated from user overlays).
-const ompAdvisorOverlayName = "multica-advisor-overlay.yml"
+// ompSettingsOverlayName is the OMP settings-overlay file the daemon writes
+// per run to carry managed settings (advisor review cadence, memory backend,
+// auto-learn). --config is repeatable in OMP and later overlays override
+// earlier ones; a dedicated run-scoped file keeps the managed settings
+// isolated from user overlays.
+const ompSettingsOverlayName = "multica-advisor-overlay.yml"
 
-// prepareOmpAdvisorOverlay writes the run-scoped OMP settings overlay for
-// advisor review cadence into the task-private session directory (fresh runs)
-// or next to the resumed transcript (resume runs), so it dies with the
-// session and needs no explicit cleanup. Returns "" when no overlay applies.
-func prepareOmpAdvisorOverlay(sessionPath, sessionDir string, opts *OmpRuntimeOpts) (string, error) {
-	if opts == nil || !opts.AdvisorEnabled || opts.AdvisorReviewMode == "" {
+// prepareOmpSettingsOverlay writes the run-scoped OMP settings overlay into
+// the task-private session directory (fresh runs) or next to the resumed
+// transcript (resume runs), so it dies with the session and needs no explicit
+// cleanup. Returns "" when no overlay applies.
+func prepareOmpSettingsOverlay(sessionPath, sessionDir string, opts *OmpRuntimeOpts) (string, error) {
+	if !ompSettingsOverlayApplies(opts) {
 		return "", nil
 	}
 	dir := sessionDir
@@ -194,10 +207,41 @@ func prepareOmpAdvisorOverlay(sessionPath, sessionDir string, opts *OmpRuntimeOp
 		}
 		dir = filepath.Dir(sessionPath)
 	}
-	path := filepath.Join(dir, ompAdvisorOverlayName)
-	content := "advisor:\n  reviewMode: " + opts.AdvisorReviewMode + "\n"
+	path := filepath.Join(dir, ompSettingsOverlayName)
+	content := ompSettingsOverlayYAML(opts)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return "", fmt.Errorf("omp advisor overlay: %w", err)
+		return "", fmt.Errorf("omp settings overlay: %w", err)
 	}
 	return path, nil
+}
+
+// ompSettingsOverlayApplies reports whether any managed setting needs the
+// overlay: advisor review cadence, a non-off memory backend, or auto-learn.
+func ompSettingsOverlayApplies(opts *OmpRuntimeOpts) bool {
+	if opts == nil {
+		return false
+	}
+	return (opts.AdvisorEnabled && opts.AdvisorReviewMode != "") ||
+		opts.MemoryBackend != "" || opts.AutolearnEnabled
+}
+
+// ompSettingsOverlayYAML renders the overlay body. Values are fixed enums or
+// booleans from the decoded config, never user free text, so plain string
+// concatenation is safe YAML here.
+func ompSettingsOverlayYAML(opts *OmpRuntimeOpts) string {
+	var b strings.Builder
+	if opts.AdvisorEnabled && opts.AdvisorReviewMode != "" {
+		b.WriteString("advisor:\n  reviewMode: " + opts.AdvisorReviewMode + "\n")
+	}
+	switch opts.MemoryBackend {
+	case "sharpshooter":
+		b.WriteString("memory:\n  backend: sharpshooter\n")
+	case "mnemopi":
+		b.WriteString("memory:\n  backend: mnemopi\n")
+		b.WriteString("mnemopi:\n  scoping: per-project-tagged\n  embeddingVariant: multilingual\n")
+	}
+	if opts.AutolearnEnabled {
+		b.WriteString("autolearn:\n  enabled: true\n  autoContinue: true\n")
+	}
+	return b.String()
 }
