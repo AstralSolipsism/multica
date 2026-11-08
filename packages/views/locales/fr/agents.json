@@ -529,6 +529,9 @@
   },
   "omp": {
     "panel": {
+      "inherit": "Hériter des réglages locaux",
+      "inherit_hint": "Utilise les réglages OMP de l’hôte et du projet.",
+      "on": "Activé",
       "model_roles": "Rôles des modèles",
       "smol_model": "Modèle Smol",
       "smol_hint": "Délègue les tâches internes légères. Laissez vide pour hériter du modèle principal.",
@@ -562,7 +565,7 @@
       "memory": "Mémoire et apprentissage",
       "memory_backend": "Backend de mémoire",
       "memory_off": "Désactivée",
-      "memory_off_hint": "Aucune mémoire d'expérience ; chaque exécution repart de zéro.",
+      "memory_off_hint": "Désactive la mémoire d’expérience pour cet agent.",
       "memory_sharpshooter": "Sharpshooter",
       "memory_sharpshooter_hint": "N'enregistre que les leçons de rollback et de correction.",
       "memory_mnemopi": "Mnemopi",
@@ -572,7 +575,10 @@
     },
     "inspector": {
       "title": "Collaboration",
-      "empty": "Aucune stratégie de collaboration activée",
+      "empty": "Aucun réglage de collaboration sélectionné",
+      "advisor_off": "Advisor : désactivé",
+      "memory_off": "Mémoire : désactivée",
+      "autolearn_off": "Auto-Learn : désactivé",
       "smol": "Smol : {{model}}",
       "advisor": "Advisor : {{model}} · {{mode}}",
       "auto_model": "Sélection automatique",

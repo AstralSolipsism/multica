@@ -9,6 +9,18 @@ import {
 } from "./omp-runtime-config";
 
 describe("parseOmpRuntimeConfig", () => {
+  it.each([
+    [{ advisor_enabled: false }, { advisorEnabled: false }],
+    [{ memory_backend: "off" }, { memoryBackend: "off" as const }],
+    [{ autolearn_enabled: false }, { autolearnEnabled: false }],
+  ])("preserves an explicit override: %j", (wire, config) => {
+    const parsed = parseOmpRuntimeConfig(wire);
+    expect(parsed).toEqual(config);
+    expect(serializeOmpRuntimeConfig(parsed)).toEqual(wire);
+    expect(ompRuntimeConfigEquals(config, {})).toBe(false);
+    expect(ompRuntimeConfigEquals({}, config)).toBe(false);
+  });
+
   it("parses a full wire payload", () => {
     expect(
       parseOmpRuntimeConfig({
@@ -48,19 +60,19 @@ describe("parseOmpRuntimeConfig", () => {
     expect(parseOmpRuntimeConfig({ execution_mode: "standard" })).toEqual({});
   });
 
-  it("normalizes the off memory backend away and rejects unknown values", () => {
-    expect(parseOmpRuntimeConfig({ memory_backend: "off" })).toEqual({});
+  it("preserves off and rejects unknown memory backends", () => {
+    expect(parseOmpRuntimeConfig({ memory_backend: "off" })).toEqual({ memoryBackend: "off" });
     expect(parseOmpRuntimeConfig({ memory_backend: "sqlite" })).toEqual({});
     expect(parseOmpRuntimeConfig({ memory_backend: "sharpshooter" })).toEqual({
       memoryBackend: "sharpshooter",
     });
-    expect(parseOmpRuntimeConfig({ autolearn_enabled: false })).toEqual({});
+    expect(parseOmpRuntimeConfig({ autolearn_enabled: false })).toEqual({ autolearnEnabled: false });
   });
 
-  it("keeps an explicitly disabled advisor out of the parsed state", () => {
+  it("keeps an explicitly disabled advisor in the parsed state", () => {
     expect(
       parseOmpRuntimeConfig({ advisor_enabled: false, execution_mode: "prewalk" }),
-    ).toEqual({ executionMode: "prewalk" });
+    ).toEqual({ advisorEnabled: false, executionMode: "prewalk" });
   });
 
   it("round-trips through serialize", () => {
@@ -80,14 +92,25 @@ describe("parseOmpRuntimeConfig", () => {
     expect(serializeOmpRuntimeConfig({})).toEqual({});
     expect(
       serializeOmpRuntimeConfig({ memoryBackend: "off", autolearnEnabled: false }),
-    ).toEqual({});
+    ).toEqual({ memory_backend: "off", autolearn_enabled: false });
   });
 });
 
 describe("ompRuntimeConfigEquals", () => {
+  it.each([
+    { advisorEnabled: false, autolearnEnabled: false },
+    { executionMode: "standard" as const },
+    { memoryBackend: "off" as const },
+    { executionMode: "standard" as const, memoryBackend: "off" as const },
+  ])("keeps defaults clean after a save round trip: %j", (draft) => {
+    const saved = parseOmpRuntimeConfig(serializeOmpRuntimeConfig(draft));
+    expect(ompRuntimeConfigEquals(draft, saved)).toBe(true);
+    expect(ompRuntimeConfigEquals(saved, draft)).toBe(true);
+  });
+
   it("treats absent and empty fields as equal", () => {
     expect(ompRuntimeConfigEquals({}, { smolModel: undefined })).toBe(true);
-    expect(ompRuntimeConfigEquals({ advisorEnabled: false }, {})).toBe(true);
+    expect(ompRuntimeConfigEquals({ executionMode: "standard" }, {})).toBe(true);
   });
 
   it("detects real differences", () => {

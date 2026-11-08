@@ -430,3 +430,22 @@ it("copies OMP roles only when a duplicate keeps its OMP runtime", () => {
   expect(buildDuplicateDraft(source, { ...options, runtimes: [CODEX_RUNTIME] }).ompRuntimeConfig)
     .toEqual({});
 });
+
+it("keeps explicit OMP off values when duplicating and creating an agent", () => {
+  const runtimeConfig = {
+    advisor_enabled: false,
+    memory_backend: "off",
+    autolearn_enabled: false,
+  };
+  const duplicate = buildDuplicateDraft(sourceAgent({ runtime_config: runtimeConfig }), {
+    runtimes: [{ ...CODEX_RUNTIME, provider: "omp" }],
+    currentUserId: "user-1",
+    fallbackRuntimeId: "fallback",
+    nameSuffix: " copy",
+  });
+  expect(buildCreateAgentRequest({
+    draft: duplicate,
+    runtimeId: duplicate.runtimeId,
+    runtimeProvider: "omp",
+  }).runtime_config).toEqual(runtimeConfig);
+});

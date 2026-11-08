@@ -363,6 +363,9 @@
   },
   "omp": {
     "panel": {
+      "inherit": "로컬 설정 상속",
+      "inherit_hint": "호스트와 프로젝트의 OMP 설정을 사용합니다.",
+      "on": "켬",
       "model_roles": "모델 역할",
       "smol_model": "Smol 모델",
       "smol_hint": "가벼운 내부 작업을 분배합니다. 비워 두면 주 모델을 상속합니다.",
@@ -396,7 +399,7 @@
       "memory": "메모리 및 자동 학습",
       "memory_backend": "메모리 백엔드",
       "memory_off": "끄기",
-      "memory_off_hint": "경험 메모리 없음. 매 실행마다 새로 시작합니다.",
+      "memory_off_hint": "이 에이전트의 경험 메모리를 끕니다.",
       "memory_sharpshooter": "Sharpshooter",
       "memory_sharpshooter_hint": "롤백 및 수정 교훈만 기록합니다.",
       "memory_mnemopi": "Mnemopi",
@@ -406,7 +409,10 @@
     },
     "inspector": {
       "title": "협업 전략",
-      "empty": "활성화된 협업 전략이 없습니다",
+      "empty": "선택한 협업 설정이 없습니다",
+      "advisor_off": "Advisor: 끔",
+      "memory_off": "메모리: 끔",
+      "autolearn_off": "자동 학습: 끔",
       "smol": "Smol: {{model}}",
       "advisor": "Advisor: {{model}} · {{mode}}",
       "auto_model": "자동 선택",

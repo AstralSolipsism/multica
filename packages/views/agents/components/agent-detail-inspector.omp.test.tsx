@@ -81,6 +81,51 @@ describe("AgentDetailInspector OMP persistence", () => {
   });
   afterEach(cleanup);
 
+  it("saves explicit off values once and can clear them back to inheritance", async () => {
+    const onUpdate = vi.fn(async () => {});
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const inspector = (current: Agent) => (
+      <QueryClientProvider client={queryClient}>
+        <AgentDetailInspector
+          agent={current}
+          runtime={runtime}
+          runtimes={[runtime]}
+          members={[]}
+          currentUserId="user-1"
+          canEdit
+          onUpdate={onUpdate}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = renderWithI18n(inspector(agent));
+    act(() => panel.current?.onChange({
+      advisorEnabled: false,
+      memoryBackend: "off",
+      autolearnEnabled: false,
+    }));
+    const saved = {
+      custom_key: "keep",
+      advisor_enabled: false,
+      memory_backend: "off",
+      autolearn_enabled: false,
+    };
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      runtime_config: saved,
+    }), { timeout: 2000 });
+    rerender(inspector({ ...agent, runtime_config: saved }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 750)); });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+
+    act(() => panel.current?.onChange({}));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    expect(onUpdate).toHaveBeenLastCalledWith("agent-1", {
+      runtime_config: { custom_key: "keep" },
+    });
+    queryClient.clear();
+  });
+
   it("blocks an incomplete handoff and saves the completed config", async () => {
     const onUpdate = vi.fn(async () => {});
     const queryClient = new QueryClient({

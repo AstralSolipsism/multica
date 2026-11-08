@@ -513,6 +513,9 @@
   },
   "omp": {
     "panel": {
+      "inherit": "继承本地配置",
+      "inherit_hint": "沿用宿主机与项目中的 OMP 配置。",
+      "on": "开启",
       "model_roles": "角色模型路由",
       "smol_model": "后勤轻量模型（Smol）",
       "smol_hint": "分流文件粗筛、标题生成等轻量内部工作。留空则继承主模型。",
@@ -546,7 +549,7 @@
       "memory": "记忆与技能沉淀",
       "memory_backend": "经验记忆模式",
       "memory_off": "关闭",
-      "memory_off_hint": "不沉淀经验记忆，每次运行从零开始。",
+      "memory_off_hint": "关闭此智能体的经验记忆。",
       "memory_sharpshooter": "仅记录踩坑与纠偏教训",
       "memory_sharpshooter_hint": "摩擦门控错题本，仅记录回滚与纠偏教训。",
       "memory_mnemopi": "全量本地经验知识库",
@@ -556,7 +559,10 @@
     },
     "inspector": {
       "title": "协同策略",
-      "empty": "未启用协同策略",
+      "empty": "未设置协同策略",
+      "advisor_off": "Advisor：关闭",
+      "memory_off": "Memory：关闭",
+      "autolearn_off": "Auto-Learn：关闭",
       "smol": "Smol：{{model}}",
       "advisor": "Advisor：{{model}} · {{mode}}",
       "auto_model": "自动选择",
