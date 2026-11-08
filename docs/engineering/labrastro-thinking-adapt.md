@@ -428,9 +428,9 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 - **显示**：触发器、只读态、资料卡都显示"自适应"，不显示 `_adapt`。reasonix、dim 自己的 `auto` 仍按 CLI 的 label 显示，要能和"自适应"区分。
 - **清理**：换模型后，新模型仍有不少于 2 个候选时保留自适应，否则清掉；换运行时清掉；同一运行时内复制智能体时保留（§2）。
 
-### 额度区
+### 额度区与 Runtime 名称
 
-有快照时，在 `RuntimeQuotaCell` 和 `RuntimeQuotaCard`（`packages/views/runtimes/components/runtime-quota-cell.tsx`）里加一行。没有 `plan_quota` 时也要显示这一行；没有快照时不显示。
+动态思考调档不再混入额度区域。机器详情页的 Runtime 名称下以小字显示版本和 `ThinkingAdaptQuotaRow`；Runtime 详情页在配额卡下方渲染独立的 `ThinkingAdaptQuotaCard`（均在 `packages/views/runtimes/components/`）。没有 `plan_quota` 时也保留独立的调档卡；没有 `thinking_adapt` 快照时不显示。
 
 | 状态 | 显示 |
 |---|---|
@@ -439,7 +439,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 | `unavailable` | 黄点 + "暂不可用（自适应已回退默认挡位）" |
 | `idle` | 灰点 + "尚未使用" |
 
-悬停显示本次 daemon 启动以来的成功次数和回退次数。
+独立调档卡显示本次 daemon 启动以来的成功次数和回退次数；悬停状态行可查看相同计数。
 
 ### 状态微标（D3）
 

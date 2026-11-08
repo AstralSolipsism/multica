@@ -54,7 +54,7 @@ import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { HealthBadge, HealthIcon, shortDaemonId, useHealthLabel } from "./shared";
 import { ProviderLogo } from "./provider-logo";
 import { UsageSection } from "./usage-section";
-import { RuntimeQuotaCard } from "./runtime-quota-cell";
+import { RuntimeQuotaCard, ThinkingAdaptQuotaCard } from "./runtime-quota-cell";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { RuntimeAccessEditor, RuntimeAccessReadout } from "./runtime-access-editor";
 import { RuntimeConcurrencyField } from "./runtime-concurrency-field";
@@ -108,7 +108,7 @@ export function RuntimeDetail({
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: agents = [], isPending: agentsPending } = useQuery(agentListOptions(wsId));
   const { data: profiles = [] } = useQuery(runtimeProfileListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
   const now = useNowTick();
@@ -232,7 +232,19 @@ export function RuntimeDetail({
             />
           </ObjectSection>
 
-          {canReadRuntime && <RuntimeQuotaCard runtime={runtime} now={now} agents={agents} />}
+          {canReadRuntime && (
+            <div className="space-y-4">
+              <RuntimeQuotaCard
+                runtime={runtime}
+                now={now}
+                agents={agents}
+                agentsPending={agentsPending}
+              />
+              {runtime.thinking_adapt && (
+                <ThinkingAdaptQuotaCard snapshot={runtime.thinking_adapt} />
+              )}
+            </div>
+          )}
 
           {canReadRuntime && (
             <ObjectSection title={t(($) => $.detail.usage_title)}>

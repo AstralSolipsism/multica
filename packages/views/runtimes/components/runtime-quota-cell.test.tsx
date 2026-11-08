@@ -13,7 +13,13 @@ import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
 import { MachineQuotaChips } from "./machine-quota-chips";
 import { formatQuotaTime } from "./quota-time";
-import { MiniMeterBar, RuntimeQuotaCard, RuntimeQuotaCell, TONE_BAR_CLASS } from "./runtime-quota-cell";
+import {
+  MiniMeterBar,
+  RuntimeQuotaCard,
+  RuntimeQuotaCell,
+  ThinkingAdaptQuotaCard,
+  TONE_BAR_CLASS,
+} from "./runtime-quota-cell";
 
 const viewer = vi.hoisted(() => ({ timezone: "Asia/Shanghai" as string | null }));
 
@@ -56,7 +62,6 @@ function quotaRuntime(provider: string, quota: Record<string, unknown>): AgentRu
   };
 }
 
-// Live 10-08 shapes, shifted onto NOW.
 function antigravityRuntime(): AgentRuntime {
   return quotaRuntime("antigravity", {
     status: "limited",
@@ -108,7 +113,7 @@ function ompAccount(
 }
 
 function ompPool(id: string, accounts: ReturnType<typeof ompAccount>[]) {
-  const available = accounts.filter((account) => ["ok", "warning", "reserve"].includes(account.status)).length;
+  const available = accounts.filter((account) => ["ok", "warning"].includes(account.status)).length;
   return {
     id,
     total_accounts: accounts.length,
@@ -170,184 +175,130 @@ function renderChips(
   locale: SupportedLocale = "en",
   agents: Agent[] = [],
 ) {
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   const machine = buildRuntimeMachines([runtime], { now: NOW })[0]!;
   return renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} agents={agents} />, { locale });
 }
 
 function chipTrigger(label: RegExp) {
-  return screen.getByLabelText(label, { selector: '[data-slot="tooltip-trigger"]' });
+  return screen.getByLabelText(label, { selector: '[data-slot="hover-card-trigger"]' });
 }
 
-describe("a used-up pool next to an untouched one (antigravity)", () => {
-  it("limits only that pool in the list cell", () => {
+describe("CLI quota subjects", () => {
+  it("flows each independent subject's windows horizontally and keeps healthy values neutral", () => {
     renderWithI18n(<RuntimeQuotaCell runtime={antigravityRuntime()} now={NOW} />);
+
     expect(screen.getByText("Gemini")).toBeInTheDocument();
     expect(screen.getByText("Claude + GPT")).toBeInTheDocument();
-    const full = screen.getAllByText("100%");
-    expect(full).toHaveLength(2);
-    for (const value of full) expect(value).toHaveClass("text-success");
+    expect(screen.getAllByText("100%")).toHaveLength(2);
+    for (const value of screen.getAllByText("100%")) {
+      expect(value).not.toHaveClass("text-success");
+    }
     expect(screen.getByText("Not applicable now")).toBeInTheDocument();
-    expect(screen.getByText("0%")).toHaveClass("text-destructive");
-    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar")).toHaveLength(3);
+    expect(screen.getByText("Exhausted")).toHaveClass("text-destructive");
+    expect(screen.queryByText(/Rate limited ·/)).not.toBeInTheDocument();
   });
 
-  it("states the recovery in the settings card and sets the 5h window aside", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={antigravityRuntime()} now={NOW} />);
-    expect(screen.getAllByText("100% left")).toHaveLength(2);
-    expect(screen.getByText("Not applicable now")).toBeInTheDocument();
-    expect(screen.getByText("0% left")).toBeInTheDocument();
-    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
-    expect(screen.getByText(`resets at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
-    expect(screen.getByText("updated 1m ago")).toBeInTheDocument();
-  });
-
-  it("gives each pool its own machine chip and tooltip rows", async () => {
+  it("opens the shared hover skeleton with source, context, windows, and recovery", async () => {
     renderChips(antigravityRuntime());
-    expect(chipTrigger(/ · Gemini: 100% left$/)).toHaveClass("text-success");
     const limited = chipTrigger(/ · Claude \+ GPT: Rate limited$/);
     await userEvent.hover(limited);
-    const tooltip = (await screen.findByText("Claude + GPT · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    const rows = within(tooltip);
-    expect(rows.getByText("Claude + GPT · 5h").parentElement).toHaveTextContent("Not applicable now");
-    expect(rows.getByText("Claude + GPT · 7d").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 2 * DAY)}`);
-    expect(rows.getByText("Gemini · 7d").parentElement).toHaveTextContent("100%");
-  });
-});
 
-describe("a five-hour window past its reset (claude)", () => {
-  it("counts it as refilled and shows the weekly reset", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
+    const title = await screen.findByText("Antigravity / Claude + GPT");
+    const card = title.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
+    expect(within(card).getByText("Antigravity · dev.local")).toBeInTheDocument();
+    expect(within(card).getByText(/via daemon · updated/)).toBeInTheDocument();
+    expect(within(card).getByText("Not applicable now")).toBeInTheDocument();
+    expect(within(card).getByText("Exhausted")).toBeInTheDocument();
+    expect(within(card).getByText("recovers in 48h")).toBeInTheDocument();
+    expect(card.querySelectorAll("table")).toHaveLength(0);
+  });
+
+  it("keeps each window's reset and passed reset in the detail card", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />);
+
     expect(screen.getByText("100%")).toBeInTheDocument();
     expect(screen.getByText("86%")).toBeInTheDocument();
-    expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
-  });
-
-  it("notes when the window was refilled in the settings card", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />);
-    expect(screen.getByText("100% left")).toBeInTheDocument();
     expect(screen.getByText(`reset at ${at(NOW_SEC - HOUR)}`)).toBeInTheDocument();
-    expect(screen.getByText("86% left")).toBeInTheDocument();
     expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
+    expect(screen.getByText("updated 4h ago")).toBeInTheDocument();
   });
 
-  it("puts the weekly balance on the machine chip", () => {
-    renderChips(claudeRuntime());
-    expect(chipTrigger(/: 86% left$/)).toHaveClass("text-success");
-  });
-});
-
-describe("windows set aside by a limited pool", () => {
-  // The weekly window holds the pool for three days. The 5h window already
-  // refilled and the daily one resets tomorrow: neither shows its reset.
-  function setAsideRuntime(): AgentRuntime {
-    return quotaRuntime("claude", {
-      status: "limited",
-      windows: [
-        { name: "five_hour", used_percent: 50, window_minutes: 300, resets_at: NOW_SEC - HOUR },
-        { name: "daily", used_percent: 30, window_minutes: 1440, resets_at: NOW_SEC + DAY },
-        { name: "seven_day", used_percent: 100, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
-      ],
+  it("omits an invalid reset instead of breaking the card", () => {
+    const runtime = quotaRuntime("claude", {
+      windows: [{ name: "five_hour", used_percent: 50, window_minutes: 300, resets_at: 9_000_000_000_000 }],
     });
-  }
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
 
-  it("show neither their own reset nor their refill in the settings card", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={setAsideRuntime()} now={NOW} />);
-    expect(screen.getAllByText("Not applicable now")).toHaveLength(2);
-    expect(screen.queryByText(`reset at ${at(NOW_SEC - HOUR)}`)).not.toBeInTheDocument();
-    expect(screen.queryByText(`resets at ${at(NOW_SEC + DAY)}`)).not.toBeInTheDocument();
-    expect(screen.getByText(`resets at ${at(NOW_SEC + 3 * DAY)}`)).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.queryByText(/resets at/)).not.toBeInTheDocument();
   });
 
-  it("show neither in the machine chip tooltip", async () => {
-    renderChips(setAsideRuntime());
-    await userEvent.hover(chipTrigger(/: Rate limited$/));
-    const tooltip = (await screen.findByText("1d")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    const rows = within(tooltip);
-    expect(rows.getByText("5h").parentElement).toHaveTextContent(/^5hNot applicable now$/);
-    expect(rows.getByText("1d").parentElement).toHaveTextContent(/^1dNot applicable now$/);
-    expect(rows.getByText("7d").parentElement).toHaveTextContent(`0%resets at ${at(NOW_SEC + 3 * DAY)}`);
-  });
-});
+  it("keeps an unmeasured window neutral instead of treating it as healthy", () => {
+    const runtime = quotaRuntime("claude", {
+      windows: [{ name: "five_hour", used_percent: null, window_minutes: 300, resets_at: NOW_SEC + HOUR }],
+    });
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Balance unknown")).toHaveClass("text-faint-foreground");
+    cell.unmount();
 
-describe("a limit that names no window", () => {
-  // Claude rejected a request while every window read below 100%.
-  function unattributedRuntime(): AgentRuntime {
-    return quotaRuntime("claude", {
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Balance unknown")).toHaveClass("text-faint-foreground");
+  });
+
+  it("keeps an unattributed provider limit visible in the detail card", () => {
+    const runtime = quotaRuntime("claude", {
       status: "limited",
       windows: [
         { name: "five_hour", used_percent: 98, window_minutes: 300, resets_at: NOW_SEC + HOUR },
         { name: "seven_day", used_percent: 40, window_minutes: 10080, resets_at: NOW_SEC + 3 * DAY },
       ],
     });
-  }
-
-  it("limits the list cell without a recovery time", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={unattributedRuntime()} now={NOW} />);
-    expect(screen.getByText("2%")).toHaveClass("text-destructive");
-    expect(screen.getByText("60%")).toHaveClass("text-success");
-    expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
-    expect(screen.queryByText(/resets at/)).not.toBeInTheDocument();
-  });
-
-  it("states the limit in the settings card and keeps each window's reset", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={unattributedRuntime()} now={NOW} />);
-    expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
-    expect(screen.getByText("2% left")).toBeInTheDocument();
-    expect(screen.getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
-    expect(screen.queryByText("Not applicable now")).not.toBeInTheDocument();
-  });
-
-  it("limits the machine chip", () => {
-    renderChips(unattributedRuntime());
-    expect(chipTrigger(/: Rate limited$/)).toHaveClass("text-destructive");
-  });
-});
-
-describe("a reset time past the Date range", () => {
-  it("is left out instead of breaking the quota views", () => {
-    const runtime = quotaRuntime("claude", {
-      windows: [{ name: "five_hour", used_percent: 50, window_minutes: 300, resets_at: 9_000_000_000_000 }],
-    });
-    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.getByText("50%")).toBeInTheDocument();
     renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("50% left")).toBeInTheDocument();
-    expect(screen.queryByText(/resets at/)).not.toBeInTheDocument();
+
+    expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
+    expect(screen.getByText("2%")).toBeInTheDocument();
+    expect(screen.getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
   });
 });
 
-describe("machine chips that do not fit", () => {
-  it("list a runtime split into pool chips once under the overflow pill", async () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
-    const machine = buildRuntimeMachines([antigravityRuntime()], { now: NOW })[0]!;
-    renderWithI18n(<MachineQuotaChips machine={machine} now={NOW} />);
-    await userEvent.hover(screen.getByText("+2"));
-    const tooltip = (await screen.findByText("Claude + GPT · 5h")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    const rows = within(tooltip);
-    expect(rows.getByLabelText(/ · Gemini: 100% left$/)).toBeInTheDocument();
-    expect(rows.getByLabelText(/ · Claude \+ GPT: Rate limited$/)).toBeInTheDocument();
-    expect(rows.getAllByText("Claude + GPT · 5h")).toHaveLength(1);
-    expect(rows.getAllByText(/^via daemon/)).toHaveLength(1);
-  });
-});
+describe("snapshot availability and interruption", () => {
+  it("shows a neutral no-snapshot chip and an explicit empty hover state", async () => {
+    const runtime = claudeRuntime();
+    runtime.plan_quota = null;
+    renderChips(runtime);
 
-describe("an interrupted collector (kimi)", () => {
-  it("keeps the last balance uncolored and flags the interruption", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />);
+    const trigger = chipTrigger(/Claude: No snapshot$/);
+    expect(trigger).toHaveClass("bg-muted");
+    await userEvent.hover(trigger);
+    expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
+  });
+
+  it("uses the same empty copy in the table and detail card", () => {
+    const runtime = claudeRuntime();
+    runtime.plan_quota = null;
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+  });
+
+  it("keeps interrupted values muted and reports the last update", async () => {
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />);
     expect(screen.getByText("80%")).toHaveClass("text-faint-foreground");
     expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 30 * HOUR)}`)).toBeInTheDocument();
-  });
+    cell.unmount();
 
-  it("flags the machine chip and the settings card", () => {
     renderChips(kimiRuntime());
-    expect(chipTrigger(/: 80% left · Collection interrupted$/)).toHaveClass("bg-muted");
-    renderWithI18n(<RuntimeQuotaCard runtime={kimiRuntime()} now={NOW} />);
-    expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 30 * HOUR)}`)).toBeInTheDocument();
+    const trigger = chipTrigger(/: 80% left · Collection interrupted$/);
+    expect(trigger).toHaveClass("bg-muted");
+    await userEvent.hover(trigger);
+    const warning = await screen.findByText(`Collection interrupted · last updated ${at(NOW_SEC - 30 * HOUR)}`);
+    expect(warning).toHaveClass("text-warning");
   });
 
-  it("never interrupts a task-reported snapshot that is merely old", () => {
+  it("does not interrupt a task-reported snapshot merely because it is old", () => {
     renderWithI18n(
       <RuntimeQuotaCell
         runtime={quotaRuntime("codex", {
@@ -357,68 +308,8 @@ describe("an interrupted collector (kimi)", () => {
         now={NOW}
       />,
     );
-    expect(screen.getByText("41%")).toHaveClass("text-success");
+    expect(screen.getByText("41%")).toHaveClass("text-foreground");
     expect(screen.queryByText(/Collection interrupted/)).not.toBeInTheDocument();
-  });
-});
-
-describe("reset times", () => {
-  it("follow the viewer's timezone preference", () => {
-    viewer.timezone = "America/New_York";
-    const { rerender } = renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
-    const newYork = at(NOW_SEC + 4 * DAY, "en", "America/New_York");
-    expect(screen.getByText(`resets at ${newYork}`)).toBeInTheDocument();
-    viewer.timezone = "Asia/Shanghai";
-    rerender(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />);
-    expect(newYork).not.toBe(at(NOW_SEC + 4 * DAY));
-    expect(screen.getByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toBeInTheDocument();
-  });
-
-  it("are never countdowns", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />);
-    expect(screen.queryByText(/resets at \d+h/)).not.toBeInTheDocument();
-  });
-});
-
-describe("translated states", () => {
-  it.each([
-    ["zh-Hans", "暂不适用", `已限流 · ${at(NOW_SEC + 2 * DAY, "zh-Hans")} 重置`],
-    ["ja", "現在は適用外", `レート制限中 · ${at(NOW_SEC + 2 * DAY, "ja")} にリセット`],
-    ["ko", "현재 적용 안 됨", `속도 제한됨 · ${at(NOW_SEC + 2 * DAY, "ko")} 초기화`],
-    ["fr", "Ne s'applique pas pour l'instant", `Limite atteinte · réinitialisation : ${at(NOW_SEC + 2 * DAY, "fr")}`],
-  ] as const)("in %s", (locale, notApplicable, limited) => {
-    renderWithI18n(<RuntimeQuotaCell runtime={antigravityRuntime()} now={NOW} />, { locale });
-    expect(screen.getByText(notApplicable)).toBeInTheDocument();
-    expect(screen.getByText(limited)).toBeInTheDocument();
-  });
-
-  it("reads the Chinese interruption and refill copy", () => {
-    renderWithI18n(<RuntimeQuotaCell runtime={kimiRuntime()} now={NOW} />, { locale: "zh-Hans" });
-    expect(screen.getByText(`采集中断 · 最后更新 ${at(NOW_SEC - 30 * HOUR, "zh-Hans")}`)).toBeInTheDocument();
-    renderWithI18n(<RuntimeQuotaCard runtime={claudeRuntime()} now={NOW} />, { locale: "zh-Hans" });
-    expect(screen.getByText(`已于 ${at(NOW_SEC - HOUR, "zh-Hans")} 重置`)).toBeInTheDocument();
-  });
-});
-
-describe("unmeasured windows", () => {
-  it("are unknown, or rate limited when the snapshot says so", () => {
-    const runtime = quotaRuntime("claude", {
-      windows: [{ name: "five_hour", used_percent: null, window_minutes: 300, resets_at: NOW_SEC + HOUR }],
-    });
-    const { unmount } = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.getByText("Balance unknown")).toBeInTheDocument();
-    unmount();
-    runtime.plan_quota!.status = "limited";
-    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText(`Rate limited · resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
-    expect(screen.getAllByText("Rate limited")).toHaveLength(1);
-  });
-
-  it("shows not reported without a snapshot", () => {
-    const runtime = quotaRuntime("claude", {});
-    runtime.plan_quota = null;
-    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.getByText("Not reported")).toBeInTheDocument();
   });
 });
 
@@ -428,7 +319,7 @@ describe("OMP account pools", () => {
     quotaAgent("anthropic/claude-sonnet-4-6"),
   ];
 
-  it("filters the list to serving providers and renders aggregate balances and counts", () => {
+  it("lists only serving pools as horizontal subjects without idle-pool entries", () => {
     renderWithI18n(
       <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
     );
@@ -437,12 +328,11 @@ describe("OMP account pools", () => {
     expect(screen.getByText("Claude")).toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
     expect(screen.queryByText("Z.AI")).not.toBeInTheDocument();
-    expect(screen.getByText("+2 idle pools")).toBeInTheDocument();
+    expect(screen.queryByText(/idle pool/)).not.toBeInTheDocument();
     expect(screen.getByText("2/3")).toBeInTheDocument();
     expect(screen.getByText("1/2")).toBeInTheDocument();
     expect(screen.getByText("62%")).toBeInTheDocument();
     expect(screen.getByText("80%")).toBeInTheDocument();
-    expect(screen.getAllByText("7d")).toHaveLength(2);
   });
 
   it.each([
@@ -457,142 +347,155 @@ describe("OMP account pools", () => {
     expect(screen.getByText("Claude")).toBeInTheDocument();
     expect(screen.getByText("Codex")).toBeInTheDocument();
     expect(screen.getByText("Z.AI")).toBeInTheDocument();
-    expect(screen.queryByText(/idle pools/)).not.toBeInTheDocument();
   });
 
-  it("reads an OMP model override from custom args", () => {
-    const agent = quotaAgent("", {
-      custom_args: ["--model", "anthropic/claude-sonnet-4-6"],
-    });
-    renderWithI18n(<RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={[agent]} />);
-
-    expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
-    expect(screen.getByText("Claude")).toBeInTheDocument();
-    expect(screen.getByText("+3 idle pools")).toBeInTheDocument();
-  });
-
-  it("summarizes idle pools in their tooltip", async () => {
+  it("uses pool headers and one account table in the shared hover card", async () => {
     const user = userEvent.setup();
     renderWithI18n(
-      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={[quotaAgent("kimi-code/k2.5")]} />,
     );
-
-    await user.hover(screen.getByText("+2 idle pools"));
-    const tooltip = (await screen.findByText("Signed in, but no agent in this workspace uses them."))
-      .closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    expect(within(tooltip).getByText("Codex")).toBeInTheDocument();
-    expect(within(tooltip).getByText("Z.AI")).toBeInTheDocument();
-    expect(within(tooltip).getAllByText(/^1\/1 available/)).toHaveLength(2);
-  });
-
-  it("labels a fully disabled pool as needing re-login rather than exhausted", () => {
-    const runtime = quotaRuntime("omp", {
-      account_pools: [
-        ompPool("zai", [ompAccount("di*", "disabled", 0, 0, "oauth refresh failed")]),
-      ],
-    });
-    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-
-    expect(screen.getByText("Re-login required")).toBeInTheDocument();
-    expect(screen.queryByText("Rate limited")).not.toBeInTheDocument();
-  });
-
-  it("keeps OMP balances neutral when collection is interrupted", () => {
-    const runtime = ompRuntime();
-    runtime.plan_quota!.observed_at = NOW_SEC - 2 * HOUR;
-    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-
-    expect(screen.getByText("62%")).toHaveClass("text-faint-foreground");
-    expect(screen.getByText(`Collection interrupted · last updated ${at(NOW_SEC - 2 * HOUR)}`)).toBeInTheDocument();
-  });
-
-  it("opens redacted account details on hover and closes on Escape", async () => {
-    const user = userEvent.setup();
-    renderWithI18n(
-      <RuntimeQuotaCell
-        runtime={ompRuntime()}
-        now={NOW}
-        agents={[quotaAgent("kimi-code/k2.5")]}
-      />,
-    );
-    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
-
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
     await user.hover(trigger);
-    const tooltip = (await screen.findByText("#1 (19*)")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    expect(within(tooltip).getByText("Cooling down")).toBeInTheDocument();
-    expect(within(tooltip).getByText("#2 (as*)")).toBeInTheDocument();
-    expect(within(tooltip).getByText("#3 (de*)")).toBeInTheDocument();
-    expect(within(tooltip).getAllByText("7d")).toHaveLength(3);
-    expect(within(tooltip).getAllByText("resets in 1h").length).toBeGreaterThan(0);
+
+    const account = await screen.findByText("#1 (19*)");
+    const card = account.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
+    expect(within(card).getByText("Kimi Code pool")).toBeInTheDocument();
+    expect(within(card).getByText("2/3 accounts available")).toBeInTheDocument();
+    const table = within(card).getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Account" })).toBeInTheDocument();
+    expect(within(table).getAllByRole("columnheader", { name: "5h" })).toHaveLength(1);
+    expect(within(table).getAllByRole("columnheader", { name: "7d" })).toHaveLength(1);
+    expect(within(card).getByText("#2 (as*)")).toBeInTheDocument();
+    expect(within(card).getByText("#3 (de*)")).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByText("#1 (19*)")).not.toBeInTheDocument());
   });
 
-  it("opens the same account details for keyboard focus", async () => {
+  it("opens on keyboard focus", async () => {
     const user = userEvent.setup();
     renderWithI18n(
-      <RuntimeQuotaCell
-        runtime={ompRuntime()}
-        now={NOW}
-        agents={[quotaAgent("kimi-code/k2.5")]}
-      />,
+      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={[quotaAgent("kimi-code/k2.5")]} />,
     );
-    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
     await user.tab();
+
     expect(trigger).toHaveFocus();
-
-    const tooltip = (await screen.findByText("#1 (19*)")).closest<HTMLElement>('[data-slot="tooltip-content"]')!;
-    expect(within(tooltip).getByText("85%")).toBeInTheDocument();
-  });
-
-  it("applies the same serving filter and account tooltip to machine chips", async () => {
-    const user = userEvent.setup();
-    renderChips(ompRuntime(), "en", servingAgents());
-
-    expect(screen.getAllByText("Kimi Code").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Claude").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
-    expect(screen.getByText("+2 idle pools")).toBeInTheDocument();
-    const trigger = chipTrigger(/Kimi Code: 2 of 3 accounts available/);
-    await user.hover(trigger);
     expect(await screen.findByText("#1 (19*)")).toBeInTheDocument();
   });
 
-  it("shows the full detail matrix, expands idle pools, and surfaces re-login guidance", async () => {
-    const user = userEvent.setup();
+  it("caps hover accounts at four and points the remainder to Runtime details", async () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("kimi-code", ["a", "b", "c", "d", "e"].map((label) => ompAccount(label, "ok", 85, 80))),
+      ],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    await userEvent.hover(screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!);
+
+    expect(await screen.findByText("#4 (d)")).toBeInTheDocument();
+    expect(screen.queryByText("#5 (e)")).not.toBeInTheDocument();
+    expect(screen.getByText("1 more account; open Runtime details to view it")).toBeInTheDocument();
+  });
+
+  it("shows one re-login warning when every account is invalid", async () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("zai", [ompAccount("di*", "disabled", 0, 0)]),
+      ],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Re-login required")).toHaveClass("text-warning");
+    const trigger = screen.getByText("Z.AI").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
+    await userEvent.hover(trigger);
+
+    expect(await screen.findByText("Every account in this pool requires re-login.")).toHaveClass("text-warning");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("lists every pool in details, marks only unused pools, and never collapses accounts", () => {
     const { container } = renderWithI18n(
       <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
     );
 
     expect(container.querySelectorAll("[data-account-pool-matrix]")).toHaveLength(4);
-    expect(screen.getAllByText("In use")).toHaveLength(2);
-    expect(screen.getAllByText("Idle")).toHaveLength(2);
-    expect(screen.getByText("(19*)")).toBeInTheDocument();
-    expect(screen.getByText("(di*7*)")).toBeInTheDocument();
-    expect(screen.getByText(/oauth refresh failed/)).toHaveTextContent("/login");
-    expect(screen.queryByText("(7f*)")).not.toBeInTheDocument();
-    expect(screen.queryByText("(mo*)")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Show or hide Codex accounts" }));
-    expect(screen.getByText("(7f*)")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Expand all" }));
-    expect(screen.getByText("(mo*)")).toBeInTheDocument();
-    expect(screen.getAllByText("7d window")).toHaveLength(4);
+    expect(screen.getByText("Codex").parentElement).toHaveTextContent("· Not used");
+    expect(screen.getByText("Z.AI").parentElement).toHaveTextContent("· Not used");
+    expect(screen.queryByText("Idle provider pools")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Expand/ })).not.toBeInTheDocument();
+    expect(screen.getByText("#1 (19*)")).toBeInTheDocument();
+    expect(screen.getByText("#1 (7f*)")).toBeInTheDocument();
+    expect(screen.getByText("#1 (mo*)")).toBeInTheDocument();
+    expect(screen.getByText("Re-login required")).toBeInTheDocument();
   });
 
-  it("expands every detail pool without serving or idle labels when filtering is unavailable", () => {
-    renderWithI18n(<RuntimeQuotaCard runtime={ompRuntime()} now={NOW} />);
+  it("derives account table columns from reported windows", () => {
+    const account = ompAccount("a", "ok", 85, 80);
+    account.windows = [
+      { name: "hourly", used_percent: 15, window_minutes: 60, resets_at: NOW_SEC + HOUR },
+      { name: "daily", used_percent: 20, window_minutes: 1440, resets_at: NOW_SEC + DAY },
+    ];
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
 
-    expect(screen.getByText("(19*)")).toBeInTheDocument();
-    expect(screen.getByText("(7f*)")).toBeInTheDocument();
-    expect(screen.getByText("(mo*)")).toBeInTheDocument();
-    expect(screen.queryByText("In use")).not.toBeInTheDocument();
-    expect(screen.queryByText("Idle")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Expand all" })).not.toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "1h" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "1d" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "5h" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "7d" })).not.toBeInTheDocument();
   });
 
-  it("shows the earliest recovering account and the all-unavailable warning", () => {
+  it("uses the no-snapshot state for a pool without windows", async () => {
+    const account = ompAccount("a", "ok", 85, 80);
+    account.windows = [];
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
+    const chips = renderChips(runtime);
+    const trigger = chipTrigger(/Kimi Code: 1 of 1 accounts available/);
+    expect(within(trigger).getByText("No snapshot")).toBeInTheDocument();
+    await userEvent.hover(trigger);
+    expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+  });
+
+  it.each(["k2.5", "other/model"])(
+    "does not mark fallback pools unused when an active agent uses %s",
+    (model) => {
+      renderWithI18n(
+        <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[quotaAgent(model)]} />,
+      );
+
+      for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+        expect(screen.getByText(name).parentElement).not.toHaveTextContent("Not used");
+      }
+    },
+  );
+
+  it("does not mark pools unused while the agent list is pending", () => {
+    renderWithI18n(
+      <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[]} agentsPending />,
+    );
+
+    for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+      expect(screen.getByText(name).parentElement).not.toHaveTextContent("Not used");
+    }
+  });
+
+  it("marks every pool unused when the Runtime has no active agents", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[]} />);
+
+    for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+      expect(screen.getByText(name).parentElement).toHaveTextContent("· Not used");
+    }
+  });
+
+  it("shows the earliest recovering account without an idle section or banner", () => {
     const first = ompAccount("19*", "exhausted", 0, 65);
     const second = ompAccount("as*", "exhausted", 0, 12);
     first.windows[0]!.resets_at = NOW_SEC + 4320;
@@ -603,173 +506,39 @@ describe("OMP account pools", () => {
     renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
 
     expect(screen.getByText("Earliest recovery in 1h (#2)")).toBeInTheDocument();
-    expect(screen.getByText(/All accounts in this provider pool are unavailable/)).toBeInTheDocument();
-  });
-
-  it.each(["en", "zh-Hans", "fr", "ja", "ko"] as const)("uses the 7d label in %s", (locale) => {
-    renderWithI18n(<RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />, { locale });
-
-    expect(screen.getByText("7d")).toBeInTheDocument();
+    expect(screen.queryByText(/All accounts in this provider pool/)).not.toBeInTheDocument();
   });
 });
 
-describe("thinking Adapt engine status", () => {
-  it.each([
-    ["available", "Adapt · OpenCode Zen (free) · 290ms", "bg-success"],
-    [
-      "degraded",
-      "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
-      "bg-warning",
-    ],
-    [
-      "unavailable",
-      "Adapt · Unavailable (Adapt has fallen back to the CLI default level)",
-      "bg-warning",
-    ],
-    ["idle", "Adapt · Not used yet", "bg-muted-foreground/50"],
-    ["future-status", "Adapt · Status unknown", "bg-muted-foreground/50"],
-  ])(
-    "renders %s in the cell and card without plan quota",
-    (status, text, dotClass) => {
-      const runtime = quotaRuntime("claude", {});
-      runtime.plan_quota = null;
-      const snapshot = adaptSnapshot(status);
-      const cell = renderWithI18n(
-        <RuntimeQuotaCell
-          runtime={runtime}
-          now={NOW}
-          thinkingAdapt={snapshot}
-        />,
-      );
-
-      const cellRow = screen
-        .getByText(text)
-        .closest("[data-thinking-adapt-status]");
-      expect(cellRow).toHaveAttribute("data-thinking-adapt-status", status);
-      expect(cellRow?.querySelector("[aria-hidden=true]")).toHaveClass(dotClass);
-      expect(screen.getByText("Not reported")).toBeInTheDocument();
-      cell.unmount();
-
-      renderWithI18n(
-        <RuntimeQuotaCard
-          runtime={runtime}
-          now={NOW}
-          thinkingAdapt={snapshot}
-        />,
-      );
-      expect(screen.getByText(text)).toBeInTheDocument();
-      expect(screen.getByText("Not reported")).toBeInTheDocument();
-    },
-  );
-
-  it.each([
-    ["available", "Adapt · OpenCode Zen (free) · 290ms"],
-    [
-      "degraded",
-      "Adapt · Degraded (Adapt uses the CLI default level when decisions fail)",
-    ],
-    [
-      "unavailable",
-      "Adapt · Unavailable (Adapt has fallen back to the CLI default level)",
-    ],
-    ["idle", "Adapt · Not used yet"],
-  ])("renders %s alongside plan quota in the cell and card", (status, text) => {
+describe("thinking Adapt placement", () => {
+  it("keeps Adapt out of quota cells and cards, and renders its own status card", () => {
     const runtime = claudeRuntime();
-    runtime.thinking_adapt = adaptSnapshot(status);
-    const cell = renderWithI18n(
-      <RuntimeQuotaCell runtime={runtime} now={NOW} />,
-    );
-
-    expect(screen.getByText("100%")).toBeInTheDocument();
-    expect(screen.getByText(text)).toBeInTheDocument();
-    cell.unmount();
-
-    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("100% left")).toBeInTheDocument();
-    expect(screen.getByText(text)).toBeInTheDocument();
-  });
-
-  it("shows the daemon-period decision counts on hover", async () => {
-    const runtime = quotaRuntime("claude", {});
-    renderWithI18n(
-      <RuntimeQuotaCell
-        runtime={runtime}
-        now={NOW}
-        thinkingAdapt={adaptSnapshot("available")}
-      />,
-    );
-
-    await userEvent.hover(screen.getByText("Adapt · OpenCode Zen (free) · 290ms"));
-    expect(
-      await screen.findByText(
-        "Since daemon started: 12 successful, 3 fallbacks",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it.each([
-    ["opencode", "OpenCode Zen"],
-    ["opencode-free", "OpenCode Zen (free)"],
-    ["dashscope", "Alibaba Cloud Model Studio"],
-    ["self-hosted", "Self-hosted"],
-    ["decision.internal", "decision.internal"],
-  ])("labels the %s source", (source, label) => {
-    const runtime = quotaRuntime("claude", {});
-    renderWithI18n(
-      <RuntimeQuotaCell
-        runtime={runtime}
-        now={NOW}
-        thinkingAdapt={adaptSnapshot("available", { active_source: source })}
-      />,
-    );
-
-    expect(screen.getByText(`Adapt · ${label} · 290ms`)).toBeInTheDocument();
-  });
-
-  it.each([
-    ["opencode", "OpenCode Zen"],
-    ["opencode-free", "OpenCode Zen 免费通道"],
-    ["dashscope", "阿里云百炼"],
-    ["self-hosted", "自部署"],
-  ])("labels the %s source in zh-Hans", (source, label) => {
-    const runtime = quotaRuntime("claude", {});
-    renderWithI18n(
-      <RuntimeQuotaCell
-        runtime={runtime}
-        now={NOW}
-        thinkingAdapt={adaptSnapshot("available", { active_source: source })}
-      />,
-      { locale: "zh-Hans" },
-    );
-
-    expect(screen.getByText(`自适应 · ${label} · 290ms`)).toBeInTheDocument();
-  });
-
-  it("reads the runtime snapshot by default without plan quota", () => {
-    const runtime = quotaRuntime("claude", {});
-    runtime.plan_quota = null;
     runtime.thinking_adapt = adaptSnapshot("available");
-    const cell = renderWithI18n(
-      <RuntimeQuotaCell runtime={runtime} now={NOW} />,
-    );
-
-    expect(screen.getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
-    expect(screen.getByText("Not reported")).toBeInTheDocument();
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
     cell.unmount();
 
-    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    const card = renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
+    card.unmount();
+
+    renderWithI18n(<ThinkingAdaptQuotaCard snapshot={runtime.thinking_adapt} />);
+    expect(screen.getByRole("heading", { name: "Adapt" })).toBeInTheDocument();
     expect(screen.getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
-    expect(screen.getByText("Not reported")).toBeInTheDocument();
+    expect(screen.getByText("Since daemon started: 12 successful, 3 fallbacks")).toBeInTheDocument();
   });
 
-  it("omits the engine row when no snapshot is supplied", () => {
-    const { container } = renderWithI18n(
-      <RuntimeQuotaCell runtime={claudeRuntime()} now={NOW} />,
-    );
+  it("renders unavailable Adapt independently of a quota snapshot", () => {
+    renderWithI18n(<ThinkingAdaptQuotaCard snapshot={adaptSnapshot("unavailable")} />);
+    expect(screen.getByText(/Adapt · Unavailable/)).toBeInTheDocument();
+  });
+});
 
-    expect(
-      container.querySelector("[data-thinking-adapt-status]"),
-    ).not.toBeInTheDocument();
+describe("localized quota states", () => {
+  it("uses explicit Chinese exhaustion copy", () => {
+    renderWithI18n(<RuntimeQuotaCell runtime={antigravityRuntime()} now={NOW} />, { locale: "zh-Hans" });
+    expect(screen.getByText("已耗尽")).toBeInTheDocument();
+    expect(screen.getByText("暂不适用")).toBeInTheDocument();
   });
 });
 
@@ -783,15 +552,8 @@ describe("MiniMeterBar", () => {
   });
 
   it("lets the caller override the fill for non-health states", () => {
-    // A stale host-metrics sample passes a neutral gray: it is not a health
-    // judgment, so it must not inherit the (green) "ok" tone.
     const { container } = render(
-      <MiniMeterBar
-        percent={95}
-        tone="ok"
-        barClassName="bg-muted-foreground/50"
-        ariaLabel="cpu"
-      />,
+      <MiniMeterBar percent={95} tone="ok" barClassName="bg-muted-foreground/50" ariaLabel="cpu" />,
     );
     const indicator = container.querySelector('[data-slot="progress-indicator"]');
     expect(indicator?.className).toContain("bg-muted-foreground/50");

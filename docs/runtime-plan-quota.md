@@ -26,8 +26,9 @@ apply one set of rules (`evaluatePlanQuota` in
 `packages/core/runtimes/plan-quota.ts`):
 
 - **Reset times** are wall-clock times in the viewer's timezone (the
-  Preferences timezone, else the browser's): the time alone on the viewer's
-  current day, month and day otherwise. There are no countdowns.
+  Preferences timezone, else the browser's) on detail cards: the time alone on
+  the viewer's current day, month and day otherwise. Hover cards use compact
+  reset countdowns, and exhausted windows show their recovery countdown.
 - **A passed reset refills its window.** The window counts as 100% with no next
   reset, and its row notes when it was refilled. The next observation replaces
   the inference.
@@ -46,12 +47,19 @@ apply one set of rules (`evaluatePlanQuota` in
   is guessed: there is no recovery time, independent pools are not split, and
   no reset lifts the limit before the next observation replaces the snapshot.
   Each window keeps its own balance and color.
-- **Single-value surfaces** (the list cell's status line, machine chips) show
-  the tightest pool: "Rate limited · resets at …" with the latest recovery among
-  limited pools, otherwise the least remaining window and its reset. When every
-  window is grouped (Antigravity), the pools are independent: each gets its own
-  chip and status line. Claude's model-specific pools still merge into the
-  runtime's single value, since an agent using that model is blocked.
+- **Machine chips and subject rows.** Chips show the tightest pool. When every
+  window is grouped (Antigravity), each pool gets its own chip and subject row.
+  Claude's model-specific pools still merge into the runtime's single value,
+  since an agent using that model is blocked. Machine chips wrap with an
+  eight-chip cutoff; machine details use one horizontal window row per CLI or
+  serving account-pool subject. CLI and pool hover cards share the same source,
+  title, window and account-table skeleton.
+- **Pool visibility.** Machine rows and tables omit unused provider pools.
+  Runtime details list every reported pool, marking unused pools inline rather
+  than providing a separate idle-pool section or entry point. The all-pools
+  display fallback is not proof of usage: when an active agent uses a default
+  or unrecognized model, no pool is marked unused. A Runtime with no active
+  agents marks every pool unused; a pending agent query marks none.
 - **Freshness.** Task-reported providers (Codex, Claude and others) never age
   out: no task means no usage, so the last balance holds until its reset.
   Collectors (Kimi, Antigravity, ZenMux) and the server's GLM collector show

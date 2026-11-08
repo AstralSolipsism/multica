@@ -34,6 +34,8 @@ export interface MachineQuotaChip {
   remainingPercent: number | null;
   limited: boolean;
   tone: QuotaTone;
+  /** The runtime is online but has not reported a usable quota snapshot. */
+  empty?: boolean;
   /** The collector stopped: the last balance stays, uncolored and flagged. */
   interrupted: boolean;
 }
@@ -360,12 +362,27 @@ function machineQuotaChips(
           limited: pool.exhausted,
           tone: pool.tone,
           interrupted: isQuotaCollectionInterrupted(quota, now),
+          empty: pool.windows.length === 0,
         });
       }
       continue;
     }
     const state = planQuotaState(runtime.plan_quota, now);
-    if (!state) continue;
+    if (!state) {
+      if (runtime.plan_quota != null && parsePlanQuota(runtime.plan_quota) == null) continue;
+      chips.push({
+        key: runtime.id,
+        runtimeId: runtime.id,
+        provider: runtime.provider,
+        group: null,
+        remainingPercent: null,
+        limited: false,
+        tone: "ok",
+        interrupted: false,
+        empty: true,
+      });
+      continue;
+    }
     const provider = state.provider || runtime.provider;
     const parts = state.independentPools
       ? state.pools.map((pool) => ({ group: pool.group, status: pool }))
