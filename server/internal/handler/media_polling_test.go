@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,56 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestMediaExpiredTerminalJobsRemainUnchanged(t *testing.T) {
+	for _, state := range []string{"completed", "cancelled", "failed"} {
+		for _, action := range []string{"get", "cancel", "claim"} {
+			t.Run(state+"/"+action, func(t *testing.T) {
+				job := createTestMediaJob(t, testHandler, protocol.MediaRequest{Provider: "codex", Capability: "image-generate", Prompt: "image"})
+				message := ""
+				if state == "failed" {
+					message = "provider failed"
+				}
+				dbfx.Exec(t, "UPDATE media_job SET state=$2,error=$3 WHERE id=$1", job.ID, state, message)
+				attachmentID := ""
+				if state == "completed" {
+					attachmentID = dbfx.Insert(t, "attachment", testutil.Cols{
+						"workspace_id": testWorkspaceID, "uploader_type": "member", "uploader_id": testUserID,
+						"filename": "completed.png", "content_type": "image/png", "size_bytes": 1, "url": "/uploads/completed.png",
+					})
+					dbfx.Exec(t, "UPDATE media_job SET attachment_id=$2 WHERE id=$1", job.ID, attachmentID)
+				}
+				var before protocol.MediaJob
+				testutil.Call(t, testHandler.GetMediaJob, withURLParam(newRequest(http.MethodGet, "/", nil), "id", job.ID)).Want(200).JSON(&before)
+				if before.State != state || before.Error != message || before.AttachmentID != attachmentID ||
+					(state == "completed" && (before.MarkdownURL == "" || before.Markdown == "")) {
+					t.Fatalf("invalid terminal fixture: %+v", before)
+				}
+				dbfx.Exec(t, "UPDATE media_job SET expires_at=now()-interval '1 second' WHERE id=$1", job.ID)
+				if action == "claim" {
+					rt := mediaTestRuntime(t, "codex", 0)
+					if claim := claimTestMediaJob(t, testHandler, rt); claim != nil {
+						t.Fatalf("terminal job was assigned: %+v", claim)
+					}
+				}
+				method, handler := http.MethodGet, testHandler.GetMediaJob
+				if action == "cancel" {
+					method, handler = http.MethodPost, testHandler.CancelMediaJob
+				}
+				var after protocol.MediaJob
+				testutil.Call(t, handler, withURLParam(newRequest(method, "/", nil), "id", job.ID)).Want(200).JSON(&after)
+				if after.State != before.State || after.Error != before.Error || after.AttachmentID != before.AttachmentID ||
+					after.MarkdownURL != before.MarkdownURL || after.Markdown != before.Markdown {
+					t.Fatalf("expired terminal job changed: before=%+v after=%+v", before, after)
+				}
+				stored, err := testHandler.Queries.GetMediaJob(t.Context(), db.GetMediaJobParams{ID: parseUUID(job.ID), WorkspaceID: parseUUID(testWorkspaceID)})
+				if err != nil || stored.State != state || stored.Error != message || uuidToString(stored.AttachmentID) != attachmentID {
+					t.Fatalf("terminal state was not preserved in storage: %+v, %v", stored, err)
+				}
+			})
+		}
+	}
+}
 
 func TestMediaGetDoesNotWaitForOtherExpiredJob(t *testing.T) {
 	rt := mediaTestRuntime(t, "codex", 0)
@@ -112,6 +163,7 @@ func TestMediaIdleClaimQueryBudget(t *testing.T) {
 
 func TestMediaModelRejectedBeforeJobCreation(t *testing.T) {
 	request := protocol.MediaRequest{Provider: "auto", Capability: "image-generate", Prompt: "image", Model: "unsupported-model"}
+	dbfx.Cleanup(t, "DELETE FROM media_job WHERE workspace_id=$1 AND request->>'model'=$2", testWorkspaceID, request.Model)
 	testutil.Call(t, testHandler.CreateMediaJob, newRequest("POST", "/", request)).Want(400)
 	var count int
 	dbfx.QueryRow(t, "SELECT count(*) FROM media_job WHERE workspace_id=$1 AND request->>'model'=$2", testWorkspaceID, request.Model).Scan(&count)
