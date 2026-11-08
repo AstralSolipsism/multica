@@ -32,6 +32,21 @@ type Resolver interface {
 }
 
 func ValidatePublicHTTPSEndpoint(ctx context.Context, raw string, allowedHosts []string, resolver Resolver) (*url.URL, error) {
+	return validatePublicHTTPSEndpoint(ctx, raw, allowedHosts, resolver, false)
+}
+
+// ValidatePublicHTTPSEndpointAllowingProxyFakeIP is
+// ValidatePublicHTTPSEndpoint for callers behind a transparent proxy in
+// fake-ip mode (Mihomo/Clash enhanced-mode), whose resolver answers every
+// public hostname with an address from the 198.18.0.0/15 pool: the pool
+// passes the resolved-address check there, exactly as it does in
+// NewSecureHTTPClientAllowingProxyFakeIP's dial gate. Every other reserved
+// range stays refused.
+func ValidatePublicHTTPSEndpointAllowingProxyFakeIP(ctx context.Context, raw string, allowedHosts []string, resolver Resolver) (*url.URL, error) {
+	return validatePublicHTTPSEndpoint(ctx, raw, allowedHosts, resolver, true)
+}
+
+func validatePublicHTTPSEndpoint(ctx context.Context, raw string, allowedHosts []string, resolver Resolver, allowProxyFakeIP bool) (*url.URL, error) {
 	endpoint, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parse endpoint: %w", err)
@@ -64,7 +79,7 @@ func ValidatePublicHTTPSEndpoint(ctx context.Context, raw string, allowedHosts [
 		return nil, fmt.Errorf("resolve endpoint host: %w", err)
 	}
 	for _, address := range addresses {
-		if !isPublicAddress(address.Unmap()) {
+		if !isPublicAddress(address.Unmap(), allowProxyFakeIP) {
 			return nil, fmt.Errorf("endpoint host resolves to non-public address %s", address)
 		}
 	}
@@ -87,16 +102,31 @@ func hostAllowed(host string, policies []string) bool {
 	return false
 }
 
-func isPublicAddress(address netip.Addr) bool {
+// proxyFakeIPPool is 198.18.0.0/15 (RFC 2544 benchmarking), the pool a
+// transparent proxy in fake-ip mode (Mihomo/Clash enhanced-mode) answers
+// every public hostname with; the proxy maps a connection to a pool address
+// back to the original hostname. Behind such a gateway a pool address is the
+// resolver's only honest answer for a public host, so callers serving users
+// on one may accept it; everywhere else the range is unrouted and stays
+// refused. The default policy refuses it.
+var proxyFakeIPPool = netip.MustParsePrefix("198.18.0.0/15")
+
+// isPublicAddress reports whether address may carry a public destination.
+// allowProxyFakeIP additionally accepts the transparent-proxy fake-ip pool;
+// every other reserved range — loopback, RFC 1918, CGNAT, link-local,
+// TEST-NETs, 240/4 and the IPv6 equivalents — is refused either way.
+func isPublicAddress(address netip.Addr, allowProxyFakeIP bool) bool {
 	if !address.IsValid() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
 		return false
+	}
+	if proxyFakeIPPool.Contains(address) {
+		return allowProxyFakeIP
 	}
 	// IANA special-purpose and metadata ranges not covered by netip's helpers.
 	blocked := []netip.Prefix{
 		netip.MustParsePrefix("100.64.0.0/10"),
 		netip.MustParsePrefix("192.0.0.0/24"),
 		netip.MustParsePrefix("192.0.2.0/24"),
-		netip.MustParsePrefix("198.18.0.0/15"),
 		netip.MustParsePrefix("198.51.100.0/24"),
 		netip.MustParsePrefix("203.0.113.0/24"),
 		netip.MustParsePrefix("224.0.0.0/4"),
@@ -114,6 +144,20 @@ func isPublicAddress(address netip.Addr) bool {
 }
 
 func NewSecureHTTPClient(endpoint *url.URL) *http.Client {
+	return newSecureHTTPClient(endpoint, false)
+}
+
+// NewSecureHTTPClientAllowingProxyFakeIP is NewSecureHTTPClient for callers
+// behind a transparent proxy in fake-ip mode, whose resolver answers every
+// public hostname with an address from the 198.18.0.0/15 pool: the dial-time
+// re-resolve accepts the pool exactly when validation did, so the precheck
+// and the connection agree on the range. Every other reserved range is
+// still refused at dial.
+func NewSecureHTTPClientAllowingProxyFakeIP(endpoint *url.URL) *http.Client {
+	return newSecureHTTPClient(endpoint, true)
+}
+
+func newSecureHTTPClient(endpoint *url.URL, allowProxyFakeIP bool) *http.Client {
 	// Decided once, here, rather than inside the dialer: the endpoint is fixed
 	// for this client's lifetime, so a per-dial lookup could only differ if the
 	// environment changed mid-task, and honouring that would be a way to widen
@@ -145,8 +189,9 @@ func NewSecureHTTPClient(endpoint *url.URL) *http.Client {
 			candidate = candidate.Unmap()
 			// The host pin above still holds for a dev origin, so a redirect
 			// pointing somewhere else is refused either way. What this skips is
-			// only "the address must be on the public internet".
-			if !devOrigin && !isPublicAddress(candidate) {
+			// only "the address must be on the public internet"; a fake-ip-aware
+			// caller additionally accepts the proxy pool, nothing more.
+			if !devOrigin && !isPublicAddress(candidate, allowProxyFakeIP) {
 				return nil, errors.New("remote MCP endpoint resolved to a non-public address")
 			}
 			connection, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.String(), port))

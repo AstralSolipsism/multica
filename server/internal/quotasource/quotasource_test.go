@@ -234,6 +234,51 @@ func TestValidateBaseURLHostAllowlist(t *testing.T) {
 	}
 }
 
+// fixedAddrs answers every lookup with the same addresses, standing in for
+// the system resolver on a fake-ip gateway.
+type fixedAddrs []netip.Addr
+
+func (f fixedAddrs) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr, error) {
+	return f, nil
+}
+
+// Behind a transparent proxy in fake-ip mode (Mihomo/Clash enhanced-mode)
+// the system resolver answers every public hostname out of 198.18.0.0/15.
+// The quota chain accepts exactly that pool — registering and polling a
+// provider host keeps working — while real intranet, loopback and metadata
+// answers stay refused.
+func TestValidateBaseURLAcceptsFakeIPGateway(t *testing.T) {
+	ctx := context.Background()
+	glm := GLMDriver{}
+
+	fake := fixedAddrs{netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("198.19.3.48")}
+	for _, host := range glm.AllowedHosts() {
+		if _, err := ValidateBaseURL(ctx, glm, "https://"+host, fake); err != nil {
+			t.Fatalf("fake-ip resolution of %s rejected: %v", host, err)
+		}
+	}
+	zenmux := fixedAddrs{netip.MustParseAddr("198.18.3.45")}
+	if _, err := ValidateBaseURL(ctx, ZenMuxDriver{}, ZenMuxDriver{}.DefaultBaseURL(), zenmux); err != nil {
+		t.Fatalf("fake-ip resolution of %s rejected: %v", ZenMuxDriver{}.DefaultBaseURL(), err)
+	}
+
+	// A pool address alongside a real intranet answer fails closed: the
+	// exemption widens nothing but the pool.
+	rebind := fixedAddrs{netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("192.168.50.1")}
+	if _, err := ValidateBaseURL(ctx, glm, glm.DefaultBaseURL(), rebind); err == nil {
+		t.Fatal("a mixed fake-ip + intranet answer was accepted")
+	}
+	for _, addr := range []string{
+		"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.50.1",
+		"169.254.169.254", "100.64.0.1", "::1", "fd00::1",
+	} {
+		answer := fixedAddrs{netip.MustParseAddr(addr)}
+		if _, err := ValidateBaseURL(ctx, glm, glm.DefaultBaseURL(), answer); err == nil {
+			t.Fatalf("%s was accepted", addr)
+		}
+	}
+}
+
 func TestDriverFor(t *testing.T) {
 	if DriverFor("glm") == nil || DriverFor("zenmux") == nil {
 		t.Fatal("known kinds must resolve")

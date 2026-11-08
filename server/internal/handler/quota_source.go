@@ -134,8 +134,11 @@ func credentialHint(credential string) string {
 }
 
 // quotaSourceHTTPClient builds the SSRF-hardened client for one endpoint.
+// The fake-ip-allowing dial gate matches ValidateBaseURL: a host validated
+// behind a fake-ip proxy (198.18.0.0/15) stays dialable, while every other
+// reserved range is refused at connection time too.
 func quotaSourceHTTPClient(endpoint *url.URL) *http.Client {
-	client := remotemcp.NewSecureHTTPClient(endpoint)
+	client := remotemcp.NewSecureHTTPClientAllowingProxyFakeIP(endpoint)
 	client.Timeout = quotaSourceRequestTimeout
 	return client
 }
@@ -143,7 +146,7 @@ func quotaSourceHTTPClient(endpoint *url.URL) *http.Client {
 // probeQuotaSource runs one synchronous collection with the candidate
 // credential/base_url (not yet stored). Returns the validated snapshot.
 func (h *Handler) probeQuotaSource(ctx context.Context, driver quotasource.Driver, rawBaseURL, credential string) (*protocol.RuntimePlanQuota, error) {
-	endpoint, err := quotasource.ValidateBaseURL(ctx, driver, rawBaseURL)
+	endpoint, err := quotasource.ValidateBaseURL(ctx, driver, rawBaseURL, nil)
 	if err != nil {
 		return nil, &quotasource.ProbeError{Code: "invalid_base_url", Err: err}
 	}
