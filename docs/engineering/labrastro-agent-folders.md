@@ -165,10 +165,14 @@ The key is `["workspaces", wsId, "agent-folders"]`. Invalidate after a local
 write settles, including an unreadable response. Mutations must use `retry:
 false` if configuring TanStack mutations. The API layer adds no retries.
 
-The tree invalidates on all `agent:*` and `squad:*` events. Custom folder
-writes do not broadcast new events; other clients refresh on window focus
-or the next query. The tree overrides the shared Infinity stale time with 0
-and sets `refetchOnWindowFocus: "always"`.
+The tree invalidates on structural agent and squad events and on websocket
+reconnect. Fast-path `agent:status` events only update presence projections;
+full agent refreshes still invalidate the tree because configuration or
+visibility may have changed. Invalidation cancels an obsolete in-flight first
+load before refreshing. Custom folder writes do not broadcast new events;
+other clients refresh on window focus or the next query. The tree overrides
+the shared Infinity stale time with 0 and sets `refetchOnWindowFocus:
+"always"`.
 
 ## Upstream mount points
 

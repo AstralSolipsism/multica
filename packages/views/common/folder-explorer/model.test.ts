@@ -152,4 +152,13 @@ describe("in-place folder explorer rows", () => {
     });
     expect(rows.map((row) => row.kind === "folder" && row.folder.id)).toEqual(["orphan"]);
   });
+
+  it("keeps repeated membership ids from duplicating a row", () => {
+    const rows = flattenFolderExplorerRows({
+      folders: [folder("a")],
+      entries: [entry("one", "a", "a")],
+      expandedFolderIds: new Set(["a"]),
+    });
+    expect(rows.filter((row) => row.kind === "entry").map((row) => row.key)).toEqual(["entry-a-one"]);
+  });
 });
