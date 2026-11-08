@@ -20,6 +20,10 @@ SELECT * FROM media_job WHERE id = @id AND workspace_id = @workspace_id FOR UPDA
 UPDATE media_job SET state = 'failed', error = 'job deadline exceeded', updated_at = now()
 WHERE workspace_id = @workspace_id AND state IN ('queued','running') AND expires_at <= now();
 
+-- name: ExpireMediaJob :exec
+UPDATE media_job SET state = 'failed', error = 'job deadline exceeded', updated_at = now()
+WHERE id = @id AND workspace_id = @workspace_id AND state IN ('queued','running') AND expires_at <= now();
+
 -- name: QueuedMediaJobs :many
 SELECT j.* FROM media_job j
 JOIN agent_runtime r ON r.id = @runtime_id AND r.workspace_id = j.workspace_id
