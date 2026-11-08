@@ -275,3 +275,28 @@ describe("createBaselineReferenceMatcher", () => {
     expect(separate.map((matches) => matches.length)).toEqual([1, 0, 0]);
   });
 });
+
+describe("natural concept links", () => {
+  it("links case variants of a concept title and keeps the text as written", () => {
+    const parsed = parseBaselineChapter("architecture", "## Billing Ledger\n\nOwns invoices.\n\n## Checkout\n\nBody.").sections;
+    const matches = matchBaselineReferences("The billing ledger and the BILLING LEDGER.", {
+      sections: parsed,
+      currentSectionKey: parsed[1]!.key,
+    });
+
+    expect(matches.map((match) => [match.reference.kind, match.reference.label, match.reference.kind === "concept" ? match.reference.section.key : ""])).toEqual([
+      ["concept", "billing ledger", parsed[0]!.key],
+      ["concept", "BILLING LEDGER", parsed[0]!.key],
+    ]);
+  });
+
+  it("prefers the exact-case title when two concepts differ only by case", () => {
+    const parsed = parseBaselineChapter("architecture", "## Token Store\n\nA.\n\n## token store\n\nB.\n\n## Checkout\n\nC.").sections;
+    const options = { sections: parsed, currentSectionKey: parsed[2]!.key };
+    const exact = matchBaselineReferences("uses token store", options);
+    const variant = matchBaselineReferences("uses TOKEN STORE", options);
+
+    expect(exact[0]?.reference.kind === "concept" && exact[0].reference.section.key).toBe(parsed[1]!.key);
+    expect(variant[0]?.reference.kind === "concept" && variant[0].reference.section.key).toBe(parsed[0]!.key);
+  });
+});

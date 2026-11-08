@@ -296,6 +296,13 @@ export function createBaselineReferenceMatcher(
     if (!conceptKeys.has(section.key)) conceptKeys.set(section.key, section);
   }
   const naturalConcepts = new Map([...concepts].filter(([title]) => allowsNaturalConceptMatch(title)));
+  // The pattern is case-insensitive; resolve case variants to the first
+  // concept with that spelling, preferring an exact-case title.
+  const naturalConceptsByLowerTitle = new Map<string, BaselineSection>();
+  for (const [title, section] of naturalConcepts) {
+    const key = title.toLowerCase();
+    if (!naturalConceptsByLowerTitle.has(key)) naturalConceptsByLowerTitle.set(key, section);
+  }
   const nodes = new Map((options.nodes ?? []).map((node) => [node.identifier, node]));
   const stages = new Map((options.stages ?? []).map((stage) => [stage.stage, stage]));
   const alternatives = [
@@ -344,7 +351,7 @@ export function createBaselineReferenceMatcher(
       const after = text[end];
       if (before && /[A-Za-z0-9_]/.test(before) && /^[A-Za-z0-9_]/.test(raw)) continue;
       if (after && /[A-Za-z0-9_]/.test(after) && /[A-Za-z0-9_]$/.test(raw)) continue;
-      const concept = naturalConcepts.get(raw);
+      const concept = naturalConcepts.get(raw) ?? naturalConceptsByLowerTitle.get(raw.toLowerCase());
       let reference: BaselineReference | undefined;
       if (concept) {
         if (seenConcepts?.has(concept.key)) continue;
