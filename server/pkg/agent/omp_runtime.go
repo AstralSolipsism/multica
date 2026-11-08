@@ -198,10 +198,11 @@ func appendOmpRuntimeArgs(args []string, opts *OmpRuntimeOpts, advisorConfigPath
 // isolated from user overlays.
 const ompSettingsOverlayName = "multica-advisor-overlay.yml"
 
-// prepareOmpSettingsOverlay writes the run-scoped OMP settings overlay into
-// the task-private session directory (fresh runs) or next to the resumed
-// transcript (resume runs), so it dies with the session and needs no explicit
-// cleanup. Returns "" when no overlay applies.
+// prepareOmpSettingsOverlay writes the OMP settings overlay into the private
+// session directory (fresh runs) or next to the resumed transcript. It is
+// retained with the transcript and rewritten on resume when settings apply.
+// Execute removes a fresh directory if launch fails. Returns "" when no
+// overlay applies; an existing overlay is not passed to OMP in that case.
 func prepareOmpSettingsOverlay(sessionPath, sessionDir string, opts *OmpRuntimeOpts) (string, error) {
 	if !ompSettingsOverlayApplies(opts) {
 		return "", nil

@@ -30,14 +30,13 @@ func buildOmpArgs(sessionPath, sessionDir string, opts ExecOptions, logger *slog
 	}
 	// Managed OMP role/advisor/execution flags ride after the session flags.
 	// A same-named flag the user put in custom_args wins (explicit override),
-	// so opts.CustomArgs is consulted pre-filter here — the filtered slice
-	// above only drops daemon-owned session flags, never the role flags.
-	// The advisor overlay is written next to buildOmpArgs so argv and file
+	// so the session-filtered CustomArgs above still includes role overrides.
+	// The settings overlay is written next to buildOmpArgs so argv and file
 	// stay in lockstep even on resume runs.
 	overlayPath, err := prepareOmpSettingsOverlay(sessionPath, sessionDir, opts.OmpRuntime)
 	if err != nil {
 		if logger != nil {
-			logger.Warn("omp runtime_config: advisor overlay unavailable; launching without review-mode override", "error", err)
+			logger.Warn("omp runtime_config: settings overlay unavailable; launching without managed settings overlay", "error", err)
 		}
 		overlayPath = ""
 	}
