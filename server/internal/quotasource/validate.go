@@ -3,9 +3,11 @@ package quotasource
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -37,6 +39,21 @@ func ValidateBaseURL(ctx context.Context, driver Driver, raw string, resolver re
 		return nil, fmt.Errorf("base_url rejected: %w", err)
 	}
 	return endpoint, nil
+}
+
+// requestTimeout bounds one provider fetch.
+const requestTimeout = 15 * time.Second
+
+// NewHTTPClient builds the SSRF-hardened client one provider fetch dials
+// with. The fake-ip-allowing dial gate matches ValidateBaseURL: a host
+// validated behind a fake-ip proxy (198.18.0.0/15) stays dialable, while
+// every other reserved range is refused at connection time too. Living next
+// to ValidateBaseURL keeps both halves of the quota-source SSRF policy in
+// one place, testable without a database.
+func NewHTTPClient(endpoint *url.URL) *http.Client {
+	client := remotemcp.NewSecureHTTPClientAllowingProxyFakeIP(endpoint)
+	client.Timeout = requestTimeout
+	return client
 }
 
 // isOperatorDevOrigin reports whether the exact scheme://host[:port] is

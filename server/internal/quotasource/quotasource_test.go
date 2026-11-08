@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,11 +272,40 @@ func TestValidateBaseURLAcceptsFakeIPGateway(t *testing.T) {
 	}
 	for _, addr := range []string{
 		"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.50.1",
-		"169.254.169.254", "100.64.0.1", "::1", "fd00::1",
+		"169.254.169.254", "100.64.0.1", "0.0.0.1", "0.1.2.3",
+		"::1", "fd00::1",
 	} {
 		answer := fixedAddrs{netip.MustParseAddr(addr)}
 		if _, err := ValidateBaseURL(ctx, glm, glm.DefaultBaseURL(), answer); err == nil {
 			t.Fatalf("%s was accepted", addr)
+		}
+	}
+}
+
+// The dial half of the quota chain: the client a provider fetch dials with
+// must accept the pool ValidateBaseURL accepted and keep refusing everything
+// else. Guards the fake-ip wiring end to end without a database; the context
+// is already canceled so no dial ever leaves the machine — the gate runs
+// before the connect.
+func TestNewHTTPClientDialGateMatchesValidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	poolEndpoint, err := url.Parse("https://198.18.0.165")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHTTPClient(poolEndpoint).Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err == nil || strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("quota-source dial gate refused a fake-ip pool address: %v", err)
+	}
+
+	for _, addr := range []string{"127.0.0.1", "0.1.2.3"} {
+		endpoint, err := url.Parse("https://" + addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewHTTPClient(endpoint).Transport.(*http.Transport).DialContext(ctx, "tcp", addr+":443"); err == nil || !strings.Contains(err.Error(), "non-public") {
+			t.Fatalf("quota-source dial gate accepted %s (err = %v)", addr, err)
 		}
 	}
 }

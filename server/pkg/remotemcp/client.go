@@ -114,7 +114,8 @@ var proxyFakeIPPool = netip.MustParsePrefix("198.18.0.0/15")
 // isPublicAddress reports whether address may carry a public destination.
 // allowProxyFakeIP additionally accepts the transparent-proxy fake-ip pool;
 // every other reserved range — loopback, RFC 1918, CGNAT, link-local,
-// TEST-NETs, 240/4 and the IPv6 equivalents — is refused either way.
+// 0.0.0.0/8, TEST-NETs, 240/4 and the IPv6 equivalents — is refused either
+// way.
 func isPublicAddress(address netip.Addr, allowProxyFakeIP bool) bool {
 	if !address.IsValid() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
 		return false
@@ -123,7 +124,10 @@ func isPublicAddress(address netip.Addr, allowProxyFakeIP bool) bool {
 		return allowProxyFakeIP
 	}
 	// IANA special-purpose and metadata ranges not covered by netip's helpers.
+	// IsUnspecified covers only 0.0.0.0 itself; the rest of "this network"
+	// routes to the local machine on Linux and must not pass either.
 	blocked := []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("100.64.0.0/10"),
 		netip.MustParsePrefix("192.0.0.0/24"),
 		netip.MustParsePrefix("192.0.2.0/24"),

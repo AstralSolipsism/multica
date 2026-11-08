@@ -57,11 +57,12 @@ func TestValidatePublicHTTPSEndpointProxyFakeIPPool(t *testing.T) {
 		"loopback.example":  {netip.MustParseAddr("127.0.0.1")},
 		"cgnat.example":     {netip.MustParseAddr("100.64.0.1")},
 		"metadata.example":  {netip.MustParseAddr("169.254.169.254")},
+		"thisnet.example":   {netip.MustParseAddr("0.0.0.1"), netip.MustParseAddr("0.1.2.3")},
 		"ula.example":       {netip.MustParseAddr("fd00::1")},
 		"v6loop.example":    {netip.MustParseAddr("::1")},
 		"linklocal.example": {netip.MustParseAddr("fe80::1")},
 	}
-	for _, host := range []string{"fake.example", "rebind.example"} {
+	for _, host := range []string{"fake.example", "rebind.example", "thisnet.example"} {
 		if _, err := ValidatePublicHTTPSEndpoint(context.Background(), "https://"+host, nil, resolver); err == nil {
 			t.Fatalf("%s was accepted by the default policy", host)
 		}
@@ -71,8 +72,8 @@ func TestValidatePublicHTTPSEndpointProxyFakeIPPool(t *testing.T) {
 	}
 	for _, host := range []string{
 		"rebind.example", "intranet.example", "loopback.example",
-		"cgnat.example", "metadata.example", "ula.example", "v6loop.example",
-		"linklocal.example",
+		"cgnat.example", "metadata.example", "thisnet.example",
+		"ula.example", "v6loop.example", "linklocal.example",
 	} {
 		if _, err := ValidatePublicHTTPSEndpointAllowingProxyFakeIP(context.Background(), "https://"+host, nil, resolver); err == nil {
 			t.Fatalf("%s was accepted alongside the fake-ip exemption", host)
@@ -82,12 +83,12 @@ func TestValidatePublicHTTPSEndpointProxyFakeIPPool(t *testing.T) {
 
 // The dial-time gate must treat the fake-ip pool exactly like validation: a
 // strict client refuses a pool address before connecting, a fake-ip-aware
-// client lets it through the gate (beyond the gate the connection fails for
-// real transport reasons, or succeeds behind an actual fake-ip gateway), and
-// loopback stays refused for both policies.
+// client proceeds past the gate and fails in the dialer instead, and loopback
+// stays refused for both policies. The context is already canceled, so no
+// dial ever leaves the machine — both gates run before the connect.
 func TestSecureHTTPClientDialGateMatchesFakeIPPolicy(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	poolEndpoint, err := url.Parse("https://198.18.0.165")
 	if err != nil {
@@ -98,7 +99,7 @@ func TestSecureHTTPClientDialGateMatchesFakeIPPolicy(t *testing.T) {
 		t.Fatalf("strict dial gate error = %v, want the non-public refusal", err)
 	}
 	lenient := NewSecureHTTPClientAllowingProxyFakeIP(poolEndpoint)
-	if _, err := lenient.Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err != nil && strings.Contains(err.Error(), "non-public") {
+	if _, err := lenient.Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err == nil || strings.Contains(err.Error(), "non-public") {
 		t.Fatalf("fake-ip-aware dial gate refused a pool address: %v", err)
 	}
 
