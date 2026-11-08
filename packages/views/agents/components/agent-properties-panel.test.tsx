@@ -273,7 +273,7 @@ describe("AgentPropertiesPanel", () => {
 
   it("keeps the OMP summary empty by default and hides it for other runtimes", () => {
     renderPanel(omp);
-    expect(screen.getByText("No collaboration strategies enabled")).toBeInTheDocument();
+    expect(screen.getByText("No collaboration settings selected")).toBeInTheDocument();
 
     cleanup();
     renderPanel(claude);

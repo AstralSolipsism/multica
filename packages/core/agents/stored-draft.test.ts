@@ -43,6 +43,24 @@ describe("stored agent draft", () => {
     expect(restored).toEqual(original);
   });
 
+  it("preserves explicit OMP off values through stored drafts", () => {
+    const original = {
+      ...draft(),
+      ompRuntimeConfig: {
+        advisorEnabled: false,
+        memoryBackend: "off" as const,
+        autolearnEnabled: false,
+      },
+    };
+    const stored = toStoredAgentDraft(original, null);
+    expect(stored.omp_runtime_config).toEqual({
+      advisor_enabled: false,
+      memory_backend: "off",
+      autolearn_enabled: false,
+    });
+    expect(fromStoredAgentDraft(stored, original.runtimeId)).toEqual(original);
+  });
+
   // The runtime a conversation executes on is owned by its carrier agent. A
   // copy inside the draft could only go stale and put the picker on a runtime
   // that runs nothing (MUL-5163), so the restore takes it from the caller.

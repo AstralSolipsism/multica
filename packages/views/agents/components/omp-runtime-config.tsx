@@ -7,7 +7,13 @@ import {
   type OmpExecutionMode,
   type OmpRuntimeConfig,
 } from "@multica/core/agents";
-import { Switch } from "@multica/ui/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import {
@@ -95,17 +101,18 @@ export function OmpRuntimeConfigPanel({
         <SettingsCard>
           <SettingsRow
             label={t(($) => $.omp.panel.advisor_enabled)}
+            size="select-wide"
             description={
               value.advisorEnabled
                 ? undefined
                 : t(($) => $.omp.panel.advisor_disabled_hint)
             }
           >
-            <Switch
-              checked={value.advisorEnabled === true}
+            <BooleanSetting
+              value={value.advisorEnabled}
               disabled={!canEdit}
-              aria-label={t(($) => $.omp.panel.advisor_enabled)}
-              onCheckedChange={(checked) =>
+              label={t(($) => $.omp.panel.advisor_enabled)}
+              onChange={(checked) =>
                 set({
                   advisorEnabled: checked,
                   advisorReviewMode: checked
@@ -267,18 +274,25 @@ export function OmpRuntimeConfigPanel({
               aria-label={t(($) => $.omp.panel.memory_backend)}
               className="grid min-w-0 gap-2 sm:w-96"
             >
+              <Choice
+                name={`${id}-memory-backend`}
+                value="inherit"
+                selected={value.memoryBackend === undefined}
+                title={t(($) => $.omp.panel.inherit)}
+                description={t(($) => $.omp.panel.inherit_hint)}
+                disabled={!canEdit}
+                onSelect={() => set({ memoryBackend: undefined })}
+              />
               {(["off", "sharpshooter", "mnemopi"] as const).map((backend) => (
                 <Choice
                   key={backend}
                   name={`${id}-memory-backend`}
                   value={backend}
-                  selected={(value.memoryBackend ?? "off") === backend}
+                  selected={value.memoryBackend === backend}
                   title={t(($) => $.omp.panel[`memory_${backend}`])}
                   description={t(($) => $.omp.panel[`memory_${backend}_hint`])}
                   disabled={!canEdit}
-                  onSelect={() =>
-                    set({ memoryBackend: backend === "off" ? undefined : backend })
-                  }
+                  onSelect={() => set({ memoryBackend: backend })}
                 />
               ))}
             </div>
@@ -286,19 +300,58 @@ export function OmpRuntimeConfigPanel({
           <SettingsRow
             label={t(($) => $.omp.panel.autolearn_enabled)}
             description={t(($) => $.omp.panel.autolearn_hint)}
+            size="select-wide"
           >
-            <Switch
-              checked={value.autolearnEnabled === true}
+            <BooleanSetting
+              value={value.autolearnEnabled}
               disabled={!canEdit}
-              aria-label={t(($) => $.omp.panel.autolearn_enabled)}
-              onCheckedChange={(autolearnEnabled) =>
-                set({ autolearnEnabled: autolearnEnabled || undefined })
-              }
+              label={t(($) => $.omp.panel.autolearn_enabled)}
+              onChange={(autolearnEnabled) => set({ autolearnEnabled })}
             />
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
     </div>
+  );
+}
+
+function BooleanSetting({
+  value,
+  disabled,
+  label,
+  onChange,
+}: {
+  value: boolean | undefined;
+  disabled: boolean;
+  label: string;
+  onChange: (value: boolean | undefined) => void;
+}) {
+  const { t } = useT("agents");
+  const items = [
+    { value: "inherit", label: t(($) => $.omp.panel.inherit) },
+    { value: "on", label: t(($) => $.omp.panel.on) },
+    { value: "off", label: t(($) => $.omp.panel.memory_off) },
+  ];
+  return (
+    <Select
+      items={items}
+      value={value === undefined ? "inherit" : value ? "on" : "off"}
+      disabled={disabled}
+      onValueChange={(next) => {
+        if (next !== null) onChange(next === "inherit" ? undefined : next === "on");
+      }}
+    >
+      <SelectTrigger className="w-full" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent alignItemWithTrigger={false}>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -437,6 +490,8 @@ export function OmpRuntimeConfigSummary({ config }: { config: OmpRuntimeConfig }
             : t(($) => $.omp.inspector.agent_end),
       }),
     );
+  } else if (config.advisorEnabled === false) {
+    chips.push(t(($) => $.omp.inspector.advisor_off));
   }
   const executionMode = config.executionMode;
   if (executionMode === "plan_yolo" || executionMode === "prewalk") {
@@ -466,9 +521,13 @@ export function OmpRuntimeConfigSummary({ config }: { config: OmpRuntimeConfig }
             : $.omp.inspector.memory_mnemopi,
       ),
     );
+  } else if (config.memoryBackend === "off") {
+    chips.push(t(($) => $.omp.inspector.memory_off));
   }
   if (config.autolearnEnabled) {
     chips.push(t(($) => $.omp.inspector.autolearn));
+  } else if (config.autolearnEnabled === false) {
+    chips.push(t(($) => $.omp.inspector.autolearn_off));
   }
   if (chips.length === 0) {
     return (

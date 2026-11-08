@@ -16,16 +16,17 @@ export interface OmpRuntimeConfig {
   slowModel?: string;
   /** Plan-mode model (`--plan`). */
   planModel?: string;
+  /** Unset inherits local settings; false explicitly disables Advisor. */
   advisorEnabled?: boolean;
-  /** Advisor review cadence; OMP's own default is "turn". */
+  /** Managed Advisor review cadence; defaults to "agent-end" when enabled. */
   advisorReviewMode?: OmpAdvisorReviewMode;
   /** "standard" is the default and normalized away on parse. */
   executionMode?: OmpExecutionMode;
   /** Handoff target for plan_yolo / prewalk (`--plan-yolo-into` / `--prewalk-into`). */
   handoffModel?: string;
-  /** Memory backend; "off" is the default and normalized away on parse. */
+  /** Unset inherits local settings; "off" explicitly disables memory. */
   memoryBackend?: OmpMemoryBackend;
-  /** Allow the agent to distill reusable flows into managed skills. */
+  /** Allow managed skill learning; unset inherits, false explicitly disables. */
   autolearnEnabled?: boolean;
 }
 
@@ -61,7 +62,9 @@ export function parseOmpRuntimeConfig(raw: unknown): OmpRuntimeConfig {
   out.slowModel = parseModelField(root, "slow_model");
   out.planModel = parseModelField(root, "plan_model");
   out.handoffModel = parseModelField(root, "handoff_model");
-  if (root.advisor_enabled === true) out.advisorEnabled = true;
+  if (typeof root.advisor_enabled === "boolean") {
+    out.advisorEnabled = root.advisor_enabled;
+  }
   if (
     typeof root.advisor_review_mode === "string" &&
     advisorReviewModes.includes(root.advisor_review_mode as OmpAdvisorReviewMode)
@@ -77,12 +80,13 @@ export function parseOmpRuntimeConfig(raw: unknown): OmpRuntimeConfig {
   }
   if (
     typeof root.memory_backend === "string" &&
-    memoryBackends.includes(root.memory_backend as OmpMemoryBackend) &&
-    root.memory_backend !== "off"
+    memoryBackends.includes(root.memory_backend as OmpMemoryBackend)
   ) {
     out.memoryBackend = root.memory_backend as OmpMemoryBackend;
   }
-  if (root.autolearn_enabled === true) out.autolearnEnabled = true;
+  if (typeof root.autolearn_enabled === "boolean") {
+    out.autolearnEnabled = root.autolearn_enabled;
+  }
   return out;
 }
 
@@ -97,20 +101,22 @@ export function serializeOmpRuntimeConfig(
   if (cfg.slowModel) out.slow_model = cfg.slowModel;
   if (cfg.planModel) out.plan_model = cfg.planModel;
   if (cfg.handoffModel) out.handoff_model = cfg.handoffModel;
-  if (cfg.advisorEnabled) out.advisor_enabled = true;
+  if (cfg.advisorEnabled !== undefined) out.advisor_enabled = cfg.advisorEnabled;
   if (cfg.advisorReviewMode) out.advisor_review_mode = cfg.advisorReviewMode;
   if (cfg.executionMode && cfg.executionMode !== "standard") {
     out.execution_mode = cfg.executionMode;
   }
-  if (cfg.memoryBackend && cfg.memoryBackend !== "off") {
+  if (cfg.memoryBackend) {
     out.memory_backend = cfg.memoryBackend;
   }
-  if (cfg.autolearnEnabled) out.autolearn_enabled = true;
+  if (cfg.autolearnEnabled !== undefined) {
+    out.autolearn_enabled = cfg.autolearnEnabled;
+  }
   return out;
 }
 
 // Stable shallow equality across two parsed configs, used by the form's dirty
-// detector. Absent and default-normalized values compare equal.
+// detector. Explicit off values differ from absence (local inheritance).
 export function ompRuntimeConfigEquals(
   a: OmpRuntimeConfig,
   b: OmpRuntimeConfig,
@@ -120,11 +126,11 @@ export function ompRuntimeConfigEquals(
     (a.slowModel ?? "") === (b.slowModel ?? "") &&
     (a.planModel ?? "") === (b.planModel ?? "") &&
     (a.handoffModel ?? "") === (b.handoffModel ?? "") &&
-    Boolean(a.advisorEnabled) === Boolean(b.advisorEnabled) &&
+    a.advisorEnabled === b.advisorEnabled &&
     (a.advisorReviewMode ?? "") === (b.advisorReviewMode ?? "") &&
-    (a.executionMode ?? "") === (b.executionMode ?? "") &&
-    (a.memoryBackend ?? "") === (b.memoryBackend ?? "") &&
-    Boolean(a.autolearnEnabled) === Boolean(b.autolearnEnabled)
+    (a.executionMode ?? "standard") === (b.executionMode ?? "standard") &&
+    a.memoryBackend === b.memoryBackend &&
+    a.autolearnEnabled === b.autolearnEnabled
   );
 }
 

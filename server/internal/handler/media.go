@@ -145,7 +145,7 @@ func (h *Handler) loadMediaJob(w http.ResponseWriter, r *http.Request) (db.Media
 	if !ok {
 		return db.MediaJob{}, false
 	}
-	if err := h.Queries.ExpireMediaJobs(r.Context(), ws); err != nil {
+	if err := h.Queries.ExpireMediaJob(r.Context(), db.ExpireMediaJobParams{ID: id, WorkspaceID: ws}); err != nil {
 		writeError(w, 500, "expire media jobs failed")
 		return db.MediaJob{}, false
 	}
@@ -222,11 +222,6 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "settle previous assignment failed")
 		return
 	}
-	runtimes, err := q.AvailableMediaRuntimes(r.Context(), rt.WorkspaceID)
-	if err != nil {
-		writeError(w, 500, "runtime selection failed")
-		return
-	}
 	// Filter unroutable operations and callers before the bounded queue scan,
 	// so an unavailable provider's backlog cannot starve another provider.
 	routes := make([]map[string]string, 0, 4)
@@ -236,11 +231,22 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 			routes = append(routes, map[string]string{"provider": protocol.MediaTagProvider(selected.Tag), "capability": capability})
 		}
 	}
-	rawRoutes, _ := json.Marshal(routes)
-	jobs, err := q.QueuedMediaJobs(r.Context(), db.QueuedMediaJobsParams{WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, Routes: rawRoutes})
-	if err != nil {
-		writeError(w, 500, "claim failed")
-		return
+	var jobs []db.MediaJob
+	if len(routes) > 0 {
+		rawRoutes, _ := json.Marshal(routes)
+		jobs, err = q.QueuedMediaJobs(r.Context(), db.QueuedMediaJobsParams{WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, Routes: rawRoutes})
+		if err != nil {
+			writeError(w, 500, "claim failed")
+			return
+		}
+	}
+	var runtimes []db.AgentRuntime
+	if len(jobs) > 0 {
+		runtimes, err = q.AvailableMediaRuntimes(r.Context(), rt.WorkspaceID)
+		if err != nil {
+			writeError(w, 500, "runtime selection failed")
+			return
+		}
 	}
 	for _, job := range jobs {
 		if _, err := h.getWorkspaceMember(r.Context(), uuidToString(job.CallerID), uuidToString(job.WorkspaceID)); err != nil {
