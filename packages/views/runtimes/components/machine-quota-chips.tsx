@@ -19,7 +19,7 @@ import {
   MUTED_BAR_CLASS,
   quotaGroupLabel,
 } from "./runtime-quota-cell";
-import { accountPoolProviderLabel } from "./account-pool-filter";
+import { accountPoolNeedsRelogin, accountPoolProviderLabel } from "./account-pool-filter";
 import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 import { partitionAccountPools, type AccountPoolPartition } from "./account-pool-filter";
@@ -134,6 +134,7 @@ function QuotaOverflowHoverCard({
                   ? `${runtimeLabel} / ${quotaGroupLabel(chip.group, t)}`
                   : runtimeLabel;
               const state = quotaChipState(chip);
+              const relogin = accountPool != null && accountPoolNeedsRelogin(accountPool);
               return (
                 <span
                   key={chip.key}
@@ -163,18 +164,24 @@ function QuotaOverflowHoverCard({
                     className={`text-right text-micro tabular-nums ${
                       chip.interrupted
                         ? "text-faint-foreground"
-                        : chip.tone === "ok"
-                          ? "text-foreground"
-                          : TONE_TEXT_CLASS[chip.tone]
+                        : relogin
+                          ? "text-warning"
+                          : state.kind === "empty"
+                            ? "text-faint-foreground"
+                            : chip.tone === "ok"
+                              ? "text-foreground"
+                              : TONE_TEXT_CLASS[chip.tone]
                     }`}
                   >
-                    {state.kind === "empty"
-                      ? t(($) => $.no_snapshot_chip)
-                      : state.kind === "limited"
-                        ? t(($) => $.exhausted)
-                        : state.kind === "unknown"
-                          ? t(($) => $.unknown)
-                          : `${displayRemainingPercent(state.percent)}%`}
+                    {relogin
+                      ? t(($) => $.account_pools.pool_needs_relogin)
+                      : state.kind === "empty"
+                        ? t(($) => $.no_snapshot_chip)
+                        : state.kind === "limited"
+                          ? t(($) => $.exhausted)
+                          : state.kind === "unknown"
+                            ? t(($) => $.unknown)
+                            : `${displayRemainingPercent(state.percent)}%`}
                   </span>
                 </span>
               );

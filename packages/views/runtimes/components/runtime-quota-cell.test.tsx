@@ -405,6 +405,7 @@ describe("OMP account pools", () => {
       ],
     });
     renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("Re-login required")).toHaveClass("text-warning");
     const trigger = screen.getByText("Z.AI").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
     await userEvent.hover(trigger);
 
@@ -442,6 +443,33 @@ describe("OMP account pools", () => {
     expect(within(table).getByRole("columnheader", { name: "1d" })).toBeInTheDocument();
     expect(within(table).queryByRole("columnheader", { name: "5h" })).not.toBeInTheDocument();
     expect(within(table).queryByRole("columnheader", { name: "7d" })).not.toBeInTheDocument();
+  });
+
+  it("uses the no-snapshot state for a pool without windows", async () => {
+    const account = ompAccount("a", "ok", 85, 80);
+    account.windows = [];
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
+    const chips = renderChips(runtime);
+    const trigger = chipTrigger(/Kimi Code: 1 of 1 accounts available/);
+    expect(within(trigger).getByText("No snapshot")).toBeInTheDocument();
+    await userEvent.hover(trigger);
+    expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+  });
+
+  it("marks every pool unused when no agent provider matches", () => {
+    renderWithI18n(<RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[]} />);
+
+    for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+      expect(screen.getByText(name).parentElement).toHaveTextContent("· Not used");
+    }
   });
 
   it("shows the earliest recovering account without an idle section or banner", () => {

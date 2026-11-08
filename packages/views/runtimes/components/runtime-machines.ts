@@ -362,6 +362,7 @@ function machineQuotaChips(
           limited: pool.exhausted,
           tone: pool.tone,
           interrupted: isQuotaCollectionInterrupted(quota, now),
+          empty: pool.windows.length === 0,
         });
       }
       continue;

@@ -48,6 +48,7 @@ import {
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
+  servingAccountPoolProviders,
 } from "./account-pool-filter";
 import { runtimeRowLabel } from "./runtime-machines";
 
@@ -712,12 +713,12 @@ function QuotaHoverCardBody({
           </span>
         )}
       </div>
-      {!state || (!pool && windows.length === 0) ? (
-        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
-      ) : relogin ? (
+      {relogin ? (
         <div className="-mx-3 border-t border-border px-3 pt-2.5 text-caption text-warning">
           {t(($) => $.account_pools.all_relogin)}
         </div>
+      ) : !state || windows.length === 0 ? (
+        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
       ) : (
         <>
           <div className="-mx-3 border-t border-border px-3 pt-2.5">
@@ -755,16 +756,20 @@ export function AccountPoolMachineChip({
   const relogin = accountPoolNeedsRelogin(pool);
   const value = relogin
     ? t(($) => $.account_pools.pool_needs_relogin)
-    : pool.exhausted
-      ? t(($) => $.exhausted)
-      : primary?.remainingPercent == null
-        ? t(($) => $.unknown)
-        : `${displayRemainingPercent(primary.remainingPercent)}%`;
+    : pool.windows.length === 0
+      ? t(($) => $.no_snapshot_chip)
+      : pool.exhausted
+        ? t(($) => $.exhausted)
+        : primary?.remainingPercent == null
+          ? t(($) => $.unknown)
+          : `${displayRemainingPercent(primary.remainingPercent)}%`;
   const toneClass = interrupted
     ? "bg-muted text-muted-foreground"
     : relogin
       ? "bg-warning/10 text-warning"
-      : pool.tone === "destructive"
+      : pool.windows.length === 0
+        ? "bg-muted text-muted-foreground"
+        : pool.tone === "destructive"
         ? "bg-destructive/10 text-destructive"
         : pool.tone === "warning"
           ? "bg-warning/10 text-warning"
@@ -819,13 +824,23 @@ function AccountPoolQuotaList({
                   {pool.availableAccounts}/{pool.totalAccounts}
                 </span>
               </span>
-              {pool.windows.map((window, windowIndex) => (
-                <QuotaWindowRow
-                  key={`${window.name}-${windowIndex}`}
-                  window={window}
-                  interrupted={interrupted}
-                />
-              ))}
+              {accountPoolNeedsRelogin(pool) ? (
+                <span className="text-micro text-warning">
+                  {t(($) => $.account_pools.pool_needs_relogin)}
+                </span>
+              ) : pool.windows.length === 0 ? (
+                <span className="text-caption text-faint-foreground">
+                  {t(($) => $.no_snapshot)}
+                </span>
+              ) : (
+                pool.windows.map((window, windowIndex) => (
+                  <QuotaWindowRow
+                    key={`${window.name}-${windowIndex}`}
+                    window={window}
+                    interrupted={interrupted}
+                  />
+                ))
+              )}
             </span>
           }
         />
@@ -868,6 +883,8 @@ function AccountPoolQuotaSubject({
       </div>
       {relogin ? (
         <p className="text-caption text-warning">{t(($) => $.account_pools.all_relogin)}</p>
+      ) : pool.windows.length === 0 ? (
+        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
@@ -913,6 +930,9 @@ export function RuntimeQuotaCard({
   const partition = accountPools
     ? partitionAccountPools(accountPools.pools, agents, runtime.id)
     : null;
+  const servingProviders = accountPools
+    ? servingAccountPoolProviders(agents, runtime.id)
+    : null;
 
   return (
     <section className="rounded-lg border bg-card">
@@ -932,7 +952,7 @@ export function RuntimeQuotaCard({
                       pool={pool}
                       now={now}
                       interrupted={state.interrupted}
-                      serving={!partition.filtered || partition.serving.some((item) => item.id === pool.id)}
+                      serving={servingProviders?.has(pool.id) ?? false}
                     />
                   ))
                 : state.pools.map((pool) => (
