@@ -171,7 +171,7 @@ jsdom 实测（300 小节、400 个 DAG 节点）：
 
 - **B1 已做**：claim 摘要以 2,000 字为总预算。
   - 固定章节、阶段和推进方针始终保留；
-  - 模块章节按位置顺序填满剩余预算，超出的部分合并成一行“另有 K 个模块，用 `multica project baseline get <id> --index` 查看”；
+  - 模块章节按位置顺序填满剩余预算，超出的部分合并成一行“另有 K 个模块，用 `multica project baseline get <id> --index` 查看”；剩下的模块能全部放下时，不为这行提示预留空间（首审 #1 修正）；
   - 待审候选行最多 200 字，超出时改写为“等共 N 个”；
   - 极端情况下（所有自由文本都打满上限）只会多出这一行指针和候选行，实测约 2,180 字。
 - **B2 维持现状**。
@@ -195,6 +195,7 @@ jsdom 实测（300 小节、400 个 DAG 节点）：
   - `./internal/handler` 中 Labrastro/Project/Claim/Baseline/Engineering 相关测试加 `-race` 通过；
   - `./internal/engineering`、`./internal/middleware`、`./cmd/multica`、`./cmd/migrate` 通过；
   - B1 新增回归测试，覆盖三种情况：模块能放下时全部列出、超出时截断并给出精确的 K、固定章节打满上限时模块全部合并成指针；
+  - 另有一个边界测试：模块行比提示行短时，扫过整段预算，确认模块能放下就一定全部列出（首审 #1），修复前在 goal=196 处失败；
   - `go vet` 通过。
 - **前端**：
   - core 全量 284 个文件 3,740 个用例通过；

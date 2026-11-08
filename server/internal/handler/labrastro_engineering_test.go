@@ -953,3 +953,64 @@ func TestLabrastroEngineeringClaimDescriptionBudgetsModules(t *testing.T) {
 		t.Fatalf("summary grew past %d runes: %d", limit, utf8.RuneCountInString(got))
 	}
 }
+
+func TestLabrastroEngineeringClaimDescriptionListsModulesThatFit(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	for _, chapter := range engineering.Chapters {
+		adopted := f.propose(chapter, "## "+strings.Repeat("节", 180)+"\nBody", nil, nil)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+		f.propose(chapter, "## Candidate\nBody", uuidToPtr(adopted.ID), nil)
+	}
+	// Module lines shorter than the pointer line expose a pointer reserved too early.
+	title := strings.Repeat("模", 40)
+	var moduleLines []string
+	for i := 0; i < 2; i++ {
+		chapter := fmt.Sprintf("module:m%d", i)
+		var adopted baselineRevisionResponse
+		testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", map[string]any{"chapter": chapter, "chapter_title": title, "content_markdown": "## S\nBody", "change_summary": "Init"}, "session")).Want(201).JSON(&adopted)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+		moduleLines = append(moduleLines, fmt.Sprintf("- %s（%s） v1：S", chapter, title))
+	}
+	pointer := func(rest int) string {
+		return fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", rest, f.project)
+	}
+	if utf8.RuneCountInString(moduleLines[1]) >= utf8.RuneCountInString(pointer(1)) {
+		t.Fatal("fixture must keep module lines shorter than the pointer")
+	}
+	// Sweep the stage goal so the budget left for modules crosses from "both
+	// fit" through "one fits" to "none fit".
+	outcomes := map[int]bool{}
+	for goal := 0; goal <= 280; goal += 2 {
+		testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{
+			"mode_summary": strings.Repeat("方", 280),
+			"stages":       []engineeringStage{{Stage: 1, Title: strings.Repeat("阶", 60), Goal: strings.Repeat("标", goal)}},
+		}, "session")).Want(200)
+		got := testHandler.appendEngineeringProjectDescription(context.Background(), parseUUID(testWorkspaceID), parseUUID(f.project), "")
+		listed := 0
+		for listed < len(moduleLines) && strings.Contains(got, moduleLines[listed]) {
+			listed++
+		}
+		rest := len(moduleLines) - listed
+		outcomes[listed] = true
+		// A pointer that replaces every module is always kept, even past the budget.
+		if listed > 0 && utf8.RuneCountInString(got) > engineeringContextBudget {
+			t.Fatalf("goal=%d: %d runes exceed the budget:\n%s", goal, utf8.RuneCountInString(got), got)
+		}
+		if rest == 0 {
+			if strings.Contains(got, "另有") {
+				t.Fatalf("goal=%d: pointer shown although every module is listed:\n%s", goal, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, pointer(rest)) {
+			t.Fatalf("goal=%d: %d modules hidden without an exact pointer:\n%s", goal, rest, got)
+		}
+		if full := strings.Replace(got, pointer(rest), strings.Join(moduleLines[listed:], "\n"), 1); utf8.RuneCountInString(full) <= engineeringContextBudget {
+			t.Fatalf("goal=%d: the hidden modules fit in %d runes but were collapsed:\n%s", goal, utf8.RuneCountInString(full), got)
+		}
+	}
+	if !outcomes[2] || !outcomes[0] {
+		t.Fatalf("sweep must reach both full listing and full collapse: %v", outcomes)
+	}
+}

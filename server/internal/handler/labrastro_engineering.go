@@ -120,11 +120,12 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	remaining := engineeringContextBudget - engineeringContextRunes(lines) - engineeringContextRunes(tail)
 	listed := 0
 	for i, line := range modules {
-		need := engineeringContextRunes([]string{line})
-		if rest := len(modules) - i - 1; rest > 0 {
-			need += engineeringContextRunes([]string{overflow(rest)})
+		// Reserve room for the pointer only when the rest cannot all fit.
+		if engineeringContextRunes(modules[i:]) <= remaining {
+			listed = len(modules)
+			break
 		}
-		if need > remaining {
+		if engineeringContextRunes([]string{line, overflow(len(modules) - i - 1)}) > remaining {
 			break
 		}
 		remaining -= engineeringContextRunes([]string{line})
