@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -364,6 +364,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [changeSummary, setChangeSummary] = useState("");
   const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
   const [query, setQuery] = useState("");
+  const [tocOpen, setTocOpen] = useState(false);
+  const tocId = useId();
   const [readIds, setReadIds] = useState<readonly string[]>(() => {
     try {
       const value = JSON.parse(readStorage(readKey) ?? "[]");
@@ -819,27 +821,34 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
               </div>
             ) : (
               <div className="mt-4">
-                {lens === "understand" ? (
-                  <div className="mb-4" data-read-progress>
-                    <div className="h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground transition-[width]" style={{ width: `${activeSections.length ? Math.round(readCount / activeSections.length * 100) : 0}%` }} /></div>
-                    <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.readProgress, { read: readCount, total: activeSections.length })}</div>
-                    {nextUnread ? <button type="button" className="mt-1 text-left text-caption font-medium hover:underline" onClick={() => onConcept(nextUnread, false)}>{readCount ? t(($) => $.wiki.continueReading) : t(($) => $.wiki.startReading)}: {nextUnread.title || t(($) => $.wiki.untitled)} →</button> : <div className="mt-1 text-caption text-success">{t(($) => $.wiki.allRead)}</div>}
-                  </div>
-                ) : null}
-                <nav>
-                  <section aria-label={t(($) => $.wiki.globalChapters)}>
-                    <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.globalChapters)}</h3>
-                    {globalChapters.map(renderChapterNavigation)}
-                  </section>
-                  <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
-                    <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
-                    {moduleChapters.map(renderChapterNavigation)}
-                    <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
-                      <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
-                    </Button>
-                  </section>
-                  <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById("baseline-history")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.history.title)}</button>
-                </nav>
+                <button type="button" className="flex w-full items-center justify-between py-1 text-caption font-medium lg:hidden" aria-expanded={tocOpen} aria-controls={tocId} onClick={() => setTocOpen((open) => !open)}>
+                  {t(($) => $.wiki.tocLabel)}
+                  <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", tocOpen && "rotate-180")} aria-hidden="true" />
+                </button>
+                {/* Below lg the contents sit above the article; keep them folded until asked for. */}
+                <div id={tocId} data-baseline-toc className={cn(tocOpen ? "mt-2" : "hidden", "lg:mt-0 lg:block")}>
+                  {lens === "understand" ? (
+                    <div className="mb-4" data-read-progress>
+                      <div className="h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground transition-[width]" style={{ width: `${activeSections.length ? Math.round(readCount / activeSections.length * 100) : 0}%` }} /></div>
+                      <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.readProgress, { read: readCount, total: activeSections.length })}</div>
+                      {nextUnread ? <button type="button" className="mt-1 text-left text-caption font-medium hover:underline" onClick={() => onConcept(nextUnread, false)}>{readCount ? t(($) => $.wiki.continueReading) : t(($) => $.wiki.startReading)}: {nextUnread.title || t(($) => $.wiki.untitled)} →</button> : <div className="mt-1 text-caption text-success">{t(($) => $.wiki.allRead)}</div>}
+                    </div>
+                  ) : null}
+                  <nav>
+                    <section aria-label={t(($) => $.wiki.globalChapters)}>
+                      <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.globalChapters)}</h3>
+                      {globalChapters.map(renderChapterNavigation)}
+                    </section>
+                    <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
+                      <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
+                      {moduleChapters.map(renderChapterNavigation)}
+                      <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
+                        <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
+                      </Button>
+                    </section>
+                    <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById("baseline-history")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.history.title)}</button>
+                  </nav>
+                </div>
               </div>
             )}
           </aside>

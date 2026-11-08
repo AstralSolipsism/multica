@@ -225,6 +225,23 @@ describe("EngineeringBaseline Wiki", () => {
     expect(document.querySelector("[data-search-results]")).toHaveTextContent("预占快照");
   });
 
+  it("folds the contents below the large breakpoint until expanded", async () => {
+    const user = userEvent.setup();
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
+    const toggle = screen.getByRole("button", { name: "Baseline contents" });
+    const contents = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveClass("lg:hidden");
+    expect(contents).toHaveClass("hidden", "lg:block");
+    expect(contents.querySelector("nav")).not.toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(contents).not.toHaveClass("hidden");
+    expect(contents).toHaveClass("lg:block");
+  });
+
   it("renders dynamic modules with cross-chapter cards, backlinks, and return navigation", async () => {
     const user = userEvent.setup();
     const global = { ...adopted(), contentMarkdown: "### 幂等键\n全局幂等定义。" };
