@@ -11,6 +11,7 @@ import { issueViewContainerKey, useActiveIssueViewStore } from "@multica/core/is
 import { UNREAD_VIEW_ID } from "@multica/core/issue-views/unread-view";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
+import { SpacePanelOpenProvider } from "../space-panel-open-context";
 import { ViewsSection } from "./views-section";
 
 const actions = vi.hoisted(() => ({
@@ -71,11 +72,16 @@ let listIssueUnread: ReturnType<typeof vi.fn>;
 let listIssueTableRows: ReturnType<typeof vi.fn>;
 let listIssueStatuses: ReturnType<typeof vi.fn>;
 
-function renderSection({ activeIssueId = null }: { activeIssueId?: string | null } = {}) {
+function renderSection({
+  activeIssueId = null,
+  panelOpen = true,
+}: { activeIssueId?: string | null; panelOpen?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let open = panelOpen;
   const tree = (issueId: string | null) => (
     <QueryClientProvider client={qc}>
       <NavigationProvider value={adapter}>
+        <SpacePanelOpenProvider open={open}>
         <ViewsSection
           wsId="ws-1"
           pathname={issueId ? `/acme/issues/${issueId}` : "/acme/issues"}
@@ -83,11 +89,20 @@ function renderSection({ activeIssueId = null }: { activeIssueId?: string | null
           issueLitInTree={false}
           activeIssueId={issueId}
         />
+        </SpacePanelOpenProvider>
       </NavigationProvider>
     </QueryClientProvider>
   );
   const view = renderWithI18n(tree(activeIssueId));
-  return { ...view, qc, openIssue: (issueId: string | null) => view.rerender(tree(issueId)) };
+  return {
+    ...view,
+    qc,
+    openIssue: (issueId: string | null) => view.rerender(tree(issueId)),
+    setPanelOpen: (next: boolean) => {
+      open = next;
+      view.rerender(tree(activeIssueId));
+    },
+  };
 }
 
 beforeEach(() => {
@@ -192,6 +207,18 @@ describe("ViewsSection built-in Unread view", () => {
       { id: "view:v1", kind: "view", view: UNREAD_VIEW },
     ];
     useSidebarTreeStore.setState({ viewsCollapsed: false, expanded: [] });
+  });
+
+  it("reads no unread list while the space panel is collapsed", async () => {
+    actions.sidebar.items = [...actions.sidebar.items, { id: "builtin:unread", kind: "builtin", key: "unread" }];
+    listIssueUnread.mockResolvedValue([mark("a")]);
+    const { setPanelOpen } = renderSection({ panelOpen: false });
+    await screen.findByRole("link", { name: /^Unread/ });
+    expect(listIssueUnread).not.toHaveBeenCalled();
+
+    setPanelOpen(true);
+
+    await waitFor(() => expect(listIssueUnread).toHaveBeenCalled());
   });
 
   it("is not in the sidebar until starred, even with unread issues", async () => {

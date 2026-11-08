@@ -1,9 +1,12 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { messageDeliveriesInfiniteOptions } from "@multica/core/message-delivery";
+import {
+  messageDeliveriesInfiniteOptions,
+  runDeliveriesRefetchInterval,
+} from "@multica/core/message-delivery";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { MessageDelivery } from "@multica/core/types";
+import type { AutopilotRun, MessageDelivery } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import { confirmedRunPages, messageDeliveryStatusKey } from "../copy";
@@ -24,20 +27,23 @@ import { deliveryStatusVisual } from "../status-visual";
  */
 export function RunDeliveryBadges({
   autopilotId,
-  runId,
+  run,
   onOpenDelivery,
   onOpenRunList,
 }: {
   autopilotId: string;
-  runId: string;
+  run: Pick<AutopilotRun, "id" | "status" | "completed_at">;
   onOpenDelivery: (delivery: MessageDelivery) => void;
   onOpenRunList: (runId: string) => void;
 }) {
   const { t } = useT("message-delivery");
   const wsId = useWorkspaceId();
-  const query = useInfiniteQuery(
-    messageDeliveriesInfiniteOptions(wsId, autopilotId, { runId }),
-  );
+  const runId = run.id;
+  const query = useInfiniteQuery({
+    ...messageDeliveriesInfiniteOptions(wsId, autopilotId, { runId }),
+    // Rows of long-finished runs stop re-reading; see the helper.
+    refetchInterval: (q) => runDeliveriesRefetchInterval(run, q.state, Date.now()),
+  });
 
   // Read-only callers get a real 403; badges stay silent there.
   if (query.isError) return null;

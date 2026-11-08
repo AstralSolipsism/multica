@@ -4,9 +4,11 @@
 // numbers; the UI layers the fresh / stale / not-reported states on top of
 // these primitives.
 
+import { queryOptions } from "@tanstack/react-query";
 import type { AgentRuntime, RuntimeSystemStats } from "../types";
 import { RuntimeSystemStatsSchema } from "../api/schemas";
 import type { QuotaTone } from "./plan-quota";
+import { runtimeListOptions } from "./queries";
 
 /**
  * Sanitize a raw `system_stats` payload. A malformed snapshot returns null
@@ -74,6 +76,30 @@ export function runtimeListHasSystemStats(
   runtimes: AgentRuntime[] | undefined,
 ): boolean {
   return runtimes?.some((runtime) => runtime.system_stats != null) === true;
+}
+
+/** Bounded freshness re-sync for the views that render host metrics (the
+ *  runtimes list and runtime detail): unchanged content broadcasts nothing by
+ *  design, so they re-read the runtime list every 30s while any runtime
+ *  carries a system_stats sample, and every 60s while none does — the slower
+ *  cadence is the bounded recovery path back after samples vanish. Only those
+ *  views subscribe with it: the shared `runtimeListOptions` stays poll-free
+ *  like upstream, because the app shell keeps that list observed on every
+ *  page and the realtime runtime events already keep it current there. */
+export function runtimeHostMetricsRefetchInterval(query: {
+  state: { data?: AgentRuntime[] };
+}): number {
+  return runtimeListHasSystemStats(query.state.data)
+    ? SYSTEM_STATS_REFRESH_MS
+    : SYSTEM_STATS_RECOVERY_MS;
+}
+
+/** The workspace runtime list for views that render host metrics. */
+export function runtimeHostMetricsListOptions(wsId: string) {
+  return queryOptions({
+    ...runtimeListOptions(wsId),
+    refetchInterval: runtimeHostMetricsRefetchInterval,
+  });
 }
 
 /** Client-side staleness backstop BETWEEN the bounded refetches: the local

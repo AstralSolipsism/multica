@@ -51,6 +51,10 @@ was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
 ## Product and delivery gates
 
+- [ ] Before the merge, run `git config merge.labrastro-brand.driver true` so
+  the reviewed brand assets keep the fork copy instead of conflicting. After
+  it, `node scripts/brand/sync.mjs --check` must pass; restore any reported
+  asset from the fork parent (see [scripts/brand/README.md](../../scripts/brand/README.md)).
 - [ ] Preserve the [branding overlay and guard contract](branding.md). Do not
   relax source/resource guards or expand exceptions to accept restored upstream
   product branding. Run `pnpm test:brand` and, from `server/`,

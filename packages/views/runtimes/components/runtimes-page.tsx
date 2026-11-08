@@ -35,9 +35,8 @@ import {
 } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
-import { runtimeProfileListOptions } from "@multica/core/runtimes";
+import { runtimeHostMetricsListOptions, runtimeProfileListOptions } from "@multica/core/runtimes";
 import {
-  runtimeListOptions,
   runtimeKeys,
   workspaceQuotaSourceListOptions,
 } from "@multica/core/runtimes/queries";
@@ -196,7 +195,7 @@ export function RuntimesPage({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
-    runtimeListOptions(wsId),
+    runtimeHostMetricsListOptions(wsId),
   );
   const { data: runtimeProfiles = [], isLoading: profilesLoading } = useQuery(
     runtimeProfileListOptions(wsId),

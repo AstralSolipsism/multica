@@ -31,6 +31,7 @@ import { useLocalDaemonActivity } from "./daemon-activity";
  */
 export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
   const { t } = useT("settings");
+  const { t: tForkUi } = useT("fork-ui");
   const [info, setInfo] = useState<WorkspacesRootInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [confirmMode, setConfirmMode] = useState<"change" | "reset" | null>(
@@ -69,7 +70,7 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
         const result = await window.daemonAPI.setWorkspacesRoot(path);
         if (!result.success) {
           toast.error(
-            t(($) => $.desktop.daemon.workspaces_root_update_failed),
+            tForkUi(($) => $.settings.desktop.daemon.workspaces_root_update_failed),
             { description: result.error },
           );
           return;
@@ -87,14 +88,14 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
           });
           return;
         }
-        toast.success(t(($) => $.desktop.daemon.workspaces_root_updated), {
+        toast.success(tForkUi(($) => $.settings.desktop.daemon.workspaces_root_updated), {
           description: t(($) => $.desktop.daemon.restarting_description),
         });
       } finally {
         setApplying(false);
       }
     },
-    [t],
+    [t, tForkUi],
   );
 
   // Confirming the risk dialog closes it and only THEN opens the native
@@ -107,13 +108,13 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
       if (picked.reason && picked.reason !== "cancelled") {
         toast.error(
           picked.error ??
-            t(($) => $.desktop.daemon.workspaces_root_update_failed),
+            tForkUi(($) => $.settings.desktop.daemon.workspaces_root_update_failed),
         );
       }
       return;
     }
     void applyPath(picked.path);
-  }, [applyPath, t]);
+  }, [applyPath, tForkUi]);
 
   const handleConfirmReset = useCallback(() => {
     setConfirmMode(null);
@@ -126,7 +127,7 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
   const externallyManaged = status.externallyManaged === true;
   const managedNote =
     info?.envOverride != null
-      ? t(($) => $.desktop.daemon.workspaces_root_env_managed)
+      ? tForkUi(($) => $.settings.desktop.daemon.workspaces_root_env_managed)
       : externallyManaged
         ? t(($) => $.desktop.daemon.managed_externally)
         : null;
@@ -135,7 +136,7 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
   return (
     <>
       <SettingsRow
-        label={t(($) => $.desktop.daemon.workspaces_root_title)}
+        label={tForkUi(($) => $.settings.desktop.daemon.workspaces_root_title)}
         description={
           <>
             <span
@@ -159,7 +160,7 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
             disabled={changeDisabled}
             onClick={() => setConfirmMode("change")}
           >
-            {t(($) => $.desktop.daemon.workspaces_root_change)}
+            {tForkUi(($) => $.settings.desktop.daemon.workspaces_root_change)}
           </Button>
           {info?.customPath ? (
             <Button
@@ -168,7 +169,7 @@ export function DaemonWorkspacesRootRow({ status }: { status: DaemonStatus }) {
               disabled={changeDisabled}
               onClick={() => setConfirmMode("reset")}
             >
-              {t(($) => $.desktop.daemon.workspaces_root_reset)}
+              {tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset)}
             </Button>
           ) : null}
         </div>
@@ -207,26 +208,27 @@ function WorkspacesRootConfirmDialog({
   onConfirmReset: () => void;
 }) {
   const { t } = useT("settings");
+  const { t: tForkUi } = useT("fork-ui");
 
   const risks: string[] = [];
   if (mode === "change") {
     risks.push(
-      t(($) => $.desktop.daemon.workspaces_root_risk_gc),
-      t(($) => $.desktop.daemon.workspaces_root_risk_no_migration),
+      tForkUi(($) => $.settings.desktop.daemon.workspaces_root_risk_gc),
+      tForkUi(($) => $.settings.desktop.daemon.workspaces_root_risk_no_migration),
       affectedCount > 0
-        ? t(($) => $.desktop.daemon.workspaces_root_risk_restart_active, {
+        ? tForkUi(($) => $.settings.desktop.daemon.workspaces_root_risk_restart_active, {
             count: affectedCount,
           })
-        : t(($) => $.desktop.daemon.workspaces_root_risk_restart),
+        : tForkUi(($) => $.settings.desktop.daemon.workspaces_root_risk_restart),
     );
   } else if (mode === "reset") {
     risks.push(
-      t(($) => $.desktop.daemon.workspaces_root_reset_risk_no_migration),
+      tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset_risk_no_migration),
       affectedCount > 0
-        ? t(($) => $.desktop.daemon.workspaces_root_reset_risk_restart_active, {
+        ? tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset_risk_restart_active, {
             count: affectedCount,
           })
-        : t(($) => $.desktop.daemon.workspaces_root_reset_risk_restart),
+        : tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset_risk_restart),
     );
   }
 
@@ -240,9 +242,9 @@ function WorkspacesRootConfirmDialog({
           <DialogHeader className="flex-1 gap-1">
             <DialogTitle className="text-body font-semibold">
               {mode === "reset"
-                ? t(($) => $.desktop.daemon.workspaces_root_reset_confirm_title)
-                : t(
-                    ($) => $.desktop.daemon.workspaces_root_change_confirm_title,
+                ? tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset_confirm_title)
+                : tForkUi(
+                    ($) => $.settings.desktop.daemon.workspaces_root_change_confirm_title,
                   )}
             </DialogTitle>
           </DialogHeader>
@@ -265,8 +267,8 @@ function WorkspacesRootConfirmDialog({
             onClick={mode === "reset" ? onConfirmReset : onConfirmChange}
           >
             {mode === "reset"
-              ? t(($) => $.desktop.daemon.workspaces_root_reset_confirm)
-              : t(($) => $.desktop.daemon.workspaces_root_confirm_pick)}
+              ? tForkUi(($) => $.settings.desktop.daemon.workspaces_root_reset_confirm)
+              : tForkUi(($) => $.settings.desktop.daemon.workspaces_root_confirm_pick)}
           </Button>
         </DialogFooter>
       </DialogContent>

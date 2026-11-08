@@ -3236,6 +3236,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <WakeupsSection
         issueId={issue.id}
         closed={["done", "closed"].includes(resolveStatusCategory(issue.status))}
+        visible={sidebarOpen}
         defaultAgentId={issue.assignee_type === "agent" ? (issue.assignee_id ?? undefined) : undefined}
       />
 

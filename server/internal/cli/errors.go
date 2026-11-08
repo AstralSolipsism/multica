@@ -720,6 +720,7 @@ func ExitCodeFor(err error) int {
 	if err == nil {
 		return 0
 	}
+
 	var netErr *NetworkError
 	if errors.As(err, &netErr) {
 		return ExitNetwork

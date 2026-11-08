@@ -7,8 +7,8 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import { runtimeProfileListOptions } from "@multica/core/runtimes";
-import { runtimeKeys, runtimeListOptions } from "@multica/core/runtimes/queries";
+import { runtimeHostMetricsListOptions, runtimeProfileListOptions } from "@multica/core/runtimes";
+import { runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import {
   agentListOptions,
@@ -129,7 +129,7 @@ export function RuntimeDetailPage({
   const qc = useQueryClient();
   const healthLabel = useHealthLabel();
   const currentUserId = useAuthStore((state) => state.user?.id);
-  const { data: runtimes = [], isLoading } = useQuery(runtimeListOptions(wsId));
+  const { data: runtimes = [], isLoading } = useQuery(runtimeHostMetricsListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: tasks = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
