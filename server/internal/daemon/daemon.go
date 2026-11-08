@@ -477,6 +477,7 @@ type Daemon struct {
 	profileLaunchSpecs   map[string]profileLaunchSpec
 	nativeMediaMu        sync.Mutex
 	nativeMediaExecutors map[string]media.Executor
+	nativeMediaVerdicts  map[string]nativeMediaVerdict
 	reloading            sync.Mutex         // prevents concurrent workspace syncs
 	runtimeSet           *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
 

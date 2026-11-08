@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,7 +36,11 @@ func runMediaNativeProcess() {
 	mode := os.Getenv("MULTICA_TEST_MEDIA_PROBE")
 	for _, arg := range os.Args[1:] {
 		if arg == "--version" {
-			_, _ = os.Stdout.WriteString("codex-cli 0.160.1\n")
+			version := os.Getenv("MULTICA_TEST_MEDIA_VERSION")
+			if version == "" {
+				version = "0.160.1"
+			}
+			_, _ = os.Stdout.WriteString("codex-cli " + version + "\n")
 			return
 		}
 	}
@@ -176,13 +181,124 @@ func TestMediaNativeDiscoveryReadiness(t *testing.T) {
 					}
 				}
 				wantCalls = "probe\n"
+			} else {
+				// The same CLI and login keep their verdict; an upgraded CLI is
+				// verified again.
+				t.Setenv("MULTICA_TEST_MEDIA_VERSION", "0.161.0")
 			}
+			check(false)
 			check(false)
 			calls, err := os.ReadFile(counter)
 			if err != nil || string(calls) != wantCalls {
 				t.Fatalf("probe calls=%q want=%q err=%v", calls, wantCalls, err)
 			}
 		})
+	}
+}
+
+// codexDiscoveryFixture is a daemon whose built-in Codex is the test-owned CLI
+// above, with a file-backed fixture login. Every App Server start appends
+// "probe" to counter.
+func codexDiscoveryFixture(t *testing.T, mode string) (d *Daemon, auth, counter string) {
+	t.Helper()
+	command, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	auth = filepath.Join(home, "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fixture":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	counter = filepath.Join(t.TempDir(), "calls")
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("MULTICA_TEST_MEDIA_COUNTER", counter)
+	t.Setenv("MULTICA_TEST_MEDIA_PROBE", mode)
+	d = &Daemon{cfg: Config{DiscoverNativeMedia: true, Agents: map[string]AgentEntry{"codex": {Path: command}}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), agentVersions: map[string]string{}}
+	return d, auth, counter
+}
+
+// codexInspection runs one CLI inspection round and reports whether it
+// advertised native Codex images.
+func codexInspection(t *testing.T, d *Daemon) bool {
+	t.Helper()
+	entries, _, _ := d.detectBuiltinRuntimes(t.Context())
+	if len(entries) != 1 {
+		t.Fatalf("missing builtin runtime: %v", entries)
+	}
+	caps := d.withMediaCapabilities(entries)[0]["media_capabilities"].([]string)
+	ready := slices.Equal(caps, []string{"media-image-codex-v1"})
+	if !ready && len(caps) != 0 {
+		t.Fatalf("unexpected capabilities: %v", caps)
+	}
+	if (d.mediaExecutor("codex", "") != nil) != ready {
+		t.Fatalf("executor does not match advertised capabilities %v", caps)
+	}
+	return ready
+}
+
+func codexAppServerStarts(t *testing.T, counter string) int {
+	t.Helper()
+	calls, err := os.ReadFile(counter)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(calls), "probe\n")
+}
+
+// An idle daemon re-inspects its CLIs every agentVersionRefreshInterval, and
+// starting the App Server makes Codex contact its account and model services.
+// Inspection rounds must reuse the verdict, ready or not, while the binary and
+// login it was taken against are unchanged.
+func TestMediaNativeDiscoveryReusesVerdictWhileIdle(t *testing.T) {
+	for _, mode := range []string{"ready", "apikey", "unsupported", "eof"} {
+		t.Run(mode, func(t *testing.T) {
+			d, _, counter := codexDiscoveryFixture(t, mode)
+			for round := 1; round <= 3; round++ {
+				if ready := codexInspection(t, d); ready != (mode == "ready") {
+					t.Fatalf("round %d advertised native images=%v", round, ready)
+				}
+			}
+			if got := codexAppServerStarts(t, counter); got != 1 {
+				t.Fatalf("App Server started %d times across idle rounds, want 1", got)
+			}
+		})
+	}
+}
+
+// Parking the login file takes a host's subscription out of service. The
+// capability must go without starting the CLI, and the restored login, which
+// may belong to a different account type, is verified once.
+func TestMediaNativeDiscoveryReprobesRestoredLogin(t *testing.T) {
+	d, auth, counter := codexDiscoveryFixture(t, "ready")
+	if !codexInspection(t, d) {
+		t.Fatal("ready login was not advertised")
+	}
+	parked := auth + ".paused"
+	if err := os.Rename(auth, parked); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if codexInspection(t, d) {
+			t.Fatal("capability survived the parked login")
+		}
+	}
+	if got := codexAppServerStarts(t, counter); got != 1 {
+		t.Fatalf("parked login started the App Server: %d starts, want 1", got)
+	}
+	if err := os.Rename(parked, auth); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if !codexInspection(t, d) {
+			t.Fatal("restored login was not advertised")
+		}
+	}
+	if got := codexAppServerStarts(t, counter); got != 2 {
+		t.Fatalf("App Server started %d times in total, want one more for the restored login", got)
 	}
 }
 

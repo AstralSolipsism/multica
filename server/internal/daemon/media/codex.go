@@ -16,10 +16,19 @@ type Codex struct {
 	Home    string
 }
 
-func (e *Codex) Probe(ctx context.Context) error {
+// Login checks the host's file-backed login without starting the CLI.
+func (e *Codex) Login() error {
 	info, err := os.Stat(filepath.Join(e.Home, "auth.json"))
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("file-backed Codex login unavailable")
+	}
+	return nil
+}
+
+// Probe starts the App Server, which contacts the provider while it starts.
+func (e *Codex) Probe(ctx context.Context) error {
+	if err := e.Login(); err != nil {
+		return err
 	}
 	return agent.ProbeCodexImages(ctx, e.Command, e.Home)
 }
