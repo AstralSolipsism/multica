@@ -15,10 +15,29 @@ export async function sync(root, { check = false } = {}) {
   });
   const cli = "server/cmd/multica/cmd_auth.go";
   if (!readFileSync(join(root, cli), "utf8").includes(cliBrand)) drifted.push(cli);
+  // Upstream syncs keep these assets through the labrastro-brand merge driver;
+  // an asset missing from (or stale in) .gitattributes would conflict again.
+  const merged = mergeProtectedPaths(root);
+  const expected = Object.keys(assets);
+  if (merged.length !== expected.length || expected.some((path) => !merged.includes(path))) {
+    drifted.push(".gitattributes");
+  }
   if (drifted.length && !check) {
     throw new Error(`Restore the reviewed Labrastro assets; upstream generation is disabled:\n${drifted.join("\n")}`);
   }
   return drifted;
+}
+
+/** Paths .gitattributes assigns to the labrastro-brand merge driver. */
+export function mergeProtectedPaths(root) {
+  let attributes;
+  try {
+    attributes = readFileSync(join(root, ".gitattributes"), "utf8");
+  } catch { return []; }
+  return attributes.split(/\r?\n/).flatMap((line) => {
+    const match = /^(\S+)\s+merge=labrastro-brand\s*$/.exec(line);
+    return match ? [match[1]] : [];
+  });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -9,3 +9,36 @@ docker/entrypoint.sh text eol=lf
 server/internal/service/builtin_skills/** text eol=lf
 server/internal/service/builtin_skills_legacy/** text eol=lf
 scripts/agent-cli-command-names.txt text eol=lf
+
+# Labrastro brand assets (scripts/brand/labrastro-assets.json). Upstream
+# redraws its own artwork; keep the fork's copy when both sides changed.
+# Needs `git config merge.labrastro-brand.driver true` in the sync clone.
+# scripts/brand/sync.mjs --check keeps this list equal to the manifest.
+apps/desktop/build/icon.icns merge=labrastro-brand
+apps/desktop/build/icon.ico merge=labrastro-brand
+apps/desktop/build/icon.png merge=labrastro-brand
+apps/desktop/build/icons/128x128.png merge=labrastro-brand
+apps/desktop/build/icons/16x16.png merge=labrastro-brand
+apps/desktop/build/icons/24x24.png merge=labrastro-brand
+apps/desktop/build/icons/256x256.png merge=labrastro-brand
+apps/desktop/build/icons/32x32.png merge=labrastro-brand
+apps/desktop/build/icons/48x48.png merge=labrastro-brand
+apps/desktop/build/icons/512x512.png merge=labrastro-brand
+apps/desktop/build/icons/64x64.png merge=labrastro-brand
+apps/desktop/resources/icon.png merge=labrastro-brand
+apps/docs/app/icon.svg merge=labrastro-brand
+apps/mobile/assets/icon.png merge=labrastro-brand
+apps/mobile/components/brand/multica-logo.tsx merge=labrastro-brand
+apps/web/app/opengraph-image.png merge=labrastro-brand
+apps/web/public/favicon.svg merge=labrastro-brand
+apps/web/public/icons/apple-touch-icon.png merge=labrastro-brand
+apps/web/public/icons/icon-192.png merge=labrastro-brand
+apps/web/public/icons/icon-512.png merge=labrastro-brand
+apps/web/public/icons/icon-maskable-512.png merge=labrastro-brand
+apps/web/public/icons/icon.svg merge=labrastro-brand
+docs/assets/logo-dark.gif merge=labrastro-brand
+docs/assets/logo-dark.svg merge=labrastro-brand
+docs/assets/logo-light.gif merge=labrastro-brand
+docs/assets/logo-light.svg merge=labrastro-brand
+packages/ui/components/common/multica-icon.tsx merge=labrastro-brand
+packages/ui/components/common/multica-wordmark.tsx merge=labrastro-brand
