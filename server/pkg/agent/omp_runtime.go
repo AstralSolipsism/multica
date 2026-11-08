@@ -19,11 +19,11 @@ type OmpRuntimeOpts struct {
 	SlowModel         string `json:"slow_model"`
 	PlanModel         string `json:"plan_model"`
 	HandoffModel      string `json:"handoff_model"`
-	AdvisorEnabled    bool   `json:"advisor_enabled"`
+	AdvisorEnabled    *bool  `json:"advisor_enabled"`     // nil inherits; false explicitly disables
 	AdvisorReviewMode string `json:"advisor_review_mode"` // "" | "turn" | "agent-end"
 	ExecutionMode     string `json:"execution_mode"`      // "" | "standard" | "plan_yolo" | "prewalk"
 	MemoryBackend     string `json:"memory_backend"`      // "" | "off" | "sharpshooter" | "mnemopi"
-	AutolearnEnabled  bool   `json:"autolearn_enabled"`
+	AutolearnEnabled  *bool  `json:"autolearn_enabled"`   // nil inherits; false explicitly disables
 }
 
 // DecodeOmpRuntimeConfig extracts the omp-specific knobs from an agent's
@@ -51,7 +51,7 @@ func DecodeOmpRuntimeConfig(raw json.RawMessage, logger *slog.Logger) *OmpRuntim
 	case "", "turn", "agent-end":
 	default:
 		if logger != nil {
-			logger.Warn("omp runtime_config: unrecognized advisor_review_mode; using OMP default", "value", cfg.AdvisorReviewMode)
+			logger.Warn("omp runtime_config: unrecognized advisor_review_mode; using managed default when enabled", "value", cfg.AdvisorReviewMode)
 		}
 		cfg.AdvisorReviewMode = ""
 	}
@@ -66,12 +66,10 @@ func DecodeOmpRuntimeConfig(raw json.RawMessage, logger *slog.Logger) *OmpRuntim
 		cfg.ExecutionMode = ""
 	}
 	switch cfg.MemoryBackend {
-	case "", "off":
-		cfg.MemoryBackend = ""
-	case "sharpshooter", "mnemopi":
+	case "", "off", "sharpshooter", "mnemopi":
 	default:
 		if logger != nil {
-			logger.Warn("omp runtime_config: unrecognized memory_backend; using off", "value", cfg.MemoryBackend)
+			logger.Warn("omp runtime_config: unrecognized memory_backend; inheriting local settings", "value", cfg.MemoryBackend)
 		}
 		cfg.MemoryBackend = ""
 	}
@@ -125,13 +123,13 @@ func (o *OmpRuntimeOpts) flags(advisorConfigPath string) []ompFlag {
 	if o.SmolModel != "" {
 		out = append(out, ompFlag{"--smol", o.SmolModel})
 	}
-	if o.AdvisorEnabled && o.SlowModel != "" {
+	if o.AdvisorEnabled != nil && *o.AdvisorEnabled && o.SlowModel != "" {
 		out = append(out, ompFlag{"--slow", o.SlowModel})
 	}
 	if o.ExecutionMode != "" && o.PlanModel != "" {
 		out = append(out, ompFlag{"--plan", o.PlanModel})
 	}
-	if o.AdvisorEnabled {
+	if o.AdvisorEnabled != nil && *o.AdvisorEnabled {
 		out = append(out, ompFlag{"--advisor", ""})
 	}
 	if advisorConfigPath != "" {
@@ -223,13 +221,12 @@ func prepareOmpSettingsOverlay(sessionPath, sessionDir string, opts *OmpRuntimeO
 }
 
 // ompSettingsOverlayApplies reports whether any managed setting needs the
-// overlay: advisor review cadence, a non-off memory backend, or auto-learn.
+// overlay, including explicit off values that override local configuration.
 func ompSettingsOverlayApplies(opts *OmpRuntimeOpts) bool {
 	if opts == nil {
 		return false
 	}
-	return (opts.AdvisorEnabled && opts.AdvisorReviewMode != "") ||
-		opts.MemoryBackend != "" || opts.AutolearnEnabled
+	return opts.AdvisorEnabled != nil || opts.MemoryBackend != "" || opts.AutolearnEnabled != nil
 }
 
 // ompSettingsOverlayYAML renders the overlay body. Values are fixed enums or
@@ -237,18 +234,30 @@ func ompSettingsOverlayApplies(opts *OmpRuntimeOpts) bool {
 // concatenation is safe YAML here.
 func ompSettingsOverlayYAML(opts *OmpRuntimeOpts) string {
 	var b strings.Builder
-	if opts.AdvisorEnabled && opts.AdvisorReviewMode != "" {
-		b.WriteString("advisor:\n  reviewMode: " + opts.AdvisorReviewMode + "\n")
+	if opts.AdvisorEnabled != nil {
+		fmt.Fprintf(&b, "advisor:\n  enabled: %t\n", *opts.AdvisorEnabled)
+		if *opts.AdvisorEnabled {
+			mode := opts.AdvisorReviewMode
+			if mode == "" {
+				mode = "agent-end"
+			}
+			b.WriteString("  reviewMode: " + mode + "\n")
+		}
 	}
 	switch opts.MemoryBackend {
+	case "off":
+		b.WriteString("memory:\n  backend: off\n")
 	case "sharpshooter":
 		b.WriteString("memory:\n  backend: sharpshooter\n")
 	case "mnemopi":
 		b.WriteString("memory:\n  backend: mnemopi\n")
 		b.WriteString("mnemopi:\n  scoping: per-project-tagged\n  embeddingVariant: multilingual\n")
 	}
-	if opts.AutolearnEnabled {
-		b.WriteString("autolearn:\n  enabled: true\n  autoContinue: true\n")
+	if opts.AutolearnEnabled != nil {
+		fmt.Fprintf(&b, "autolearn:\n  enabled: %t\n", *opts.AutolearnEnabled)
+		if *opts.AutolearnEnabled {
+			b.WriteString("  autoContinue: true\n")
+		}
 	}
 	return b.String()
 }

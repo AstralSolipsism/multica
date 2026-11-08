@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { OmpRuntimeConfig } from "@multica/core/agents";
 import { renderWithI18n } from "../../test/i18n";
 
@@ -60,6 +61,12 @@ function renderPanel({
   return { onChange };
 }
 
+async function selectSetting(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
 afterEach(cleanup);
 
 describe("OmpRuntimeConfigPanel", () => {
@@ -79,11 +86,41 @@ describe("OmpRuntimeConfigPanel", () => {
     expect(screen.queryByTestId("omp-runtime-config")).toBeNull();
   });
 
-  it("defaults Advisor review to agent-end when enabled", () => {
+  it.each([
+    ["Enable Advisor", "advisorEnabled"],
+    ["Auto-learn managed skills", "autolearnEnabled"],
+  ] as const)("can turn off an inherited %s directly", async (label, key) => {
+    const { onChange } = renderPanel();
+    expect(screen.getByRole("combobox", { name: label })).toHaveTextContent("Inherit local settings");
+    await selectSetting(label, "Off");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ [key]: false }));
+  });
+
+  it.each([
+    ["Enable Advisor", "advisorEnabled"],
+    ["Auto-learn managed skills", "autolearnEnabled"],
+  ] as const)("can restore inheritance for %s", async (label, key) => {
+    const { onChange } = renderPanel({ value: { [key]: false } });
+    await selectSetting(label, "Inherit local settings");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ [key]: undefined }));
+  });
+
+  it("can turn off inherited memory directly or restore inheritance", () => {
+    const { onChange } = renderPanel();
+    fireEvent.click(screen.getByRole("radio", { name: /^Off/ }));
+    expect(onChange).toHaveBeenCalledWith({ memoryBackend: "off" });
+    cleanup();
+    renderPanel({ value: { memoryBackend: "off" }, onChange });
+    fireEvent.click(screen.getByRole("radio", { name: /^Inherit local settings/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ memoryBackend: undefined });
+  });
+
+  it("defaults Advisor review to agent-end when enabled", async () => {
     const { onChange } = renderPanel();
 
     expect(screen.queryByRole("button", { name: "Slow / Advisor model" })).toBeNull();
-    fireEvent.click(screen.getByRole("switch", { name: "Enable Advisor" }));
+    await selectSetting("Enable Advisor", "On");
 
     expect(onChange).toHaveBeenCalledWith({
       advisorEnabled: true,
@@ -155,37 +192,37 @@ describe("OmpRuntimeConfigPanel", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("switches the memory backend and normalizes off away", () => {
+  it("inherits unset memory and can choose a backend", () => {
     const { onChange } = renderPanel();
 
-    expect(screen.getByRole("radio", { name: /^Off/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Inherit local settings/ })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: /Sharpshooter/ }));
 
     expect(onChange).toHaveBeenCalledWith({ memoryBackend: "sharpshooter" });
   });
 
-  it("normalizes a selected memory backend back to off", () => {
+  it("explicitly disables a selected memory backend", () => {
     const { onChange } = renderPanel({ value: { memoryBackend: "mnemopi" } });
 
     fireEvent.click(screen.getByRole("radio", { name: /^Off/ }));
 
-    expect(onChange).toHaveBeenCalledWith({ memoryBackend: undefined });
+    expect(onChange).toHaveBeenCalledWith({ memoryBackend: "off" });
   });
 
-  it("enables auto-learn from the switch", () => {
+  it("enables auto-learn", async () => {
     const { onChange } = renderPanel();
 
-    fireEvent.click(screen.getByRole("switch", { name: "Auto-learn managed skills" }));
+    await selectSetting("Auto-learn managed skills", "On");
 
     expect(onChange).toHaveBeenCalledWith({ autolearnEnabled: true });
   });
 
-  it("normalizes a disabled auto-learn switch away", () => {
+  it("explicitly disables auto-learn", async () => {
     const { onChange } = renderPanel({ value: { autolearnEnabled: true } });
 
-    fireEvent.click(screen.getByRole("switch", { name: "Auto-learn managed skills" }));
+    await selectSetting("Auto-learn managed skills", "Off");
 
-    expect(onChange).toHaveBeenCalledWith({ autolearnEnabled: undefined });
+    expect(onChange).toHaveBeenCalledWith({ autolearnEnabled: false });
   });
 });
 
@@ -231,7 +268,7 @@ describe("OmpRuntimeConfigSummary", () => {
       />,
     );
     expect(screen.getByText("Memory: Sharpshooter")).toBeInTheDocument();
-    expect(screen.queryByText(/Auto-Learn/)).toBeNull();
+    expect(screen.getByText("Auto-Learn: Off")).toBeInTheDocument();
   });
 
   it("omits inactive roles and renders the empty state", () => {
@@ -245,7 +282,7 @@ describe("OmpRuntimeConfigSummary", () => {
       />,
     );
 
-    expect(screen.getByText("No collaboration strategies enabled")).toBeInTheDocument();
+    expect(screen.getByText("No collaboration settings selected")).toBeInTheDocument();
     expect(screen.queryByText(/Advisor:/)).toBeNull();
     expect(screen.queryByText(/Prewalk/)).toBeNull();
 
