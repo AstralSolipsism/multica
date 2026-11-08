@@ -47,6 +47,13 @@ func antigravityImageAuth(home string) (string, error) {
 	return path, nil
 }
 
+// CheckAntigravityImageLogin validates the host login file without starting
+// the CLI.
+func CheckAntigravityImageLogin(home string) error {
+	_, err := antigravityImageAuth(home)
+	return err
+}
+
 // ProbeAntigravityImages does not start a conversation or spend model quota.
 func ProbeAntigravityImages(ctx context.Context, command Command, home string) error {
 	if _, err := antigravityImageAuth(home); err != nil {

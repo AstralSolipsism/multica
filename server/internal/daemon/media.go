@@ -43,9 +43,35 @@ func builtinMediaFromPayload(entries []map[string]string) map[string]string {
 	return result
 }
 
+// nativeMediaAdapter is a built-in native executor that discovery verifies.
+// Login reads local files only; Probe starts the provider CLI.
+type nativeMediaAdapter interface {
+	media.Executor
+	Login() error
+	Probe(ctx context.Context) error
+}
+
+// nativeMediaProbeKey is the local state a native media verdict was taken
+// against.
+type nativeMediaProbeKey struct {
+	path, version, home string
+}
+
+type nativeMediaVerdict struct {
+	key        nativeMediaProbeKey
+	capability string
+}
+
 // Discovery runs with the existing CLI inspection cadence, never on the WS
 // reader. Only built-in identities are eligible; a protocol-compatible custom
 // profile does not establish native provider support or subscription identity.
+//
+// A probe starts the provider CLI, and the CLI contacts its provider while it
+// starts even though no job runs. Probing on every round would keep an idle
+// host talking to the provider, so a verdict, ready or not, stands until the
+// resolved executable, its version or the credential home changes. The login
+// is still checked locally on every round: losing it withdraws the capability
+// and discards the verdict, so the next login is probed once.
 func (d *Daemon) probeNativeMedia(ctx context.Context, provider string, entry AgentEntry) string {
 	if !d.cfg.DiscoverNativeMedia || d.cfg.MediaExecutor != nil || (provider != "codex" && provider != "antigravity") {
 		return ""
@@ -53,38 +79,65 @@ func (d *Daemon) probeNativeMedia(ctx context.Context, provider string, entry Ag
 	// Publish only complete probe results to workers.
 	d.nativeMediaMu.Lock()
 	defer d.nativeMediaMu.Unlock()
-	resolved, _ := d.resolveAgentEntry(ctx, provider, entry)
+	resolved, version := d.resolveAgentEntry(ctx, provider, entry)
 	if d.nativeMediaExecutors == nil {
 		d.nativeMediaExecutors = map[string]media.Executor{}
 	}
+	if d.nativeMediaVerdicts == nil {
+		d.nativeMediaVerdicts = map[string]nativeMediaVerdict{}
+	}
+	adapter, home, capability := builtinNativeMediaAdapter(provider, agent.NewCommand(resolved.Path, nil))
+	if adapter == nil || adapter.Login() != nil {
+		delete(d.nativeMediaExecutors, provider)
+		delete(d.nativeMediaVerdicts, provider)
+		return ""
+	}
+	key := nativeMediaProbeKey{path: resolved.Path, version: version, home: home}
+	if verdict, ok := d.nativeMediaVerdicts[provider]; ok && verdict.key == key {
+		return verdict.capability
+	}
 	delete(d.nativeMediaExecutors, provider)
-	command := agent.NewCommand(resolved.Path, nil)
-	if provider == "antigravity" {
+	delete(d.nativeMediaVerdicts, provider)
+	err := adapter.Probe(ctx)
+	if ctx.Err() != nil {
+		// The round was cancelled mid-probe; that is no verdict to keep.
+		return ""
+	}
+	verdict := nativeMediaVerdict{key: key}
+	if err == nil {
+		d.nativeMediaExecutors[provider] = adapter
+		verdict.capability = capability
+		d.logger.Info("native media verified", "provider", provider, "version", version, "capability", capability)
+	} else {
+		d.logger.Info("native media unavailable until the CLI, its version or the login changes, or the daemon restarts",
+			"provider", provider, "version", version, "error", err)
+	}
+	d.nativeMediaVerdicts[provider] = verdict
+	return verdict.capability
+}
+
+// builtinNativeMediaAdapter returns a built-in provider's native adapter, the
+// credential home it reads and the capability it advertises once verified.
+func builtinNativeMediaAdapter(provider string, command agent.Command) (nativeMediaAdapter, string, string) {
+	switch provider {
+	case "antigravity":
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ""
+			return nil, "", ""
 		}
-		executor := &media.Antigravity{Command: command, Home: home}
-		if executor.Probe(ctx) != nil {
-			return ""
+		return &media.Antigravity{Command: command, Home: home}, home, "media-image-agy-v1"
+	case "codex":
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			if userHome, err := os.UserHomeDir(); err == nil {
+				home = filepath.Join(userHome, ".codex")
+			}
 		}
-		d.nativeMediaExecutors[provider] = executor
-		return "media-image-agy-v1"
-	}
-	home := os.Getenv("CODEX_HOME")
-	if home == "" {
-		if userHome, err := os.UserHomeDir(); err == nil {
-			home = filepath.Join(userHome, ".codex")
-		}
-	}
-	if home != "" {
-		executor := &media.Codex{Command: command, Home: home}
-		if executor.Probe(ctx) == nil {
-			d.nativeMediaExecutors[provider] = executor
-			return "media-image-codex-v1"
+		if home != "" {
+			return &media.Codex{Command: command, Home: home}, home, "media-image-codex-v1"
 		}
 	}
-	return ""
+	return nil, "", ""
 }
 
 func (d *Daemon) withMediaCapabilities(entries []map[string]string) []map[string]any {

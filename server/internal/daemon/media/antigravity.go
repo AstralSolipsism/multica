@@ -14,6 +14,12 @@ type Antigravity struct {
 	Home    string
 }
 
+// Login checks the host's consumer login without starting the CLI.
+func (e *Antigravity) Login() error {
+	return agent.CheckAntigravityImageLogin(e.Home)
+}
+
+// Probe runs `agy models`, which fetches the remote model catalog.
 func (e *Antigravity) Probe(ctx context.Context) error {
 	return agent.ProbeAntigravityImages(ctx, e.Command, e.Home)
 }

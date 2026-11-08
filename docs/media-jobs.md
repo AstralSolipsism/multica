@@ -7,13 +7,22 @@ Installing an agent CLI alone does not establish image support.
 
 ## Native Codex images
 
-The daemon probes the resolved built-in Codex executable during registration
-and periodic CLI inspection. It requires a file-backed ChatGPT login, the
-provider's `imageGeneration` capability, and an enabled `image_generation`
-feature. API-key authentication, unavailable features, and custom runtime
-profiles do not advertise `media-image-codex-v1`. Capability changes refresh
-registration even when the CLI version has not changed. Failed registrations
-retain the previous acknowledgement and are retried on the next inspection.
+The daemon probes the resolved built-in Codex executable with a short-lived App
+Server. It requires a file-backed ChatGPT login, the provider's
+`imageGeneration` capability, and an enabled `image_generation` feature.
+API-key authentication, unavailable features, and custom runtime profiles do
+not advertise `media-image-codex-v1`.
+
+Starting the App Server contacts the provider even when no job runs, so the
+probe does not repeat on every registration or periodic CLI inspection. The
+daemon process keeps the verdict, ready or not, until the resolved executable,
+its version or `CODEX_HOME` changes. Every inspection still checks `auth.json`
+locally: a missing or non-regular file withdraws the capability without
+starting the CLI, and the next login is probed once. Enabling the feature,
+replacing the login in place, or retrying a failed probe takes a CLI upgrade or
+a daemon restart. Capability changes refresh registration even when the CLI
+version has not changed. Failed registrations retain the previous
+acknowledgement and are retried on the next inspection.
 
 Each job starts one fresh Codex App Server turn in its private temporary
 directory. Its private `CODEX_HOME` links only the host's authentication file;
@@ -50,9 +59,9 @@ MULTICA_RUN_REAL_AGENT_SMOKE=1 go test -tags=agentintegration ./pkg/agent \
 ```
 
 Ordinary tests use test-owned CLI processes and synthetic credentials. They
-cover native receipts, login/capability gating, cancellation, explicit quota
-failures, registration refresh/retry, and three HTTP upload attempts with one
-native generation. The live test verifies the native CLI. Credential-separated
+cover native receipts, login/capability gating, probe reuse across idle
+inspections, cancellation, explicit quota failures, registration refresh/retry,
+and three HTTP upload attempts with one native generation. The live test verifies the native CLI. Credential-separated
 CLI tests verify the caller/host boundary against a test Server; production
 deployment is not a prerequisite for this acceptance baseline.
 
@@ -63,8 +72,12 @@ host has a readable `.gemini/antigravity-cli/antigravity-oauth-token` under
 `HOME`, containing a nonempty `token.access_token` and either absent or
 `consumer` `auth_method`, and `agy models` exits successfully with a nonempty
 catalog within 15 seconds. The file may be a symlink to a regular file. Custom
-profiles do not inherit this capability. Login or catalog changes refresh the
-runtime registration even when the CLI version stays the same.
+profiles do not inherit this capability. The token file is checked on every
+inspection, but `agy models` fetches the remote catalog, so its verdict is kept
+like the Codex probe's: until the executable, its version or `HOME` changes, or
+an inspection finds the token missing or invalid. Login changes refresh the
+runtime registration even when the CLI version stays the same; a catalog change
+alone takes effect after the next login, CLI upgrade or daemon restart.
 
 Each assignment starts one `agy --output-format stream-json` invocation with
 `HOME=<job-directory>/agy-home`. Only the host authentication file is linked

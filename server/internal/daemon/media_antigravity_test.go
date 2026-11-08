@@ -81,9 +81,21 @@ func TestMediaAntigravityDiscoveryReadiness(t *testing.T) {
 			case "enterprise":
 				os.WriteFile(auth, []byte(`{"auth_method":"enterprise","token":{"access_token":"fake"}}`), 0600)
 			default:
+				// An idle round does not re-read the catalog; a returning
+				// login is verified again.
 				t.Setenv(agyimage.ModeEnv, failure)
+				check(true)
+				parked := auth + ".paused"
+				if err := os.Rename(auth, parked); err != nil {
+					t.Fatal(err)
+				}
+				check(false)
+				if err := os.Rename(parked, auth); err != nil {
+					t.Fatal(err)
+				}
 				want += "probe\n"
 			}
+			check(false)
 			check(false)
 			calls, _ := os.ReadFile(counter)
 			if string(calls) != want {
@@ -114,8 +126,39 @@ func TestMediaAntigravityDiscoveryGates(t *testing.T) {
 	}
 }
 
+// A verdict stands until the CLI changes, so a probe the round abandoned must
+// not be kept as one: the next round asks again.
+func TestMediaAntigravityDiscoveryCancelledProbeIsNotAVerdict(t *testing.T) {
+	executor, counter := antigravityNativeFixture(t, "cancel")
+	redirectTestHome(t, executor.Home)
+	d := &Daemon{cfg: Config{DiscoverNativeMedia: true}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		defer cancel()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if calls, _ := os.ReadFile(counter); len(calls) > 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	entry := AgentEntry{Path: executor.Command.Path}
+	if got := d.probeNativeMedia(ctx, "antigravity", entry); got != "" {
+		t.Fatalf("cancelled probe advertised %q", got)
+	}
+	t.Setenv(agyimage.ModeEnv, "ready")
+	if got := d.probeNativeMedia(t.Context(), "antigravity", entry); got != "media-image-agy-v1" {
+		t.Fatalf("round after a cancelled probe advertised %q", got)
+	}
+	if calls, _ := os.ReadFile(counter); string(calls) != "probe\nprobe\n" {
+		t.Fatalf("catalog reads=%q, want the cancelled one and its retry", calls)
+	}
+}
+
 func TestMediaAntigravityCapabilityRefresh(t *testing.T) {
-	executor, _ := antigravityNativeFixture(t, "ready")
+	executor, counter := antigravityNativeFixture(t, "ready")
 	redirectTestHome(t, executor.Home)
 	fx := newBatchFixture(t)
 	d := fx.daemon
@@ -137,7 +180,11 @@ func TestMediaAntigravityCapabilityRefresh(t *testing.T) {
 	check("ws-1", true)
 	check("ws-2", true)
 	before := fx.registerCallCount()
-	t.Setenv(agyimage.ModeEnv, "catalog-fail")
+	auth := filepath.Join(executor.Home, agyimage.TokenPath)
+	parked := auth + ".paused"
+	if err := os.Rename(auth, parked); err != nil {
+		t.Fatal(err)
+	}
 	fx.failRegisterFor("ws-2", true)
 	d.refreshAgentVersions(t.Context())
 	check("ws-1", false)
@@ -148,13 +195,18 @@ func TestMediaAntigravityCapabilityRefresh(t *testing.T) {
 	if got := fx.registerCallCount() - before; got != 2 {
 		t.Fatalf("registration retries=%d", got)
 	}
-	t.Setenv(agyimage.ModeEnv, "ready")
+	if err := os.Rename(parked, auth); err != nil {
+		t.Fatal(err)
+	}
 	d.refreshAgentVersions(t.Context())
 	check("ws-1", true)
 	check("ws-2", true)
 	d.refreshAgentVersions(t.Context())
 	if got := fx.registerCallCount() - before; got != 4 {
 		t.Fatalf("capability recovery/unchanged registrations=%d", got)
+	}
+	if calls, _ := os.ReadFile(counter); string(calls) != "probe\nprobe\n" {
+		t.Fatalf("catalog reads=%q, want one for the first login and one for the restored login", calls)
 	}
 }
 
