@@ -1,14 +1,12 @@
 "use client";
 
-import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
-
 import { useRef, useState } from "react";
 import {
   ArrowUpRight,
   CircleHelp,
   Download,
-  MessageCircle,
   Megaphone,
+  MessageCircle,
   MessagesSquare as QrCode,
 } from "@multica/ui/icons";
 import {
@@ -24,11 +22,12 @@ import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { isDesktopShell } from "../platform/local-directory";
-import { useT } from "../i18n";
 import { FeishuQrDialog } from "./feishu-group-qr-dialog";
+import { useT } from "../i18n";
 import { RAIL_ICON_BUTTON_CLASS } from "./rail-styles";
-
+import { DOWNLOAD_URL } from "./help-links";
 import { useWhatsNewMenuPanel, WhatsNewMenuPanel } from "../whats-new/whats-new-menu-panel";
+
 
 export function HelpLauncher() {
   const { t } = useT("layout");
@@ -70,7 +69,7 @@ export function HelpLauncher() {
               <DropdownMenuItem
                 render={
                   <a
-                    href={DOWNLOAD_PAGE_URL}
+                    href={DOWNLOAD_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                   />
@@ -88,7 +87,10 @@ export function HelpLauncher() {
               <Megaphone className="h-3.5 w-3.5" />
               {t(($) => $.whats_new.trigger)}
               {whatsNew.newestUnread && (
-                <span data-slot="whats-new-tag" className="ml-auto text-caption font-medium text-brand tabular-nums">
+                <span
+                  data-slot="whats-new-tag"
+                  className="ml-auto text-caption font-medium text-brand tabular-nums"
+                >
                   {`v${whatsNew.newestUnread}`}
                 </span>
               )}

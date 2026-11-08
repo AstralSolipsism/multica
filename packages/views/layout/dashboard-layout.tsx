@@ -8,11 +8,11 @@ import { AppRail } from "./app-rail";
 import { AppShellProvider } from "./app-shell-context";
 import { CompactNavSheet } from "./compact-nav-sheet";
 import { DashboardGuard } from "./dashboard-guard";
-import { GlobalShortcuts } from "./global-shortcuts";
 import { NavigationProgress } from "./navigation-progress";
 import { ShellRouteDataPrefetch } from "./route-data-prefetch";
 import { SpacePanel } from "./space-panel";
 import { WorkspacePresencePrefetch } from "./workspace-presence-prefetch";
+import { GlobalShortcuts } from "./global-shortcuts";
 
 interface DashboardLayoutProps {
   children: ReactNode;
