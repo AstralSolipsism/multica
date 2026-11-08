@@ -355,6 +355,9 @@
   },
   "omp": {
     "panel": {
+      "inherit": "ローカル設定を継承",
+      "inherit_hint": "ホストとプロジェクトの OMP 設定を使用します。",
+      "on": "オン",
       "model_roles": "モデルロール",
       "smol_model": "Smol モデル",
       "smol_hint": "軽量な内部作業を振り分けます。空の場合はメインモデルを継承します。",
@@ -388,7 +391,7 @@
       "memory": "メモリーと自動学習",
       "memory_backend": "メモリーバックエンド",
       "memory_off": "オフ",
-      "memory_off_hint": "経験メモリーなし。実行ごとにゼロから始まります。",
+      "memory_off_hint": "このエージェントの経験メモリーを無効にします。",
       "memory_sharpshooter": "Sharpshooter",
       "memory_sharpshooter_hint": "ロールバックと修正の教訓のみを記録します。",
       "memory_mnemopi": "Mnemopi",
@@ -398,7 +401,10 @@
     },
     "inspector": {
       "title": "連携戦略",
-      "empty": "有効な連携戦略はありません",
+      "empty": "連携設定は未選択です",
+      "advisor_off": "Advisor: オフ",
+      "memory_off": "メモリー: オフ",
+      "autolearn_off": "自動学習: オフ",
       "smol": "Smol: {{model}}",
       "advisor": "Advisor: {{model}} · {{mode}}",
       "auto_model": "自動選択",

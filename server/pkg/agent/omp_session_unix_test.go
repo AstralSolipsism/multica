@@ -104,3 +104,52 @@ func TestOmpFreshSessionRequiresPersistedTranscript(t *testing.T) {
 		t.Fatalf("must not publish a fabricated resume path: %+v", result)
 	}
 }
+
+func TestOmpStartFailureRemovesFreshSessionDirectory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fake := filepath.Join(t.TempDir(), "omp")
+	writeTestExecutable(t, fake, []byte("#!/bin/sh\nexit 0\n"))
+	backend, err := ResolveBackend("omp", Config{ExecutablePath: fake, Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A missing working directory fails after argv and the overlay are built,
+	// before OMP can create any session artifacts of its own.
+	opts := ExecOptions{
+		Cwd:        filepath.Join(t.TempDir(), "missing"),
+		OmpRuntime: &OmpRuntimeOpts{MemoryBackend: "mnemopi"},
+	}
+	for range 2 {
+		if _, err := backend.Execute(t.Context(), "prompt", opts); err == nil {
+			t.Fatal("expected a start failure")
+		}
+		dir, err := piSessionDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("failed start leaked session artifacts: %v, %v", entries, err)
+		}
+	}
+
+	// A resume failure must never remove the existing transcript or its peers.
+	resumeDir := t.TempDir()
+	opts.ResumeSessionID = filepath.Join(resumeDir, "saved.jsonl")
+	const transcript = "{\"type\":\"session\",\"id\":\"saved\"}\n"
+	if err := os.WriteFile(opts.ResumeSessionID, []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Execute(t.Context(), "prompt", opts); err == nil {
+		t.Fatal("expected a resume start failure")
+	}
+	data, err := os.ReadFile(opts.ResumeSessionID)
+	if err != nil || string(data) != transcript {
+		t.Fatalf("resume failure modified history: %q, %v", data, err)
+	}
+	lock, locked, err := tryLockPiSessionFile(opts.ResumeSessionID)
+	defer releasePiSessionFileLock(lock)
+	if err != nil || !locked {
+		t.Fatalf("resume failure retained session lock: %v, %v", locked, err)
+	}
+}

@@ -428,6 +428,18 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 	}
 
+	// A fresh OMP directory only becomes resumable state once the runtime
+	// starts. Launch failures must not accumulate empty dirs and overlays;
+	// existing resume directories are never owned by this execution.
+	processStarted := false
+	defer func() {
+		if sessionDir != "" && !processStarted {
+			if err := os.RemoveAll(sessionDir); err != nil && b.cfg.Logger != nil {
+				b.cfg.Logger.Warn("omp failed-start session cleanup", "error", err)
+			}
+		}
+	}()
+
 	extensionPath, err := b.preparePiMcpExtension(opts.McpConfig)
 	if err != nil {
 		releasePiSessionFileLock(sessionLock)
@@ -518,6 +530,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		cancel()
 		return nil, fmt.Errorf("start %s: %w", label, err)
 	}
+	processStarted = true
 	stderrDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(stderrWatch, stderrRead)

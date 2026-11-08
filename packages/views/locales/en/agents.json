@@ -529,6 +529,9 @@
   },
   "omp": {
     "panel": {
+      "inherit": "Inherit local settings",
+      "inherit_hint": "Uses OMP settings on the host and in the project.",
+      "on": "On",
       "model_roles": "Model roles",
       "smol_model": "Smol model",
       "smol_hint": "Routes lightweight internal work. Leave empty to inherit the main model.",
@@ -562,7 +565,7 @@
       "memory": "Memory & auto-learn",
       "memory_backend": "Memory backend",
       "memory_off": "Off",
-      "memory_off_hint": "No experience memory; every run starts fresh.",
+      "memory_off_hint": "Disable experience memory for this agent.",
       "memory_sharpshooter": "Sharpshooter",
       "memory_sharpshooter_hint": "Record only rollback and correction lessons.",
       "memory_mnemopi": "Mnemopi",
@@ -572,7 +575,10 @@
     },
     "inspector": {
       "title": "Collaboration",
-      "empty": "No collaboration strategies enabled",
+      "empty": "No collaboration settings selected",
+      "advisor_off": "Advisor: Off",
+      "memory_off": "Memory: Off",
+      "autolearn_off": "Auto-Learn: Off",
       "smol": "Smol: {{model}}",
       "advisor": "Advisor: {{model}} · {{mode}}",
       "auto_model": "Auto-select",
