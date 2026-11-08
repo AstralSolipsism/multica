@@ -23,7 +23,7 @@ func TestOmpExecuteRoutesYouShouldKnowFrames(t *testing.T) {
 		want     string
 	}{
 		{name: "ordinary", callback: true, want: "false"},
-		{name: "managed advisor", callback: true, advisor: &OmpRuntimeOpts{AdvisorEnabled: true}, want: "true"},
+		{name: "managed advisor", callback: true, advisor: &OmpRuntimeOpts{AdvisorEnabled: ompTestBool(true)}, want: "true"},
 		{name: "custom advisor", callback: true, args: []string{"--advisor"}, want: "true"},
 		{name: "no callback", want: "false"},
 	} {
