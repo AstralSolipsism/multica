@@ -36,6 +36,8 @@ export interface CollectionColumn<T> {
   /** Track width in px. The first column is the primary column: it takes the
    *  remaining space, and `width` is its minimum on wide layouts. */
   width?: number;
+  /** Wide-layout share of the remaining space for a non-primary column. */
+  flex?: number;
   align?: "start" | "end";
   /** Sort field this column's header toggles. */
   sortKey?: string;
@@ -46,6 +48,8 @@ export interface CollectionColumn<T> {
   /** Holds its own controls: clicks inside never activate the row. */
   interactive?: boolean;
   className?: string;
+  /** Optional cell-shaped skeleton content while the list loads. */
+  loadingCell?: ReactNode;
   cell: (row: T) => ReactNode;
 }
 
@@ -136,7 +140,13 @@ function gridTemplate<T>(
   if (selectable && wide) tracks.push(`${SLOT}px`);
   columns.forEach((col, i) => {
     if (i === 0) tracks.push(wide ? `minmax(${col.width ?? PRIMARY_MIN}px,1fr)` : "minmax(0,1fr)");
-    else if (wide || col.core) tracks.push(`${col.width ?? DEFAULT_WIDTH}px`);
+    else if (wide || col.core) {
+      tracks.push(
+        wide && col.flex != null
+          ? `minmax(${col.width ?? DEFAULT_WIDTH}px,${col.flex}fr)`
+          : `${col.width ?? DEFAULT_WIDTH}px`,
+      );
+    }
   });
   if (menu) tracks.push(`${MENU}px`);
   tracks.push(`${EDGE}px`);
@@ -902,7 +912,7 @@ function SkeletonRow<T>({
               <Skeleton className="h-3.5 w-40 max-w-full" />
             </span>
           ) : (
-            <Skeleton className="h-3 w-14 max-w-full" />
+            col.loadingCell ?? <Skeleton className="h-3 w-14 max-w-full" />
           )}
         </div>
       ))}

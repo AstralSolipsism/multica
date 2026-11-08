@@ -35,6 +35,11 @@ describe("quotaChipState", () => {
     });
   });
 
+  it("distinguishes a missing snapshot from an unmeasured window", () => {
+    expect(quotaChipState(chip({ empty: true }))).toEqual({ kind: "empty" });
+    expect(quotaChipState(chip({ remainingPercent: null }))).toEqual({ kind: "unknown" });
+  });
+
   it("keeps the last balance of an interrupted collection", () => {
     expect(quotaChipState(chip({ interrupted: true }))).toEqual({ kind: "percent", percent: 62 });
     expect(quotaChipState(chip({ interrupted: true, limited: true }))).toEqual({ kind: "limited" });

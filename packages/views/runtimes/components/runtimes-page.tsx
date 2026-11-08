@@ -84,6 +84,7 @@ import {
   type CollectionColumn,
   type CollectionGroup,
 } from "../../layout/collection-list";
+import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { useNavigation } from "../../navigation";
 import { getMikaOnboarding, pickContentLang } from "../../onboarding/templates";
@@ -394,7 +395,9 @@ export function RuntimesPage({
       {
         key: "quota",
         header: tForkUi(($) => $.runtimes.machine.metrics.quota),
-        width: 224,
+        width: 240,
+        flex: 1.4,
+        loadingCell: <Skeleton className="h-5 w-24 rounded-sm" />,
         cell: (row) =>
           row.kind === "machine" ? (
             <MachineQuotaChips machine={row.machine} now={now} agents={agents} />
@@ -575,6 +578,7 @@ export function RuntimesPage({
             groups={groups}
             loading={listLoading}
             getRowId={(row) => row.id}
+            getRowClassName={() => "h-auto min-h-9 py-1.5"}
             getRowHref={rowHref}
             getRowTitle={(row) =>
               row.kind === "machine"

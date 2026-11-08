@@ -16,6 +16,7 @@ export {
 } from "./collection-page";
 export {
   OBJECT_PAGE_BODY,
+  OBJECT_PAGE_BODY_WIDE,
   ObjectIconMark,
   ObjectIdentity,
   ObjectPage,

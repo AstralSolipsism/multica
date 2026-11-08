@@ -28,7 +28,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { CollectionPageState } from "../../layout/collection-page";
 import {
-  OBJECT_PAGE_BODY,
+  OBJECT_PAGE_BODY_WIDE,
   ObjectIconMark,
   ObjectIdentity,
   ObjectPage,
@@ -296,7 +296,7 @@ export function RuntimeDetailPage({
         }
         panel={<MachineProperties machine={machine} members={members} />}
       >
-        <div className={cn(OBJECT_PAGE_BODY, "space-y-8")}>
+        <div className={cn(OBJECT_PAGE_BODY_WIDE, "space-y-8")}>
           <ObjectIdentity
             media={<ObjectIconMark icon={Icon} />}
             title={machine.title}
@@ -344,6 +344,7 @@ export function RuntimeDetailPage({
             {machineRuntimes.length > 0 ? (
               <div className="-mx-2">
                 <RuntimeList
+                  machineDetail
                   runtimes={machineRuntimes}
                   now={now}
                   machineTitle={machine.title}
@@ -516,7 +517,7 @@ function PropertiesSkeleton() {
 
 function MachineBodySkeleton() {
   return (
-    <div className={cn(OBJECT_PAGE_BODY, "space-y-8")}>
+    <div className={cn(OBJECT_PAGE_BODY_WIDE, "space-y-8")}>
       <div className="flex items-center gap-3">
         <Skeleton className="size-12 rounded-xl" />
         <div className="flex-1 space-y-2">

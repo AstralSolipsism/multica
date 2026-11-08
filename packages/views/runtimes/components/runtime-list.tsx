@@ -63,7 +63,7 @@ import {
   pctChange,
 } from "../utils";
 import { runtimeRowLabel } from "./runtime-machines";
-import { RuntimeQuotaCell } from "./runtime-quota-cell";
+import { RuntimeQuotaCell, ThinkingAdaptQuotaRow } from "./runtime-quota-cell";
 import {
   customRuntimeRegistrationFailure,
   isDisabledCustomRuntime,
@@ -138,6 +138,7 @@ export function buildWorkloadIndex(
 function RuntimeNameCell({
   runtime,
   machineTitle,
+  machineDetail = false,
 }: {
   runtime: AgentRuntime;
   /**
@@ -148,8 +149,9 @@ function RuntimeNameCell({
    * runtime profiles), where any alias is shown verbatim.
    */
   machineTitle?: string;
+  machineDetail?: boolean;
 }) {
-  return (
+  const name = (
     <CollectionNameCell
       icon={<ProviderLogo provider={runtime.provider} className="size-4 shrink-0" />}
       title={runtimeRowLabel(runtime, machineTitle ?? "")}
@@ -161,6 +163,27 @@ function RuntimeNameCell({
         </>
       }
     />
+  );
+  if (!machineDetail) return name;
+
+  const metadata = runtime.metadata as Record<string, unknown> | null;
+  const version = metadata && typeof metadata.version === "string"
+    ? metadata.version
+    : null;
+  const versionLabel = version
+    ? /^\d/.test(version) ? `v${version}` : version
+    : null;
+  const thinkingAdapt = runtime.thinking_adapt ?? null;
+  if (!versionLabel && !thinkingAdapt) return name;
+  return (
+    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      {name}
+      <span className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
+        {versionLabel && <span className="shrink-0">{versionLabel}</span>}
+        {versionLabel && thinkingAdapt && <span aria-hidden="true">·</span>}
+        {thinkingAdapt && <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />}
+      </span>
+    </span>
   );
 }
 
@@ -546,11 +569,14 @@ export function RuntimeList({
   now,
   runtimeHref,
   machineTitle,
+  machineDetail = false,
 }: {
   runtimes: AgentRuntime[];
   now: number;
   /** Machine-detail pages keep runtime settings nested under the machine. */
   runtimeHref?: (runtimeId: string) => string;
+  /** Three-column quota layout used only by the machine detail page. */
+  machineDetail?: boolean;
   /**
    * The containing machine's title, when this list renders the runtimes of a
    * single machine. Used so a machine-level alias doesn't repeat on every row
@@ -629,19 +655,29 @@ export function RuntimeList({
     {
       key: "name",
       header: t(($) => $.list.col_runtime),
-      cell: (row) => <RuntimeNameCell runtime={row.runtime} machineTitle={machineTitle} />,
+      cell: (row) => (
+        <RuntimeNameCell
+          runtime={row.runtime}
+          machineTitle={machineTitle}
+          machineDetail={machineDetail}
+        />
+      ),
     },
-    {
-      // Health folds the workload in as a suffix ("Healthy · 2 tasks") —
-      // same merge as the agents list's status cell.
-      key: "health",
-      header: t(($) => $.list.col_health),
-      width: 176,
-      core: true,
-      cell: (row) => <HealthCell runtime={row.runtime} workload={row.workload} now={now} />,
-    },
-    // Owner only earns its space when the list has more than one owner.
-    ...(showOwner
+    ...(machineDetail
+      ? []
+      : [
+          {
+            key: "health",
+            header: t(($) => $.list.col_health),
+            width: 176,
+            core: true,
+            cell: (row: RuntimeRow) => (
+              <HealthCell runtime={row.runtime} workload={row.workload} now={now} />
+            ),
+          },
+        ]),
+    // Owner only earns its space when the full table has multiple owners.
+    ...(!machineDetail && showOwner
       ? [
           {
             key: "owner",
@@ -665,38 +701,52 @@ export function RuntimeList({
       width: 92,
       cell: (row) => <AgentStack agentIds={row.workload.agentIds} />,
     },
-    {
-      key: "cost",
-      header: t(($) => $.list.col_cost),
-      width: 96,
-      align: "end",
-      cell: (row) =>
-        isPendingCustomRuntime(row.runtime) ? (
-          <CollectionEmptyValue />
-        ) : (
-          <CostCell
-            runtimeId={row.runtime.id}
-            enabled={canReadRuntimeUsage(row.runtime, user?.id ?? null)}
-          />
-        ),
-    },
+    ...(machineDetail
+      ? []
+      : [
+          {
+            key: "cost",
+            header: t(($) => $.list.col_cost),
+            width: 96,
+            align: "end" as const,
+            cell: (row: RuntimeRow) =>
+              isPendingCustomRuntime(row.runtime) ? (
+                <CollectionEmptyValue />
+              ) : (
+                <CostCell
+                  runtimeId={row.runtime.id}
+                  enabled={canReadRuntimeUsage(row.runtime, user?.id ?? null)}
+                />
+              ),
+          },
+        ]),
     {
       key: "quota",
       header: tQuota(($) => $.column_label),
-      width: 120,
+      width: machineDetail ? 320 : 120,
+      flex: machineDetail ? 1.4 : undefined,
       cell: (row) =>
         isPendingCustomRuntime(row.runtime) ? (
           <CollectionEmptyValue />
         ) : (
-          <RuntimeQuotaCell runtime={row.runtime} now={now} agents={agents} />
+          <RuntimeQuotaCell
+            runtime={row.runtime}
+            now={now}
+            agents={agents}
+            machineName={machineDetail ? machineTitle : undefined}
+          />
         ),
     },
-    {
-      key: "cli",
-      header: t(($) => $.list.col_cli),
-      width: 112,
-      cell: (row) => <CliCell runtime={row.runtime} />,
-    },
+    ...(machineDetail
+      ? []
+      : [
+          {
+            key: "cli",
+            header: t(($) => $.list.col_cli),
+            width: 112,
+            cell: (row: RuntimeRow) => <CliCell runtime={row.runtime} />,
+          },
+        ]),
   ];
 
   const detailHrefOf = (row: RuntimeRow) =>

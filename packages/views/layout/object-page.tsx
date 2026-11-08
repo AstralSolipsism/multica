@@ -34,6 +34,8 @@ import { BreadcrumbHeader, type BreadcrumbSegment } from "./breadcrumb-header";
 
 /** The reading column of an object page; the header above it stays full width. */
 export const OBJECT_PAGE_BODY = "mx-auto w-full max-w-[760px] px-6 py-8";
+/** Wide runtime table variant; other object pages keep the reading column. */
+export const OBJECT_PAGE_BODY_WIDE = "mx-auto w-full max-w-[1040px] px-6 py-8";
 
 interface ObjectPageProps {
   /** The lists this object was opened from, each one a link back. */
