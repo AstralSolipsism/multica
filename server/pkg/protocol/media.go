@@ -33,7 +33,10 @@ func (r MediaRequest) Validate() error {
 	if !slices.Contains([]string{"auto", "codex", "agy"}, r.Provider) {
 		return fmt.Errorf("unsupported provider")
 	}
-	if len(r.Prompt) == 0 || len(r.Prompt) > 32000 || len(r.Inputs) > 16 || len(r.Model) > 128 || len(r.Size) > 64 || len(r.Aspect) > 32 || r.Duration != 0 {
+	if r.Model != "" {
+		return fmt.Errorf("native image adapters do not support model selection; omit model and select a provider")
+	}
+	if len(r.Prompt) == 0 || len(r.Prompt) > 32000 || len(r.Inputs) > 16 || len(r.Size) > 64 || len(r.Aspect) > 32 || r.Duration != 0 {
 		return fmt.Errorf("invalid media parameters")
 	}
 	for _, in := range r.Inputs {

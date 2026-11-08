@@ -95,7 +95,7 @@ func TestMediaCLIReceiptAndExplicitDownload(t *testing.T) {
 	}
 }
 
-func TestMediaCLIRetiredOptionsDoNotUploadOrSubmit(t *testing.T) {
+func TestMediaCLIUnsupportedOptionsDoNotUploadOrSubmit(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
 	defer server.Close()
@@ -105,16 +105,16 @@ func TestMediaCLIRetiredOptionsDoNotUploadOrSubmit(t *testing.T) {
 	if err := os.WriteFile(input, []byte("reference"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, flags := range [][]string{{"--provider", "flow"}, {"--provider", "whisk"}, {"--capability", "video-generate"}, {"--capability", "image-remix"}, {"--duration", "8"}} {
+	for _, flags := range [][]string{{"--provider", "flow"}, {"--provider", "whisk"}, {"--capability", "video-generate"}, {"--capability", "image-remix"}, {"--duration", "8"}, {"--model", "unsupported-model"}} {
 		cmd := newMediaCmd()
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
 		cmd.SetArgs(append([]string{"generate", "--prompt", "image", "--input", input}, flags...))
 		if cmd.Execute() == nil {
-			t.Fatalf("retired option accepted: %v", flags)
+			t.Fatalf("unsupported option accepted: %v", flags)
 		}
 	}
 	if requests.Load() != 0 {
-		t.Fatal("retired options uploaded or submitted work")
+		t.Fatal("unsupported options uploaded or submitted work")
 	}
 }
