@@ -63,7 +63,7 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	if err != nil {
 		return baseDescription
 	}
-	var adopted, candidates []string
+	var builtin, modules, candidates []string
 	for _, doc := range orderedBaselineDocs(docs) {
 		chapter := doc.Chapter
 		if doc.CandidateRevisionID.Valid {
@@ -91,26 +91,84 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 		if doc.Title != "" {
 			label += "（" + engineeringContextText(doc.Title, 60) + "）"
 		}
-		adopted = append(adopted, fmt.Sprintf("- %s v%d：%s", label, revision.RevisionNumber, outline))
+		line := fmt.Sprintf("- %s v%d：%s", label, revision.RevisionNumber, outline)
+		if strings.HasPrefix(chapter, "module:") {
+			modules = append(modules, line)
+		} else {
+			builtin = append(builtin, line)
+		}
 	}
-	if len(adopted) == 0 {
+	if len(builtin)+len(modules) == 0 {
 		lines = append(lines, "当前尚未建立生效基线")
 	} else {
 		lines = append(lines, "已生效基线（adopted）：")
-		lines = append(lines, adopted...)
+		lines = append(lines, builtin...)
 	}
+	var tail []string
 	if len(candidates) > 0 {
-		lines = append(lines, "待审候选（candidate，尚未生效）："+strings.Join(candidates, "、"))
+		tail = append(tail, "待审候选（candidate，尚未生效）："+engineeringContextList(candidates, 200))
 	}
-	lines = append(lines,
+	tail = append(tail,
 		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。完整基线与契约：`multica project baseline get %s`。", uuidToString(projectID), uuidToString(projectID)),
 		fmt.Sprintf("规划、拆单、编码或审阅前，先用 `multica project baseline get %s --index` 浏览目录，再用 `multica project baseline get %s --section \"<小节名>\"` 按需查阅小节与关联概念。", uuidToString(projectID), uuidToString(projectID)),
 		"如已绑定 strixnova-* 系列工程 skill，请按对应 skill 规程调用相关能力。")
+	// Module chapters fill what the budget leaves after everything else, in
+	// position order; the rest collapse into one pointer to the index.
+	overflow := func(rest int) string {
+		return fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", rest, uuidToString(projectID))
+	}
+	remaining := engineeringContextBudget - engineeringContextRunes(lines) - engineeringContextRunes(tail)
+	listed := 0
+	for i, line := range modules {
+		need := engineeringContextRunes([]string{line})
+		if rest := len(modules) - i - 1; rest > 0 {
+			need += engineeringContextRunes([]string{overflow(rest)})
+		}
+		if need > remaining {
+			break
+		}
+		remaining -= engineeringContextRunes([]string{line})
+		listed++
+	}
+	lines = append(lines, modules[:listed]...)
+	if listed < len(modules) {
+		lines = append(lines, overflow(len(modules)-listed))
+	}
+	lines = append(lines, tail...)
 	summary := strings.Join(lines, "\n")
 	if baseDescription == "" {
 		return summary
 	}
 	return baseDescription + "\n\n" + summary
+}
+
+// engineeringContextBudget bounds the claim summary in runes. Built-in chapters
+// always fit within it; module chapters share what is left.
+const engineeringContextBudget = 2000
+
+// engineeringContextRunes counts lines as joined with newlines.
+func engineeringContextRunes(lines []string) int {
+	n := 0
+	for _, line := range lines {
+		n += utf8.RuneCountInString(line) + 1
+	}
+	return n
+}
+
+// engineeringContextList joins chapter names up to limit runes and counts the rest.
+func engineeringContextList(items []string, limit int) string {
+	out := ""
+	for i, item := range items {
+		next := item
+		if i > 0 {
+			next = out + "、" + item
+		}
+		if i > 0 && utf8.RuneCountInString(next) > limit {
+			return fmt.Sprintf("%s 等共 %d 个", out, len(items))
+		}
+		out = next
+	}
+	return out
 }
 
 // Keep free-form configuration and headings on one bounded line per summary item.

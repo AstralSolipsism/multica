@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -865,5 +866,90 @@ func TestLabrastroEngineeringReadsReleaseLocksBeforeWriting(t *testing.T) {
 				t.Fatalf("status=%d probed=%v project edit while streaming: %v", w.Code, w.probed, w.err)
 			}
 		})
+	}
+}
+
+func TestLabrastroEngineeringClaimDescriptionBudgetsModules(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	adopt := func(chapter, title, content string) {
+		t.Helper()
+		body := map[string]any{"chapter": chapter, "content_markdown": content, "change_summary": "Init"}
+		if title != "" {
+			body["chapter_title"] = title
+		}
+		var revision baselineRevisionResponse
+		testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", body, "session")).Want(201).JSON(&revision)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", revision), "session")).Want(200)
+		if strings.HasPrefix(chapter, "module:") {
+			// An open candidate on every module stresses the candidate line too.
+			f.propose(chapter, "## 候选\n正文", uuidToPtr(revision.ID), nil)
+		}
+	}
+	describe := func() string {
+		t.Helper()
+		got, err := testHandler.resolveClaimProjectContext(context.Background(), parseUUID(f.project), parseUUID(testWorkspaceID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Description
+	}
+	longOutline := strings.Repeat("## "+strings.Repeat("节", 100)+"\n正文\n", 3)
+	for _, chapter := range engineering.Chapters {
+		adopt(chapter, "", "## 目标\n正文")
+	}
+	adopt("module:m00", "模块零", "## 结算\n正文")
+	adopt("module:m01", "模块一", "## 对账\n正文")
+	if got := describe(); strings.Count(got, "\n- module:") != 2 || strings.Contains(got, "另有") || utf8.RuneCountInString(got) > engineeringContextBudget {
+		t.Fatalf("modules within budget must all be listed: %s", got)
+	}
+
+	const modules = 30
+	for i := 2; i < modules; i++ {
+		adopt(fmt.Sprintf("module:m%02d", i), strings.Repeat("模", 60), longOutline)
+	}
+	pointer := func(got string) int {
+		listed := strings.Count(got, "\n- module:")
+		if listed < 1 || listed >= modules || !strings.Contains(got, fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", modules-listed, f.project)) {
+			t.Fatalf("listed %d of %d modules without an exact index pointer: %s", listed, modules, got)
+		}
+		for _, chapter := range engineering.Chapters {
+			if !strings.Contains(got, "\n- "+chapter+" v1：") {
+				t.Fatalf("built-in chapter %s dropped by the module budget: %s", chapter, got)
+			}
+		}
+		return listed
+	}
+	got := describe()
+	pointer(got)
+	if utf8.RuneCountInString(got) > engineeringContextBudget || !strings.Contains(got, "- module:m00（模块零）") || !strings.Contains(got, "等共 30 个") {
+		t.Fatalf("modules must fill the budget in position order with bounded candidates (%d runes): %s", utf8.RuneCountInString(got), got)
+	}
+
+	// Built-in content at its limits leaves no module room; the pointer remains.
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{
+		"mode_summary": strings.Repeat("方针", 140),
+		"stages":       []engineeringStage{{Stage: 1, Title: strings.Repeat("阶", 60), Goal: strings.Repeat("标", 280)}},
+	}, "session")).Want(200)
+	for _, chapter := range engineering.Chapters {
+		var state struct {
+			Chapters []baselineChapterResponse `json:"chapters"`
+		}
+		testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(200).JSON(&state)
+		for _, c := range state.Chapters {
+			if c.Chapter == chapter {
+				revision := f.propose(chapter, longOutline, uuidToPtr(c.Adopted.ID), nil)
+				testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", revision), "session")).Want(200)
+			}
+		}
+	}
+	got = describe()
+	overflow := fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", modules, f.project)
+	if strings.Contains(got, "\n- module:") || !strings.Contains(got, overflow) {
+		t.Fatalf("modules must collapse into the pointer when built-ins fill the budget: %s", got)
+	}
+	// Only the pointer and the bounded candidate line may exceed the budget.
+	if limit := engineeringContextBudget + utf8.RuneCountInString(overflow) + 220; utf8.RuneCountInString(got) > limit {
+		t.Fatalf("summary grew past %d runes: %d", limit, utf8.RuneCountInString(got))
 	}
 }
