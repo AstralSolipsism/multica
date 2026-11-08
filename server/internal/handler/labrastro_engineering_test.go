@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/engineering"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -226,7 +228,7 @@ func TestLabrastroEngineeringClaimDescriptionQueryFailure(t *testing.T) {
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
 	const original = "Original project context\n"
 	dbfx.Exec(t, `UPDATE project SET description=$2 WHERE id=$1`, f.project, original)
-	for _, query := range []string{"LabrastroGetEngineering", "LabrastroListBaselineDocs", "LabrastroGetBaselineRevision"} {
+	for _, query := range []string{"LabrastroGetEngineering", "LabrastroListBaselineDocs", "LabrastroListBaselineRevisionsByID"} {
 		t.Run(query, func(t *testing.T) {
 			h := *testHandler
 			h.Queries = db.New(failQueryDBTX{DBTX: testPool, failOn: query, err: errors.New("database read failed")})
@@ -756,4 +758,259 @@ func TestLabrastroEngineeringDiffIgnoresOtherChaptersAndRechecksStoredDiff(t *te
 	}
 	replacement := f.propose("domain_rules", next.ContentMarkdown, uuidToPtr(cut.ID), uuidToPtr(next.ID))
 	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", replacement), "pat")).Want(200)
+}
+
+func TestLabrastroEngineeringLightweightReads(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	first := f.propose("overview", "## First\nOne", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", first), "session")).Want(200)
+	f.propose("overview", "## First\nTwo", uuidToPtr(first.ID), nil)
+
+	var config map[string]json.RawMessage
+	testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering?with_chapters=false", nil, "session")).Want(200).JSON(&config)
+	var engineeringConfig engineeringConfigResponse
+	if _, hasChapters := config["chapters"]; hasChapters || json.Unmarshal(config["engineering"], &engineeringConfig) != nil || !engineeringConfig.Enabled {
+		t.Fatalf("config-only read=%s", config)
+	}
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering?with_chapters=no", nil, "session")).Want(400), "invalid_request")
+
+	type history struct {
+		Revisions []baselineRevisionResponse `json:"revisions"`
+		More      bool                       `json:"has_more"`
+		Before    *int                       `json:"next_before"`
+	}
+	var full, summary history
+	testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&limit=1", nil, "session")).Want(200).JSON(&full)
+	testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&limit=1&with_content=false", nil, "session")).Want(200).JSON(&summary)
+	if len(full.Revisions) != 1 || len(summary.Revisions) != 1 || full.Revisions[0].ContentMarkdown == "" || summary.Revisions[0].ContentMarkdown != "" {
+		t.Fatalf("full=%+v summary=%+v", full, summary)
+	}
+	fullRow, summaryRow := full.Revisions[0], summary.Revisions[0]
+	fullRow.ContentMarkdown = ""
+	if !reflect.DeepEqual(fullRow.ProjectBaselineRevision, summaryRow.ProjectBaselineRevision) || string(fullRow.AnchorsDiff) != string(summaryRow.AnchorsDiff) ||
+		full.More != summary.More || full.Before == nil || summary.Before == nil || *full.Before != *summary.Before {
+		t.Fatalf("summary page diverged: full=%+v summary=%+v", full, summary)
+	}
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroBaselineHistory, f.request("GET", "/baseline/revisions?chapter=overview&with_content=0", nil, "session")).Want(400), "invalid_request")
+
+	// The batched chapter read keeps the single-row contract for a dangling pointer.
+	dbfx.Exec(t, `UPDATE project_baseline_doc SET adopted_revision_id = gen_random_uuid() WHERE workspace_id=$1 AND project_id=$2 AND chapter='overview'`, testWorkspaceID, f.project)
+	wantEngineeringCode(t, testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(404), "not_found")
+}
+
+func TestLabrastroEngineeringPatchRejectsMalformedDeciderBeforeLocking(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	// Matches the decision endpoint: request shape errors precede any row lock.
+	h := *testHandler
+	h.TxStarter = refusingEngineeringTx{t}
+	testutil.Call(t, h.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{"decider_member_ids": []string{"not-a-uuid"}}, "session")).Want(400)
+}
+
+type refusingEngineeringTx struct{ t *testing.T }
+
+func (r refusingEngineeringTx) Begin(context.Context) (pgx.Tx, error) {
+	r.t.Error("malformed request opened a transaction")
+	return nil, errors.New("transaction refused")
+}
+
+// lockProbeWriter checks, while the body is being written, whether a project
+// edit can take its row lock; a read snapshot still open would block it.
+type lockProbeWriter struct {
+	*httptest.ResponseRecorder
+	t       *testing.T
+	project string
+	probed  bool
+	err     error
+}
+
+func (w *lockProbeWriter) Write(b []byte) (int, error) {
+	if !w.probed {
+		w.probed = true
+		ctx := context.Background()
+		tx, err := testPool.Begin(ctx)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '200ms'`); err != nil {
+			w.t.Fatal(err)
+		}
+		_, w.err = tx.Exec(ctx, `UPDATE project SET title = title WHERE id = $1`, w.project)
+	}
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestLabrastroEngineeringReadsReleaseLocksBeforeWriting(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	adopted := f.propose("overview", "## First\nOne", nil, nil)
+	testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		path    string
+	}{
+		{"overview", testHandler.LabrastroGetEngineering, "/engineering"},
+		{"config", testHandler.LabrastroGetEngineering, "/engineering?with_chapters=false"},
+		{"index", testHandler.LabrastroReadBaseline, "/baseline?index=true"},
+		{"section", testHandler.LabrastroReadBaseline, "/baseline?section=First"},
+		{"history", testHandler.LabrastroBaselineHistory, "/baseline/revisions?chapter=overview"},
+		{"diff", testHandler.LabrastroBaselineHistory, "/baseline/revisions?chapter=overview&diff_from=1&diff_to=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &lockProbeWriter{ResponseRecorder: httptest.NewRecorder(), t: t, project: f.project}
+			tc.handler(w, f.request("GET", tc.path, nil, "session"))
+			if w.Code != 200 || !w.probed || w.err != nil {
+				t.Fatalf("status=%d probed=%v project edit while streaming: %v", w.Code, w.probed, w.err)
+			}
+		})
+	}
+}
+
+func TestLabrastroEngineeringClaimDescriptionBudgetsModules(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	adopt := func(chapter, title, content string) {
+		t.Helper()
+		body := map[string]any{"chapter": chapter, "content_markdown": content, "change_summary": "Init"}
+		if title != "" {
+			body["chapter_title"] = title
+		}
+		var revision baselineRevisionResponse
+		testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", body, "session")).Want(201).JSON(&revision)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", revision), "session")).Want(200)
+		if strings.HasPrefix(chapter, "module:") {
+			// An open candidate on every module stresses the candidate line too.
+			f.propose(chapter, "## 候选\n正文", uuidToPtr(revision.ID), nil)
+		}
+	}
+	describe := func() string {
+		t.Helper()
+		got, err := testHandler.resolveClaimProjectContext(context.Background(), parseUUID(f.project), parseUUID(testWorkspaceID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Description
+	}
+	longOutline := strings.Repeat("## "+strings.Repeat("节", 100)+"\n正文\n", 3)
+	for _, chapter := range engineering.Chapters {
+		adopt(chapter, "", "## 目标\n正文")
+	}
+	adopt("module:m00", "模块零", "## 结算\n正文")
+	adopt("module:m01", "模块一", "## 对账\n正文")
+	if got := describe(); strings.Count(got, "\n- module:") != 2 || strings.Contains(got, "另有") || utf8.RuneCountInString(got) > engineeringContextBudget {
+		t.Fatalf("modules within budget must all be listed: %s", got)
+	}
+
+	const modules = 30
+	for i := 2; i < modules; i++ {
+		adopt(fmt.Sprintf("module:m%02d", i), strings.Repeat("模", 60), longOutline)
+	}
+	pointer := func(got string) int {
+		listed := strings.Count(got, "\n- module:")
+		if listed < 1 || listed >= modules || !strings.Contains(got, fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", modules-listed, f.project)) {
+			t.Fatalf("listed %d of %d modules without an exact index pointer: %s", listed, modules, got)
+		}
+		for _, chapter := range engineering.Chapters {
+			if !strings.Contains(got, "\n- "+chapter+" v1：") {
+				t.Fatalf("built-in chapter %s dropped by the module budget: %s", chapter, got)
+			}
+		}
+		return listed
+	}
+	got := describe()
+	pointer(got)
+	if utf8.RuneCountInString(got) > engineeringContextBudget || !strings.Contains(got, "- module:m00（模块零）") || !strings.Contains(got, "等共 30 个") {
+		t.Fatalf("modules must fill the budget in position order with bounded candidates (%d runes): %s", utf8.RuneCountInString(got), got)
+	}
+
+	// Built-in content at its limits leaves no module room; the pointer remains.
+	testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{
+		"mode_summary": strings.Repeat("方针", 140),
+		"stages":       []engineeringStage{{Stage: 1, Title: strings.Repeat("阶", 60), Goal: strings.Repeat("标", 280)}},
+	}, "session")).Want(200)
+	for _, chapter := range engineering.Chapters {
+		var state struct {
+			Chapters []baselineChapterResponse `json:"chapters"`
+		}
+		testutil.Call(t, testHandler.LabrastroGetEngineering, f.request("GET", "/engineering", nil, "session")).Want(200).JSON(&state)
+		for _, c := range state.Chapters {
+			if c.Chapter == chapter {
+				revision := f.propose(chapter, longOutline, uuidToPtr(c.Adopted.ID), nil)
+				testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", revision), "session")).Want(200)
+			}
+		}
+	}
+	got = describe()
+	overflow := fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", modules, f.project)
+	if strings.Contains(got, "\n- module:") || !strings.Contains(got, overflow) {
+		t.Fatalf("modules must collapse into the pointer when built-ins fill the budget: %s", got)
+	}
+	// Only the pointer and the bounded candidate line may exceed the budget.
+	if limit := engineeringContextBudget + utf8.RuneCountInString(overflow) + 220; utf8.RuneCountInString(got) > limit {
+		t.Fatalf("summary grew past %d runes: %d", limit, utf8.RuneCountInString(got))
+	}
+}
+
+func TestLabrastroEngineeringClaimDescriptionListsModulesThatFit(t *testing.T) {
+	f := newEngineeringFixture(t)
+	f.enable()
+	for _, chapter := range engineering.Chapters {
+		adopted := f.propose(chapter, "## "+strings.Repeat("节", 180)+"\nBody", nil, nil)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+		f.propose(chapter, "## Candidate\nBody", uuidToPtr(adopted.ID), nil)
+	}
+	// Module lines shorter than the pointer line expose a pointer reserved too early.
+	title := strings.Repeat("模", 40)
+	var moduleLines []string
+	for i := 0; i < 2; i++ {
+		chapter := fmt.Sprintf("module:m%d", i)
+		var adopted baselineRevisionResponse
+		testutil.Call(t, testHandler.LabrastroProposeBaseline, f.request("POST", "/baseline/candidates", map[string]any{"chapter": chapter, "chapter_title": title, "content_markdown": "## S\nBody", "change_summary": "Init"}, "session")).Want(201).JSON(&adopted)
+		testutil.Call(t, testHandler.LabrastroDecideBaseline, f.request("POST", "/baseline/decisions", decision("adopt", adopted), "session")).Want(200)
+		moduleLines = append(moduleLines, fmt.Sprintf("- %s（%s） v1：S", chapter, title))
+	}
+	pointer := func(rest int) string {
+		return fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", rest, f.project)
+	}
+	if utf8.RuneCountInString(moduleLines[1]) >= utf8.RuneCountInString(pointer(1)) {
+		t.Fatal("fixture must keep module lines shorter than the pointer")
+	}
+	// Sweep the stage goal so the budget left for modules crosses from "both
+	// fit" through "one fits" to "none fit".
+	outcomes := map[int]bool{}
+	for goal := 0; goal <= 280; goal += 2 {
+		testutil.Call(t, testHandler.LabrastroPatchEngineering, f.request("PATCH", "/engineering", map[string]any{
+			"mode_summary": strings.Repeat("方", 280),
+			"stages":       []engineeringStage{{Stage: 1, Title: strings.Repeat("阶", 60), Goal: strings.Repeat("标", goal)}},
+		}, "session")).Want(200)
+		got := testHandler.appendEngineeringProjectDescription(context.Background(), parseUUID(testWorkspaceID), parseUUID(f.project), "")
+		listed := 0
+		for listed < len(moduleLines) && strings.Contains(got, moduleLines[listed]) {
+			listed++
+		}
+		rest := len(moduleLines) - listed
+		outcomes[listed] = true
+		// A pointer that replaces every module is always kept, even past the budget.
+		if listed > 0 && utf8.RuneCountInString(got) > engineeringContextBudget {
+			t.Fatalf("goal=%d: %d runes exceed the budget:\n%s", goal, utf8.RuneCountInString(got), got)
+		}
+		if rest == 0 {
+			if strings.Contains(got, "另有") {
+				t.Fatalf("goal=%d: pointer shown although every module is listed:\n%s", goal, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, pointer(rest)) {
+			t.Fatalf("goal=%d: %d modules hidden without an exact pointer:\n%s", goal, rest, got)
+		}
+		if full := strings.Replace(got, pointer(rest), strings.Join(moduleLines[listed:], "\n"), 1); utf8.RuneCountInString(full) <= engineeringContextBudget {
+			t.Fatalf("goal=%d: the hidden modules fit in %d runes but were collapsed:\n%s", goal, utf8.RuneCountInString(full), got)
+		}
+	}
+	if !outcomes[2] || !outcomes[0] {
+		t.Fatalf("sweep must reach both full listing and full collapse: %v", outcomes)
+	}
 }

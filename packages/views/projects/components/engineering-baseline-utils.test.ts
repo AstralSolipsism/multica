@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { BaselineRevision, IssueGraphNode } from "@multica/core/api";
-import { baselineModuleSlug, canEditBaselineSection, isBaselineModuleSlug, matchBaselineReferences, mergeBaselineSections, orderedBaselineChapters, parseBaselineChapter, scanBaselineReferences } from "./engineering-baseline-utils";
+import { baselineModuleSlug, canEditBaselineSection, createBaselineReferenceMatcher, isBaselineModuleSlug, matchBaselineReferences, mergeBaselineSections, orderedBaselineChapters, parseBaselineChapter, scanBaselineReferences } from "./engineering-baseline-utils";
 import type { EngineeringStageSummary } from "./engineering-utils";
 
 const revision = (): BaselineRevision => ({
@@ -258,5 +258,45 @@ describe("module chapters", () => {
     const module = parseBaselineChapter("module:billing", "## 计费请求\n使用 [[幂等键]] 防止重复扣款。").sections;
     const references = scanBaselineReferences(module[0]!, [...global, ...module], [], []);
     expect(references).toEqual([expect.objectContaining({ kind: "concept", section: expect.objectContaining({ chapter: "domain_rules", title: "幂等键" }) })]);
+  });
+});
+
+describe("createBaselineReferenceMatcher", () => {
+  it("matches every text node like separate calls while sharing seen concepts", () => {
+    const parsed = parseBaselineChapter("architecture", "## Billing Ledger\n\nOwns invoices.\n\n## Checkout\n\nBody.").sections;
+    const options = { sections: parsed, currentSectionKey: parsed[1]!.key, conceptsOnly: true };
+    const texts = ["See [[Billing Ledger]] first.", "The Billing Ledger again.", "Billing Ledger once more."];
+    const separateSeen = new Set<string>();
+    const separate = texts.map((text) => matchBaselineReferences(text, { ...options, seenConcepts: separateSeen }));
+    const match = createBaselineReferenceMatcher(options);
+    const sharedSeen = new Set<string>();
+
+    expect(texts.map((text) => match(text, sharedSeen))).toEqual(separate);
+    expect(separate.map((matches) => matches.length)).toEqual([1, 0, 0]);
+  });
+});
+
+describe("natural concept links", () => {
+  it("links case variants of a concept title and keeps the text as written", () => {
+    const parsed = parseBaselineChapter("architecture", "## Billing Ledger\n\nOwns invoices.\n\n## Checkout\n\nBody.").sections;
+    const matches = matchBaselineReferences("The billing ledger and the BILLING LEDGER.", {
+      sections: parsed,
+      currentSectionKey: parsed[1]!.key,
+    });
+
+    expect(matches.map((match) => [match.reference.kind, match.reference.label, match.reference.kind === "concept" ? match.reference.section.key : ""])).toEqual([
+      ["concept", "billing ledger", parsed[0]!.key],
+      ["concept", "BILLING LEDGER", parsed[0]!.key],
+    ]);
+  });
+
+  it("prefers the exact-case title when two concepts differ only by case", () => {
+    const parsed = parseBaselineChapter("architecture", "## Token Store\n\nA.\n\n## token store\n\nB.\n\n## Checkout\n\nC.").sections;
+    const options = { sections: parsed, currentSectionKey: parsed[2]!.key };
+    const exact = matchBaselineReferences("uses token store", options);
+    const variant = matchBaselineReferences("uses TOKEN STORE", options);
+
+    expect(exact[0]?.reference.kind === "concept" && exact[0].reference.section.key).toBe(parsed[1]!.key);
+    expect(variant[0]?.reference.kind === "concept" && variant[0].reference.section.key).toBe(parsed[0]!.key);
   });
 });

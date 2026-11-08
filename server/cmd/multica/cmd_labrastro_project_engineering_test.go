@@ -66,6 +66,9 @@ func TestLabrastroEngineeringCLIGetSet(t *testing.T) {
 			t.Fatalf("%d %s %s", code, out, stderr)
 		}
 	}
+	if got := calls()[0]; got.Method != "GET" || got.Query.Get("with_chapters") != "false" {
+		t.Fatalf("get should skip chapter bodies: %+v", got)
+	}
 	if got := calls()[1]; got.Method != "PATCH" || !reflect.DeepEqual(got.Body["stages"], stages) || got.Body["mode_summary"] != "" || got.Body["current_stage"] != float64(9) {
 		t.Fatalf("patch=%+v", got)
 	}

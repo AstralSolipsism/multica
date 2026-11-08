@@ -131,13 +131,14 @@ describe("useRealtimeSync — ws instance change", () => {
     const ws2 = createMockWs();
     rerender({ ws: ws2 });
 
-    // Should have called invalidateQueries for all workspace-scoped keys
-    // Includes fork dependency recovery and upstream subscription invalidation (37 calls).
+    // Should have called invalidateQueries for all workspace-scoped keys.
+    // Includes fork dependency recovery, project engineering reads and upstream
+    // subscription invalidation (38 calls).
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(37));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(38));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {

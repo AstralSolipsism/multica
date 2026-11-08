@@ -49,7 +49,8 @@ func scanHeadings(content string) []documentHeading {
 			}
 			inFence = true
 		}
-		if !inFence {
+		// Cheap prefilter for headingPattern's `^ {0,3}#`: most lines are body text.
+		if !inFence && len(line)-len(trimmed) <= 3 && strings.HasPrefix(trimmed, "#") {
 			if match := headingPattern.FindStringSubmatch(strings.TrimRight(line, " \t")); match != nil {
 				if len(headings) == 0 && normalize(content[:start]) != "" {
 					seen["_preamble"] = true
@@ -89,7 +90,7 @@ func scanHeadings(content string) []documentHeading {
 }
 
 func Index(chapter, content string) ([]Heading, error) {
-	if _, err := Parse(chapter, content); err != nil {
+	if err := validate(chapter, content); err != nil {
 		return nil, err
 	}
 	out := []Heading{}
@@ -130,10 +131,10 @@ func MergeSection(chapter, before, query, replacement string, deleting bool) (st
 	if query == "" || strings.ContainsAny(query, "\r\n\x00") || deleting && replacement != "" {
 		return "", &Error{"invalid_request"}
 	}
-	if _, err := Parse(chapter, before); err != nil {
+	if err := validate(chapter, before); err != nil {
 		return "", err
 	}
-	if _, err := Parse(chapter, replacement); err != nil {
+	if err := validate(chapter, replacement); err != nil {
 		return "", err
 	}
 	headings := scanHeadings(before)
@@ -172,7 +173,7 @@ func MergeSection(chapter, before, query, replacement string, deleting bool) (st
 		replacement += "\n\n"
 	}
 	merged := before[:start] + replacement + before[end:]
-	if _, err := Parse(chapter, merged); err != nil {
+	if err := validate(chapter, merged); err != nil {
 		return "", err
 	}
 	return merged, nil
@@ -230,7 +231,7 @@ func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, erro
 	all, scope := []located{}, []documentHeading{}
 	scopeIDs := []int{}
 	for _, c := range chapters {
-		if _, err := Parse(c.Chapter, c.Content); err != nil {
+		if err := validate(c.Chapter, c.Content); err != nil {
 			return out, err
 		}
 		for _, h := range scanHeadings(c.Content) {
@@ -259,6 +260,7 @@ func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, erro
 		}
 	}
 	body := strings.Join(bodies, "\n")
+	lowerBody := strings.ToLower(body)
 	refs := map[string]bool{}
 	for _, m := range wikiReferencePattern.FindAllStringSubmatch(body, -1) {
 		refs[strings.ToLower(strings.TrimSpace(m[1]))] = true
@@ -267,7 +269,7 @@ func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, erro
 		if selected[i] {
 			continue
 		}
-		if refs[strings.ToLower(s.Anchor)] || refs[strings.ToLower(s.Title)] || s.Title != "" && strings.Contains(strings.ToLower(body), strings.ToLower(s.Title)) {
+		if refs[strings.ToLower(s.Anchor)] || refs[strings.ToLower(s.Title)] || s.Title != "" && strings.Contains(lowerBody, strings.ToLower(s.Title)) {
 			out.ReferencedSections = append(out.ReferencedSections, ReferencedSection{s.chapter, s.Heading, paragraph(s.content[s.bodyStart:s.ownEnd]), sectionWhy(s.content[s.bodyStart:s.end])})
 		}
 	}

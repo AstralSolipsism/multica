@@ -250,7 +250,7 @@ function deferred() {
 }
 
 function renderProjectDetail() {
-  qc.setQueryData(projectKeys.engineering("workspace-1", PROJECT.id), mocks.engineering);
+  qc.setQueryData(projectKeys.engineeringConfig("workspace-1", PROJECT.id), mocks.engineering);
   qc.setQueryData(["members"], [{ user_id: "user-1", name: "User One", role: mocks.role }]);
   const adapter: NavigationAdapter = {
     push: mocks.push,

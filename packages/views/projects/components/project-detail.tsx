@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import type { Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { canDeleteProject } from "@multica/core/projects/deletion-permissions";
-import { projectEngineeringOptions, projectDetailOptions } from "@multica/core/projects/queries";
+import { projectEngineeringConfigOptions, projectDetailOptions } from "@multica/core/projects/queries";
 import { Spinner } from "@multica/ui/components/ui/spinner";
 import { useUpdateProject, useDeleteProject, ProjectDeletionOfflineError } from "@multica/core/projects/mutations";
 import { pinListOptions } from "@multica/core/pins";
@@ -127,7 +127,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     ...projectDetailOptions(wsId, projectId),
     enabled: !deleted,
   });
-  const { data: engineeringOverview } = useQuery(projectEngineeringOptions(wsId, projectId));
+  const { data: engineeringOverview } = useQuery(projectEngineeringConfigOptions(wsId, projectId));
   useRegisterCommandBarContext(
     useMemo(() => (project ? { kind: "project", project } : null), [project]),
   );

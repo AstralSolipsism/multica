@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/engineering"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -61,21 +62,31 @@ func (h *Handler) LabrastroReadBaseline(w http.ResponseWriter, r *http.Request) 
 		writeEngineeringError(w, err)
 		return
 	}
-	chapters := []baselineIndexChapter{}
-	contents := []engineering.ChapterContent{}
+	selectedID := func(d db.ProjectBaselineDoc) pgtype.UUID {
+		if candidate == "true" {
+			return d.CandidateRevisionID
+		}
+		return d.AdoptedRevisionID
+	}
+	ordered := []db.ProjectBaselineDoc{}
+	ids := []pgtype.UUID{}
 	for _, d := range orderedBaselineDocs(docs) {
 		if index == "true" && chapter != "" && d.Chapter != chapter {
 			continue
 		}
-		id := d.AdoptedRevisionID
-		if candidate == "true" {
-			id = d.CandidateRevisionID
-		}
-		rev, err := s.revision(r.Context(), id)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
+		ordered = append(ordered, d)
+		ids = append(ids, selectedID(d))
+	}
+	revisions, err := s.revisionsByID(r.Context(), ids)
+	if err != nil {
+		writeEngineeringError(w, err)
+		return
+	}
+	chapters := []baselineIndexChapter{}
+	contents := []engineering.ChapterContent{}
+	for _, d := range ordered {
+		id := selectedID(d)
+		rev := revisions[id]
 		if index == "true" {
 			headings, err := engineering.Index(d.Chapter, rev.ContentMarkdown)
 			if err != nil {
@@ -87,6 +98,7 @@ func (h *Handler) LabrastroReadBaseline(w http.ResponseWriter, r *http.Request) 
 			contents = append(contents, engineering.ChapterContent{Chapter: d.Chapter, Content: rev.ContentMarkdown})
 		}
 	}
+	s.release(r.Context())
 	if index == "true" {
 		writeJSON(w, 200, map[string]any{"chapters": chapters})
 		return

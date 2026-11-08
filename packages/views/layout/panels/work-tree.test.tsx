@@ -18,7 +18,7 @@ import { ProjectsSection } from "./work-tree";
 
 const apiMock = vi.hoisted(() => ({
   putIssueViewPreference: vi.fn(),
-  getProjectEngineering: vi.fn(),
+  getProjectEngineeringConfig: vi.fn(),
   listMembers: vi.fn(),
 }));
 const navigationMock = vi.hoisted(() => ({ push: vi.fn() }));
@@ -78,7 +78,7 @@ beforeEach(() => {
   apiMock.putIssueViewPreference
     .mockReset()
     .mockImplementation(async ({ prefs }: { prefs: Record<string, unknown> }) => savedPrefs(prefs));
-  apiMock.getProjectEngineering.mockReset().mockResolvedValue({
+  apiMock.getProjectEngineeringConfig.mockReset().mockResolvedValue({
     engineering: { enabled: true },
     chapters: [],
   });
@@ -152,18 +152,18 @@ describe("ProjectsSection", () => {
 
   it("loads engineering only for an open project menu and opens its baseline", async () => {
     renderSection();
-    expect(apiMock.getProjectEngineering).not.toHaveBeenCalled();
+    expect(apiMock.getProjectEngineeringConfig).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
     const item = await screen.findByRole("menuitem", { name: "Open engineering baseline" });
-    expect(apiMock.getProjectEngineering).toHaveBeenCalledWith("ws-1", "p2");
+    expect(apiMock.getProjectEngineeringConfig).toHaveBeenCalledWith("ws-1", "p2");
 
     fireEvent.click(item);
     expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
   });
 
   it("shows a disabled explanation instead of an empty menu while engineering loads", async () => {
-    apiMock.getProjectEngineering.mockReturnValue(new Promise(() => {}));
+    apiMock.getProjectEngineeringConfig.mockReturnValue(new Promise(() => {}));
     apiMock.listMembers.mockReturnValue(new Promise(() => {}));
     renderSection();
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
@@ -173,7 +173,7 @@ describe("ProjectsSection", () => {
   });
 
   it("hides engineering actions from a member when the project has not enabled them", async () => {
-    apiMock.getProjectEngineering.mockResolvedValue({ engineering: { enabled: false }, chapters: [] });
+    apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
     renderSection();
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
 
@@ -184,7 +184,7 @@ describe("ProjectsSection", () => {
   });
 
   it("offers the enable entry to an administrator when engineering is disabled", async () => {
-    apiMock.getProjectEngineering.mockResolvedValue({ engineering: { enabled: false }, chapters: [] });
+    apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
     apiMock.listMembers.mockResolvedValue([{ user_id: "u1", role: "admin" }]);
     renderSection();
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));

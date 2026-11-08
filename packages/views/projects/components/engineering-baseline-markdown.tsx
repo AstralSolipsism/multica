@@ -13,7 +13,7 @@ import type { BaselineChapter, BaselineRevision, IssueGraphNode } from "@multica
 import { useT } from "../../i18n";
 import { useStatusLabel } from "../../issues/utils/status-label";
 import {
-  matchBaselineReferences,
+  createBaselineReferenceMatcher,
   type BaselineReference,
   type BaselineSection,
 } from "./engineering-baseline-utils";
@@ -60,6 +60,7 @@ function createReferencePlugin(options: {
   stages: readonly EngineeringStageSummary[];
   conceptsOnly: boolean;
 }) {
+  const match = createBaselineReferenceMatcher(options);
   return () => (tree: Root) => {
     const seenConcepts = options.conceptsOnly ? new Set<string>() : undefined;
     const transform = (parent: Parent) => {
@@ -69,14 +70,7 @@ function createReferencePlugin(options: {
         if (tagName === "code" || tagName === "pre" || tagName === "a" || tagName === "baseline-reference") continue;
         if (node.type === "text") {
           const value = (node as unknown as Text).value;
-          const matches = matchBaselineReferences(value, {
-            sections: options.sections,
-            currentSectionKey: options.currentSectionKey,
-            nodes: options.nodes,
-            stages: options.stages,
-            conceptsOnly: options.conceptsOnly,
-            seenConcepts,
-          });
+          const matches = match(value, seenConcepts);
           if (!matches.length) continue;
           const replacements: RootContent[] = [];
           let cursor = 0;
@@ -249,10 +243,17 @@ export function BaselineMarkdown({ content, currentSection, chapter }: {
       return reference ? <BaselineReferenceLink reference={reference}>{children}</BaselineReferenceLink> : <>{children}</>;
     },
   }) as unknown as Components, [references]);
+  // The wiki re-renders on search input, hover and read tracking; reuse the
+  // element so React skips re-parsing unchanged sections. Reference links still
+  // receive context updates.
+  const markdown = useMemo(
+    () => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[plugin, sourceLinePlugin]} components={components}>{content}</ReactMarkdown>,
+    [content, plugin, sourceLinePlugin, components],
+  );
   if (!content.trim()) return null;
   return (
     <div className="rich-text-editor readonly text-body leading-7 [&_li]:my-1 [&_p]:my-2 [&_strong]:font-medium" data-baseline-markdown={chapter ?? currentSection.chapter}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[plugin, sourceLinePlugin]} components={components}>{content}</ReactMarkdown>
+      {markdown}
     </div>
   );
 }

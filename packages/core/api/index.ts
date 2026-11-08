@@ -33,8 +33,6 @@ export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
 export {
-  BaselineIndexSchema,
-  BaselineSliceSchema,
   BaselineChapterSchema,
   BaselineDecisionSchema,
   BaselineDiffSchema,
@@ -46,8 +44,6 @@ export {
   EngineeringUpdatedSchema,
 } from "./labrastro-engineering-schemas";
 export type {
-  BaselineIndex,
-  BaselineSlice,
   BaselineChapter,
   BaselineDecision,
   BaselineDiff,
@@ -69,6 +65,7 @@ export type {
   BaselineAnnotationsUpdated,
   BaselineAnnotationBatchClosed,
 } from "./labrastro-baseline-annotation-schemas";
+export type { BaselineHistoryOptions } from "./labrastro-engineering-api";
 export type {
   BaselineAnnotationBatchListState,
   BaselineAnnotationDetailState,

@@ -163,7 +163,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const historyQuery = useInfiniteQuery({
     queryKey: [...projectKeys.engineeringHistoryAll(wsId, projectId), selectedChapter, "infinite"] as const,
-    queryFn: ({ pageParam }) => api.getProjectBaselineHistory(wsId, projectId, selectedChapter, { limit: 50, before: pageParam }),
+    queryFn: ({ pageParam }) => api.getProjectBaselineHistory(wsId, projectId, selectedChapter, { limit: 50, before: pageParam, withContent: false }),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (lastPage) => lastPage?.hasMore ? lastPage.nextBefore : undefined,
     enabled: enabled && activeView === "baseline",
@@ -177,7 +177,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const baselineChapters = useMemo(() => orderedBaselineChapters(overview?.chapters ?? []), [overview?.chapters]);
   const recentQueries = useQueries({
     queries: baselineChapters.map((chapter) => ({
-      ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 10 }),
+      // Only anchorsDiff is read, to find each section's latest revision.
+      ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 10, withContent: false }),
       enabled: enabled && activeView === "baseline",
     })),
   });
