@@ -7,7 +7,11 @@ import { HTML_BLOCK_MESSAGE_KEY, type HtmlBlockMessage } from "./utils/html-bloc
 type CommentAction = Extract<HtmlBlockMessage, { content: string }>;
 
 /** The source frame is checked by the caller; activation is checked at receipt. */
-export function useHtmlCommentActions(iframeRef: RefObject<HTMLIFrameElement | null>, documentKey: string) {
+export function useHtmlCommentActions(
+  iframeRef: RefObject<HTMLIFrameElement | null>,
+  documentKey: string,
+  beforeFillComment: () => void,
+) {
   const issue = useCurrentIssueRenderContext();
   const inFlight = useRef<object | null>(null);
 
@@ -34,6 +38,7 @@ export function useHtmlCommentActions(iframeRef: RefObject<HTMLIFrameElement | n
       if (message.type === "submit-comment") {
         ok = await issue!.submitComment!(message.content);
       } else {
+        beforeFillComment();
         issue!.fillCommentDraft!(message.content);
         ok = true;
       }
