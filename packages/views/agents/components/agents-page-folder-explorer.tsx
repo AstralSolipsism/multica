@@ -243,17 +243,16 @@ export function useAgentsPageFolderExplorer({
     return () => clearTimeout(timer);
   }, [folderTree, folderTreeError]);
 
-  const treeReady = !!folderTree && !folderTreeError;
+  const hasFolderTree = folderTree !== undefined && folderTree !== null;
+  const treeReady = hasFolderTree;
   const treeUnavailable =
-    folderTree === null ||
-    !!folderTreeError ||
-    (folderTree === undefined && folderTreeFailures > 0) ||
-    treeWaitExpired;
-  const treeLoading = !treeReady && !treeUnavailable;
+    !hasFolderTree &&
+    (folderTree === null || !!folderTreeError || folderTreeFailures > 0 || treeWaitExpired);
   const flatRequested =
     search.trim().length > 0 ||
     Object.values(filters).some((values) => values.length > 0);
   const isFlatView = treeUnavailable || flatRequested || scope === "archived";
+  const treeLoading = !isFlatView && !treeReady && !treeUnavailable;
 
   const folders = useMemo<FolderExplorerFolder[]>(
     () => (folderTree ? explorerFolders(folderTree) : []),

@@ -1338,9 +1338,8 @@ describe("AgentsPage localized folder errors", () => {
 
 describe("AgentsPage tree wait fallback", () => {
   it("keeps the hierarchy when a background tree refresh fails once with cached data", async () => {
-    // Cached tree + first failed background attempt (retry still pending):
-    // the hierarchy must not flip to flat for a transient failure.
     mocks.folderTreeFailures = 1;
+    mocks.folderTreeError = true;
     renderPage();
     await expandFolder("Design");
     expect(screen.getByRole("button", { name: "Expand Research" })).toBeTruthy();
@@ -1349,6 +1348,15 @@ describe("AgentsPage tree wait fallback", () => {
     expect(
       screen.queryByText("Folders are unavailable. Showing agents in a flat list."),
     ).toBeNull();
+  });
+
+  it.each(["search", "archived"])("does not block the %s flat view on tree loading", (view) => {
+    mocks.folderTree = undefined;
+    if (view === "search") mocks.viewState.search = "placed-agent";
+    else mocks.viewState.scope = "archived";
+    renderPage();
+    expect(screen.getByText(view === "search" ? "placed-agent" : "archived-agent")).toBeTruthy();
+    expect(screen.queryByTestId("skeleton")).toBeNull();
   });
 
   it("falls back to the flat list on the first failed tree attempt, before the retry settles", () => {

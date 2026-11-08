@@ -75,12 +75,12 @@ SELECT * FROM agent WHERE workspace_id=$1 AND id=$2 AND kind = 'user' FOR SHARE;
 -- agents, are pruned on the next tree mutation.
 WITH agents AS (
     DELETE FROM labrastro_agent_placement p WHERE p.workspace_id=$1
-    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id AND a.kind = 'user')
-      OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
+    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=$1 AND a.kind = 'user')
+      OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=$1))
 )
 DELETE FROM labrastro_agent_squad_placement p WHERE p.workspace_id=$1
-AND (NOT EXISTS (SELECT 1 FROM squad s WHERE s.id=p.squad_id AND s.workspace_id=p.workspace_id AND s.archived_at IS NULL)
-  OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id));
+AND (NOT EXISTS (SELECT 1 FROM squad s WHERE s.id=p.squad_id AND s.workspace_id=$1 AND s.archived_at IS NULL)
+  OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=$1));
 
 -- name: LabrastroDeleteWorkspaceAgentTree :exec
 WITH agents AS (

@@ -14,12 +14,12 @@ import (
 const labrastroCleanAgentPlacements = `-- name: LabrastroCleanAgentPlacements :exec
 WITH agents AS (
     DELETE FROM labrastro_agent_placement p WHERE p.workspace_id=$1
-    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=p.workspace_id AND a.kind = 'user')
-      OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
+    AND (NOT EXISTS (SELECT 1 FROM agent a WHERE a.id=p.agent_id AND a.workspace_id=$1 AND a.kind = 'user')
+      OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=$1))
 )
 DELETE FROM labrastro_agent_squad_placement p WHERE p.workspace_id=$1
-AND (NOT EXISTS (SELECT 1 FROM squad s WHERE s.id=p.squad_id AND s.workspace_id=p.workspace_id AND s.archived_at IS NULL)
-  OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=p.workspace_id))
+AND (NOT EXISTS (SELECT 1 FROM squad s WHERE s.id=p.squad_id AND s.workspace_id=$1 AND s.archived_at IS NULL)
+  OR NOT EXISTS (SELECT 1 FROM labrastro_agent_folder f WHERE f.id=p.folder_id AND f.workspace_id=$1))
 `
 
 // A placement is valid only while its agent exists, is kind='user', and its
