@@ -5,6 +5,8 @@ export {
   messageApprovedTargetsOptions,
   messageDeliveriesInfiniteOptions,
   messageDeliveryOptions,
+  RUN_DELIVERIES_SETTLE_MS,
+  runDeliveriesRefetchInterval,
 } from "./queries";
 export {
   useCreateMessageRoute,

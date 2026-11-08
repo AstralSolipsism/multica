@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import { autopilotKeys } from "../autopilots/queries";
+import type { ListMessageDeliveriesResponse } from "../types";
 
 /**
  * Query keys for the Labrastro message-delivery surface (automation result
@@ -116,11 +117,39 @@ export function messageDeliveriesInfiniteOptions(
         : last.offset + MESSAGE_DELIVERIES_PAGE_SIZE,
     enabled: options?.enabled ?? true,
     retry: false,
-    refetchInterval: (query) => {
-      const first = query.state.data?.pages[0];
-      return first?.deliveries.some((d) => isInFlight(d.status)) ? 5_000 : 30_000;
-    },
+    refetchInterval: (query) => deliveriesRefetchInterval(query.state.data?.pages),
   });
+}
+
+function deliveriesRefetchInterval(
+  pages: readonly ListMessageDeliveriesResponse[] | undefined,
+): number {
+  return pages?.[0]?.deliveries.some((d) => isInFlight(d.status)) ? 5_000 : 30_000;
+}
+
+/** How long a finished run's deliveries keep polling: the compensator creates
+ *  missed deliveries within about a minute of completion. */
+export const RUN_DELIVERIES_SETTLE_MS = 10 * 60_000;
+
+const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "skipped"]);
+
+/**
+ * Poll for one run's deliveries in a Run History row. Automatic retries put a
+ * delivery back to `queued`, so once the run has finished, nothing is in
+ * flight and the settle window has passed, only a manual retry can change the
+ * rows — and that invalidates the query for whoever pressed it. Twenty idle
+ * rows would otherwise each re-read every 30s for as long as the page is open.
+ */
+export function runDeliveriesRefetchInterval(
+  run: { status: string; completed_at: string | null },
+  pages: readonly ListMessageDeliveriesResponse[] | undefined,
+  now: number,
+): number | false {
+  const interval = deliveriesRefetchInterval(pages);
+  if (interval !== 30_000 || !FINISHED_RUN_STATUSES.has(run.status)) return interval;
+  const completedAt = run.completed_at ? Date.parse(run.completed_at) : Number.NaN;
+  if (!Number.isFinite(completedAt)) return interval;
+  return now - completedAt < RUN_DELIVERIES_SETTLE_MS ? interval : false;
 }
 
 /**

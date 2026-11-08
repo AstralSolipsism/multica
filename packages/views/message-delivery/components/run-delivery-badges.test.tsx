@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "@multica/core/api";
+import type { AutopilotRun } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { RunDeliveryBadges } from "./run-delivery-badges";
 
@@ -14,26 +15,33 @@ type InfiniteResult = {
   error?: unknown;
 };
 
-const queryRef = vi.hoisted(() => ({ current: undefined as InfiniteResult | undefined }));
+const queryRef = vi.hoisted(() => ({
+  current: undefined as InfiniteResult | undefined,
+  options: undefined as { refetchInterval?: unknown } | undefined,
+}));
 
 vi.mock("@tanstack/react-query", () => ({
-  useInfiniteQuery: () =>
-    queryRef.current ?? {
+  useInfiniteQuery: (options: { refetchInterval?: unknown }) => {
+    queryRef.options = options;
+    return queryRef.current ?? {
       data: undefined,
       isLoading: true,
       isError: false,
       hasNextPage: false,
-    },
+    };
+  },
   useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   infiniteQueryOptions: <T,>(opts: T) => opts,
   queryOptions: <T,>(opts: T) => opts,
 }));
 
-vi.mock("@multica/core/message-delivery", () => ({
+vi.mock("@multica/core/message-delivery", async () => ({
   messageDeliveriesInfiniteOptions: (_wsId: string, autopilotId: string, scope?: { runId?: string }) => ({
     queryKey: ["deliveries", autopilotId, scope?.runId],
   }),
+  runDeliveriesRefetchInterval: (await import("@multica/core/message-delivery/queries"))
+    .runDeliveriesRefetchInterval,
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
@@ -75,11 +83,14 @@ function withRows(runId: string, rows: ReturnType<typeof delivery>[], applied?: 
 const onOpenDelivery = vi.fn();
 const onOpenRunList = vi.fn();
 
-function renderBadges(runId = "run-1") {
+function renderBadges(
+  runId = "run-1",
+  run: Pick<AutopilotRun, "status" | "completed_at"> = { status: "running", completed_at: null },
+) {
   return renderWithI18n(
     <RunDeliveryBadges
       autopilotId="ap-1"
-      runId={runId}
+      run={{ id: runId, ...run }}
       onOpenDelivery={onOpenDelivery}
       onOpenRunList={onOpenRunList}
     />,
@@ -153,6 +164,30 @@ describe("RunDeliveryBadges", () => {
     renderBadges("run-1");
     expect(screen.getByText(/isn't supported by this server/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /view delivery/i })).not.toBeInTheDocument();
+  });
+
+  it("stops re-reading a long-finished run but keeps a fresh or in-flight one live", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-08T12:00:00Z"));
+    try {
+      const page = (status: string) => ({ pages: [{ deliveries: [delivery("d-1", "run-1", status)], applied_run_id: "run-1" }] });
+      const interval = () =>
+        queryRef.options?.refetchInterval as (query: { state: { data?: ReturnType<typeof page> } }) => number | false;
+
+      renderBadges("run-1", { status: "completed", completed_at: "2026-11-08T11:00:00Z" });
+      expect(interval()({ state: { data: page("sent") } })).toBe(false);
+      expect(interval()({ state: { data: page("queued") } })).toBe(5_000);
+      cleanup();
+
+      renderBadges("run-1", { status: "completed", completed_at: "2026-11-08T11:55:00Z" });
+      expect(interval()({ state: { data: page("sent") } })).toBe(30_000);
+      cleanup();
+
+      renderBadges("run-1", { status: "running", completed_at: null });
+      expect(interval()({ state: { data: page("sent") } })).toBe(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stays silent on a real 403 (read-only)", () => {

@@ -232,7 +232,7 @@ function RunRow({
           through the React tree and would otherwise navigate away. */}
       <RunDeliveryBadges
         autopilotId={run.autopilot_id}
-        runId={run.id}
+        run={run}
         onOpenDelivery={onOpenDelivery}
         onOpenRunList={onOpenRunDeliveries}
       />
