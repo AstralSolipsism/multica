@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { cn } from "@multica/ui/lib/utils";
 import { HtmlPreviewSurface } from "./html-preview-surface";
 import { useT } from "../i18n";
@@ -119,7 +120,11 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const { handleAction } = useHtmlCommentActions(iframeRef, `${reloadKey}:${srcDoc}`);
+  const { handleAction } = useHtmlCommentActions(iframeRef, `${reloadKey}:${srcDoc}`, () => {
+    // Release the native modal and scroll lock before the draft callback focuses
+    // the page's composer; a batched close would restore focus over that focus.
+    if (fullscreen) flushSync(() => setFullscreen(false));
+  });
   // The body's laid-out height, reported by HtmlBlockBody below. The frame
   // turns it into the collapse decision in the same paint the height lands
   // (see the flicker note in the file header).

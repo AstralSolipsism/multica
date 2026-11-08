@@ -189,6 +189,62 @@ describe("HtmlBlockPreview — comment actions", () => {
     post(frame, { type: "submit-comment", content: "answer" });
     expect(submitComment).toHaveBeenCalledExactlyOnceWith("answer");
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
+    expect(screen.getByRole("dialog").querySelector("iframe")).toBe(frame);
+  });
+
+  it.each(["Preview", "Source"])("closes fullscreen before filling and focusing the draft from %s", (tab) => {
+    activation.isActive = true;
+    render(<textarea aria-label="Comment draft" />);
+    const editor = screen.getByRole("textbox", { name: "Comment draft" });
+    const beforeFill: { modalOpen: boolean; overflow: string }[] = [];
+    const fill = vi.fn(() => {
+      beforeFill.push({ modalOpen: !!document.querySelector("dialog[open]"), overflow: document.body.style.overflow });
+      editor.focus();
+    });
+    const { frame, reply } = mount(undefined, fill);
+    const srcDoc = frame.getAttribute("srcdoc");
+    fireEvent.click(screen.getByRole("tab", { name: tab }));
+    const fullscreenButton = screen.getByRole("button", { name: "Fullscreen" });
+    act(() => fullscreenButton.focus());
+    fireEvent.click(fullscreenButton);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    post(frame, { type: "fill-comment", content: "answer" });
+
+    expect(beforeFill).toEqual([{ modalOpen: false, overflow: "" }]);
+    expect(fill).toHaveBeenCalledExactlyOnceWith("answer");
+    expect(reply).toHaveBeenCalledWith(result("fill-comment", true), "*");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(editor);
+    expect(screen.getByRole("tab", { name: tab }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(fullscreenButton);
+    expect(screen.getByRole("dialog").querySelector("iframe")).toBe(frame);
+    expect(frame.getAttribute("srcdoc")).toBe(srcDoc);
+  });
+
+  it("keeps fullscreen open when a draft request fails activation validation", () => {
+    const { frame, reply, fillCommentDraft } = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
+
+    post(frame, { type: "fill-comment", content: "answer" });
+
+    expect(screen.getByRole("dialog").querySelector("iframe")).toBe(frame);
+    expect(fillCommentDraft).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledExactlyOnceWith(result("fill-comment", false), "*");
+  });
+
+  it("keeps fullscreen open when a draft request competes with a pending submission", async () => {
+    activation.isActive = true;
+    let finish!: (ok: boolean) => void;
+    const { frame, fillCommentDraft } = mount(vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; })));
+    fireEvent.click(screen.getByRole("button", { name: "Fullscreen" }));
+    post(frame, { type: "submit-comment", content: "original" });
+
+    post(frame, { type: "fill-comment", content: "competing" });
+
+    expect(screen.getByRole("dialog").querySelector("iframe")).toBe(frame);
+    expect(fillCommentDraft).not.toHaveBeenCalled();
+    await act(async () => finish(true));
   });
 
   it("ignores another frame even when activation, marker and action are valid", () => {
