@@ -172,19 +172,24 @@ describe("RunDeliveryBadges", () => {
     try {
       const page = (status: string) => ({ pages: [{ deliveries: [delivery("d-1", "run-1", status)], applied_run_id: "run-1" }] });
       const interval = () =>
-        queryRef.options?.refetchInterval as (query: { state: { data?: ReturnType<typeof page> } }) => number | false;
+        queryRef.options?.refetchInterval as (query: {
+          state: { status: "pending" | "error" | "success"; data?: ReturnType<typeof page> };
+        }) => number | false;
 
       renderBadges("run-1", { status: "completed", completed_at: "2026-11-08T11:00:00Z" });
-      expect(interval()({ state: { data: page("sent") } })).toBe(false);
-      expect(interval()({ state: { data: page("queued") } })).toBe(5_000);
+      expect(interval()({ state: { status: "success", data: page("sent") } })).toBe(false);
+      expect(interval()({ state: { status: "success", data: page("queued") } })).toBe(5_000);
+      // A failed read, first or over cached rows, keeps recovering.
+      expect(interval()({ state: { status: "error" } })).toBe(30_000);
+      expect(interval()({ state: { status: "error", data: page("sent") } })).toBe(30_000);
       cleanup();
 
       renderBadges("run-1", { status: "completed", completed_at: "2026-11-08T11:55:00Z" });
-      expect(interval()({ state: { data: page("sent") } })).toBe(30_000);
+      expect(interval()({ state: { status: "success", data: page("sent") } })).toBe(30_000);
       cleanup();
 
       renderBadges("run-1", { status: "running", completed_at: null });
-      expect(interval()({ state: { data: page("sent") } })).toBe(30_000);
+      expect(interval()({ state: { status: "success", data: page("sent") } })).toBe(30_000);
     } finally {
       vi.useRealTimers();
     }

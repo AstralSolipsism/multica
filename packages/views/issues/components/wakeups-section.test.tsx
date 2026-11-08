@@ -134,9 +134,9 @@ describe("Wakeups sidebar", () => {
     expect(screen.queryByRole("button", { name: /^Wakeups/ })).toBeNull();
     const wakeupsOptions = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups");
     const refetchInterval = wakeupsOptions?.refetchInterval as (
-      query: { state: { data: IssueWakeup[] } },
+      query: { state: { status: "pending" | "error" | "success"; data?: IssueWakeup[] } },
     ) => number | false;
-    expect(refetchInterval({ state: { data: [] } })).toBe(false);
+    expect(refetchInterval({ state: { status: "success", data: [] } })).toBe(false);
     for (const key of ["tasks", "system"]) {
       expect(observedQueryOptions.findLast((options) => options.queryKey[0] === key)?.enabled).toBe(false);
     }
@@ -149,13 +149,16 @@ describe("Wakeups sidebar", () => {
     expect(screen.getByRole("button", { name: /^Wakeups/ })).toBeTruthy();
     const wakeupsOptions = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups");
     const refetchInterval = wakeupsOptions?.refetchInterval as (
-      query: { state: { data: IssueWakeup[] } },
+      query: { state: { status: "pending" | "error" | "success"; data?: IssueWakeup[] } },
     ) => number | false;
     expect(wakeupsOptions?.enabled).toBe(true);
-    expect(refetchInterval({ state: { data: [wakeup] } })).toBe(false);
+    expect(refetchInterval({ state: { status: "success", data: [wakeup] } })).toBe(false);
     // A run still in flight or a rule left enabled can change on its own.
-    expect(refetchInterval({ state: { data: [{ ...wakeup, last_task_status: "running" }] } })).toBe(10_000);
-    expect(refetchInterval({ state: { data: [{ ...wakeup, enabled: true }] } })).toBe(10_000);
+    expect(refetchInterval({ state: { status: "success", data: [{ ...wakeup, last_task_status: "running" }] } })).toBe(10_000);
+    expect(refetchInterval({ state: { status: "success", data: [{ ...wakeup, enabled: true }] } })).toBe(10_000);
+    // Only a successful read can show nothing is left to change.
+    expect(refetchInterval({ state: { status: "error" } })).toBe(10_000);
+    expect(refetchInterval({ state: { status: "error", data: [wakeup] } })).toBe(10_000);
     // Closed issues never render system rules, so they are not read.
     expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "system")?.enabled).toBe(false);
     expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "tasks")?.enabled).toBe(true);
@@ -165,14 +168,14 @@ describe("Wakeups sidebar", () => {
     wakeup = { ...wakeup, enabled: false, last_task_status: "completed" };
     const view = renderWithI18n(<WakeupsSection issueId="issue" closed />);
     const closedInterval = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups")
-      ?.refetchInterval as (query: { state: { data: IssueWakeup[] } }) => number | false;
-    expect(closedInterval({ state: { data: [wakeup] } })).toBe(false);
+      ?.refetchInterval as (query: { state: { status: "pending" | "error" | "success"; data?: IssueWakeup[] } }) => number | false;
+    expect(closedInterval({ state: { status: "success", data: [wakeup] } })).toBe(false);
 
     view.rerender(<WakeupsSection issueId="issue" closed={false} />);
 
     const reopenedInterval = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups")
-      ?.refetchInterval as (query: { state: { data: IssueWakeup[] } }) => number | false;
-    expect(reopenedInterval({ state: { data: [wakeup] } })).toBe(10_000);
+      ?.refetchInterval as (query: { state: { status: "pending" | "error" | "success"; data?: IssueWakeup[] } }) => number | false;
+    expect(reopenedInterval({ state: { status: "success", data: [wakeup] } })).toBe(10_000);
     expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "system")?.enabled).toBe(true);
   });
 

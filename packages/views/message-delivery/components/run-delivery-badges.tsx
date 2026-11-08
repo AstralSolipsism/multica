@@ -42,7 +42,7 @@ export function RunDeliveryBadges({
   const query = useInfiniteQuery({
     ...messageDeliveriesInfiniteOptions(wsId, autopilotId, { runId }),
     // Rows of long-finished runs stop re-reading; see the helper.
-    refetchInterval: (q) => runDeliveriesRefetchInterval(run, q.state.data?.pages, Date.now()),
+    refetchInterval: (q) => runDeliveriesRefetchInterval(run, q.state, Date.now()),
   });
 
   // Read-only callers get a real 403; badges stay silent there.

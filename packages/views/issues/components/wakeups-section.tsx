@@ -396,9 +396,12 @@ export function WakeupsSection({
     // poll instead of waiting for the next tick.
     staleTime: 10_000,
     // A closed issue cannot enable or add wakeups, so only a row that is
-    // still enabled or running can change; poll until none is left.
+    // still enabled or running can change; poll until a successful read
+    // shows none is left. A failed read keeps polling to recover.
     refetchInterval: (query) =>
-      closed && !query.state.data?.some(wakeupMayChange) ? false : 10_000,
+      closed && query.state.status === "success" && !query.state.data?.some(wakeupMayChange)
+        ? false
+        : 10_000,
   });
   const loadRunDetails = !closed || data.length > 0;
   const { data: tasks = [] } = useQuery({

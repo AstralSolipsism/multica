@@ -139,14 +139,21 @@ const FINISHED_RUN_STATUSES = new Set(["completed", "failed", "skipped"]);
  * flight and the settle window has passed, only a manual retry can change the
  * rows — and that invalidates the query for whoever pressed it. Twenty idle
  * rows would otherwise each re-read every 30s for as long as the page is open.
+ * Only the latest read succeeding proves the rows settled: a failed first
+ * read, or a failed refetch over cached rows, keeps the 30s recovery.
  */
 export function runDeliveriesRefetchInterval(
   run: { status: string; completed_at: string | null },
-  pages: readonly ListMessageDeliveriesResponse[] | undefined,
+  state: {
+    status: "pending" | "error" | "success";
+    data?: { pages: readonly ListMessageDeliveriesResponse[] };
+  },
   now: number,
 ): number | false {
-  const interval = deliveriesRefetchInterval(pages);
-  if (interval !== 30_000 || !FINISHED_RUN_STATUSES.has(run.status)) return interval;
+  const interval = deliveriesRefetchInterval(state.data?.pages);
+  if (interval !== 30_000 || state.status !== "success" || !FINISHED_RUN_STATUSES.has(run.status)) {
+    return interval;
+  }
   const completedAt = run.completed_at ? Date.parse(run.completed_at) : Number.NaN;
   if (!Number.isFinite(completedAt)) return interval;
   return now - completedAt < RUN_DELIVERIES_SETTLE_MS ? interval : false;
