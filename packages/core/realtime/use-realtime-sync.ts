@@ -674,6 +674,7 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     // answered by the request already on the wire (see refreshInboxQuery).
     void onInboxInvalidate(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+    void invalidateAgentFolderQueries(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
@@ -1218,7 +1219,6 @@ export function useRealtimeSync(
         if (wsId && applyAgentStatusPatch(qc, wsId, msg.payload)) {
           scheduleWorkingAgentRefresh(wsId);
           debouncedRefresh("agent:status", () => {
-            void invalidateAgentFolderQueries(qc, wsId);
             invalidateSquadMemberStatusQueries(qc, wsId);
           });
           return;

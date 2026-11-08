@@ -17,5 +17,9 @@ export function agentFolderTreeOptions(wsId: string) {
 }
 
 export function invalidateAgentFolderQueries(qc: QueryClient, wsId: string): Promise<void> {
-  return qc.invalidateQueries({ queryKey: agentFolderKeys.tree(wsId) });
+  const filters = { queryKey: agentFolderKeys.tree(wsId) };
+  const pending = qc.getQueryCache().findAll(filters)
+    .some((query) => query.state.fetchStatus !== "idle");
+  if (!pending) return qc.invalidateQueries(filters);
+  return qc.cancelQueries(filters).then(() => qc.invalidateQueries(filters));
 }

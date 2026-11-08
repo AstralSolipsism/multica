@@ -158,9 +158,39 @@ export function flattenFolderExplorerRows<
   entryKeyPrefix?: string;
 }): FlattenedFolderExplorerRow<F, E>[] {
   const rows: FlattenedFolderExplorerRow<F, E>[] = [];
+  const byId = folderExplorerMap(folders);
+  const childrenByParent = new Map<string | null, F[]>();
+  const entriesByFolder = new Map<string | null, E[]>();
+  for (const folder of folders) {
+    const parentId = folder.parentId !== null && byId.has(folder.parentId)
+      ? folder.parentId
+      : null;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(folder);
+    childrenByParent.set(parentId, siblings);
+  }
+  for (const siblings of childrenByParent.values()) {
+    siblings.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  for (const entry of entries) {
+    const folderIds = new Set(entry.folderIds);
+    let placed = false;
+    for (const folderId of folderIds) {
+      if (!byId.has(folderId)) continue;
+      const siblings = entriesByFolder.get(folderId) ?? [];
+      siblings.push(entry);
+      entriesByFolder.set(folderId, siblings);
+      placed = true;
+    }
+    if (!placed) {
+      const rootEntries = entriesByFolder.get(null) ?? [];
+      rootEntries.push(entry);
+      entriesByFolder.set(null, rootEntries);
+    }
+  }
 
-  const visit = (parentFolderId: string | null, depth: number, ancestors: ReadonlySet<string>) => {
-    for (const folder of directChildFolders(folders, parentFolderId)) {
+  const visit = (parentFolderId: string | null, depth: number, ancestors: Set<string>) => {
+    for (const folder of childrenByParent.get(parentFolderId) ?? []) {
       if (ancestors.has(folder.id)) continue;
       rows.push({
         kind: "folder",
@@ -170,10 +200,12 @@ export function flattenFolderExplorerRows<
         depth,
       });
       if (expandedFolderIds.has(folder.id)) {
-        visit(folder.id, depth + 1, new Set([...ancestors, folder.id]));
+        ancestors.add(folder.id);
+        visit(folder.id, depth + 1, ancestors);
+        ancestors.delete(folder.id);
       }
     }
-    for (const entry of directEntries(entries, parentFolderId, folders)) {
+    for (const entry of entriesByFolder.get(parentFolderId) ?? []) {
       rows.push({
         kind: "entry",
         key: `${entryKeyPrefix}-${parentFolderId ?? "root"}-${entryKey(entry)}`,

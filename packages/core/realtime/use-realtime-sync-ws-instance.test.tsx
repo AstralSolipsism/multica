@@ -132,13 +132,13 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys.
-    // Includes fork dependency recovery, project engineering reads and upstream
-    // subscription invalidation (38 calls).
+    // Includes fork dependency recovery, agent folders, project engineering
+    // reads and upstream subscription invalidation (39 calls).
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(38));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(39));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -1096,7 +1096,7 @@ it("keeps the generic refresh for a full agent update that also carries status",
   } finally { unmount(); qc.clear(); vi.useRealTimers(); }
 });
 
-it("coalesces folder and squad refreshes for a burst of status patches", () => {
+it("coalesces squad status refreshes without refetching static folders", () => {
   vi.useFakeTimers();
   vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
   const qc = new QueryClient();
@@ -1114,7 +1114,7 @@ it("coalesces folder and squad refreshes for a burst of status patches", () => {
     }
     expect(invalidate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(100);
-    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(1);
   } finally { unmount(); qc.clear(); vi.useRealTimers(); }
 });
 
