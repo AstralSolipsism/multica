@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { chatSessionsOptions } from "@multica/core/chat/queries";
-import { runtimeProfileListOptions } from "@multica/core/runtimes";
+import {
+  runtimeHostMetricsRefetchInterval,
+  runtimeProfileListOptions,
+} from "@multica/core/runtimes";
 import { qoderOptions, type QoderConnection } from "@multica/core/runtimes/qoder";
 import { DOWNLOAD_PAGE_URL } from "@multica/core/deployment";
 import {
@@ -136,7 +139,7 @@ function renderPage({
   qc.setQueryData(qoderOptions(WS).queryKey, connection);
   qc.setQueryData(quotaSourceListOptions().queryKey, { encryption_configured: true, sources: [] });
   qc.setQueryData(workspaceQuotaSourceListOptions(WS).queryKey, { sources: [] });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <RuntimesPage
@@ -152,9 +155,23 @@ function renderPage({
       </I18nProvider>
     </QueryClientProvider>,
   );
+  return { ...view, qc };
 }
 
 describe("RuntimesPage", () => {
+  it("re-reads the runtime list for host metrics only while it is on screen", () => {
+    const { qc, unmount } = renderPage();
+    const query = qc.getQueryCache().find({ queryKey: runtimeListOptions(WS).queryKey });
+
+    expect(
+      query?.observers.some(
+        (observer) => observer.options.refetchInterval === runtimeHostMetricsRefetchInterval,
+      ),
+    ).toBe(true);
+    unmount();
+    expect(query?.observers).toHaveLength(0);
+  });
+
   it("lists machines and cloud services in one table", () => {
     renderPage();
 
