@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,6 +232,80 @@ func TestValidateBaseURLHostAllowlist(t *testing.T) {
 		// empty raw defaults to driver default only in ValidateBaseURL
 		if _, err2 := remotemcp.ValidatePublicHTTPSEndpoint(ctx, ZenMuxDriver{}.DefaultBaseURL(), ZenMuxDriver{}.AllowedHosts(), stubResolver{}); err2 != nil {
 			t.Fatalf("default zenmux base URL rejected: %v", err2)
+		}
+	}
+}
+
+// fixedAddrs answers every lookup with the same addresses, standing in for
+// the system resolver on a fake-ip gateway.
+type fixedAddrs []netip.Addr
+
+func (f fixedAddrs) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr, error) {
+	return f, nil
+}
+
+// Behind a transparent proxy in fake-ip mode (Mihomo/Clash enhanced-mode)
+// the system resolver answers every public hostname out of 198.18.0.0/15.
+// The quota chain accepts exactly that pool — registering and polling a
+// provider host keeps working — while real intranet, loopback and metadata
+// answers stay refused.
+func TestValidateBaseURLAcceptsFakeIPGateway(t *testing.T) {
+	ctx := context.Background()
+	glm := GLMDriver{}
+
+	fake := fixedAddrs{netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("198.19.3.48")}
+	for _, host := range glm.AllowedHosts() {
+		if _, err := ValidateBaseURL(ctx, glm, "https://"+host, fake); err != nil {
+			t.Fatalf("fake-ip resolution of %s rejected: %v", host, err)
+		}
+	}
+	zenmux := fixedAddrs{netip.MustParseAddr("198.18.3.45")}
+	if _, err := ValidateBaseURL(ctx, ZenMuxDriver{}, ZenMuxDriver{}.DefaultBaseURL(), zenmux); err != nil {
+		t.Fatalf("fake-ip resolution of %s rejected: %v", ZenMuxDriver{}.DefaultBaseURL(), err)
+	}
+
+	// A pool address alongside a real intranet answer fails closed: the
+	// exemption widens nothing but the pool.
+	rebind := fixedAddrs{netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("192.168.50.1")}
+	if _, err := ValidateBaseURL(ctx, glm, glm.DefaultBaseURL(), rebind); err == nil {
+		t.Fatal("a mixed fake-ip + intranet answer was accepted")
+	}
+	for _, addr := range []string{
+		"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.50.1",
+		"169.254.169.254", "100.64.0.1", "0.0.0.1", "0.1.2.3",
+		"::1", "fd00::1",
+	} {
+		answer := fixedAddrs{netip.MustParseAddr(addr)}
+		if _, err := ValidateBaseURL(ctx, glm, glm.DefaultBaseURL(), answer); err == nil {
+			t.Fatalf("%s was accepted", addr)
+		}
+	}
+}
+
+// The dial half of the quota chain: the client a provider fetch dials with
+// must accept the pool ValidateBaseURL accepted and keep refusing everything
+// else. Guards the fake-ip wiring end to end without a database; the context
+// is already canceled so no dial ever leaves the machine — the gate runs
+// before the connect.
+func TestNewHTTPClientDialGateMatchesValidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	poolEndpoint, err := url.Parse("https://198.18.0.165")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHTTPClient(poolEndpoint).Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err == nil || strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("quota-source dial gate refused a fake-ip pool address: %v", err)
+	}
+
+	for _, addr := range []string{"127.0.0.1", "0.1.2.3"} {
+		endpoint, err := url.Parse("https://" + addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewHTTPClient(endpoint).Transport.(*http.Transport).DialContext(ctx, "tcp", addr+":443"); err == nil || !strings.Contains(err.Error(), "non-public") {
+			t.Fatalf("quota-source dial gate accepted %s (err = %v)", addr, err)
 		}
 	}
 }

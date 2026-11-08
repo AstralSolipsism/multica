@@ -46,6 +46,77 @@ func TestValidatePublicHTTPSEndpoint(t *testing.T) {
 	}
 }
 
+// A transparent proxy in fake-ip mode answers every public hostname with an
+// address from 198.18.0.0/15. The fake-ip-aware policy accepts exactly that
+// pool; the default policy and every other reserved range stay refused.
+func TestValidatePublicHTTPSEndpointProxyFakeIPPool(t *testing.T) {
+	resolver := staticResolver{
+		"fake.example":      {netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("198.19.3.48")},
+		"rebind.example":    {netip.MustParseAddr("198.18.0.165"), netip.MustParseAddr("192.168.50.1")},
+		"intranet.example":  {netip.MustParseAddr("192.168.50.1")},
+		"loopback.example":  {netip.MustParseAddr("127.0.0.1")},
+		"cgnat.example":     {netip.MustParseAddr("100.64.0.1")},
+		"metadata.example":  {netip.MustParseAddr("169.254.169.254")},
+		"thisnet.example":   {netip.MustParseAddr("0.0.0.1"), netip.MustParseAddr("0.1.2.3")},
+		"ula.example":       {netip.MustParseAddr("fd00::1")},
+		"v6loop.example":    {netip.MustParseAddr("::1")},
+		"linklocal.example": {netip.MustParseAddr("fe80::1")},
+	}
+	for _, host := range []string{"fake.example", "rebind.example", "thisnet.example"} {
+		if _, err := ValidatePublicHTTPSEndpoint(context.Background(), "https://"+host, nil, resolver); err == nil {
+			t.Fatalf("%s was accepted by the default policy", host)
+		}
+	}
+	if _, err := ValidatePublicHTTPSEndpointAllowingProxyFakeIP(context.Background(), "https://fake.example", nil, resolver); err != nil {
+		t.Fatalf("fake-ip resolution rejected: %v", err)
+	}
+	for _, host := range []string{
+		"rebind.example", "intranet.example", "loopback.example",
+		"cgnat.example", "metadata.example", "thisnet.example",
+		"ula.example", "v6loop.example", "linklocal.example",
+	} {
+		if _, err := ValidatePublicHTTPSEndpointAllowingProxyFakeIP(context.Background(), "https://"+host, nil, resolver); err == nil {
+			t.Fatalf("%s was accepted alongside the fake-ip exemption", host)
+		}
+	}
+}
+
+// The dial-time gate must treat the fake-ip pool exactly like validation: a
+// strict client refuses a pool address before connecting, a fake-ip-aware
+// client proceeds past the gate and fails in the dialer instead, and loopback
+// stays refused for both policies. The context is already canceled, so no
+// dial ever leaves the machine — both gates run before the connect.
+func TestSecureHTTPClientDialGateMatchesFakeIPPolicy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	poolEndpoint, err := url.Parse("https://198.18.0.165")
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict := NewSecureHTTPClient(poolEndpoint)
+	if _, err := strict.Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err == nil || !strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("strict dial gate error = %v, want the non-public refusal", err)
+	}
+	lenient := NewSecureHTTPClientAllowingProxyFakeIP(poolEndpoint)
+	if _, err := lenient.Transport.(*http.Transport).DialContext(ctx, "tcp", "198.18.0.165:443"); err == nil || strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("fake-ip-aware dial gate refused a pool address: %v", err)
+	}
+
+	loopEndpoint, err := url.Parse("https://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, client := range map[string]*http.Client{
+		"strict":  NewSecureHTTPClient(loopEndpoint),
+		"lenient": NewSecureHTTPClientAllowingProxyFakeIP(loopEndpoint),
+	} {
+		if _, err := client.Transport.(*http.Transport).DialContext(ctx, "tcp", "127.0.0.1:443"); err == nil || !strings.Contains(err.Error(), "non-public") {
+			t.Fatalf("%s dial gate accepted loopback (err = %v)", name, err)
+		}
+	}
+}
+
 func TestHostAllowedWildcardDoesNotMatchApex(t *testing.T) {
 	if !hostAllowed("tools.example.com", []string{"*.example.com"}) {
 		t.Fatal("wildcard did not match subdomain")

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,7 +18,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
-	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
 // User-scoped subscription quota sources (OL-1205 scenario 3, final
@@ -38,8 +36,6 @@ const (
 	quotaSourcePollInterval = 5 * time.Minute
 	// quotaSourceMaxBackoff caps the failure backoff.
 	quotaSourceMaxBackoff = 30 * time.Minute
-	// quotaSourceRequestTimeout bounds one provider fetch.
-	quotaSourceRequestTimeout = 15 * time.Second
 )
 
 // QuotaSourceResponse is the owner-facing view of one source. The credential
@@ -133,21 +129,14 @@ func credentialHint(credential string) string {
 	return credential[len(credential)-4:]
 }
 
-// quotaSourceHTTPClient builds the SSRF-hardened client for one endpoint.
-func quotaSourceHTTPClient(endpoint *url.URL) *http.Client {
-	client := remotemcp.NewSecureHTTPClient(endpoint)
-	client.Timeout = quotaSourceRequestTimeout
-	return client
-}
-
 // probeQuotaSource runs one synchronous collection with the candidate
 // credential/base_url (not yet stored). Returns the validated snapshot.
 func (h *Handler) probeQuotaSource(ctx context.Context, driver quotasource.Driver, rawBaseURL, credential string) (*protocol.RuntimePlanQuota, error) {
-	endpoint, err := quotasource.ValidateBaseURL(ctx, driver, rawBaseURL)
+	endpoint, err := quotasource.ValidateBaseURL(ctx, driver, rawBaseURL, nil)
 	if err != nil {
 		return nil, &quotasource.ProbeError{Code: "invalid_base_url", Err: err}
 	}
-	client := quotaSourceHTTPClient(endpoint)
+	client := quotasource.NewHTTPClient(endpoint)
 	return driver.Fetch(ctx, client, endpoint.String(), credential, time.Now())
 }
 
