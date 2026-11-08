@@ -189,6 +189,21 @@ func (q *Queries) DeleteMediaJobsForWorkspace(ctx context.Context, workspaceID p
 	return err
 }
 
+const expireMediaJob = `-- name: ExpireMediaJob :exec
+UPDATE media_job SET state = 'failed', error = 'job deadline exceeded', updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND state IN ('queued','running') AND expires_at <= now()
+`
+
+type ExpireMediaJobParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ExpireMediaJob(ctx context.Context, arg ExpireMediaJobParams) error {
+	_, err := q.db.Exec(ctx, expireMediaJob, arg.ID, arg.WorkspaceID)
+	return err
+}
+
 const expireMediaJobs = `-- name: ExpireMediaJobs :exec
 UPDATE media_job SET state = 'failed', error = 'job deadline exceeded', updated_at = now()
 WHERE workspace_id = $1 AND state IN ('queued','running') AND expires_at <= now()
