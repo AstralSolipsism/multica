@@ -404,7 +404,9 @@ function UnreadViewRow({
   const source = viewSidebarSource(UNREAD_VIEW_ID);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const unread = useIssueUnreadIds(wsId);
+  // Collapsed, the panel stays mounted; unread changes re-read on expand.
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, panelOpen);
   const unreadDependency = filterDependencyState(true, [unread]);
   const count = unread.data?.length ?? 0;
   const request = unreadDependency.unresolved
@@ -520,7 +522,8 @@ function SavedViewRow({
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
   const needsUnread = viewSidebarNeedsUnread(view);
-  const unread = useIssueUnreadIds(wsId, needsUnread);
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, needsUnread && panelOpen);
   const unreadDependency = filterDependencyState(needsUnread, [unread]);
   const request = unreadDependency.unresolved
     ? undefined

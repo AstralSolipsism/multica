@@ -362,13 +362,21 @@ function WakeupRow({
   );
 }
 
+function wakeupMayChange(wakeup: IssueWakeup) {
+  return wakeup.enabled || isActiveWakeupRun(wakeup.last_task_status);
+}
+
 export function WakeupsSection({
   issueId,
   closed = false,
+  visible = true,
   defaultAgentId,
 }: {
   issueId: string;
   closed?: boolean;
+  /** False while the sidebar holding the section is collapsed: it stays
+   *  mounted there, and nobody can see the rows it would keep polling. */
+  visible?: boolean;
   /** Preselected target for a new wakeup: the issue's agent assignee. */
   defaultAgentId?: string;
 }) {
@@ -376,7 +384,7 @@ export function WakeupsSection({
   const workspaceId = useCurrentWorkspace()?.id ?? "";
   const [open, setOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const queryEnabled = open && !!workspaceId && !!issueId;
+  const queryEnabled = open && visible && !!workspaceId && !!issueId;
   const {
     data = [],
     isError: wakeupsError,
@@ -384,17 +392,24 @@ export function WakeupsSection({
   } = useQuery({
     ...issueWakeupsOptions(workspaceId, issueId),
     enabled: queryEnabled,
+    // Expanding or showing the section again re-reads a list older than one
+    // poll instead of waiting for the next tick.
+    staleTime: 10_000,
+    // A closed issue cannot enable or add wakeups, so only a row that is
+    // still enabled or running can change; poll until none is left.
     refetchInterval: (query) =>
-      closed && query.state.data?.length === 0 ? false : 10_000,
+      closed && !query.state.data?.some(wakeupMayChange) ? false : 10_000,
   });
   const loadRunDetails = !closed || data.length > 0;
   const { data: tasks = [] } = useQuery({
     ...issueTasksOptions(issueId),
-    enabled: open && !!issueId && loadRunDetails,
+    enabled: open && visible && !!issueId && loadRunDetails,
   });
+  // System rules render only on open issues.
   const { data: systemRules = [], isError: systemRulesError, refetch: refetchSystemRules } = useQuery({
     ...issueSystemWakeupsOptions(workspaceId, issueId),
-    enabled: queryEnabled && loadRunDetails,
+    enabled: queryEnabled && !closed,
+    staleTime: 10_000,
   });
   const isError = wakeupsError === true || systemRulesError === true;
   const hasContent = data.length > 0 || (!closed && systemRules.length > 0) || isError;

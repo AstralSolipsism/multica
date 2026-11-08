@@ -142,6 +142,57 @@ describe("Wakeups sidebar", () => {
     }
   });
 
+  it("keeps a closed issue's finished history visible without polling it", () => {
+    wakeup = { ...wakeup, enabled: false, disabled_at: "2026-11-01T00:00:00Z", last_task_status: "completed" };
+    renderWithI18n(<WakeupsSection issueId="issue" closed />);
+
+    expect(screen.getByRole("button", { name: /^Wakeups/ })).toBeTruthy();
+    const wakeupsOptions = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups");
+    const refetchInterval = wakeupsOptions?.refetchInterval as (
+      query: { state: { data: IssueWakeup[] } },
+    ) => number | false;
+    expect(wakeupsOptions?.enabled).toBe(true);
+    expect(refetchInterval({ state: { data: [wakeup] } })).toBe(false);
+    // A run still in flight or a rule left enabled can change on its own.
+    expect(refetchInterval({ state: { data: [{ ...wakeup, last_task_status: "running" }] } })).toBe(10_000);
+    expect(refetchInterval({ state: { data: [{ ...wakeup, enabled: true }] } })).toBe(10_000);
+    // Closed issues never render system rules, so they are not read.
+    expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "system")?.enabled).toBe(false);
+    expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "tasks")?.enabled).toBe(true);
+  });
+
+  it("resumes polling when the issue reopens", () => {
+    wakeup = { ...wakeup, enabled: false, last_task_status: "completed" };
+    const view = renderWithI18n(<WakeupsSection issueId="issue" closed />);
+    const closedInterval = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups")
+      ?.refetchInterval as (query: { state: { data: IssueWakeup[] } }) => number | false;
+    expect(closedInterval({ state: { data: [wakeup] } })).toBe(false);
+
+    view.rerender(<WakeupsSection issueId="issue" closed={false} />);
+
+    const reopenedInterval = observedQueryOptions.findLast((options) => options.queryKey[0] === "wakeups")
+      ?.refetchInterval as (query: { state: { data: IssueWakeup[] } }) => number | false;
+    expect(reopenedInterval({ state: { data: [wakeup] } })).toBe(10_000);
+    expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "system")?.enabled).toBe(true);
+  });
+
+  it("stops every query while the sidebar holding it is collapsed", () => {
+    const view = renderWithI18n(<WakeupsSection issueId="issue" visible={false} />);
+    for (const key of ["wakeups", "tasks", "system"]) {
+      expect(observedQueryOptions.findLast((options) => options.queryKey[0] === key)?.enabled).toBe(false);
+    }
+
+    view.rerender(<WakeupsSection issueId="issue" visible />);
+
+    for (const key of ["wakeups", "system"]) {
+      const options = observedQueryOptions.findLast((entry) => entry.queryKey[0] === key);
+      expect(options?.enabled).toBe(true);
+      // Older than one poll when shown again, so the list is re-read at once.
+      expect((options as { staleTime?: number } | undefined)?.staleTime).toBe(10_000);
+    }
+    expect(observedQueryOptions.findLast((options) => options.queryKey[0] === "tasks")?.enabled).toBe(true);
+  });
+
   it("keeps the header to the add action without a settings-only menu", () => {
     renderWithI18n(<WakeupsSection issueId="issue" />);
     expect(screen.getByRole("button", { name: "Wakeups 1" })).toBeVisible();
