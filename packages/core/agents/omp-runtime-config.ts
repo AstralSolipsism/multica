@@ -122,8 +122,8 @@ export function ompRuntimeConfigEquals(
     (a.handoffModel ?? "") === (b.handoffModel ?? "") &&
     Boolean(a.advisorEnabled) === Boolean(b.advisorEnabled) &&
     (a.advisorReviewMode ?? "") === (b.advisorReviewMode ?? "") &&
-    (a.executionMode ?? "") === (b.executionMode ?? "") &&
-    (a.memoryBackend ?? "") === (b.memoryBackend ?? "") &&
+    (a.executionMode ?? "standard") === (b.executionMode ?? "standard") &&
+    (a.memoryBackend ?? "off") === (b.memoryBackend ?? "off") &&
     Boolean(a.autolearnEnabled) === Boolean(b.autolearnEnabled)
   );
 }

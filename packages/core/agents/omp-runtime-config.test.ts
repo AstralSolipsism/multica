@@ -85,6 +85,16 @@ describe("parseOmpRuntimeConfig", () => {
 });
 
 describe("ompRuntimeConfigEquals", () => {
+  it.each([
+    { executionMode: "standard" as const },
+    { memoryBackend: "off" as const },
+    { executionMode: "standard" as const, memoryBackend: "off" as const },
+  ])("keeps defaults clean after a save round trip: %j", (draft) => {
+    const saved = parseOmpRuntimeConfig(serializeOmpRuntimeConfig(draft));
+    expect(ompRuntimeConfigEquals(draft, saved)).toBe(true);
+    expect(ompRuntimeConfigEquals(saved, draft)).toBe(true);
+  });
+
   it("treats absent and empty fields as equal", () => {
     expect(ompRuntimeConfigEquals({}, { smolModel: undefined })).toBe(true);
     expect(ompRuntimeConfigEquals({ advisorEnabled: false }, {})).toBe(true);
