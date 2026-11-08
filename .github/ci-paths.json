@@ -80,6 +80,7 @@
     "scripts/ci-scope.test.mjs"
   ],
   "quality": [
+    "server/internal/daemon/ysk/**",
     ".github/actions/frontend-quality/**",
     "apps/**",
     "packages/**",

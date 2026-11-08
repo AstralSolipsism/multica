@@ -50,10 +50,25 @@ func (f *yskFixture) sendTipChat(t *testing.T, session, content string) SendChat
 }
 
 func TestLabrastroTipChatLifecycle(t *testing.T) {
+	for _, provider := range []string{"claude", "omp"} {
+		t.Run(provider, func(t *testing.T) { testLabrastroTipChatLifecycle(t, provider) })
+	}
+}
+
+func testLabrastroTipChatLifecycle(t *testing.T, provider string) {
+	t.Helper()
 	f := newTipChatFixture(t)
+	f.Exec(t, `UPDATE agent_runtime SET provider=$2 WHERE id=$1`, f.runtime, provider)
 	project := f.Project(t, "Tip project")
 	f.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, f.issue, project)
-	tip := f.tip(t, "one tip")
+	f.report(t, labrastroYSKReport{Version: 1, Kind: "light", Step: 5, Tips: []labrastroYSKInputTip{
+		{Tag: "you_should_know", Line: "one tip", Title: "Title", Explanation: "Explanation"},
+	}})
+	tips := f.list(t, true, false, testUserID)
+	if len(tips) != 1 {
+		t.Fatalf("reported tip is unavailable to open: %+v", tips)
+	}
+	tip := tips[0].ID
 	session := f.openTipChat(t, tip, 201)
 	if session.AgentID != f.agent || session.CreatorID != testUserID || session.ProjectID == nil || *session.ProjectID != project || session.Title != "YSK-1 · Title" {
 		t.Fatalf("wrong chat identity: %+v", session)

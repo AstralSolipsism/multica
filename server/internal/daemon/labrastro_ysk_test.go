@@ -279,3 +279,19 @@ func TestClaimDecodesYouShouldKnowAsReceived(t *testing.T) {
 		t.Fatalf("absent field decoded as %s", fresh.YouShouldKnow)
 	}
 }
+
+func TestPrepareYouShouldKnowInstallsOMPWithoutClaudeVersionGate(t *testing.T) {
+	env := yskEnv(t)
+	agentEnv := map[string]string{ysk.PluginDirsEnv: "/user/plugins"}
+	task := Task{ID: "task-1", YouShouldKnow: json.RawMessage(yskContext)}
+	if !prepareYouShouldKnow(context.Background(), task, "omp", "18.6.0", env, agentEnv, slog.Default()) {
+		t.Fatal("OMP extension not installed")
+	}
+	paths := ysk.PathsFor(env.MulticaConfigRoot)
+	if agentEnv[ysk.PluginDirsEnv] != "/user/plugins" || agentEnv[ysk.ContextFileEnv] != paths.Context {
+		t.Fatalf("unexpected environment: %v", agentEnv)
+	}
+	if data, err := os.ReadFile(agentEnv[ysk.OMPExtensionEnv]); err != nil || !strings.Contains(string(data), "runEphemeralTurn") {
+		t.Fatalf("OMP entrypoint unavailable: %v", err)
+	}
+}

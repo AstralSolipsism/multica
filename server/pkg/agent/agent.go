@@ -157,7 +157,7 @@ type ExecOptions struct {
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
 	// OnYouShouldKnow receives each tips batch the labrastro-ysk mod logs
-	// (Claude only, see labrastro_ysk.go). It runs on the stream reader and
+	// (Claude and OMP, see labrastro_ysk.go). It runs on the stream reader and
 	// must return promptly. The batches never become task messages.
 	OnYouShouldKnow func(json.RawMessage)
 	// OnEffortEffect receives each effect record the labrastro-effort mod

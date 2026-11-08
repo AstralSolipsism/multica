@@ -51,7 +51,7 @@ func TestInstallWritesTheModAndTheContextAsReceived(t *testing.T) {
 		t.Fatalf("unexpected paths %+v", paths)
 	}
 
-	want := []string{".claude-plugin/plugin.json", "hooks/context.ts", "hooks/hooks.json", "hooks/prompts.ts", "hooks/register.ts", "hooks/reply.ts"}
+	want := []string{".claude-plugin/plugin.json", "hooks/advisor.ts", "hooks/context.ts", "hooks/hooks.json", "hooks/omp.ts", "hooks/prompts.ts", "hooks/register.ts", "hooks/reply.ts", "hooks/schedule.ts"}
 	if got := listFiles(t, paths.Plugin); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("mod files = %v, want %v", got, want)
 	}
@@ -179,7 +179,7 @@ func TestEmbeddedModulesResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	importRe := regexp.MustCompile(`(?m)^import[^'"]*from\s+['"](\.[^'"]+)['"]`)
-	pending := append([]string(nil), hooks.Modules...)
+	pending := append(append([]string(nil), hooks.Modules...), "omp.ts")
 	seen := map[string]bool{}
 	for len(pending) > 0 {
 		module := pending[0]
@@ -202,5 +202,29 @@ func TestEmbeddedModulesResolve(t *testing.T) {
 	}
 	if !seen[path.Join(modRoot, "hooks", "register.ts")] || len(seen) < 4 {
 		t.Fatalf("resolved modules %v", seen)
+	}
+}
+
+func TestInstallOMPReusesContextAndStopLifetime(t *testing.T) {
+	root := t.TempDir()
+	paths := PathsFor(root)
+	if _, err := InstallOMP(root, json.RawMessage(sampleContext)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Stop, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := InstallOMP(root, json.RawMessage(sampleContext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vars) != 2 || vars[OMPExtensionEnv] != filepath.Join(paths.Plugin, "hooks", "omp.ts") || vars[ContextFileEnv] != paths.Context {
+		t.Fatalf("env = %v", vars)
+	}
+	if _, err := os.Stat(paths.Stop); !os.IsNotExist(err) {
+		t.Fatalf("stop marker survived reinstallation: %v", err)
+	}
+	if data, err := os.ReadFile(paths.Context); err != nil || string(data) != sampleContext {
+		t.Fatalf("context = %s (%v)", data, err)
 	}
 }
