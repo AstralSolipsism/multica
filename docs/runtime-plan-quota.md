@@ -56,7 +56,10 @@ apply one set of rules (`evaluatePlanQuota` in
   title, window and account-table skeleton.
 - **Pool visibility.** Machine rows and tables omit unused provider pools.
   Runtime details list every reported pool, marking unused pools inline rather
-  than providing a separate idle-pool section or entry point.
+  than providing a separate idle-pool section or entry point. The all-pools
+  display fallback is not proof of usage: when an active agent uses a default
+  or unrecognized model, no pool is marked unused. A Runtime with no active
+  agents marks every pool unused; a pending agent query marks none.
 - **Freshness.** Task-reported providers (Codex, Claude and others) never age
   out: no task means no usage, so the last balance holds until its reset.
   Collectors (Kimi, Antigravity, ZenMux) and the server's GLM collector show

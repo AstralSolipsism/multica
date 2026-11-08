@@ -48,7 +48,6 @@ import {
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
-  servingAccountPoolProviders,
 } from "./account-pool-filter";
 import { runtimeRowLabel } from "./runtime-machines";
 
@@ -918,10 +917,12 @@ export function RuntimeQuotaCard({
   runtime,
   now,
   agents = [],
+  agentsPending = false,
 }: {
   runtime: AgentRuntime;
   now: number;
   agents?: Agent[];
+  agentsPending?: boolean;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -930,9 +931,13 @@ export function RuntimeQuotaCard({
   const partition = accountPools
     ? partitionAccountPools(accountPools.pools, agents, runtime.id)
     : null;
-  const servingProviders = accountPools
-    ? servingAccountPoolProviders(agents, runtime.id)
-    : null;
+  const hasActiveAgents = agents.some(
+    (agent) => agent.runtime_id === runtime.id && !agent.archived_at,
+  );
+  // The all-pools fallback is a display policy, not evidence of usage. Only
+  // an agent-less Runtime marks every pool unused; pending queries mark none.
+  const canIdentifyUnusedPools = partition != null && !agentsPending &&
+    (!hasActiveAgents || partition.filtered);
 
   return (
     <section className="rounded-lg border bg-card">
@@ -952,7 +957,10 @@ export function RuntimeQuotaCard({
                       pool={pool}
                       now={now}
                       interrupted={state.interrupted}
-                      serving={servingProviders?.has(pool.id) ?? false}
+                      serving={
+                        !canIdentifyUnusedPools ||
+                        (hasActiveAgents && partition.serving.some((item) => item.id === pool.id))
+                      }
                     />
                   ))
                 : state.pools.map((pool) => (

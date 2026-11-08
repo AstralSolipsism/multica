@@ -464,7 +464,30 @@ describe("OMP account pools", () => {
     expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
   });
 
-  it("marks every pool unused when no agent provider matches", () => {
+  it.each(["k2.5", "other/model"])(
+    "does not mark fallback pools unused when an active agent uses %s",
+    (model) => {
+      renderWithI18n(
+        <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[quotaAgent(model)]} />,
+      );
+
+      for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+        expect(screen.getByText(name).parentElement).not.toHaveTextContent("Not used");
+      }
+    },
+  );
+
+  it("does not mark pools unused while the agent list is pending", () => {
+    renderWithI18n(
+      <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[]} agentsPending />,
+    );
+
+    for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {
+      expect(screen.getByText(name).parentElement).not.toHaveTextContent("Not used");
+    }
+  });
+
+  it("marks every pool unused when the Runtime has no active agents", () => {
     renderWithI18n(<RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={[]} />);
 
     for (const name of ["Kimi Code", "Claude", "Codex", "Z.AI"]) {

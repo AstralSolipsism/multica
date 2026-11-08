@@ -108,7 +108,7 @@ export function RuntimeDetail({
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: agents = [], isPending: agentsPending } = useQuery(agentListOptions(wsId));
   const { data: profiles = [] } = useQuery(runtimeProfileListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
   const now = useNowTick();
@@ -234,7 +234,12 @@ export function RuntimeDetail({
 
           {canReadRuntime && (
             <div className="space-y-4">
-              <RuntimeQuotaCard runtime={runtime} now={now} agents={agents} />
+              <RuntimeQuotaCard
+                runtime={runtime}
+                now={now}
+                agents={agents}
+                agentsPending={agentsPending}
+              />
               {runtime.thinking_adapt && (
                 <ThinkingAdaptQuotaCard snapshot={runtime.thinking_adapt} />
               )}
