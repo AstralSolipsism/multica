@@ -127,9 +127,15 @@ function sectionDomId(key: string): string {
   return `baseline-section-${encodeURIComponent(key)}`;
 }
 
-function scrollToKey(key: string) {
-  const element = document.getElementById(sectionDomId(key));
-  element?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+function scrollToElement(reader: HTMLDivElement | null, element: HTMLElement | null) {
+  if (!reader || !element) return;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const top = element.getBoundingClientRect().top - reader.getBoundingClientRect().top + reader.scrollTop - 52;
+  reader.scrollTo({ top: Math.max(0, top), behavior: reduceMotion ? "auto" : "smooth" });
+}
+
+function scrollToKey(reader: HTMLDivElement | null, key: string) {
+  scrollToElement(reader, document.getElementById(sectionDomId(key)));
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -345,6 +351,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const { t } = useT("engineering");
   const navigation = useNavigation();
   const articleRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
   const readKey = `multica.engineering-baseline.read.${props.projectId}`;
   const lens = props.lens;
   const [mode, setMode] = useState<BaselineReviewMode>(props.reviewRequested ? "compare" : "base");
@@ -647,10 +654,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         .filter((element) => element.getBoundingClientRect().top < 180)
         .at(-1);
       if (source && source.dataset.baselineSectionKey !== section.key) {
-        setBack({ key: source.dataset.baselineSectionKey!, label: source.dataset.baselineSectionTitle ?? "", y: window.scrollY });
+        setBack({ key: source.dataset.baselineSectionKey!, label: source.dataset.baselineSectionTitle ?? "", y: readerRef.current?.scrollTop ?? 0 });
       }
     }
-    scrollToKey(section.key);
+    scrollToKey(readerRef.current, section.key);
     if (lens === "understand") markRead(section.key);
   }, [lens, markRead]);
   const { workspaceSlug, onOpenStage } = props;
@@ -678,12 +685,12 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     if (!changedSections.length) return;
     const next = (index + changedSections.length) % changedSections.length;
     setChangeCursor(next);
-    scrollToKey(changedSections[next]!.key);
+    scrollToKey(readerRef.current, changedSections[next]!.key);
   }, [changedSections]);
   useEffect(() => {
     setChangeCursor(0);
     if (mode !== "compare" || !changedSections.length) return;
-    const timeout = window.setTimeout(() => scrollToKey(changedSections[0]!.key), 0);
+    const timeout = window.setTimeout(() => scrollToKey(readerRef.current, changedSections[0]!.key), 0);
     return () => window.clearTimeout(timeout);
   }, [mode, revision?.id, changedSections]);
 
@@ -737,7 +744,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     <div key={chapter.chapter} className="mb-3">
       <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
         props.onChapterChange(chapter.chapter);
-        document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        scrollToElement(readerRef.current, document.getElementById(`baseline-chapter-${chapter.chapter}`));
       }}>{chapterLabel(chapter.chapter)}</button>
       {chapter.sections.filter((section) => mode !== "compare" || compareView !== "source" || revision?.chapter !== chapter.chapter || section.change !== "same").map((section) => (
         <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
@@ -751,7 +758,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
 
   return (
     <BaselineWikiProvider value={wikiContext}>
-      <div className="mt-5" data-engineering-region="baseline">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-4 md:p-6" data-engineering-region="baseline">
         <header>
           <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
           <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
@@ -793,6 +800,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         ) : null}
         {props.annotations.loading ? <Skeleton className="mt-3 h-10 w-full" /> : null}
         {props.annotations.error ? <Alert className="mt-3" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
+        <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-baseline-reader>
         <BaselineReadingHighlights
           articleRef={articleRef}
           sections={readingSections}
@@ -846,7 +854,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                         <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
                       </Button>
                     </section>
-                    <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById("baseline-history")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.history.title)}</button>
+                    <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => scrollToElement(readerRef.current, document.getElementById("baseline-history"))}>{t(($) => $.history.title)}</button>
                   </nav>
                 </div>
               </div>
@@ -1056,6 +1064,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             />
           ) : null}
         </div>
+        </div>
 
         {readingSelection && readingAnnotationsVisible ? (
           <CommentSelectionBubble range={readingSelection.range} source={readingSelection.root} owner={`baseline-${props.projectId}`}>
@@ -1117,8 +1126,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             <button type="button" className="flex items-center gap-2 px-3 py-2 text-caption" onClick={() => {
               const target = back;
               setBack(null);
-              scrollToKey(target.key);
-              window.scrollTo?.({ top: target.y, behavior: "smooth" });
+              readerRef.current?.scrollTo({ top: target.y, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
             }}><ArrowLeft className="size-3.5" aria-hidden="true" />{t(($) => $.wiki.backTo, { title: back.label })}</button>
             <button type="button" className="border-l border-background/30 px-2 py-2" aria-label={t(($) => $.actions.close)} onClick={() => setBack(null)}><X className="size-3.5" aria-hidden="true" /></button>
           </div>

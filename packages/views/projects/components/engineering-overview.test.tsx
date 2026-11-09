@@ -220,6 +220,7 @@ beforeEach(() => {
     submitProjectBaselineReview,
   } as unknown as ApiClient);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  HTMLElement.prototype.scrollTo = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
   window.localStorage.clear();
   useBaselineAnnotationDraftStore.getState().clearDraft();

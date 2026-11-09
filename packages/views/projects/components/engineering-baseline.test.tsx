@@ -127,6 +127,7 @@ beforeEach(() => {
   useBaselineAnnotationDraftStore.getState().clearDraft();
   vi.clearAllMocks();
   window.scrollTo = vi.fn();
+  HTMLElement.prototype.scrollTo = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
 });
 

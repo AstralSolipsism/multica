@@ -327,6 +327,12 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     openOverview();
   };
 
+  const reviewRequested = !!manualCandidateId || !!candidateId;
+  const baselineLens = baselineLensPreference ?? (reviewRequested ? "manage" : "understand");
+  const changeBaselineLens = (value: BaselineLens) => {
+    setBaselineLensPreference(value);
+    try { window.localStorage.setItem(baselineLensKey, value); } catch { /* Keep the in-memory preference when storage is unavailable. */ }
+  };
   const header = (
     <BreadcrumbHeader
       segments={[
@@ -336,20 +342,59 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       leaf={<span className="truncate font-medium">{t(($) => $.title)}</span>}
     />
   );
+  const topChrome = (
+    <div className="shrink-0 bg-canvas" data-engineering-top-chrome>
+      {header}
+      <nav className="flex h-11 shrink-0 items-center gap-5 border-b px-4 md:px-6">
+        <div className="flex h-full gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
+          {(["overview", "baseline"] as const).map((view) => (
+            <button
+              key={view}
+              type="button"
+              role="tab"
+              aria-label={t(($) => $.views[view])}
+              aria-selected={activeView === view}
+              disabled={view === "baseline" && !enabled}
+              className={cn("relative -mb-px border-b-2 px-1 text-body disabled:opacity-50", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              onClick={() => view === "overview" ? openOverview() : openBaseline()}
+            >
+              {t(($) => $.views[view])}
+              {view === "baseline" && pendingCandidates.length ? <span className="absolute -right-2 top-2 size-1.5 rounded-full bg-destructive" aria-label={t(($) => $.views.pending)} /> : null}
+            </button>
+          ))}
+        </div>
+        {activeView === "baseline" && enabled ? (
+          <div className="ml-auto inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.lensLabel)}>
+            {(["understand", "manage"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={baselineLens === value}
+                className={cn("rounded-sm px-3 py-1.5 text-caption", baselineLens === value ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
+                onClick={() => changeBaselineLens(value)}
+              >{t(($) => $.wiki.lens[value])}</button>
+            ))}
+          </div>
+        ) : null}
+      </nav>
+    </div>
+  );
+  const shellClass = "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden @container";
   if (projectQuery.isLoading || overviewQuery.isLoading || membersQuery.isLoading) {
-    return <div>{header}<div className="space-y-4 p-6"><Skeleton className="h-28 w-full" /><Skeleton className="h-72 w-full" /></div></div>;
+    return <div className={shellClass} data-engineering-shell>{topChrome}<main className="min-h-0 flex-1 overflow-y-auto"><div className="space-y-4 p-6"><Skeleton className="h-28 w-full" /><Skeleton className="h-72 w-full" /></div></main></div>;
   }
   if (projectQuery.isError || overviewQuery.isError || !overview || !config || !permissions) {
-    return <div>{header}<CollectionPageState icon={AlertCircle} tone="destructive" title={t(($) => $.errors.title)} description={t(($) => $.errors.overview)} /></div>;
+    return <div className={shellClass} data-engineering-shell>{topChrome}<main className="min-h-0 flex-1 overflow-y-auto"><CollectionPageState icon={AlertCircle} tone="destructive" title={t(($) => $.errors.title)} description={t(($) => $.errors.overview)} /></main></div>;
   }
   if (!enabled) {
     return (
-      <div>{header}<CollectionPageState
+      <div className={shellClass} data-engineering-shell>{topChrome}<main className="min-h-0 flex-1 overflow-y-auto"><CollectionPageState
         icon={Settings2}
         title={t(($) => $.disabled.title)}
         description={permissions.isAdmin ? t(($) => $.disabled.adminDescription) : t(($) => $.disabled.description)}
         actions={permissions.isAdmin ? <Button disabled={updateEngineering.isPending} onClick={() => void saveConfig({ enabled: true })}>{updateEngineering.isPending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.actions.enable)}</Button> : undefined}
-      />{configError ? <div className="p-4"><Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle></Alert></div> : null}</div>
+      />{configError ? <div className="p-4"><Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle></Alert></div> : null}</main></div>
     );
   }
 
@@ -368,49 +413,12 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       }}
     />
   );
-  const reviewRequested = !!manualCandidateId || !!candidateId;
-  const baselineLens = baselineLensPreference ?? (reviewRequested ? "manage" : "understand");
-  const changeBaselineLens = (value: BaselineLens) => {
-    setBaselineLensPreference(value);
-    try { window.localStorage.setItem(baselineLensKey, value); } catch { /* Keep the in-memory preference when storage is unavailable. */ }
-  };
   return (
-    <div className="min-w-0">
-      {header}
-      <main className={cn("mx-auto p-4 md:p-6", activeView === "overview" ? "max-w-5xl" : "max-w-7xl")}>
-        <nav className="flex flex-wrap items-center gap-5 border-b">
-          <div className="flex gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
-            {(["overview", "baseline"] as const).map((view) => (
-              <button
-                key={view}
-                type="button"
-                role="tab"
-                aria-label={t(($) => $.views[view])}
-                aria-selected={activeView === view}
-                className={cn("relative -mb-px border-b-2 px-1 pb-2 pt-1 text-body", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
-                onClick={() => view === "overview" ? openOverview() : openBaseline()}
-              >
-                {t(($) => $.views[view])}
-                {view === "baseline" && pendingCandidates.length ? <span className="absolute -right-2 top-1 size-1.5 rounded-full bg-destructive" aria-label={t(($) => $.views.pending)} /> : null}
-              </button>
-            ))}
-          </div>
-          {activeView === "baseline" ? (
-            <div className="ml-auto inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.lensLabel)}>
-              {(["understand", "manage"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="tab"
-                  aria-selected={baselineLens === value}
-                  className={cn("rounded-sm px-3 py-1.5 text-caption", baselineLens === value ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}
-                  onClick={() => changeBaselineLens(value)}
-                >{t(($) => $.wiki.lens[value])}</button>
-              ))}
-            </div>
-          ) : null}
-        </nav>
-        {configError ? <Alert className="mt-4" variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
+    <div className={shellClass} data-engineering-shell>
+      {topChrome}
+      <main className={cn("min-h-0 flex-1", activeView === "overview" ? "overflow-y-auto" : "overflow-hidden")}>
+        <div className={cn(activeView === "overview" ? "mx-auto w-full max-w-5xl p-4 md:p-6" : "h-full")}>
+        {configError ? <Alert className="m-4" variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
         {activeView === "overview" ? (
           <div className="mt-5 space-y-8">
             {decisionQueries.some((query) => query.isError) ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
@@ -484,6 +492,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             onOpenStage={openOverviewStage}
           />
         )}
+        </div>
       </main>
     </div>
   );
