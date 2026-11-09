@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,6 +23,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1446,6 +1451,258 @@ func issueAttachmentPaths(cmd *cobra.Command) ([]string, error) {
 	return paths.GetSlice(), nil
 }
 
+type uploadedIssueAttachment struct {
+	localPath string
+	response  cli.AttachmentResponse
+}
+
+type attachmentSpanParser struct{ parser.InlineParser }
+
+func (p attachmentSpanParser) Parse(parent ast.Node, reader text.Reader, pc parser.Context) ast.Node {
+	beforeLine, before := reader.Position()
+	n := p.InlineParser.Parse(parent, reader, pc)
+	var dest []byte
+	var hasRef bool
+	switch node := n.(type) {
+	case *ast.Link:
+		dest = node.Destination
+		hasRef = node.Reference != nil
+	case *ast.Image:
+		dest = node.Destination
+		hasRef = node.Reference != nil
+	default:
+		return n
+	}
+	endLine, end := reader.Position()
+	n.SetAttributeString("label_end", before.Start)
+	n.SetAttributeString("source_end", end.Start)
+	if !hasRef && len(dest) > 0 {
+		reader.SetPosition(beforeLine, before)
+		reader.Advance(1) // closing label bracket ']'
+		if reader.Peek() == '(' {
+			reader.Advance(1)
+			reader.SkipSpaces()
+			_, destStartPos := reader.Position()
+			angleBracketed := false
+			if reader.Peek() == '<' {
+				angleBracketed = true
+				reader.Advance(1)
+			}
+			_, rawDestPos := reader.Position()
+			stop := rawDestPos.Start + len(dest)
+			if rawDestPos.Start >= 0 && stop <= end.Start && bytes.HasPrefix(reader.Source()[rawDestPos.Start:], dest) {
+				startOffset := rawDestPos.Start
+				endOffset := stop
+				if angleBracketed && stop < end.Start && reader.Source()[stop] == '>' {
+					startOffset = destStartPos.Start
+					endOffset = stop + 1
+				}
+				n.SetAttributeString("dest_start", startOffset)
+				n.SetAttributeString("dest_end", endOffset)
+			}
+		}
+		reader.SetPosition(endLine, end)
+	}
+	return n
+}
+
+func (p attachmentSpanParser) CloseBlock(parent ast.Node, reader text.Reader, pc parser.Context) {
+	if closer, ok := p.InlineParser.(parser.CloseBlocker); ok {
+		closer.CloseBlock(parent, reader, pc)
+	}
+}
+
+type attachmentSpanEdit struct {
+	start       int
+	end         int
+	replacement string
+}
+
+var uriSchemePrefixRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+
+func isMarkdownASCIIPunctuation(b byte) bool {
+	switch b {
+	case '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/',
+		':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~':
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeMarkdownEscapes(raw string) string {
+	if !strings.ContainsAny(raw, `\&`) {
+		return raw
+	}
+	var out strings.Builder
+	out.Grow(len(raw))
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' && i+1 < len(raw) && isMarkdownASCIIPunctuation(raw[i+1]) {
+			out.WriteByte(raw[i+1])
+			i++
+			continue
+		}
+		if raw[i] == '&' {
+			if semi := strings.IndexByte(raw[i:], ';'); semi > 1 && semi <= 32 {
+				entity := raw[i : i+semi+1]
+				if decoded := html.UnescapeString(entity); decoded != entity {
+					out.WriteString(decoded)
+					i += semi
+					continue
+				}
+			}
+		}
+		out.WriteByte(raw[i])
+	}
+	return out.String()
+}
+
+func normalizeRelativeAttachmentTarget(raw string, markdownEscaped bool) (relPath string, baseName string, ok bool) {
+	clean := strings.TrimSpace(raw)
+	if clean == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(clean, "/") ||
+		strings.HasPrefix(clean, `\`) ||
+		strings.HasPrefix(clean, "#") ||
+		strings.HasPrefix(clean, "?") ||
+		strings.ContainsAny(clean, "?#") ||
+		filepath.IsAbs(clean) ||
+		uriSchemePrefixRe.MatchString(clean) {
+		return "", "", false
+	}
+	if markdownEscaped {
+		clean = decodeMarkdownEscapes(clean)
+		if unescaped, err := url.PathUnescape(clean); err == nil {
+			clean = unescaped
+		}
+	}
+	clean = strings.ReplaceAll(clean, `\`, "/")
+	for strings.HasPrefix(clean, "./") {
+		clean = strings.TrimPrefix(clean, "./")
+	}
+	if clean == "" || clean == "." || clean == ".." {
+		return "", "", false
+	}
+	segments := strings.Split(clean, "/")
+	for _, seg := range segments {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", "", false
+		}
+	}
+	return clean, segments[len(segments)-1], true
+}
+
+func matchUploadedAttachmentURL(destination string, uploaded []uploadedIssueAttachment) string {
+	relPath, baseName, ok := normalizeRelativeAttachmentTarget(destination, true)
+	if !ok {
+		return ""
+	}
+	var exactMatch string
+	exactCount := 0
+	for _, u := range uploaded {
+		if uRelPath, _, uOK := normalizeRelativeAttachmentTarget(u.localPath, false); uOK && uRelPath == relPath {
+			exactMatch = u.response.MarkdownURL
+			exactCount++
+		}
+	}
+	if exactCount == 1 {
+		return exactMatch
+	}
+	if exactCount > 1 {
+		return ""
+	}
+	var baseMatch string
+	baseCount := 0
+	for _, u := range uploaded {
+		if (u.localPath != "" && filepath.Base(u.localPath) == baseName) ||
+			(u.response.Filename != "" && filepath.Base(u.response.Filename) == baseName) {
+			baseMatch = u.response.MarkdownURL
+			baseCount++
+		}
+	}
+	if baseCount == 1 {
+		return baseMatch
+	}
+	return ""
+}
+
+// resolveUploadedAttachmentReferences rewrites inline Markdown image, link, and
+// `!file[label](dest)` destinations that name an uploaded `--attachment` by its
+// relative path or filename into the uploaded attachment's durable `markdown_url`.
+// Code spans and fenced code blocks are ignored via Goldmark's AST.
+func resolveUploadedAttachmentReferences(body string, uploaded []uploadedIssueAttachment) string {
+	if body == "" || len(uploaded) == 0 || !strings.Contains(body, "](") {
+		return body
+	}
+	inlines := parser.DefaultInlineParsers()
+	for i := range inlines {
+		inlines[i].Value = attachmentSpanParser{inlines[i].Value.(parser.InlineParser)}
+	}
+	p := parser.NewParser(
+		parser.WithBlockParsers(parser.DefaultBlockParsers()...),
+		parser.WithInlineParsers(inlines...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+	)
+	source := []byte(body)
+	doc := p.Parse(text.NewReader(source))
+
+	var edits []attachmentSpanEdit
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		var dest []byte
+		var hasRef bool
+		switch node := n.(type) {
+		case *ast.Image:
+			dest = node.Destination
+			hasRef = node.Reference != nil
+		case *ast.Link:
+			dest = node.Destination
+			hasRef = node.Reference != nil
+		default:
+			return ast.WalkContinue, nil
+		}
+		if hasRef {
+			return ast.WalkContinue, nil
+		}
+		destStartVal, ok1 := n.AttributeString("dest_start")
+		destEndVal, ok2 := n.AttributeString("dest_end")
+		destStart, ok3 := destStartVal.(int)
+		destEnd, ok4 := destEndVal.(int)
+		if !ok1 || !ok2 || !ok3 || !ok4 || destStart < 0 || destStart >= destEnd || destEnd > len(source) {
+			return ast.WalkContinue, nil
+		}
+		targetURL := matchUploadedAttachmentURL(string(dest), uploaded)
+		if targetURL == "" || targetURL == string(dest) {
+			return ast.WalkContinue, nil
+		}
+		edits = append(edits, attachmentSpanEdit{
+			start:       destStart,
+			end:         destEnd,
+			replacement: targetURL,
+		})
+		return ast.WalkContinue, nil
+	})
+	if len(edits) == 0 {
+		return body
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	var out strings.Builder
+	last := 0
+	for _, edit := range edits {
+		if edit.start < last {
+			continue
+		}
+		out.WriteString(body[last:edit.start])
+		out.WriteString(edit.replacement)
+		last = edit.end
+	}
+	out.WriteString(body[last:])
+	return out.String()
+}
+
 // appendAttachmentReferences appends the markdown snippet of every uploaded
 // attachment to an issue description, so the file renders on the issue page
 // instead of only existing as a stored row. Each snippet goes in its own
@@ -1701,15 +1958,18 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	// partial-success state: a failure here means no issue was created, so the
 	// retry is safe and cannot duplicate.
 	uploaded := make([]cli.AttachmentResponse, 0, len(pending))
+	uploadedRefs := make([]uploadedIssueAttachment, 0, len(pending))
 	for _, att := range pending {
 		result, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
 		if uploadErr != nil {
 			return fmt.Errorf("upload attachment %s (no issue created): %w", att.path, uploadErr)
 		}
 		uploaded = append(uploaded, result)
+		uploadedRefs = append(uploadedRefs, uploadedIssueAttachment{localPath: att.path, response: result})
 		attachmentIDs = appendUniqueStrings(attachmentIDs, result.ID)
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
+	desc = resolveUploadedAttachmentReferences(desc, uploadedRefs)
 	desc = appendAttachmentReferences(desc, uploaded)
 	if hasDesc || len(uploaded) > 0 {
 		body["description"] = desc
@@ -1936,6 +2196,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	}
 	attachmentIDs := make([]string, 0, len(pending))
 	attachmentRefs := make([]cli.AttachmentResponse, 0, len(pending))
+	uploadedRefs := make([]uploadedIssueAttachment, 0, len(pending))
 	for _, att := range pending {
 		uploaded, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
 		if uploadErr != nil {
@@ -1943,9 +2204,11 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		}
 		attachmentIDs = append(attachmentIDs, uploaded.ID)
 		attachmentRefs = append(attachmentRefs, uploaded)
+		uploadedRefs = append(uploadedRefs, uploadedIssueAttachment{localPath: att.path, response: uploaded})
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 	if len(attachmentRefs) > 0 {
+		desc = resolveUploadedAttachmentReferences(desc, uploadedRefs)
 		body["description"] = appendAttachmentReferences(desc, attachmentRefs)
 		body["attachment_ids"] = attachmentIDs
 	}
@@ -2680,14 +2943,17 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	var attachmentIDs []string
+	uploadedRefs := make([]uploadedIssueAttachment, 0, len(pending))
 	for _, att := range pending {
-		id, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID)
+		uploaded, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, issueID)
 		if uploadErr != nil {
 			return fmt.Errorf("upload attachment %s: %w", att.path, uploadErr)
 		}
-		attachmentIDs = append(attachmentIDs, id)
+		attachmentIDs = append(attachmentIDs, uploaded.ID)
+		uploadedRefs = append(uploadedRefs, uploadedIssueAttachment{localPath: att.path, response: uploaded})
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
+	content = resolveUploadedAttachmentReferences(content, uploadedRefs)
 
 	body := map[string]any{"content": content}
 	if len(steerTargets) > 0 {

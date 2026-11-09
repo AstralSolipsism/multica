@@ -1335,6 +1335,174 @@ func TestRunIssueCreateDoesNotDuplicateReferencedAttachment(t *testing.T) {
 	}
 }
 
+func TestRunIssueCreateRewritesInlineRelativeAttachmentWithoutDuplicating(t *testing.T) {
+	t.Chdir(t.TempDir())
+	srv := newIssueCreateAttachmentServer(t)
+
+	descFile := "desc.md"
+	rawDesc := "Step 1\n\n![第一步](shot\\(1\\).png \"say \\\"hi\\\"\")\n\n![第二步](a&amp;b.png)\n\nStep 2"
+	if err := os.WriteFile(descFile, []byte(rawDesc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newIssueCreateTestCmd()
+	_ = cmd.Flags().Set("title", "Inline relative image")
+	_ = cmd.Flags().Set("description-file", descFile)
+	_ = cmd.Flags().Set("attachment", writeIssueCreateAttachment(t, "shot(1).png"))
+	_ = cmd.Flags().Set("attachment", writeIssueCreateAttachment(t, "a&b.png"))
+	if err := runIssueCreate(cmd, nil); err != nil {
+		t.Fatalf("runIssueCreate: %v", err)
+	}
+
+	desc, _ := srv.createBody["description"].(string)
+	want := "Step 1\n\n![第一步](https://api.example/api/attachments/att-1/download \"say \\\"hi\\\"\")\n\n![第二步](https://api.example/api/attachments/att-2/download)\n\nStep 2"
+	if desc != want {
+		t.Fatalf("description = %q, want %q", desc, want)
+	}
+}
+
+func TestResolveUploadedAttachmentReferencesEscapesAndTitles(t *testing.T) {
+	uploaded := []uploadedIssueAttachment{
+		{
+			localPath: "shot(1).png",
+			response: cli.AttachmentResponse{
+				ID:          "att-1",
+				Filename:    "shot(1).png",
+				MarkdownURL: "https://api.example/api/attachments/att-1/download",
+			},
+		},
+		{
+			localPath: "a&b.png",
+			response: cli.AttachmentResponse{
+				ID:          "att-2",
+				Filename:    "a&b.png",
+				MarkdownURL: "https://api.example/api/attachments/att-2/download",
+			},
+		},
+		{
+			localPath: "sub/my file (1).png",
+			response: cli.AttachmentResponse{
+				ID:          "att-3",
+				Filename:    "my file (1).png",
+				MarkdownURL: "https://api.example/api/attachments/att-3/download",
+			},
+		},
+		{
+			localPath: "out/only-basename.png",
+			response: cli.AttachmentResponse{
+				ID:          "att-4",
+				Filename:    "only-basename.png",
+				MarkdownURL: "https://api.example/api/attachments/att-4/download",
+			},
+		},
+		{
+			localPath: "before/dup.png",
+			response: cli.AttachmentResponse{
+				ID:          "att-5",
+				Filename:    "dup.png",
+				MarkdownURL: "https://api.example/api/attachments/att-5/download",
+			},
+		},
+		{
+			localPath: "after/dup.png",
+			response: cli.AttachmentResponse{
+				ID:          "att-6",
+				Filename:    "dup.png",
+				MarkdownURL: "https://api.example/api/attachments/att-6/download",
+			},
+		},
+	}
+
+	body := strings.Join([]string{
+		`![escaped parens](shot\(1\).png "say \"hi\"")`,
+		`![html entity](a&amp;b.png 'single "quoted" title')`,
+		`![angle bracketed](<./sub/my file (1).png> "kept \"as-is\"")`,
+		`![basename fallback](only-basename.png)`,
+		`![exact path 1](before/dup.png)`,
+		`![exact path 2](after/dup.png)`,
+		`![ambiguous basename](dup.png)`,
+		`![traversal 1](../only-basename.png)`,
+		`![traversal 2](out/../only-basename.png)`,
+	}, "\n\n")
+
+	got := resolveUploadedAttachmentReferences(body, uploaded)
+	want := strings.Join([]string{
+		`![escaped parens](https://api.example/api/attachments/att-1/download "say \"hi\"")`,
+		`![html entity](https://api.example/api/attachments/att-2/download 'single "quoted" title')`,
+		`![angle bracketed](https://api.example/api/attachments/att-3/download "kept \"as-is\"")`,
+		`![basename fallback](https://api.example/api/attachments/att-4/download)`,
+		`![exact path 1](https://api.example/api/attachments/att-5/download)`,
+		`![exact path 2](https://api.example/api/attachments/att-6/download)`,
+		`![ambiguous basename](dup.png)`,
+		`![traversal 1](../only-basename.png)`,
+		`![traversal 2](out/../only-basename.png)`,
+	}, "\n\n")
+	if got != want {
+		t.Fatalf("resolveUploadedAttachmentReferences:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
+func TestRunIssueCommentAddRewritesInlineRelativeAttachmentReferences(t *testing.T) {
+	const issueID = "11111111-1111-4111-8111-111111111111"
+	var postedContent string
+	var uploadCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/"+issueID:
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": issueID, "identifier": "TST-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/upload-file":
+			uploadCount++
+			_, header, err := r.FormFile("file")
+			if err != nil {
+				t.Fatalf("FormFile: %v", err)
+			}
+			id := fmt.Sprintf("att-%d", uploadCount)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":           id,
+				"filename":     header.Filename,
+				"markdown_url": "https://api.example/api/attachments/" + id + "/download",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/"+issueID+"/comments":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode comment body: %v", err)
+			}
+			postedContent, _ = body["content"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-1"})
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("s-fail.png", []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("sub", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("sub", "run.log"), []byte("log"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newIssueCommentAddTestCmd()
+	_ = cmd.Flags().Set("content", "Inline: ![决策失败](s-fail.png)\n\nCode: `![code](s-fail.png)`\n\n!file[日志](./sub/run.log)")
+	_ = cmd.Flags().Set("attachment", "s-fail.png")
+	_ = cmd.Flags().Set("attachment", "./sub/run.log")
+	if err := runIssueCommentAdd(cmd, []string{issueID}); err != nil {
+		t.Fatalf("runIssueCommentAdd: %v", err)
+	}
+
+	want := "Inline: ![决策失败](https://api.example/api/attachments/att-1/download)\n\nCode: `![code](s-fail.png)`\n\n!file[日志](https://api.example/api/attachments/att-2/download)"
+	if postedContent != want {
+		t.Fatalf("postedContent = %q, want %q", postedContent, want)
+	}
+}
+
 // TestRunIssueCreateFailsBeforeCreateWhenUploadFails pins the new failure
 // shape: the upload runs first, so a storage failure means no issue was
 // created and the caller can retry without duplicating one. The old order
@@ -3942,6 +4110,95 @@ func TestRunIssueUpdateAttachmentUsesProvidedDescriptionWithoutFetching(t *testi
 	if want := []string{"POST /api/upload-file", "PUT /api/issues/" + issueID}; !slices.Equal(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
+}
+
+func TestRunIssueUpdateRewritesInlineRelativeAttachmentWithoutDuplicating(t *testing.T) {
+	const issueID = "11111111-1111-4111-8111-111111111111"
+	const attachmentID = "22222222-2222-4222-8222-222222222222"
+
+	t.Run("rewrites inline reference in provided description", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		path := writeIssueCreateAttachment(t, "revised(1).png")
+		descFile := "desc.md"
+		if err := os.WriteFile(descFile, []byte("Before\n\n![修订图](revised\\(1\\).png \"say \\\"hi\\\"\")\n\nAfter"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/upload-file":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": attachmentID, "filename": "revised(1).png", "content_type": "image/png",
+					"markdown_url": "https://api.example/api/attachments/" + attachmentID + "/download",
+				})
+			case "/api/issues/" + issueID:
+				if r.Method == http.MethodGet {
+					t.Error("description GET must be skipped when --description-file is provided")
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode update: %v", err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": issueID, "title": "Updated"})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer srv.Close()
+		setCLITestServerEnv(t, srv.URL)
+
+		cmd := newIssueUpdateTestCmd()
+		_ = cmd.Flags().Set("attachment", path)
+		_ = cmd.Flags().Set("description-file", descFile)
+		if err := runIssueUpdate(cmd, []string{issueID}); err != nil {
+			t.Fatalf("runIssueUpdate: %v", err)
+		}
+		got, _ := body["description"].(string)
+		want := "Before\n\n![修订图](https://api.example/api/attachments/" + attachmentID + "/download \"say \\\"hi\\\"\")\n\nAfter"
+		if got != want {
+			t.Fatalf("description = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("rewrites inline reference in fetched existing description", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		path := writeIssueCreateAttachment(t, "revised.png")
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/upload-file":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": attachmentID, "filename": "revised.png", "content_type": "image/png",
+					"markdown_url": "https://api.example/api/attachments/" + attachmentID + "/download",
+				})
+			case "/api/issues/" + issueID:
+				if r.Method == http.MethodGet {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"description": "Existing intro\n\n![现有附图](revised.png)\n\nExisting outro",
+					})
+					return
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode update: %v", err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": issueID, "title": "Updated"})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer srv.Close()
+		setCLITestServerEnv(t, srv.URL)
+
+		cmd := newIssueUpdateTestCmd()
+		_ = cmd.Flags().Set("attachment", path)
+		if err := runIssueUpdate(cmd, []string{issueID}); err != nil {
+			t.Fatalf("runIssueUpdate: %v", err)
+		}
+		got, _ := body["description"].(string)
+		want := "Existing intro\n\n![现有附图](https://api.example/api/attachments/" + attachmentID + "/download)\n\nExisting outro"
+		if got != want {
+			t.Fatalf("description = %q, want %q", got, want)
+		}
+	})
 }
 
 func newIssueAssignTestCmd() *cobra.Command {
