@@ -849,7 +849,7 @@ describe("Attachment — lazy images and reserved box (MUL-8182)", () => {
     expect(figure.hasAttribute("data-sized")).toBe(false);
     expect(figure.hasAttribute("data-clickable")).toBe(false);
     expect(figure.hasAttribute("data-error")).toBe(true);
-    expect(img.hasAttribute("data-loaded")).toBe(true);
+    expect(img.hasAttribute("data-loaded")).toBe(false);
     expect(img.hasAttribute("width")).toBe(false);
     expect(img.hasAttribute("height")).toBe(false);
     expect(figure.querySelector(".image-error-fallback")?.textContent).toBe("shot.png");
@@ -886,6 +886,7 @@ describe("Attachment — lazy images and reserved box (MUL-8182)", () => {
   });
 
   it("marks an image with an empty src as error immediately instead of holding a 16:10 placeholder", () => {
+    const onDelete = vi.fn();
     renderWithQuery(
       <Attachment
         attachment={{
@@ -894,6 +895,8 @@ describe("Attachment — lazy images and reserved box (MUL-8182)", () => {
           filename: "missing.png",
           forceKind: "image",
         }}
+        editable
+        onDelete={onDelete}
       />,
     );
     const figure = document.querySelector(".image-figure") as HTMLElement;
@@ -902,6 +905,8 @@ describe("Attachment — lazy images and reserved box (MUL-8182)", () => {
     expect(figure.hasAttribute("data-error")).toBe(true);
     expect(figure.querySelector(".image-error-fallback")?.textContent).toBe("missing.png");
     expect(screen.queryByRole("button", { name: "View" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onDelete).toHaveBeenCalled();
   });
 
   it("renders a sanitized file:// markdown image in RichContent as error instead of a pending box", () => {
@@ -912,6 +917,13 @@ describe("Attachment — lazy images and reserved box (MUL-8182)", () => {
     expect(figure.hasAttribute("data-clickable")).toBe(false);
     expect(figure.hasAttribute("data-error")).toBe(true);
     expect(figure.querySelector(".image-error-fallback")?.textContent).toBe("x");
+  });
+
+  it("omits the error text label when both alt and url are empty", () => {
+    renderWithQuery(<RichContent content="![](file:///workspaces/secret.png)" />);
+    const figure = document.querySelector(".image-figure") as HTMLElement;
+    expect(figure.hasAttribute("data-error")).toBe(true);
+    expect(figure.querySelector(".image-error-label")).toBeNull();
   });
 
   it("keeps the Delete button available on a broken image in editable mode", () => {
