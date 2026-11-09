@@ -244,7 +244,15 @@
     "openInOverview": "열기",
     "noStage": "단계 없음",
     "backTo": "‘{{title}}’(으)로 돌아가기",
-    "emptyChapter": "이 장에는 채택된 기준 내용이 없습니다."
+    "emptyChapter": "이 장에는 채택된 기준 내용이 없습니다.",
+    "pendingReview": "검토 대기",
+    "readingMode": "읽기 모드",
+    "readingTab": "읽기",
+    "annotationsTab": "주석({{count}})",
+    "pendingNotice": "이 장에는 검토 대기 후보 {{count}}개가 있습니다 · {{source}} · 변경 사항 {{changes}}건",
+    "compareCandidate": "후보 비교",
+    "previousChapter": "이전 장",
+    "nextChapter": "다음 장"
   },
   "chapters": {
     "overview": "프로젝트 개요",
@@ -330,6 +338,7 @@
   },
   "reviewQueue": {
     "backOverview": "개요로 돌아가기",
+    "backChapter": "{{number}}장으로 돌아가기",
     "label": "검토 대기 큐",
     "previous": "이전 검토 대기 후보",
     "next": "다음 검토 대기 후보",

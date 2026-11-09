@@ -247,7 +247,15 @@
     "openInOverview": "Open",
     "noStage": "No delivery stage",
     "backTo": "Back to \"{{title}}\"",
-    "emptyChapter": "No baseline content has been adopted in this chapter."
+    "emptyChapter": "No baseline content has been adopted in this chapter.",
+    "pendingReview": "Pending review",
+    "readingMode": "Reading mode",
+    "readingTab": "Read",
+    "annotationsTab": "Annotations ({{count}})",
+    "pendingNotice": "This chapter has {{count}} pending candidate · {{source}} · {{changes}} changes",
+    "compareCandidate": "Compare candidate",
+    "previousChapter": "Previous chapter",
+    "nextChapter": "Next chapter"
   },
   "chapters": {
     "overview": "Project overview",
@@ -333,6 +341,7 @@
   },
   "reviewQueue": {
     "backOverview": "Back to overview",
+    "backChapter": "Back to chapter {{number}}",
     "label": "Pending review queue",
     "previous": "Previous pending candidate",
     "next": "Next pending candidate",

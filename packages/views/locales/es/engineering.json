@@ -247,7 +247,15 @@
     "openInOverview": "Abrir",
     "noStage": "Sin etapa de entrega",
     "backTo": "Volver a \"{{title}}\"",
-    "emptyChapter": "Todavía no se ha adoptado contenido de línea base en este capítulo."
+    "emptyChapter": "Todavía no se ha adoptado contenido de línea base en este capítulo.",
+    "pendingReview": "Pendiente de revisión",
+    "readingMode": "Modo de lectura",
+    "readingTab": "Leer",
+    "annotationsTab": "Anotaciones ({{count}})",
+    "pendingNotice": "Este capítulo tiene {{count}} candidata pendiente · {{source}} · {{changes}} cambios",
+    "compareCandidate": "Comparar candidata",
+    "previousChapter": "Capítulo anterior",
+    "nextChapter": "Capítulo siguiente"
   },
   "chapters": {
     "overview": "Resumen del proyecto",
@@ -333,6 +341,7 @@
   },
   "reviewQueue": {
     "backOverview": "Volver al resumen",
+    "backChapter": "Volver al capítulo {{number}}",
     "label": "Cola de revisiones pendientes",
     "previous": "Candidata pendiente anterior",
     "next": "Candidata pendiente siguiente",

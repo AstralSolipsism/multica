@@ -244,7 +244,15 @@
     "openInOverview": "打开",
     "noStage": "未分阶段",
     "backTo": "返回「{{title}}」",
-    "emptyChapter": "本章还没有已采用的基线内容。"
+    "emptyChapter": "本章还没有已采用的基线内容。",
+    "pendingReview": "待审阅",
+    "readingMode": "阅读模式",
+    "readingTab": "阅读",
+    "annotationsTab": "批注（{{count}}）",
+    "pendingNotice": "本章有 {{count}} 个待审阅候选 · {{source}} · {{changes}} 处变更",
+    "compareCandidate": "对比候选",
+    "previousChapter": "上一章",
+    "nextChapter": "下一章"
   },
   "chapters": {
     "overview": "项目概览",
@@ -330,6 +338,7 @@
   },
   "reviewQueue": {
     "backOverview": "返回总览",
+    "backChapter": "返回第 {{number}} 章",
     "label": "待审阅队列",
     "previous": "上一个待审阅候选",
     "next": "下一个待审阅候选",

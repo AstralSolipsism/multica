@@ -226,7 +226,9 @@ beforeEach(() => {
     submitProjectBaselineReview,
   } as unknown as ApiClient);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  HTMLElement.prototype.scrollTo = vi.fn();
+  HTMLElement.prototype.scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
+    if (options && typeof options === "object") this.scrollTop = options.top ?? 0;
+  });
   Element.prototype.scrollIntoView = vi.fn();
   window.localStorage.clear();
   useBaselineAnnotationDraftStore.getState().clearDraft();
@@ -648,6 +650,34 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(await screen.findByText("Changes requested")).toBeInTheDocument();
     expect(screen.getByText("Persisted review comment")).toBeInTheDocument();
   });
+
+  it("keeps the Wiki entry chapter and restores both scroll positions after cross-chapter review navigation", async () => {
+    const user = userEvent.setup();
+    const domainBase = revision("adopted-rules", "domain_rules", 1, "Rules", "adopted", "2026-10-29T00:00:00Z", "session");
+    const architectureBase = revision("adopted-architecture", "architecture", 1, "Architecture", "adopted", "2026-10-29T00:00:00Z", "session");
+    chapters = chapters.map((chapter) => chapter.chapter === "domain_rules" ? { ...chapter, adopted: domainBase } : chapter.chapter === "architecture" ? { ...chapter, adopted: architectureBase } : chapter);
+    renderOverview();
+    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
+    expect(await screen.findByText("Compare candidate")).toBeInTheDocument();
+    const reader = document.querySelector<HTMLElement>("[data-baseline-reader]")!;
+    const toc = document.querySelector<HTMLElement>("[data-baseline-toc]")!;
+    reader.scrollTop = 120;
+    toc.scrollTop = 36;
+
+    await user.click(screen.getByRole("button", { name: "Compare candidate" }));
+    expect(await screen.findByRole("button", { name: "Back to chapter 02" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next pending candidate" }));
+    expect(await screen.findByText("ARCH-CANDIDATE", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to chapter 02" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to chapter 02" }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="domain_rules"]')).toBeInTheDocument());
+    expect(screen.getByText("Compare candidate")).toBeInTheDocument();
+    expect(reader.scrollTop).toBe(120);
+    expect(toc.scrollTop).toBe(36);
+    expect(document.querySelector("[data-baseline-revision-status]")).not.toBeInTheDocument();
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
 });
 
 describe("EngineeringOverview baseline editing", () => {
@@ -742,7 +772,7 @@ describe("EngineeringOverview baseline editing", () => {
     const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
 
     await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
-    expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
+    expect(screen.queryByRole("textbox", { name: "Markdown content" })).not.toBeInTheDocument();
     await user.click(within(toc).getByRole("button", { name: "Project overview" }));
     expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("Unsaved draft");
   });
@@ -774,12 +804,16 @@ describe("EngineeringOverview baseline editing", () => {
     const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
     await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
     expect(screen.queryByRole("button", { name: "Initialize chapter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit for review" })).not.toBeInTheDocument();
+    await user.click(within(toc).getByRole("button", { name: "Project overview" }));
 
     await user.click(screen.getByRole("button", { name: "Submit for review" }));
 
     expect(await screen.findByText("Cross chapter revision", { selector: "p" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Compare candidate" }));
+    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Project understanding" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps a replacement candidate actionable after submitting from a candidate deep link", async () => {
@@ -859,6 +893,7 @@ describe("EngineeringOverview baseline editing", () => {
     const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
     await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
     const article = document.querySelector('[data-baseline-section-key="domain_rules:Rules"]') as HTMLElement;
+    await user.click(screen.getByRole("tab", { name: "Annotations (0)" }));
     await user.click(within(article).getByRole("button", { name: "Annotate section" }));
     const rail = document.querySelector("[data-reading-rail]") as HTMLElement;
     await user.type(within(rail).getByRole("textbox", { name: "Write a change request" }), "Clarify the rule");

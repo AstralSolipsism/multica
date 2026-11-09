@@ -247,7 +247,15 @@
     "openInOverview": "Ouvrir",
     "noStage": "Aucune étape de livraison",
     "backTo": "Revenir à « {{title}} »",
-    "emptyChapter": "Aucun contenu de référence n’a été adopté dans ce chapitre."
+    "emptyChapter": "Aucun contenu de référence n’a été adopté dans ce chapitre.",
+    "pendingReview": "En attente de relecture",
+    "readingMode": "Mode lecture",
+    "readingTab": "Lire",
+    "annotationsTab": "Annotations ({{count}})",
+    "pendingNotice": "Ce chapitre a {{count}} candidat en attente · {{source}} · {{changes}} modifications",
+    "compareCandidate": "Comparer le candidat",
+    "previousChapter": "Chapitre précédent",
+    "nextChapter": "Chapitre suivant"
   },
   "chapters": {
     "overview": "Présentation du projet",
@@ -333,6 +341,7 @@
   },
   "reviewQueue": {
     "backOverview": "Retour à la vue d’ensemble",
+    "backChapter": "Revenir au chapitre {{number}}",
     "label": "File d’attente des revues",
     "previous": "Candidat en attente précédent",
     "next": "Candidat en attente suivant",

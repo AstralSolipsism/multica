@@ -244,7 +244,15 @@
     "openInOverview": "開く",
     "noStage": "ステージ未設定",
     "backTo": "「{{title}}」に戻る",
-    "emptyChapter": "この章には採用済みの基線がありません。"
+    "emptyChapter": "この章には採用済みの基線がありません。",
+    "pendingReview": "レビュー待ち",
+    "readingMode": "読書モード",
+    "readingTab": "読む",
+    "annotationsTab": "注釈（{{count}}）",
+    "pendingNotice": "この章にはレビュー待ち候補 {{count}} 件があります · {{source}} · 変更 {{changes}} 件",
+    "compareCandidate": "候補を比較",
+    "previousChapter": "前の章",
+    "nextChapter": "次の章"
   },
   "chapters": {
     "overview": "プロジェクト概要",
@@ -330,6 +338,7 @@
   },
   "reviewQueue": {
     "backOverview": "概要に戻る",
+    "backChapter": "第 {{number}} 章に戻る",
     "label": "レビュー待ちキュー",
     "previous": "前のレビュー待ち候補",
     "next": "次のレビュー待ち候補",

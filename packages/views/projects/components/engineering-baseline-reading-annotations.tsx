@@ -7,12 +7,9 @@ import type {
   BaselineAnnotationThread,
   BaselineComposerAnchor,
 } from "./engineering-baseline-annotation-model";
-import type { BaselineAnnotationDraftItem } from "@multica/core/projects/baseline-annotation-draft-store";
 import { anchorOutdated, anchorPlacement } from "./engineering-baseline-annotation-model";
 import { captureBaselineTextRange } from "./engineering-baseline-text-annotations";
 import { BaselineSubmittedThread } from "./engineering-baseline-annotation-card";
-import { baselineReadingEntries } from "./engineering-baseline-reading-card";
-import { BaselineInlineReadingEntry } from "./engineering-baseline-reading-inline";
 
 export function BaselineAnnotateSectionButton({ onClick }: { onClick: () => void }) {
   const { t } = useT("engineering");
@@ -49,50 +46,6 @@ export function createBaselineTextAnchor(
   targetLabel: string,
 ): BaselineComposerAnchor | null {
   return captureBaselineTextAnchor(article, section, adopted, targetLabel)?.anchor ?? null;
-}
-
-interface ReadingAnnotationsProps {
-  section: BaselineDisplaySection;
-  adopted: BaselineRevision;
-  /** The chapter's working candidate; placement falls back to the adopted revision. */
-  candidate: BaselineRevision | null;
-  threads: readonly BaselineAnnotationThread[];
-  pendingItems: readonly BaselineAnnotationDraftItem[];
-  composer: BaselineComposerAnchor | null;
-  canDecide: boolean;
-  limitReached: boolean;
-  hoveredId: string | null;
-  onHover: (id: string | null) => void;
-  onAddAnnotation: (anchor: BaselineComposerAnchor, note: string) => boolean;
-  onCancelComposer: () => void;
-  onAddReply: (thread: BaselineAnnotationThread, note: string) => boolean;
-  onUpdatePending: (id: string, note: string) => void;
-  onDeletePending: (id: string) => void;
-  onResolve: (annotationId: string, resolved: boolean) => Promise<boolean>;
-}
-
-export function BaselineReadingAnnotations(props: ReadingAnnotationsProps) {
-  const entries = baselineReadingEntries(props.threads, props.pendingItems, props.composer);
-  if (!entries.length) return null;
-  return entries.map((entry) => (
-    <BaselineInlineReadingEntry
-      key={entry.id}
-      section={props.section}
-      entry={entry}
-      adopted={props.adopted}
-      candidate={props.candidate}
-      canDecide={props.canDecide}
-      limitReached={props.limitReached}
-      hoveredId={props.hoveredId}
-      onHover={props.onHover}
-      onAddAnnotation={props.onAddAnnotation}
-      onCancelComposer={props.onCancelComposer}
-      onAddReply={props.onAddReply}
-      onUpdatePending={props.onUpdatePending}
-      onDeletePending={props.onDeletePending}
-      onResolve={props.onResolve}
-    />
-  ));
 }
 
 export function BaselineStandaloneThreads({ title, threads, baseRevisionId, candidate, forceOutdatedBadge, canDecide, limitReached, onAddReply, onUpdatePending, onDeletePending, onResolve }: {

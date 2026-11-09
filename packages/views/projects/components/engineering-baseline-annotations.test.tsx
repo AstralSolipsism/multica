@@ -14,7 +14,6 @@ import { EngineeringBaseline } from "./engineering-baseline";
 import { buildEngineeringRoadmap } from "./engineering-utils";
 import type { BaselineAnnotationActions } from "./engineering-baseline-annotation-model";
 import { baselineTextAnnotationAtPoint, captureBaselineTextRange, locateBaselineTextAnnotation } from "./engineering-baseline-text-annotations";
-import { indexCommentText } from "../../issues/components/comment-annotation-selection";
 
 type SubmitReviewMock = ReturnType<typeof vi.fn<BaselineAnnotationActions["onSubmitReview"]>>;
 type ResolveAnnotationsMock = ReturnType<typeof vi.fn<BaselineAnnotationActions["onResolveAnnotations"]>>;
@@ -200,11 +199,17 @@ function renderBaseline(options: {
         onReturnFromReview={vi.fn()}
         onSelectCandidate={vi.fn()}
         onOpenProcessed={vi.fn()}
+        onReviewCandidate={vi.fn()}
+        restorePosition={null}
         lens="manage"
         onOpenStage={vi.fn()}
       />
     </NavigationProvider>,
   );
+  if (options.reviewRequested === false) {
+    const tab = screen.queryByRole("tab", { name: /Annotations \(\d+\)/ });
+    if (tab) fireEvent.click(tab);
+  }
   return { ...result, onSubmitReview, onResolveAnnotations, onCloseBatch, onDecision };
 }
 
@@ -651,28 +656,29 @@ describe("baseline Word-style reading annotations", () => {
     });
     renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([root])] });
     expect(document.querySelector("[data-reading-rail]")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Show annotations (1)" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("tab", { name: "Annotations (1)" })).toHaveAttribute("aria-selected", "true");
     const card = document.querySelector<HTMLElement>('[data-reading-annotation="annotation-1"]')!;
     fireEvent.mouseEnter(card);
     expect(card).toHaveAttribute("data-annotation-hovered");
     fireEvent.mouseLeave(card);
     expect(card).not.toHaveAttribute("data-annotation-hovered");
 
-    await user.click(screen.getByRole("switch", { name: "Show annotations (1)" }));
-    expect(screen.queryByRole("switch", { name: "Show annotations (1)" })).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByRole("tab", { name: "Read" }));
+    expect(screen.queryByRole("tab", { name: "Annotations (1)" })).toHaveAttribute("aria-selected", "false");
     expect(document.querySelector("[data-reading-rail]")).not.toBeInTheDocument();
     expect(screen.queryByText("Clarify retries")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("switch", { name: "Show annotations (1)" }));
+    await user.click(screen.getByRole("tab", { name: "Annotations (1)" }));
     expect(document.querySelector("[data-reading-rail]")).toBeInTheDocument();
-    expect(screen.getByText("Clarify retries")).toBeInTheDocument();
+    expect(document.querySelector("[data-reading-rail]")).toHaveTextContent("Clarify retries");
   });
 
   it("counts unresolved threads and pending items but not resolved threads", () => {
     seed([pending({ id: "reading-pending", targetRevisionId: "rev-base" })]);
     const resolved = rootAnnotation({ state: "resolved", targetRevisionId: "rev-base" });
     renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([resolved])] });
-    expect(screen.getByRole("switch", { name: "Show annotations (1)" })).toBeInTheDocument();
-    expect(document.querySelectorAll("[data-reading-annotation]")).toHaveLength(2);
+    expect(screen.getByRole("tab", { name: "Annotations (1)" })).toBeInTheDocument();
+    const rail = document.querySelector("[data-reading-rail]")!;
+    expect(rail.querySelectorAll("[data-reading-annotation]")).toHaveLength(2);
   });
 
   it("emphasizes the card when the pointer hits its highlighted source text", async () => {
@@ -694,36 +700,43 @@ describe("baseline Word-style reading annotations", () => {
     }
   });
 
-  it("moves the same thread below its source block instead of rendering a rail below 1280px", async () => {
-    const originalMatchMedia = window.matchMedia;
-    window.matchMedia = ((query: string) => ({
-      matches: query === "(max-width: 1279px)", media: query, onchange: null,
-      addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-    })) as typeof window.matchMedia;
-    try {
-      const root = rootAnnotation({
-        anchorKind: "text", targetRevisionId: "rev-base", targetRevisionNumber: 2, side: "before",
-        lineStart: 2, lineEnd: 2, quote: "所有写接口应该携带幂等键。", prefix: "", suffix: "", start: 0,
-      });
-      renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([root])] });
-      await waitFor(() => expect(document.querySelector('[data-reading-annotations="Rule-1"]')).toBeInTheDocument());
-      const inline = document.querySelector<HTMLElement>('[data-reading-annotations="Rule-1"]')!;
-      expect(inline.previousElementSibling).toHaveAttribute("data-source-start", "2");
-      expect(inline).toHaveTextContent("Clarify retries");
-      expect(document.querySelector("[data-reading-rail]")).not.toBeInTheDocument();
-      expect(screen.getByRole("switch", { name: "Show annotations (1)" })).toBeInTheDocument();
-    } finally {
-      window.matchMedia = originalMatchMedia;
-    }
+  it("opens an overlay drawer and preserves both scroll positions across mask, close, and Escape", async () => {
+    const user = userEvent.setup();
+    const root = rootAnnotation({
+      anchorKind: "text", targetRevisionId: "rev-base", targetRevisionNumber: 2, side: "before",
+      lineStart: 2, lineEnd: 2, quote: "所有写接口应该携带幂等键。", prefix: "", suffix: "", start: 0,
+    });
+    renderBaseline({ reviewRequested: false, batches: [batch()], details: [detail([root])] });
+    const reader = document.querySelector<HTMLElement>("[data-baseline-reader]")!;
+    const toc = document.querySelector<HTMLElement>("[data-baseline-toc]")!;
+    reader.scrollTop = 120;
+    toc.scrollTop = 36;
+
+    const drawer = document.querySelector<HTMLElement>("[data-annotation-drawer]")!;
+    expect(drawer).toHaveClass("@min-[960px]:hidden");
+    expect(drawer.querySelector("button")).toHaveClass("bg-black/35");
+    expect(drawer.textContent).toContain("Clarify retries");
+    await user.keyboard("{Escape}");
+    expect(document.querySelector("[data-annotation-drawer]")).not.toBeInTheDocument();
+    expect(reader.scrollTop).toBe(120);
+    expect(toc.scrollTop).toBe(36);
+
+    await user.click(screen.getByRole("tab", { name: "Annotations (1)" }));
+    const mask = document.querySelector<HTMLElement>("[data-annotation-drawer] > button")!;
+    await user.click(mask);
+    expect(document.querySelector("[data-annotation-drawer]")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Annotations (1)" }));
+    const reopened = document.querySelector<HTMLElement>("[data-annotation-drawer]")!;
+    const closeButtons = within(reopened).getAllByRole("button", { name: "Close" });
+    await user.click(closeButtons[closeButtons.length - 1]!);
+    expect(document.querySelector("[data-annotation-drawer]")).not.toBeInTheDocument();
+    expect(reader.scrollTop).toBe(120);
+    expect(toc.scrollTop).toBe(36);
   });
 
-  it("keeps narrow text anchors, later selections, and card hover isolated from inline card content", async () => {
-    const originalMatchMedia = window.matchMedia;
+  it("keeps text anchors, later selections, and card hover isolated from drawer content", async () => {
     const originalCaret = document.caretPositionFromPoint;
-    window.matchMedia = ((query: string) => ({
-      matches: query === "(max-width: 1279px)", media: query, onchange: null,
-      addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-    })) as typeof window.matchMedia;
     try {
       const annotation = rootAnnotation({
         anchorKind: "text", targetRevisionId: "rev-base", targetRevisionNumber: 2, side: "before",
@@ -735,10 +748,9 @@ describe("baseline Word-style reading annotations", () => {
         details: [detail([annotation])],
         adoptedContent: "### [Rule-1] 幂等键\n\n第一段重试。\n\n第二段。\n\n第三段定位。\n\n### 保留小节\n保留内容。",
       });
-      await waitFor(() => expect(document.querySelector('[data-reading-annotations="Rule-1"]')).toBeInTheDocument());
+      await waitFor(() => expect(document.querySelector("[data-annotation-drawer]")).toBeInTheDocument());
       const article = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-1"]')!;
       const markdown = article.querySelector<HTMLElement>("[data-baseline-markdown]")!;
-      expect(indexCommentText(markdown, false, "[data-reading-annotations]").text).toBe("第一段重试。\n\n第二段。\n\n第三段定位。\n");
       const location = locateBaselineTextAnnotation(markdown, annotation);
       expect(location.location).toBe("exact");
       expect(location.range?.toString()).toBe("重试。\n第二段");
@@ -759,8 +771,8 @@ describe("baseline Word-style reading annotations", () => {
         lineEnd: 7,
       });
 
-      const inline = document.querySelector<HTMLElement>('[data-reading-annotations="Rule-1"]')!;
-      const card = document.querySelector<HTMLElement>('[data-reading-annotation="annotation-1"]')!;
+      const drawer = document.querySelector<HTMLElement>("[data-annotation-drawer]")!;
+      const card = drawer.querySelector<HTMLElement>('[data-reading-annotation="annotation-1"]')!;
       const firstBlock = article.querySelector<HTMLElement>('p[data-source-start="3"]')!;
       document.caretPositionFromPoint = () => ({ offsetNode: firstBlock.firstChild!, offset: 3, getClientRect: () => new DOMRect() });
       const flushFrame = () => act(async () => {
@@ -772,13 +784,12 @@ describe("baseline Word-style reading annotations", () => {
 
       document.caretPositionFromPoint = () => null;
       fireEvent.mouseEnter(card);
-      fireEvent.mouseMove(inline);
+      fireEvent.mouseMove(drawer);
       await flushFrame();
       expect(card).toHaveAttribute("data-annotation-hovered");
     } finally {
       document.caretPositionFromPoint = originalCaret;
       window.getSelection()?.removeAllRanges();
-      window.matchMedia = originalMatchMedia;
     }
   });
 

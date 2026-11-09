@@ -23,7 +23,7 @@ import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { EngineeringBaseline, type BaselineSaveDraft, type BaselineSaveResult } from "./engineering-baseline";
+import { EngineeringBaseline, type BaselineSaveDraft, type BaselineSaveResult, type BaselineWikiPosition, type BaselineWikiRestorePosition } from "./engineering-baseline";
 import type { BaselineLens } from "./engineering-baseline-markdown";
 import { orderedBaselineChapters } from "./engineering-baseline-utils";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
@@ -83,6 +83,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [reviewNotice, setReviewNotice] = useState<{ id: number; action: "adopted" | "rejected" | "changes"; chapter: BaselineChapter; remaining: number } | null>(null);
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
+  const [reviewEntry, setReviewEntry] = useState<BaselineWikiPosition | null>(null);
+  const [restorePosition, setRestorePosition] = useState<BaselineWikiRestorePosition | null>(null);
   const [failedReview, setFailedReview] = useState<FailedReview | null>(null);
   const [decisionErrorMessage, setDecisionErrorMessage] = useState("");
   const baselineLensKey = `multica.engineering-baseline.lens.${projectId}`;
@@ -271,7 +273,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     for (const detail of annotationDetails) {
       for (const review of detail.reviews) {
         const reviewed = revisions.get(review.reviewedRevisionId);
-        if (reviewed) add(reviewed, "changes", review.createdAt, review.summary);
+        const existing = records.get(`${review.reviewedRevisionId}:changes`);
+        if (reviewed && (!existing || existing.decidedAt < review.createdAt)) add(reviewed, "changes", review.createdAt, review.summary);
       }
     }
     for (const record of sessionRecords) records.set(`${record.revision.id}:${record.decision}`, record);
@@ -344,6 +347,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       setActiveView("overview");
       setCompletionOpen(true);
       setRecordsOpen(false);
+      setReviewEntry(null);
+      setRestorePosition(null);
       clearCandidateParam();
       return;
     }
@@ -465,9 +470,13 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     setActiveView("overview");
     setRecordsOpen(false);
     setSelectedRecordKey(null);
+    setReviewEntry(null);
+    setRestorePosition(null);
     clearCandidateParam();
   };
   const openBaseline = (id?: string) => {
+    setReviewEntry(null);
+    setRestorePosition(null);
     if (id) {
       const chapter = overview?.chapters.find((item) => item.candidate?.id === id);
       if (chapter) setSelectedChapter(chapter.chapter);
@@ -485,6 +494,25 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     setRecordsOpen(false);
     setSelectedRecordKey(null);
     setActiveView("baseline");
+  };
+  const openWikiReview = (id: string, position: BaselineWikiPosition) => {
+    openBaseline(id);
+    setReviewEntry(position);
+  };
+  const returnFromReview = () => {
+    if (!reviewEntry) {
+      openOverview();
+      return;
+    }
+    const entry = reviewEntry;
+    setManualCandidateId("");
+    setSelectedChapter(entry.chapter);
+    setActiveView("baseline");
+    setRecordsOpen(false);
+    setSelectedRecordKey(null);
+    setRestorePosition({ ...entry, version: Date.now() });
+    setReviewEntry(null);
+    clearCandidateParam();
   };
   const openProcessed = () => {
     setRecordsOpen(true);
@@ -590,6 +618,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       }}
     />
   );
+  const reviewEntryNumber = reviewEntry ? baselineChapters.indexOf(reviewEntry.chapter) + 1 : 0;
+  const reviewReturnLabel = reviewEntry
+    ? t(($) => $.reviewQueue.backChapter, { number: String(reviewEntryNumber).padStart(2, "0") })
+    : t(($) => $.reviewQueue.backOverview);
   return (
     <div className={shellClass} data-engineering-shell>
       {topChrome}
@@ -705,8 +737,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             batchIds={reviewBatchIds.length ? reviewBatchIds : allCandidates.map((candidate) => candidate.id)}
             processedRevisionIds={processedRevisionIds}
             processedCount={processedRecords.length}
-            returnLabel={t(($) => $.reviewQueue.backOverview)}
-            onReturnFromReview={openOverview}
+            returnLabel={reviewReturnLabel}
+            onReturnFromReview={returnFromReview}
             onSelectCandidate={(id) => {
               const candidate = pendingCandidates.find((item) => item.id === id);
               if (!candidate) return;
@@ -714,6 +746,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
               setSelectedChapter(candidate.chapter);
             }}
             onOpenProcessed={openProcessed}
+            onReviewCandidate={openWikiReview}
+            restorePosition={restorePosition}
             lens={baselineLens}
             onOpenStage={openOverviewStage}
           />
