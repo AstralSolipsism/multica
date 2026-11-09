@@ -39,6 +39,7 @@ const editorState = vi.hoisted(() => ({
   uploadingNodes: [] as Array<{ attrs: { uploading?: boolean } }>,
 }));
 const editorInstance = vi.hoisted<{ current: unknown }>(() => ({ current: null }));
+const mockEditorFocus = vi.hoisted(() => vi.fn());
 const onCreateFired = vi.hoisted(() => ({ value: false }));
 const transactionListeners = vi.hoisted(() => ({ current: [] as Array<() => void> }));
 const latestEditorOptions = vi.hoisted<{
@@ -109,7 +110,7 @@ vi.mock("@tiptap/react", () => ({
           return editorState.isDestroyed;
         },
         commands: {
-          focus: vi.fn(),
+          focus: mockEditorFocus,
           blur: vi.fn(),
           clearContent: vi.fn(() => {
             editorState.markdown = "";
@@ -186,6 +187,7 @@ vi.mock("@multica/core/chat", () => {
 
 import { ChatInput } from "./chat-input";
 import { useChatStore } from "@multica/core/chat";
+import { ChatReplyActionsProvider, useChatReplyActions } from "../chat-reply-actions-context";
 
 const TEST_RESOURCES = { en: { common: enCommon, chat: enChat, editor: enEditor } };
 
@@ -278,6 +280,7 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     onCreateFired.value = false;
     latestEditorOptions.current = undefined;
     mockSetContent.mockClear();
+    mockEditorFocus.mockClear();
     const s = store();
     s.activeSessionId = null;
     s.selectedAgentId = "agent-1";
@@ -517,5 +520,69 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
 
     expect(store().inputDrafts["__new__"]).toBe("creating a session with this");
     expect(store().inputDrafts["session-new"]).toBeUndefined();
+  });
+
+  it("replaces unflushed typing when a card fills the compose draft", () => {
+    // The chat fill action (chat-reply-actions-context) must land through
+    // adoptContent: the synchronized `value` path would SKIP permanently while
+    // the editor is focused-and-dirty — precisely the state below, where the
+    // debounce from `type()` has not fired yet.
+    const fill: { current: (() => void) | null } = { current: null };
+    const onSend = vi.fn().mockResolvedValue(true);
+    function FillProbe() {
+      const chat = useChatReplyActions();
+      fill.current = chat ? () => chat.fill("card answer") : null;
+      return null;
+    }
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatReplyActionsProvider handleSend={onSend}>
+          <FillProbe />
+          <ChatInput onSend={onSend} agentName="Multica" />
+        </ChatReplyActionsProvider>
+      </I18nProvider>,
+    );
+    type("unfinished local text");
+
+    act(() => fill.current!());
+
+    // The draft slot holds the card's answer, the document was force-adopted
+    // past the dirty guard, and the composer took focus for the next keystroke.
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
+    expect(mockSetContent).toHaveBeenCalledWith("card answer", {
+      emitUpdate: false,
+      contentType: "markdown",
+    });
+    expect(mockEditorFocus).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("applies a fill request once — switching sessions afterwards leaves the other draft alone", () => {
+    // Without the applied-id guard, the effect re-runs on every draftKey or
+    // submitting change with the stale adoptRequest in scope and would write
+    // the card's answer into whatever session is selected by then.
+    const fill: { current: (() => void) | null } = { current: null };
+    function FillProbe() {
+      const chat = useChatReplyActions();
+      fill.current = chat ? () => chat.fill("card answer") : null;
+      return null;
+    }
+    const withProvider = () => (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatReplyActionsProvider handleSend={vi.fn().mockResolvedValue(true)}>
+          <FillProbe />
+          <ChatInput onSend={vi.fn()} agentName="Multica" />
+        </ChatReplyActionsProvider>
+      </I18nProvider>
+    );
+    const { rerender } = render(withProvider());
+    act(() => fill.current!());
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
+
+    store().activeSessionId = "session-b";
+    rerender(withProvider());
+
+    expect(store().inputDrafts["session-b"]).toBeUndefined();
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
   });
 });

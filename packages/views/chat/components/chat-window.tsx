@@ -70,6 +70,7 @@ import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
 import { useChatOpenReveal } from "./use-chat-open-reveal";
+import { ChatReplyActionsProvider } from "../chat-reply-actions-context";
 import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { ChatQueue } from "./chat-queue";
@@ -824,7 +825,7 @@ export function ChatWindow() {
   const contextItems = useChatContextItems(wsId, isOpen);
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
-  return (
+  const windowPanel = (
     <motion.div
       ref={windowRef}
       inert={!isOpen}
@@ -1040,6 +1041,12 @@ export function ChatWindow() {
         focusRequest={focusRequest}
       />
     </motion.div>
+  );
+  // Reply actions for HTML blocks inside this conversation (OL-1301): the
+  // panel's own handleSend carries queueing/failure handling, and the
+  // composer below consumes the fill requests this context publishes.
+  return (
+    <ChatReplyActionsProvider handleSend={handleSend}>{windowPanel}</ChatReplyActionsProvider>
   );
 }
 

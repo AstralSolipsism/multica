@@ -23,6 +23,7 @@ import { ListColumn } from "../layout/list-column";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-list";
+import { ChatReplyActionsProvider } from "./chat-reply-actions-context";
 import { ChatInput } from "./components/chat-input";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
@@ -454,7 +455,10 @@ export function ChatPage() {
               </Button>
             </div>
           )}
-          {conversation}
+          {/* Reply actions for HTML blocks in this conversation (OL-1301) */}
+          <ChatReplyActionsProvider handleSend={c.handleSend}>
+            {conversation}
+          </ChatReplyActionsProvider>
         </div>
       );
     }
@@ -484,7 +488,9 @@ export function ChatPage() {
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
         {listCollapsed && !c.currentSession && <PageHeader>{newChatButton}</PageHeader>}
         {hasTarget ? (
-          conversation
+          <ChatReplyActionsProvider handleSend={c.handleSend}>
+            {conversation}
+          </ChatReplyActionsProvider>
         ) : noAgentPage ? (
           noAgentState
         ) : (
