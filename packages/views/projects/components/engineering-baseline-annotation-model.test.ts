@@ -98,6 +98,39 @@ describe("baseline summary annotation synthesis", () => {
     });
   });
 
+  it("falls back to a real candidate heading when only the preamble is removed", () => {
+    const reviewed = {
+      ...candidate,
+      baseRevisionId: "base-1",
+      contentMarkdown: "### Retained\nKeep this section.",
+      anchorsDiff: {
+        ...emptyDiff,
+        removed: [{ anchor: "_preamble", title: "", before: "Intro", after: "", beforeChars: 5, afterChars: 0 }],
+      },
+    } as BaselineRevision;
+    expect(synthesizeBaselineReviewAnnotation(reviewed, "Clarify the introduction")).toMatchObject({
+      targetRevisionId: candidate.id, sectionAnchor: "Retained", sectionTitle: "Retained",
+    });
+  });
+
+  it("skips a deleted preamble and uses the deleted real heading", () => {
+    const reviewed = {
+      ...candidate,
+      baseRevisionId: "base-1",
+      contentMarkdown: "### Retained\nKeep this section.",
+      anchorsDiff: {
+        ...emptyDiff,
+        removed: [
+          { anchor: "_preamble", title: "", before: "Intro", after: "", beforeChars: 5, afterChars: 0 },
+          { anchor: "Rule-old", title: "Old rule", before: "Remove", after: "", beforeChars: 6, afterChars: 0 },
+        ],
+      },
+    } as BaselineRevision;
+    expect(synthesizeBaselineReviewAnnotation(reviewed, "Revise both deletions")).toMatchObject({
+      targetRevisionId: "base-1", sectionAnchor: "Rule-old", sectionTitle: "Old rule",
+    });
+  });
+
   it("skips preamble changes and uses the first editable heading", () => {
     const reviewed = {
       ...candidate,

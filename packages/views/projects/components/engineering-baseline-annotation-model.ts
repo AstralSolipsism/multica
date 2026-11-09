@@ -118,7 +118,7 @@ export function synthesizeBaselineReviewAnnotation(
       note: note.trim(),
     };
   }
-  const firstRemoved = revision.anchorsDiff.removed[0];
+  const firstRemoved = revision.anchorsDiff.removed.find((change) => change.anchor !== "_preamble");
   if (firstRemoved && revision.baseRevisionId) {
     return {
       anchorKind: "section",
