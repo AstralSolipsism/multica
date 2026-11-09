@@ -31,16 +31,41 @@ type multiHarness struct {
 	prompts       map[string]string
 	metadata      map[string]map[string]string
 	resources     map[string][]map[string]any
-	issue         string
-	downloads     map[string]string
-	uploads       int
-	mounts        map[string][]map[string]any
-	mountStatus   int
-	// resourceStatus queues one-time HTTP statuses for session resource
-	// POSTs; once empty, mounts are recorded normally.
+	// mounted models each session's mounted resources like the official API:
+	// repositories registered at creation with sesr_… ids, files appended by
+	// the add-resource endpoint, tokens updated by the per-resource endpoint.
+	mounted  map[string][]mountedResource
+	tokenLog []tokenUpdate
+	// resourcePageSize bounds GET /sessions/{id}/resources pages (default 100).
+	resourcePageSize int
+	issue            string
+	downloads        map[string]string
+	uploads          int
+	mounts           map[string][]map[string]any
+	mountStatus      int
+	// resourceStatus queues one-time HTTP statuses for credential-update
+	// POSTs; once empty, updates are recorded normally.
 	resourceStatus []int
-	// calls records attachment mounts and message sends in order.
+	// calls records credential updates, attachment mounts and message sends in order.
 	calls []string
+}
+
+type mountedResource struct {
+	id, typ, url, fileID string
+}
+
+type tokenUpdate struct {
+	session, resourceID, token string
+}
+
+// mountResource registers a created or added resource and hands out the next
+// sesr_ id.
+func (h *multiHarness) mountResource(session string, res map[string]any) {
+	id := fmt.Sprintf("sesr_%d", len(h.mounted[session])+1)
+	typ, _ := res["type"].(string)
+	url, _ := res["url"].(string)
+	fileID, _ := res["file_id"].(string)
+	h.mounted[session] = append(h.mounted[session], mountedResource{id: id, typ: typ, url: url, fileID: fileID})
 }
 
 func newTask(id, prior string) *daemon.Task {
@@ -49,7 +74,7 @@ func newTask(id, prior string) *daemon.Task {
 
 func setupMulti(t *testing.T, limit int, tasks ...*daemon.Task) *multiHarness {
 	t.Helper()
-	h := &multiHarness{queue: tasks, status: map[string]string{}, completed: map[string]map[string]any{}, failed: map[string]map[string]any{}, sessions: map[string][]map[string]any{}, sessionStatus: map[string]string{}, prompts: map[string]string{}, metadata: map[string]map[string]string{}, resources: map[string][]map[string]any{}, downloads: map[string]string{}, mounts: map[string][]map[string]any{}}
+	h := &multiHarness{queue: tasks, status: map[string]string{}, completed: map[string]map[string]any{}, failed: map[string]map[string]any{}, sessions: map[string][]map[string]any{}, sessionStatus: map[string]string{}, prompts: map[string]string{}, metadata: map[string]map[string]string{}, resources: map[string][]map[string]any{}, downloads: map[string]string{}, mounts: map[string][]map[string]any{}, mounted: map[string][]mountedResource{}}
 	taskID := func(path string) string {
 		rest := strings.TrimPrefix(path, "/api/daemon/tasks/")
 		return rest[:strings.Index(rest, "/")]
@@ -122,25 +147,84 @@ func setupMulti(t *testing.T, limit int, tasks ...*daemon.Task) *multiHarness {
 			json.NewDecoder(r.Body).Decode(&req)
 			h.metadata[id] = req.Metadata
 			h.resources[id] = req.Resources
+			for _, res := range req.Resources {
+				if typ, _ := res["type"].(string); typ == "github_repository" {
+					h.mountResource(id, res)
+				}
+			}
 			fmt.Fprintf(w, `{"id":%q}`, id)
 		case r.URL.Path == "/files" && r.Method == http.MethodPost:
 			h.uploads++
 			fmt.Fprintf(w, `{"id":"file_%d"}`, h.uploads)
 		case len(parts) == 3 && parts[2] == "resources" && r.Method == http.MethodPost:
-			if len(h.resourceStatus) > 0 {
-				status := h.resourceStatus[0]
-				h.resourceStatus = h.resourceStatus[1:]
-				w.WriteHeader(status)
+			// The official add-resource endpoint only accepts file resources.
+			var res map[string]any
+			json.NewDecoder(r.Body).Decode(&res)
+			if typ, _ := res["type"].(string); typ != "file" {
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, `{"error":{"message":"only file resources can be added"}}`)
 				return
 			}
 			if h.mountStatus != 0 {
 				w.WriteHeader(h.mountStatus)
 				return
 			}
-			var res map[string]any
-			json.NewDecoder(r.Body).Decode(&res)
 			h.mounts[parts[1]] = append(h.mounts[parts[1]], res)
+			h.mountResource(parts[1], res)
 			h.calls = append(h.calls, "mount "+parts[1])
+			io.WriteString(w, `{}`)
+		case len(parts) == 3 && parts[2] == "resources" && r.Method == http.MethodGet:
+			// The resource list pages like the event list, with opaque cursors.
+			mounted := h.mounted[parts[1]]
+			after := strings.TrimPrefix(r.URL.Query().Get("page"), "next:")
+			if after != "" {
+				for i, res := range mounted {
+					if res.id == after {
+						mounted = mounted[i+1:]
+						break
+					}
+				}
+			}
+			size := h.resourcePageSize
+			if size <= 0 {
+				size = 100
+			}
+			data := make([]map[string]string, 0, len(mounted))
+			for _, res := range mounted {
+				data = append(data, map[string]string{"id": res.id, "type": res.typ, "url": res.url})
+			}
+			page := map[string]any{"data": data, "has_more": false}
+			if len(mounted) > size {
+				page["data"] = data[:size]
+				page["has_more"] = true
+				page["next_page"] = "next:" + mounted[size-1].id
+			}
+			json.NewEncoder(w).Encode(page)
+		case len(parts) == 4 && parts[2] == "resources" && r.Method == http.MethodPost:
+			// The per-resource credential update endpoint.
+			if len(h.resourceStatus) > 0 {
+				status := h.resourceStatus[0]
+				h.resourceStatus = h.resourceStatus[1:]
+				w.WriteHeader(status)
+				return
+			}
+			var res *mountedResource
+			for i := range h.mounted[parts[1]] {
+				if h.mounted[parts[1]][i].id == parts[3] {
+					res = &h.mounted[parts[1]][i]
+					break
+				}
+			}
+			if res == nil || res.typ != "github_repository" {
+				http.NotFound(w, r)
+				return
+			}
+			var body struct {
+				AuthorizationToken string `json:"authorization_token"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			h.tokenLog = append(h.tokenLog, tokenUpdate{session: parts[1], resourceID: parts[3], token: body.AuthorizationToken})
+			h.calls = append(h.calls, "credential "+parts[1])
 			io.WriteString(w, `{}`)
 		case len(parts) == 3 && parts[2] == "events" && r.Method == http.MethodPost:
 			h.calls = append(h.calls, "send "+parts[1])
@@ -487,6 +571,9 @@ func TestFollowUpRefreshesRotatingGitHubAppCredential(t *testing.T) {
 		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
 		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
 	}
+	// The prior session already carries the mounted repository; only its
+	// credential may be updated, and only through the per-resource endpoint.
+	h.mountResource("sess_prev", map[string]any{"type": "github_repository", "url": "https://github.com/acme/app"})
 	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
 		return "ghs_fresh", 424242, nil
 	}
@@ -496,11 +583,10 @@ func TestFollowUpRefreshesRotatingGitHubAppCredential(t *testing.T) {
 	if h.creates != 0 || len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" {
 		t.Fatalf("follow-up did not continue: creates=%d sentTo=%v", h.creates, h.sentTo)
 	}
-	mounts := h.mounts["sess_prev"]
-	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_fresh" || mounts[0]["url"] != "https://github.com/acme/app" {
-		t.Fatalf("rotating credential not refreshed into the session: %v", mounts)
+	if len(h.tokenLog) != 1 || h.tokenLog[0].session != "sess_prev" || h.tokenLog[0].resourceID != "sesr_1" || h.tokenLog[0].token != "ghs_fresh" {
+		t.Fatalf("rotating credential not updated on the mounted resource: %+v", h.tokenLog)
 	}
-	if fmt.Sprint(h.calls) != "[mount sess_prev send sess_prev]" {
+	if fmt.Sprint(h.calls) != "[credential sess_prev send sess_prev]" {
 		t.Fatalf("calls: %v", h.calls)
 	}
 }
@@ -519,6 +605,7 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
 		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
 	}
+	h.mountResource("sess_prev", map[string]any{"type": "github_repository", "url": "https://github.com/acme/app"})
 	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
 		return "ghs_fresh", 424242, nil
 	}
@@ -578,11 +665,10 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 	if len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" || h.creates != 0 {
 		t.Fatalf("follow-up did not continue after retry: creates=%d sentTo=%v", h.creates, h.sentTo)
 	}
-	mounts := h.mounts["sess_prev"]
-	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_fresh" {
-		t.Fatalf("credential not refreshed on retry: %v", mounts)
+	if len(h.tokenLog) != 1 || h.tokenLog[0].session != "sess_prev" || h.tokenLog[0].resourceID != "sesr_1" || h.tokenLog[0].token != "ghs_fresh" {
+		t.Fatalf("credential not refreshed on retry: %+v", h.tokenLog)
 	}
-	if fmt.Sprint(h.calls) != "[mount sess_prev send sess_prev]" {
+	if fmt.Sprint(h.calls) != "[credential sess_prev send sess_prev]" {
 		t.Fatalf("calls: %v", h.calls)
 	}
 }
@@ -615,11 +701,11 @@ func TestRunningSessionRefreshesRotatingCredential(t *testing.T) {
 	if err := h.b.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if issued != 1 || len(h.mounts["sess_new_1"]) != 0 {
-		t.Fatalf("premature refresh: issued=%d mounts=%v", issued, h.mounts["sess_new_1"])
+	if issued != 1 || len(h.tokenLog) != 0 {
+		t.Fatalf("premature refresh: issued=%d updates=%v", issued, h.tokenLog)
 	}
-	// Past the interval the live session receives a fresh token, without a
-	// new session or message.
+	// Past the interval the live session receives a fresh token on its
+	// mounted repository, without a new session or message.
 	run.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval - time.Minute)
 	if err := h.b.step(context.Background()); err != nil {
 		t.Fatal(err)
@@ -627,9 +713,8 @@ func TestRunningSessionRefreshesRotatingCredential(t *testing.T) {
 	if issued != 2 || h.creates != 1 || len(h.sentTo) != 1 {
 		t.Fatalf("refresh spawned work: issued=%d creates=%d sentTo=%v", issued, h.creates, h.sentTo)
 	}
-	mounts := h.mounts["sess_new_1"]
-	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_second" {
-		t.Fatalf("live session not refreshed: %v", mounts)
+	if len(h.tokenLog) != 1 || h.tokenLog[0].session != "sess_new_1" || h.tokenLog[0].resourceID != "sesr_1" || h.tokenLog[0].token != "ghs_second" {
+		t.Fatalf("live session not refreshed: %+v", h.tokenLog)
 	}
 }
 
@@ -643,6 +728,7 @@ func TestDeferredRefreshFallsBackToFreshSession(t *testing.T) {
 	h := setupMulti(t, 1, task)
 	chatFollowUp(h, [3]string{"notes.md", "text/markdown", "hello"})
 	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.mountResource("sess_prev", map[string]any{"type": "github_repository", "url": "https://github.com/acme/app"})
 	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
 		return "ghs_fresh", 424242, nil
 	}
@@ -670,6 +756,64 @@ func TestDeferredRefreshFallsBackToFreshSession(t *testing.T) {
 	// The attachment came with the created session, not remounted.
 	if len(h.mounts["sess_new_1"]) != 0 || len(h.resources["sess_new_1"]) != 2 {
 		t.Fatalf("files mounted twice: mounts=%v resources=%v", h.mounts["sess_new_1"], h.resources["sess_new_1"])
+	}
+}
+
+// The repository can sit beyond the first page of the session's resource
+// list; the refresh must follow the cursor instead of missing it.
+func TestFollowUpRefreshFindsRepositoryBeyondFirstPage(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	h.sessionStatus["sess_prev"] = "idle"
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.sessions["sess_prev"] = []map[string]any{
+		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
+		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
+	}
+	h.mountResource("sess_prev", map[string]any{"type": "file", "file_id": "file_earlier"})
+	h.mountResource("sess_prev", map[string]any{"type": "github_repository", "url": "https://github.com/acme/app"})
+	h.resourcePageSize = 1
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "ghs_fresh", 424242, nil
+	}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.creates != 0 || len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" {
+		t.Fatalf("follow-up did not continue: creates=%d sentTo=%v", h.creates, h.sentTo)
+	}
+	if len(h.tokenLog) != 1 || h.tokenLog[0].resourceID != "sesr_2" || h.tokenLog[0].token != "ghs_fresh" {
+		t.Fatalf("paged repository not refreshed: %+v", h.tokenLog)
+	}
+}
+
+// A prior session that no longer carries the mounted repository cannot take
+// the credential update; the follow-up starts a fresh session instead of
+// reusing it with a stale credential.
+func TestFollowUpStartsFreshWhenRepositoryUnmounted(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	h.sessionStatus["sess_prev"] = "idle"
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.sessions["sess_prev"] = []map[string]any{
+		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
+		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
+	}
+	// No github_repository mounted on the prior session.
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "ghs_fresh", 424242, nil
+	}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := h.b.state.first()
+	if h.creates != 1 || run.Continued || len(h.tokenLog) != 0 {
+		t.Fatalf("unmounted repository not refused: creates=%d continued=%v updates=%v", h.creates, run.Continued, h.tokenLog)
+	}
+	if len(h.sentTo) != 1 || h.sentTo[0] != "sess_new_1" {
+		t.Fatalf("fresh session did not take over: %v", h.sentTo)
 	}
 }
 

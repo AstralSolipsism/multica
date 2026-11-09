@@ -679,34 +679,115 @@ func (b *Bridge) continueSession(ctx context.Context, r *run, fingerprint string
 	return true, nil
 }
 
+// errRefreshDeferred and errRefreshRefused classify a repository credential
+// refresh: the session's provider asked us to retry later, or refused the
+// update (including a repository that is no longer mounted), respectively.
+var (
+	errRefreshDeferred = errors.New("session resource update rate limited")
+	errRefreshRefused  = errors.New("session refused the repository credential update")
+)
+
+// sessionRepositoryResourceID finds the mounted-resource ID of one GitHub
+// repository in a session, following the resource list's pagination.
+func (b *Bridge) sessionRepositoryResourceID(ctx context.Context, sessionID, key string) (string, error) {
+	page := ""
+	for range 100 {
+		path := "/sessions/" + url.PathEscape(sessionID) + "/resources"
+		if page != "" {
+			path += "?page=" + url.QueryEscape(page)
+		}
+		var response struct {
+			Data []struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+				URL  string `json:"url"`
+			} `json:"data"`
+			NextPage string `json:"next_page"`
+		}
+		if err := b.qoder.call(ctx, http.MethodGet, path, nil, &response); err != nil {
+			return "", err
+		}
+		for _, resource := range response.Data {
+			if resource.Type != "github_repository" {
+				continue
+			}
+			if candidate, err := repositoryKey(resource.URL); err == nil && candidate == key {
+				return resource.ID, nil
+			}
+		}
+		if response.NextPage == "" {
+			return "", nil
+		}
+		page = response.NextPage
+	}
+	return "", fmt.Errorf("session resource list did not settle")
+}
+
+// refreshRepositoryCredentials pushes fresh tokens into a session's mounted
+// repositories. The add-resource endpoint only accepts files, so an existing
+// repository is updated through its per-resource credential endpoint, matched
+// by canonical repository URL so a token never lands on another resource.
+func (b *Bridge) refreshRepositoryCredentials(ctx context.Context, sessionID string, resources []map[string]any) error {
+	for i := range resources {
+		raw, _ := resources[i]["url"].(string)
+		key, err := repositoryKey(raw)
+		if err != nil {
+			return fmt.Errorf("refresh session repository credential: %w", err)
+		}
+		token, _ := resources[i]["authorization_token"].(string)
+		resourceID, err := b.sessionRepositoryResourceID(ctx, sessionID, key)
+		if err != nil {
+			if rateLimited(err) {
+				return errRefreshDeferred
+			}
+			if definitelyRejected(err) {
+				return errRefreshRefused
+			}
+			return err
+		}
+		if resourceID == "" {
+			return errRefreshRefused
+		}
+		err = b.qoder.call(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sessionID)+"/resources/"+url.PathEscape(resourceID), map[string]string{"authorization_token": token}, nil)
+		if err != nil {
+			if rateLimited(err) {
+				return errRefreshDeferred
+			}
+			if definitelyRejected(err) {
+				return errRefreshRefused
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 // refreshSessionResources updates the repository credentials of a reused
 // session. It runs while the run is still "prepared": a rate limit defers via
-// r.RetryAt (persisted), a definite refusal resets the run to start a fresh
-// session, and only full success marks r.ResourcesRefreshed. The caller flips
-// the phase to "created" afterwards, so no message can outrun a pending or
-// failed refresh.
+// r.RetryAt (persisted), a refusal — including a repository no longer mounted
+// there — resets the run to start a fresh session, and only full success marks
+// r.ResourcesRefreshed. The caller flips the phase to "created" afterwards, so
+// no message can outrun a pending or failed refresh.
 func (b *Bridge) refreshSessionResources(ctx context.Context, r *run, resources []map[string]any) error {
 	if r.ResourcesRefreshed {
 		return nil
 	}
-	for i := range resources {
-		err := b.qoder.call(ctx, http.MethodPost, "/sessions/"+url.PathEscape(r.SessionID)+"/resources", resources[i], nil)
-		if rateLimited(err) {
-			r.RetryAt = time.Now().Add(30 * time.Second)
-			return b.persist()
-		}
-		if definitelyRejected(err) {
-			r.SessionID, r.PriorSessionID, r.Continued = "", "", false
-			r.Credits = runCredits{}
-			r.MountedFiles = 0
-			return b.persist()
-		}
-		if err != nil {
-			return err
-		}
+	err := b.refreshRepositoryCredentials(ctx, r.SessionID, resources)
+	switch {
+	case err == nil:
+		r.ResourcesRefreshed = true
+		return b.persist()
+	case errors.Is(err, errRefreshDeferred):
+		r.RetryAt = time.Now().Add(30 * time.Second)
+		return b.persist()
+	case errors.Is(err, errRefreshRefused):
+		r.SessionID, r.PriorSessionID, r.Continued = "", "", false
+		r.Credits = runCredits{}
+		r.MountedFiles = 0
+		return b.persist()
+	default:
+		return err
 	}
-	r.ResourcesRefreshed = true
-	return b.persist()
 }
 
 // credentialRefreshInterval is how long a run waits before re-issuing a
@@ -738,16 +819,13 @@ func (b *Bridge) refreshRunningCredentials(ctx context.Context, r *run) error {
 		r.RotatingCredentials = false
 		return b.persist()
 	}
-	for i := range resources {
-		err := b.qoder.call(ctx, http.MethodPost, "/sessions/"+url.PathEscape(r.SessionID)+"/resources", resources[i], nil)
-		if err != nil {
-			b.log.WarnContext(ctx, "Qoder credential refresh push failed", "task_id", r.TaskID, "error", err)
-			r.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval + time.Minute)
-			if definitelyRejected(err) {
-				r.CredentialRefreshDisabled = true
-			}
-			return b.persist()
+	if err := b.refreshRepositoryCredentials(ctx, r.SessionID, resources); err != nil {
+		b.log.WarnContext(ctx, "Qoder credential refresh push failed", "task_id", r.TaskID, "error", err)
+		r.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval + time.Minute)
+		if errors.Is(err, errRefreshRefused) {
+			r.CredentialRefreshDisabled = true
 		}
+		return b.persist()
 	}
 	r.CredentialIssuedAt = time.Now()
 	return b.persist()
