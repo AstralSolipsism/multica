@@ -90,6 +90,29 @@ describe("matchAttachmentByURL", () => {
   it("returns undefined for unrelated URLs", () => {
     expect(matchAttachmentByURL("https://example.com/x.png", [a])).toBeUndefined();
   });
+
+  it("falls back to relative filename matching for attached files", () => {
+    const failShot = attachment({ id: UUID_A, filename: "s-fail.png" });
+    const unicodeShot = attachment({ id: UUID_B, filename: "图 v2.png" });
+    const list = [failShot, unicodeShot];
+
+    expect(matchAttachmentByURL("s-fail.png", list)).toBe(failShot);
+    expect(matchAttachmentByURL("./s-fail.png", list)).toBe(failShot);
+    expect(matchAttachmentByURL("screenshots/s-fail.png", list)).toBe(failShot);
+    expect(matchAttachmentByURL("%E5%9B%BE%20v2.png", list)).toBe(unicodeShot);
+
+    // Site-relative, scheme-bearing, and traversal URLs must not match by filename.
+    expect(matchAttachmentByURL("/s-fail.png", list)).toBeUndefined();
+    expect(matchAttachmentByURL("https://example.com/s-fail.png", list)).toBeUndefined();
+    expect(matchAttachmentByURL("file:///tmp/s-fail.png", list)).toBeUndefined();
+    expect(matchAttachmentByURL("../s-fail.png", list)).toBeUndefined();
+
+    // Ambiguous duplicate basenames without a unique exact path match return undefined instead of guessing.
+    const dupA = attachment({ id: UUID_A, filename: "shot.png" });
+    const dupB = attachment({ id: UUID_B, filename: "shot.png" });
+    expect(matchAttachmentByURL("before/shot.png", [dupA, dupB])).toBeUndefined();
+    expect(matchAttachmentByURL("shot.png", [dupA, dupB])).toBeUndefined();
+  });
 });
 
 describe("selectStandaloneAttachments", () => {
@@ -99,6 +122,18 @@ describe("selectStandaloneAttachments", () => {
     const content = `![](/api/attachments/${UUID_A}/download)`;
     expect(
       selectStandaloneAttachments(content, [inline, alone]).map((a) => a.id),
+    ).toEqual([UUID_B]);
+  });
+
+  it("drops attachments referenced inline by relative filename without hiding prose or code mentions", () => {
+    const inlineRel = attachment({ id: UUID_A, filename: "s-fail.png" });
+    const proseMentioned = attachment({ id: UUID_B, filename: "alone.png" });
+    const content = [
+      "See alone.png and `![code](alone.png)` below:",
+      "![决策失败](./s-fail.png)",
+    ].join("\n\n");
+    expect(
+      selectStandaloneAttachments(content, [inlineRel, proseMentioned]).map((a) => a.id),
     ).toEqual([UUID_B]);
   });
 
