@@ -59,6 +59,8 @@
     "preview_failed": "Impossible de charger l'aperçu",
     "preview_too_large": "Le fichier est trop volumineux pour un aperçu. Veuillez le télécharger.",
     "preview_unsupported": "Ce type de fichier ne peut pas être prévisualisé.",
+    "preview_after_reply": "L'aperçu se charge une fois la réponse terminée.",
+    "preview_attachment_missing": "Impossible de trouver la pièce jointe HTML \"{{filename}}\" dans ce commentaire ou cette réponse.",
     "close": "Fermer",
     "open_in_new_tab": "Ouvrir dans un nouvel onglet",
     "remove": "Supprimer la pièce jointe",

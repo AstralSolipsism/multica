@@ -59,6 +59,8 @@
     "preview_failed": "プレビューを読み込めませんでした",
     "preview_too_large": "ファイルが大きすぎてプレビューできません。ダウンロードしてください。",
     "preview_unsupported": "このファイル形式はプレビューできません。",
+    "preview_after_reply": "返信が完了するとプレビューを読み込みます。",
+    "preview_attachment_missing": "このコメントまたは返信に HTML 添付ファイル \"{{filename}}\" が見つかりません。",
     "close": "閉じる",
     "open_in_new_tab": "新しいタブで開く",
     "remove": "添付ファイルを削除",

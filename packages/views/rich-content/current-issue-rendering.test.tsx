@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { act, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { Issue } from "@multica/core/types";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Attachment, Issue } from "@multica/core/types";
+import { api } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider } from "../navigation/context";
 import type { NavigationAdapter } from "../navigation/types";
@@ -70,6 +72,7 @@ vi.mock("mermaid", () => ({
 }));
 
 import { RichContent } from "./rich-content";
+import { HTML_BLOCK_MESSAGE_KEY } from "../editor/utils/html-block-document";
 
 const APP_ORIGIN = "https://app.example";
 const CURRENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -145,6 +148,10 @@ beforeEach(() => {
   resolvedIssues.other = makeIssue(OTHER_ID, "MUL-8");
 });
 
+afterEach(() => {
+  Reflect.deleteProperty(navigator, "userActivation");
+});
+
 describe("RichContent current-issue rendering", () => {
   it("marks only the current UUID mention in a paragraph with two other references as current", () => {
     renderContent(CURRENT_CONTEXT);
@@ -190,5 +197,49 @@ describe("RichContent current-issue rendering", () => {
     for (const chip of chips) {
       expect(chip).toHaveAttribute("data-current", "false");
     }
+  });
+
+  it("submits a src-backed HTML block through the current issue's comment callback", async () => {
+    const submitComment = vi.fn().mockResolvedValue(true);
+    const attachment = {
+      id: "att-issue",
+      filename: "decision.html",
+      content_type: "text/html",
+      created_at: "2026-11-09T01:00:00Z",
+    } as Attachment;
+    vi.mocked(api.getAttachmentTextContent).mockResolvedValue({
+      text: "<h1>Issue attachment</h1>",
+      originalContentType: "text/html",
+    });
+    Object.defineProperty(navigator, "userActivation", {
+      configurable: true,
+      value: { isActive: true },
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    renderWithI18n(
+      <QueryClientProvider client={client}>
+        <NavigationProvider value={adapter()}>
+          <CurrentIssueRenderContextProvider value={{ ...CURRENT_CONTEXT, submitComment }}>
+            <RichContent
+              content={'```html src="decision.html"\n<p>fallback</p>\n```'}
+              attachments={[attachment]}
+            />
+          </CurrentIssueRenderContextProvider>
+        </NavigationProvider>
+      </QueryClientProvider>,
+    );
+
+    const frame = await screen.findByTitle<HTMLIFrameElement>("HTML preview");
+    expect(frame.getAttribute("srcdoc")).toContain("Issue attachment");
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { [HTML_BLOCK_MESSAGE_KEY]: 1, type: "submit-comment", content: "approved" },
+        source: frame.contentWindow,
+      }));
+    });
+
+    expect(submitComment).toHaveBeenCalledExactlyOnceWith("approved");
   });
 });

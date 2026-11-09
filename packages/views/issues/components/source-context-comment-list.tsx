@@ -85,7 +85,7 @@ export function SourceContextCommentList({
                 {comment.deleted === true ? (
                   <p className="italic text-muted-foreground">{t(($) => $.comment.deleted_placeholder)}</p>
                 ) : (
-                  <ReadonlyContent content={comment.content} />
+                  <ReadonlyContent content={comment.content} attachments={comment.attachments} />
                 )}
               </div>
             </div>

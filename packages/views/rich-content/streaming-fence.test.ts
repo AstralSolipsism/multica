@@ -105,11 +105,11 @@ describe("computeClosedFences", () => {
 describe("fence titles", () => {
   it("reads the title attribute from a closed fence's info string", () => {
     const src = '```html title="Weekly p95"\n<b>x</b>\n```\n';
-    expect(computeClosedFences(src).get(0)).toEqual({ title: "Weekly p95" });
+    expect(computeClosedFences(src).get(0)).toEqual({ title: "Weekly p95", src: null });
   });
 
   it("has no title when the info string carries none", () => {
-    expect(computeClosedFences("```html\n<b>x</b>\n```\n").get(0)).toEqual({ title: null });
+    expect(computeClosedFences("```html\n<b>x</b>\n```\n").get(0)).toEqual({ title: null, src: null });
   });
 
   it("accepts double, single and bare values", () => {
@@ -119,5 +119,29 @@ describe("fence titles", () => {
     expect(parseFenceTitle('subtitle="nope"')).toBeNull();
     expect(parseFenceTitle('title="  "')).toBeNull();
     expect(parseFenceTitle(null)).toBeNull();
+  });
+});
+
+describe("fence attachment sources", () => {
+  it.each([
+    ['src="decision.html" title="Decision"', "decision.html", "Decision"],
+    ["title='Decision' src='decision.html'", "decision.html", "Decision"],
+    ["src=decision.html title=Decision", "decision.html", "Decision"],
+  ])("parses %s", (meta, src, title) => {
+    const source = `\`\`\`html ${meta}\n<p>fallback</p>\n\`\`\`\n`;
+    expect(computeClosedFences(source).get(0)).toEqual({ title, src });
+  });
+
+  it("does not parse a prefixed attribute or an empty source", () => {
+    expect(computeClosedFences('```html data-src="other.html"\n\n```').get(0)?.src).toBeNull();
+    expect(computeClosedFences('```html src="  "\n\n```').get(0)?.src).toBeNull();
+  });
+
+  it("does not treat src text inside a quoted title as an attribute", () => {
+    const source = '```html title=\'Decision src="decision.html"\'\n<p>inline</p>\n```\n';
+    expect(computeClosedFences(source).get(0)).toEqual({
+      title: 'Decision src="decision.html"',
+      src: null,
+    });
   });
 });
