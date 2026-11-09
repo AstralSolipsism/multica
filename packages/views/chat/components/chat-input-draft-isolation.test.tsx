@@ -39,6 +39,7 @@ const editorState = vi.hoisted(() => ({
   uploadingNodes: [] as Array<{ attrs: { uploading?: boolean } }>,
 }));
 const editorInstance = vi.hoisted<{ current: unknown }>(() => ({ current: null }));
+const mockEditorFocus = vi.hoisted(() => vi.fn());
 const onCreateFired = vi.hoisted(() => ({ value: false }));
 const transactionListeners = vi.hoisted(() => ({ current: [] as Array<() => void> }));
 const latestEditorOptions = vi.hoisted<{
@@ -109,8 +110,7 @@ vi.mock("@tiptap/react", () => ({
           return editorState.isDestroyed;
         },
         commands: {
-          focus: vi.fn(),
-          blur: vi.fn(),
+          focus: mockEditorFocus,
           clearContent: vi.fn(() => {
             editorState.markdown = "";
           }),
@@ -186,6 +186,7 @@ vi.mock("@multica/core/chat", () => {
 
 import { ChatInput } from "./chat-input";
 import { useChatStore } from "@multica/core/chat";
+import { ChatReplyActionsProvider, useChatReplyActions } from "../chat-reply-actions-context";
 
 const TEST_RESOURCES = { en: { common: enCommon, chat: enChat, editor: enEditor } };
 
@@ -278,6 +279,7 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     onCreateFired.value = false;
     latestEditorOptions.current = undefined;
     mockSetContent.mockClear();
+    mockEditorFocus.mockClear();
     const s = store();
     s.activeSessionId = null;
     s.selectedAgentId = "agent-1";
@@ -505,17 +507,39 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     });
   });
 
-  it("does not strand the last keystrokes when a lazy session create re-keys the draft mid-compose", () => {
-    // First send / first upload in a New Chat flips activeSessionId null → uuid
-    // under a live editor. Those bytes were typed in the New Chat slot, so they
-    // must land there, not be dropped or filed under the new session.
-    const { rerender } = render(element());
-    type("creating a session with this");
 
-    store().activeSessionId = "session-new";
-    rerender(element());
+  it("replaces unflushed typing when a card fills the compose draft", () => {
+    // The chat fill action (chat-reply-actions-context) must land through
+    // adoptContent: the synchronized `value` path would SKIP permanently while
+    // the editor is focused-and-dirty — precisely the state below, where the
+    // debounce from `type()` has not fired yet.
+    const fill: { current: (() => void) | null } = { current: null };
+    const onSend = vi.fn().mockResolvedValue(true);
+    function FillProbe() {
+      const chat = useChatReplyActions();
+      fill.current = chat ? () => chat.fill("card answer") : null;
+      return null;
+    }
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatReplyActionsProvider handleSend={onSend}>
+          <FillProbe />
+          <ChatInput onSend={onSend} agentName="Multica" />
+        </ChatReplyActionsProvider>
+      </I18nProvider>,
+    );
+    type("unfinished local text");
 
-    expect(store().inputDrafts["__new__"]).toBe("creating a session with this");
-    expect(store().inputDrafts["session-new"]).toBeUndefined();
+    act(() => fill.current!());
+
+    // The draft slot holds the card's answer, the document was force-adopted
+    // past the dirty guard, and the composer took focus for the next keystroke.
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
+    expect(mockSetContent).toHaveBeenCalledWith("card answer", {
+      emitUpdate: false,
+      contentType: "markdown",
+    });
+    expect(mockEditorFocus).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

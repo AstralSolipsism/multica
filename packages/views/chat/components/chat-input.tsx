@@ -22,6 +22,7 @@ import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { ChatAddMenu } from "./chat-add-menu";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { useChatStore, DRAFT_NEW_SESSION } from "@multica/core/chat";
+import { useChatReplyAdoptRequest } from "../chat-reply-actions-context";
 import { attachmentToDraftUpload, type DraftUpload } from "@multica/core/drafts";
 import { createLogger } from "@multica/core/logger";
 import { useShortcut } from "@multica/core/shortcuts";
@@ -646,6 +647,28 @@ export function ChatInput({
     submitting,
     t,
   ]);
+
+  // A card's fill action replaces the draft wholesale — same semantics as the
+  // issue composer's adoptContent path. The write must go through
+  // `adoptContent`, not the synchronized `value`: ContentEditor's sync effect
+  // SKIPS (permanently, see its guards) an external value while the editor
+  // holds unflushed keystrokes, and those bytes are exactly what a decision
+  // card asks to replace. Each request id is applied once; a locked composer
+  // (mid-send) consumes it silently — the card stays clickable for a retry.
+  const adoptRequest = useChatReplyAdoptRequest();
+  const appliedAdoptIdRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!adoptRequest || appliedAdoptIdRef.current === adoptRequest.id) return;
+    appliedAdoptIdRef.current = adoptRequest.id;
+    if (submitting) return;
+    commitDraft(draftKey, adoptRequest.content);
+    // While an upload pins the editor to another draft, only the store write
+    // lands; the deferred switch adopts this slot's draft once it settles.
+    if (editorDraftKeyRef.current !== draftKey) return;
+    editorRef.current?.adoptContent(adoptRequest.content);
+    setIsEmpty(!adoptRequest.content.trim());
+    editorRef.current?.focus();
+  }, [adoptRequest, commitDraft, draftKey, submitting]);
 
   const placeholder = agentAccessRevoked
     ? t(($) => $.input.placeholder_access_revoked)
