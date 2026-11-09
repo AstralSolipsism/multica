@@ -587,6 +587,92 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 	}
 }
 
+// A run whose rotating GitHub App credential ages past the refresh interval
+// re-issues it and pushes the fresh token into the live session, so git work
+// after the token's one-hour lifetime still succeeds.
+func TestRunningSessionRefreshesRotatingCredential(t *testing.T) {
+	task := newTask("task-1", "")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	issued := 0
+	tokens := []string{"ghs_first", "ghs_second"}
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		token := tokens[issued]
+		issued++
+		return token, 424242, nil
+	}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := h.b.state.first()
+	if run == nil || run.Phase != "running" || !run.RotatingCredentials || run.CredentialIssuedAt.IsZero() {
+		t.Fatalf("run did not start with a rotating credential: %#v", run)
+	}
+	if h.resources["sess_new_1"][0]["authorization_token"] != "ghs_first" {
+		t.Fatalf("creation credential: %v", h.resources["sess_new_1"])
+	}
+	// A fresh issuance is not due yet: no refresh, no extra issuance.
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 1 || len(h.mounts["sess_new_1"]) != 0 {
+		t.Fatalf("premature refresh: issued=%d mounts=%v", issued, h.mounts["sess_new_1"])
+	}
+	// Past the interval the live session receives a fresh token, without a
+	// new session or message.
+	run.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval - time.Minute)
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 2 || h.creates != 1 || len(h.sentTo) != 1 {
+		t.Fatalf("refresh spawned work: issued=%d creates=%d sentTo=%v", issued, h.creates, h.sentTo)
+	}
+	mounts := h.mounts["sess_new_1"]
+	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_second" {
+		t.Fatalf("live session not refreshed: %v", mounts)
+	}
+}
+
+// When a deferred credential refresh outlives the prior session (it stopped
+// being idle), the follow-up starts a clean fresh session: the new session is
+// not treated as continued, so its files are mounted exactly once and the
+// stale credit base of the dead session is dropped.
+func TestDeferredRefreshFallsBackToFreshSession(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	chatFollowUp(h, [3]string{"notes.md", "text/markdown", "hello"})
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "ghs_fresh", 424242, nil
+	}
+	h.resourceStatus = []int{http.StatusTooManyRequests}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := h.b.state.first()
+	if run == nil || run.Phase != "prepared" || !run.Continued || len(h.sentTo) != 0 || len(h.calls) != 0 {
+		t.Fatalf("refresh was not deferred: %#v calls=%v", run, h.calls)
+	}
+	// The prior session becomes busy during the backoff window.
+	h.sessionStatus["sess_prev"] = "running"
+	run.RetryAt = time.Now().Add(-time.Second)
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run = h.b.state.first()
+	if run == nil || run.Continued || run.SessionID != "sess_new_1" || run.Credits.Base != nil {
+		t.Fatalf("fresh session carries continued state: %#v", run)
+	}
+	if h.creates != 1 || fmt.Sprint(h.calls) != "[send sess_new_1]" {
+		t.Fatalf("fresh session not clean: creates=%d calls=%v", h.creates, h.calls)
+	}
+	// The attachment came with the created session, not remounted.
+	if len(h.mounts["sess_new_1"]) != 0 || len(h.resources["sess_new_1"]) != 2 {
+		t.Fatalf("files mounted twice: mounts=%v resources=%v", h.mounts["sess_new_1"], h.resources["sess_new_1"])
+	}
+}
+
 // Once the workspace installation no longer covers the repository, the
 // pre-run credential re-resolution rejects the follow-up instead of reusing
 // the idle session with a stale credential.

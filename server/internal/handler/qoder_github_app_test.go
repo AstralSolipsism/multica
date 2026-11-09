@@ -108,6 +108,32 @@ func TestIssueQoderRepositoryTokenNotCovered(t *testing.T) {
 	}
 }
 
+// GitHub's two 422 refusals mean different things: ungranted permissions are
+// an operator-actionable configuration gap, while a repository the
+// installation cannot see is plain "not covered". Conflating them sends the
+// admin hunting for a missing repository when the App needs permissions.
+func TestIssueQoderRepositoryTokenPermissionRefusal(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	message := "The repository acme/app was not found in the installation."
+	withQoderGitHubApp(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"message": message})
+	})
+	_, _, err := testHandler.issueQoderRepositoryToken(context.Background(), testWorkspaceID, "acme", "app")
+	if !errors.Is(err, qoderruntime.ErrGitHubAppNotCovered) {
+		t.Fatalf("repository refusal: err=%v", err)
+	}
+	message = "The permissions requested are not granted to this installation."
+	_, _, err = testHandler.issueQoderRepositoryToken(context.Background(), testWorkspaceID, "acme", "app")
+	if !errors.Is(err, qoderruntime.ErrGitHubAppPermissions) {
+		t.Fatalf("permission refusal: err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "approve Contents and Pull requests write access") {
+		t.Fatalf("permission refusal is not actionable: %v", err)
+	}
+}
+
 // A GitHub response whose repositories do not confirm the requested single
 // repository is a boundary violation; no token is handed out.
 func TestIssueQoderRepositoryTokenRejectsWiderScope(t *testing.T) {

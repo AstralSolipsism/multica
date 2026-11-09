@@ -2,6 +2,7 @@ package qoderruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,6 +120,21 @@ func TestGitHubAppCredentialIssuerScope(t *testing.T) {
 	}
 	if len(requested) != 1 || requested[0] != [2]string{"acme", "app"} {
 		t.Fatalf("issuer not scoped to the target repository: %v", requested)
+	}
+}
+
+// An App that is installed without the repository write permissions surfaces
+// the operator-actionable message, not the generic "no credential" one.
+func TestGitHubAppPermissionErrorIsActionable(t *testing.T) {
+	b := &Bridge{cfg: Config{GitHubAppToken: func(context.Context, string, string) (string, int64, error) {
+		return "", 0, fmt.Errorf("issue token: %w", ErrGitHubAppPermissions)
+	}}}
+	_, _, _, err := b.sessionResources(context.Background(), []map[string]any{{"url": "https://github.com/acme/app"}})
+	if !errors.Is(err, ErrGitHubAppPermissions) {
+		t.Fatalf("sentinel lost: %v", err)
+	}
+	if !strings.Contains(err.Error(), "approve Contents and Pull requests write access") || strings.Contains(err.Error(), "no GitHub credential configured") {
+		t.Fatalf("not actionable or misclassified: %v", err)
 	}
 }
 

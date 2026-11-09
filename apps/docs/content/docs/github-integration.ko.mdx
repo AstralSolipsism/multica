@@ -147,7 +147,8 @@ Repository permissions:
 | 권한 | 수준 |
 |---|---|
 | Metadata | Read-only |
-| Pull requests | Read-only |
+| Contents | Read & write. Qoder Cloud Agents가 저장소를 clone하고 브랜치를 push하는 데 필요 |
+| Pull requests | Read & write. PR 연결에는 읽기로 충분하고 쓰기는 Qoder Cloud Agents용 |
 | Checks | Read-only. CI 상태 표시에 사용 |
 | Commit statuses | Read-only. legacy status 형식의 CI 집계에 사용 |
 | Actions | 선택 사항. Read-only. 같은 커밋에서 같은 워크플로의 새 실행으로 대체된, 취소된 실행을 CI 상태에서 제외하는 데 사용 |
@@ -157,7 +158,7 @@ Repository permissions:
 - **Pull request**
 - CI와 merge 가능 여부 새로 고침을 트리거할 **Check suite**, **Check run**, **Status**
 
-PR snapshot은 Pull requests, Checks 및 Commit statuses REST API로 가져옵니다. Contents 권한은 필요하지 않습니다. 선택 사항인 Actions 권한을 부여하면 해당 커밋의 워크플로 실행도 읽습니다. 부여하지 않으면 같은 워크플로의 새 실행이 통과해도 취소된 이전 실행은 실패로 계산됩니다.
+PR snapshot은 Pull requests, Checks 및 Commit statuses REST API로 가져오며, 이 용도에는 읽기 권한으로 충분합니다. Contents와 Pull requests의 쓰기 권한은 Qoder Cloud Agents 자동 승인용입니다. 이 App가 발급하는 단일 저장소 한정 단기 토큰으로 저장소를 마운트하고 브랜치를 push합니다. 이 런타임을 사용하지 않는다면 두 권한을 읽기 전용으로 되돌릴 수 있습니다. 설치된 App에 권한을 추가한 뒤에는 각 installation owner가 GitHub에서 승인해야 적용됩니다. 선택 사항인 Actions 권한을 부여하면 해당 커밋의 워크플로 실행도 읽습니다. 부여하지 않으면 같은 워크플로의 새 실행이 통과해도 취소된 이전 실행은 실패로 계산됩니다.
 
 <Callout type="warning">
 여기에는 OAuth Client secret이 아니라 **Webhook secret**이 필요합니다. 양쪽에 입력한 Webhook secret이 다르면 GitHub delivery가 `401 invalid signature`를 반환합니다.
@@ -212,7 +213,8 @@ API 서비스를 다시 시작한 뒤 **설정 → 코드**에서 연결을 완�
 - **Webhook이 401을 반환함**: GitHub App과 API가 같은 Webhook secret을 사용하는지 확인하고 GitHub의 **Recent Deliveries**에서 다시 전달합니다.
 - **PR이 연결되지 않음**: 저장소가 App 승인 범위에 있는지, 자동 연결이 켜져 있는지, 번호가 현재 워크스페이스에 속하는지, 누군가 태스크에서 PR을 제거하지 않았는지 확인합니다.
 - **본문에 번호를 썼는데 연결되지 않음**: `Closes MUL-123`을 사용하거나, 번호를 브랜치 이름이나 PR 제목에 넣거나, 직접 연결합니다.
-- **CI 상태가 없음**: `GITHUB_APP_ID`와 `GITHUB_APP_PRIVATE_KEY`가 설정되었는지, App에 Pull requests, Checks 및 Commit statuses 읽기 권한이 있고 관련 이벤트를 구독했는지 확인합니다. Contents 권한은 필요하지 않습니다. 설치된 App에 권한을 추가한 뒤에는 각 installation owner가 GitHub에서 승인해야 적용됩니다.
+- **CI 상태가 없음**: `GITHUB_APP_ID`와 `GITHUB_APP_PRIVATE_KEY`가 설정되었는지, App에 Pull requests, Checks 및 Commit statuses 읽기 권한이 있고 관련 이벤트를 구독했는지 확인합니다. PR 연결과 CI 상태에는 읽기 권한으로 충분합니다. 설치된 App에 권한을 추가한 뒤에는 각 installation owner가 GitHub에서 승인해야 적용됩니다.
+- **Qoder 실행이 "workspace GitHub App has not granted repository write permissions"로 실패함**: 해당 installation이 쓰기 권한 추가 이전에 설치되었습니다. GitHub App에서 Contents와 Pull requests를 Read & write로 변경하고 각 installation owner가 GitHub에서 승인하게 하거나, 해당 저장소의 Qoder Cloud Agents 설정에 수동 토큰을 등록하세요.
 - **PR merge 후 태스크 상태가 바뀌지 않음**: 태스크의 **Pull requests** 목록 아래 설명을 확인합니다. 아직 merge되지 않았거나 merge 없이 닫힌 PR이 있는지, 또는 이 태스크가 PR 병합 후에도 상태를 유지하도록 설정되어 있는지 알려 줍니다. 설명이 없으면 워크스페이스가 **변경하지 않음**으로 설정되어 있거나 태스크가 이미 대상 상태입니다.
 
 ## 다음 단계

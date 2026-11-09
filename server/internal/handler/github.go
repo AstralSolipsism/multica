@@ -976,6 +976,9 @@ func (h *Handler) issueQoderRepositoryToken(ctx context.Context, workspaceID, ow
 		if errors.Is(err, errGitHubRepositoryNotCovered) {
 			continue
 		}
+		if errors.Is(err, errGitHubAppPermissionsNotGranted) {
+			return "", 0, qoderruntime.ErrGitHubAppPermissions
+		}
 		return "", 0, err
 	}
 	return "", 0, qoderruntime.ErrGitHubAppNotCovered
@@ -985,6 +988,11 @@ func (h *Handler) issueQoderRepositoryToken(ctx context.Context, workspaceID, ow
 // endpoint: the installation exists but does not include the repository (for
 // example a selected-repositories installation or a revoked grant).
 var errGitHubRepositoryNotCovered = errors.New("github app installation does not include the repository")
+
+// errGitHubAppPermissionsNotGranted marks GitHub's 422 reply when the token
+// request asks for permissions the installation never granted. That is an
+// operator-actionable configuration gap, not a missing repository.
+var errGitHubAppPermissionsNotGranted = errors.New("github app installation has not granted the requested permissions")
 
 // createRepositoryInstallationToken creates a 1-hour installation access
 // token locked to a single repository with the minimum permissions remote
@@ -1011,12 +1019,25 @@ func createRepositoryInstallationToken(ctx context.Context, appJWT string, insta
 	req.Header.Set("Content-Type", "application/json")
 	res, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("create repository installation token: %w", err)
+		// The wrapped *url.Error embeds the endpoint (and with it the
+		// admin-only installation id); keep that out of member-visible
+		// task failures and log it instead.
+		slog.WarnContext(ctx, "github: create repository installation token request failed", "error", err)
+		return "", errors.New("cannot reach GitHub to create a repository installation token")
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusCreated {
-		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, githubAPIResponseLimit))
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 16<<10))
 		if res.StatusCode >= 400 && res.StatusCode < 500 && res.StatusCode != 408 && res.StatusCode != 429 {
+			// A 422 naming ungranted permissions is a configuration gap the
+			// workspace admin can fix; anything else means the installation
+			// does not cover this repository.
+			var refusal struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(raw, &refusal) == nil && strings.Contains(strings.ToLower(refusal.Message), "permissions requested are not granted") {
+				return "", errGitHubAppPermissionsNotGranted
+			}
 			return "", errGitHubRepositoryNotCovered
 		}
 		return "", fmt.Errorf("create repository installation token: github status %d", res.StatusCode)

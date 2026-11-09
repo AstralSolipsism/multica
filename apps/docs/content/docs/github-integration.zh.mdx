@@ -149,7 +149,8 @@ Repository permissions：
 | 权限 | 级别 |
 |---|---|
 | Metadata | Read-only |
-| Pull requests | Read-only |
+| Contents | Read & write；仅 Qoder Cloud Agents 需要它来克隆仓库、推送分支 |
+| Pull requests | Read & write；PR 关联只需读权限，写权限供 Qoder Cloud Agents 使用 |
 | Checks | Read-only；用于显示 CI 状态 |
 | Commit statuses | Read-only；用于汇总 legacy status 形式的 CI |
 | Actions | 可选，Read-only；同一提交上，被同一工作流的新运行取代的已取消运行不再计入 CI 状态 |
@@ -159,7 +160,7 @@ Repository permissions：
 - **Pull request**；
 - **Check suite**、**Check run** 和 **Status**，用于触发 CI 与可合并性刷新。
 
-PR 快照通过 Pull requests、Checks 和 Commit statuses 的 REST API 获取，不需要 Contents 权限。授予可选的 Actions 权限后，还会读取该提交的工作流运行记录；未授予时，即使同一工作流的新运行已通过，被取消的旧运行仍按失败计算。
+PR 快照通过 Pull requests、Checks 和 Commit statuses 的 REST API 获取，这部分只读权限即可。Contents 与 Pull requests 的写权限用于 Qoder Cloud Agents 的自动授权：它通过本 App 按需签发仅限单个仓库、短时效的令牌来挂载仓库并推送分支。如果不使用该运行时，可把这两项降回只读；给已安装的 App 补加权限后，需要各 installation 的所有者在 GitHub 上批准才会生效。授予可选的 Actions 权限后，还会读取该提交的工作流运行记录；未授予时，即使同一工作流的新运行已通过，被取消的旧运行仍按失败计算。
 
 <Callout type="warning">
 这里需要的是 **Webhook secret**，不是 OAuth Client secret。两边填写的 Webhook secret 不一致时，GitHub delivery 会返回 `401 invalid signature`。
@@ -214,7 +215,8 @@ make migrate-up
 - **Webhook 返回 401**：确认 GitHub App 与 API 使用同一个 Webhook secret，然后在 GitHub 的 **Recent Deliveries** 中重新投递。
 - **PR 没有关联**：检查仓库是否在 App 授权范围内、自动关联是否开启、编号是否属于当前工作区，以及是否有人把它从任务上移除过。
 - **正文写了编号但没关联**：改用 `Closes MUL-123`，或把编号放到分支名、PR 标题中，或者手动关联。
-- **没有 CI 状态**：确认 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 已配置，App 具有 Pull requests、Checks 与 Commit statuses 的只读权限并订阅了对应事件。不需要 Contents 权限。给已安装的 App 补加权限后，需要各 installation 的所有者在 GitHub 上批准才会生效。
+- **没有 CI 状态**：确认 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 已配置，App 具有 Pull requests、Checks 与 Commit statuses 的只读权限并订阅了对应事件。PR 关联与 CI 状态只需只读权限。给已安装的 App 补加权限后，需要各 installation 的所有者在 GitHub 上批准才会生效。
+- **Qoder 运行报「workspace GitHub App has not granted repository write permissions」**：该 installation 早于写权限配置。在 GitHub App 上授予 Contents 与 Pull requests 的 Read & write，并让各 installation 的所有者在 GitHub 上批准变更；或在该仓库的 Qoder Cloud Agents 设置中改用手动令牌。
 - **PR 合并后任务状态没变**：看任务 **Pull requests** 列表下方的说明，它会指出仍未合并或已关闭未合并的 PR，或者说明此任务合并后不改状态。没有这行说明，表示工作区设置为**不改变**，或者任务已经是目标状态。
 
 ## 接下来
