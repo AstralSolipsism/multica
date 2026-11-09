@@ -4,6 +4,7 @@ import { invalidateAgentFolderQueries } from "../agents/folder-queries";
 import { skillPackageKeys } from "../skills/package-queries";
 
 import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
+import { subscribeLabrastroEngineeringEvents } from "./labrastro-engineering-realtime";
 import { useEffect, useRef } from "react";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import { useQueryClient, type InfiniteData, type QueryClient, type QueryFilters } from "@tanstack/react-query";
@@ -134,8 +135,6 @@ import type {
   ChatSession,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
-  ProjectEngineeringUpdatedPayload,
-  ProjectBaselineChangedPayload,
   Agent,
   AgentStatusPayload,
 } from "../types";
@@ -1494,34 +1493,8 @@ export function useRealtimeSync(
       onSubscriberChanged(p as SubscriberRemovedPayload),
     );
 
-    const unsubProjectEngineeringUpdated = ws.on("project_engineering:updated", (p) => {
-      const { project_id } = p as ProjectEngineeringUpdatedPayload;
-      const wsId = getCurrentWsId();
-      if (wsId && project_id) {
-        qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
-        qc.invalidateQueries({ queryKey: projectKeys.engineeringConfig(wsId, project_id) });
-      }
-    });
+    const unsubLabrastroEngineeringEvents = subscribeLabrastroEngineeringEvents(ws, qc);
 
-    const unsubProjectBaselineChanged = ws.on("project_baseline:changed", (p) => {
-      const { project_id } = p as ProjectBaselineChangedPayload;
-      const wsId = getCurrentWsId();
-      if (wsId && project_id) {
-        qc.invalidateQueries({ queryKey: projectKeys.engineering(wsId, project_id) });
-        qc.invalidateQueries({ queryKey: projectKeys.engineeringHistoryAll(wsId, project_id) });
-        // A new working revision changes server-side annotation location/
-        // located projections; refresh them together with the engineering data.
-        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
-      }
-    });
-
-    const unsubProjectBaselineAnnotationChanged = ws.on("project_baseline_annotation:changed", (p) => {
-      const { project_id } = p as import("../types/events").ProjectBaselineAnnotationChangedPayload;
-      const wsId = getCurrentWsId();
-      if (wsId && project_id) {
-        qc.invalidateQueries({ queryKey: projectKeys.baselineAnnotationsAll(wsId, project_id) });
-      }
-    });
 
     // --- Side-effect handlers (toast, navigation) ---
 
@@ -2058,9 +2031,7 @@ export function useRealtimeSync(
       unsubIssueReactionRemoved();
       unsubSubscriberAdded();
       unsubSubscriberRemoved();
-      unsubProjectEngineeringUpdated();
-      unsubProjectBaselineChanged();
-      unsubProjectBaselineAnnotationChanged();
+      unsubLabrastroEngineeringEvents();
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();

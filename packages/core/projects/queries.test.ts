@@ -56,6 +56,16 @@ describe("project engineering queries", () => {
     for (const key of keys) expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
+  it("roots baseline annotation keys under the project detail key", () => {
+    // engineering-queries.ts re-creates the projects/{wsId}/detail/{id}
+    // prefix by value; pin it so an upstream detail-key reshape cannot
+    // silently break annotation invalidation.
+    expect(projectKeys.baselineAnnotationsAll("ws-1", "project-1")).toEqual([
+      ...projectKeys.detail("ws-1", "project-1"),
+      "baseline-annotations",
+    ]);
+  });
+
   it("requests the configuration without chapter bodies", async () => {
     const config = { engineering: { enabled: true } };
     const getProjectEngineeringConfig = vi.fn().mockResolvedValue(config);

@@ -9,6 +9,11 @@ import type { Project } from "./project";
 import type { Label } from "./label";
 import type { z } from "zod";
 import type { IssueTipSchema } from "../api/labrastro-ysk-schemas";
+import type {
+  ProjectBaselineAnnotationChangedPayload,
+  ProjectBaselineChangedPayload,
+  ProjectEngineeringUpdatedPayload,
+} from "./labrastro-engineering-events";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -629,20 +634,13 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
-export interface ProjectEngineeringUpdatedPayload {
-  project_id: string;
-}
-
-export interface ProjectBaselineChangedPayload {
-  project_id: string;
-  chapter: import("../api/labrastro-engineering-schemas").BaselineChapter;
-}
-
-export interface ProjectBaselineAnnotationChangedPayload {
-  project_id: string;
-  chapter: import("../api/labrastro-engineering-schemas").BaselineChapter;
-  batch_id: string;
-}
+// Engineering-module payloads live in the fork-owned
+// labrastro-engineering-events.ts; re-exported here for existing import paths.
+export type {
+  ProjectEngineeringUpdatedPayload,
+  ProjectBaselineChangedPayload,
+  ProjectBaselineAnnotationChangedPayload,
+} from "./labrastro-engineering-events";
 
 export interface InvitationCreatedPayload {
   invitation: Invitation;

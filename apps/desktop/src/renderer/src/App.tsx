@@ -6,7 +6,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { api } from "@multica/core/api";
-import { useHasOnboarded, workspaceSlugForPath } from "@multica/core/paths";
+import { useHasOnboarded } from "@multica/core/paths";
 import { setCurrentWorkspace } from "@multica/core/platform";
 import { ThemeProvider } from "@multica/ui/components/common/theme-provider";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
@@ -42,7 +42,7 @@ import {
 } from "./platform/session-teardown";
 import {
   clearPendingEngineeringDestination,
-  consumeEngineeringDestinationForReauth,
+  engineeringReauthDestination,
   preserveEngineeringDestinationForReauth,
 } from "./platform/engineering-deep-links";
 
@@ -301,13 +301,8 @@ function AppContent() {
     if (!workspaceListReady) return;
     const validSlugs = new Set(workspaces.map((w) => w.slug));
     useTabStore.getState().validateWorkspaceSlugs(validSlugs);
-    if (user) {
-      const pendingPath = consumeEngineeringDestinationForReauth(user.id);
-      const pendingSlug = pendingPath ? workspaceSlugForPath(pendingPath) : null;
-      if (pendingPath && pendingSlug && validSlugs.has(pendingSlug)) {
-        useTabStore.getState().switchWorkspace(pendingSlug, pendingPath);
-      }
-    }
+    const engineeringReauth = engineeringReauthDestination(user?.id, validSlugs);
+    if (engineeringReauth) useTabStore.getState().switchWorkspace(engineeringReauth.slug, engineeringReauth.path);
     const { activeWorkspaceSlug, switchWorkspace } = useTabStore.getState();
     if (validSlugs.size === 0) return;
     const target = resolveWindowWorkspace(

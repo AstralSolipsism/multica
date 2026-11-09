@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
@@ -9,7 +9,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { Folder, Plus } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { IconButton } from "@multica/ui/components/common/icon-button";
-import { DropdownMenuItem } from "@multica/ui/components/ui/dropdown-menu";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { issueKeys, sidebarIssuesOptions } from "@multica/core/issues/queries";
 import { filterDependencyState, statusCatalogSource } from "@multica/core/issues/surface/filter-dependency";
@@ -25,11 +24,9 @@ import { useSidebarKeptStore } from "@multica/core/issues/stores/sidebar-kept-st
 import { useSidebarTreeStore, type SidebarIssueSettings } from "@multica/core/issues/stores/sidebar-tree-store";
 import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { projectEngineeringConfigOptions } from "@multica/core/projects/queries";
 import type { Issue, ListIssuesResponse, Project } from "@multica/core/types";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { useT } from "../../i18n";
-import { useNavigation } from "../../navigation";
+import { ProjectEngineeringMenuItems } from "../../projects/components/project-engineering-menu-item";
 import {
   PANEL_ROW_CLASS,
   PanelCount,
@@ -235,10 +232,7 @@ function ProjectTreeItem({
   activeIssueId: string | null;
 }) {
   const { t } = useT("layout");
-  const { t: tEngineering } = useT("engineering");
-  const { t: tCommon } = useT("common");
   const p = useWorkspacePaths();
-  const { push } = useNavigation();
   const listId = useId();
   const linkRef = useRef<HTMLAnchorElement>(null);
   const source = projectSidebarSource(project.id);
@@ -251,20 +245,6 @@ function ProjectTreeItem({
     ? undefined
     : projectSidebarRequest(project.id, issueSettings, statusCatalog.statuses, userId);
   const prefetch = usePrefetch(wsId, source, params);
-  const { data: engineeringOverview, isPending: engineeringPending } = useQuery({
-    ...projectEngineeringConfigOptions(wsId, project.id),
-    enabled: open && menuOpen,
-  });
-  const { data: members = [], isPending: membersPending } = useQuery({
-    ...memberListOptions(wsId),
-    enabled: open && menuOpen,
-  });
-  const isWorkspaceAdmin = members.some(
-    (member) =>
-      member.user_id === userId && (member.role === "owner" || member.role === "admin"),
-  );
-  const engineeringEnabled = engineeringOverview?.engineering.enabled === true;
-  const showEngineering = engineeringEnabled || (!!engineeringOverview && isWorkspaceAdmin);
 
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: project.id });
   const wasDragged = useRef(false);
@@ -318,20 +298,7 @@ function ProjectTreeItem({
                 open={menuOpen}
                 onOpenChange={setMenuOpen}
               >
-                {showEngineering ? (
-                  <DropdownMenuItem onClick={() => push(p.projectEngineering(project.id))}>
-                    <Folder className="size-3.5" />
-                    {engineeringEnabled
-                      ? tEngineering(($) => $.actions.open_baseline)
-                      : tEngineering(($) => $.actions.enable)}
-                  </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem disabled>
-                    {engineeringPending || membersPending
-                      ? tCommon(($) => $.loading)
-                      : tEngineering(($) => $.disabled.title)}
-                  </DropdownMenuItem>
-                )}
+                <ProjectEngineeringMenuItems projectId={project.id} userId={userId} active={open && menuOpen} />
               </RowMenu>
               <IconButton
                 label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}

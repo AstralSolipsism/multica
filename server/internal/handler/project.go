@@ -692,7 +692,7 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to stop project notification routes")
 		return
 	}
-	if err := qtx.LabrastroDeleteProjectEngineering(r.Context(), db.LabrastroDeleteProjectEngineeringParams{WorkspaceID: project.WorkspaceID, ProjectID: project.ID}); err != nil {
+	if err := deleteProjectEngineering(r.Context(), qtx, project.WorkspaceID, project.ID); err != nil {
 		writeEngineeringError(w, err)
 		return
 	}
