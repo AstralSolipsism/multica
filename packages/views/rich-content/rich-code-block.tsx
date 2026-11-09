@@ -41,6 +41,7 @@ import {
   HTML_BLOCK_DEFAULT_RESERVED_PX,
   reservedHtmlBlockHeightPx,
 } from "../editor/html-block-preview";
+import { AttachmentHtmlBlock } from "../editor/attachment-html-block";
 import { highlightCode } from "../editor/syntax-highlight";
 import { LazyRichBlock } from "./lazy-rich-block";
 
@@ -184,17 +185,26 @@ export function RichFenceBlock({
   language,
   body,
   title,
+  src,
 }: {
   language: RichFenceLanguage;
   body: string;
   /** From the fence info string: ```html title="…". */
   title?: string | null;
+  /** An HTML attachment filename owned by the surrounding entity. */
+  src?: string | null;
 }) {
-  const reservedHeightPx = useReservedHeightPx(language, body);
+  const attachmentBacked = language === "html" && src != null;
+  const reservedHeightPx = useReservedHeightPx(language, attachmentBacked ? null : body);
   return (
-    <LazyRichBlock reservedHeightPx={reservedHeightPx} sourceKey={body}>
+    <LazyRichBlock
+      reservedHeightPx={reservedHeightPx}
+      sourceKey={attachmentBacked ? `attachment:${src}` : body}
+    >
       {language === "mermaid" ? (
         <MemoMermaidBlock chart={body} title={title} />
+      ) : src != null ? (
+        <AttachmentHtmlBlock src={src} fallbackHtml={body} title={title} />
       ) : (
         <MemoHtmlBlockPreview html={body} title={title} />
       )}
@@ -214,7 +224,8 @@ const cachedReservedPx: Record<RichFenceLanguage, (body: string) => number> = {
 
 /**
  * Reserved height for a block: the default on the first frame, then the
- * session-cached real height once mounted.
+ * session-cached real height once mounted. A null body is an attachment-backed
+ * HTML block whose actual source is still unknown, so it keeps the default.
  *
  * The cache lives in sessionStorage, which the server does not have. Reading it
  * during render therefore produces the default on the server and the cached
@@ -223,10 +234,12 @@ const cachedReservedPx: Record<RichFenceLanguage, (body: string) => number> = {
  * and does NOT repair. Deferring the read to an effect keeps the first frame
  * identical everywhere and still gets the zero-shift benefit immediately after.
  */
-function useReservedHeightPx(language: RichFenceLanguage, body: string): number {
+function useReservedHeightPx(language: RichFenceLanguage, body: string | null): number {
   const [height, setHeight] = useState(DEFAULT_RESERVED_PX[language]);
   useEffect(() => {
-    const cached = cachedReservedPx[language](body);
+    const cached = body == null
+      ? DEFAULT_RESERVED_PX[language]
+      : cachedReservedPx[language](body);
     setHeight((current) => (current === cached ? current : cached));
   }, [language, body]);
   return height;

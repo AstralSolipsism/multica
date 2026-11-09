@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
+import type { Attachment } from "@multica/core/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const { getAttachmentTextContentMock, resolveIssueIdentifierMock } = vi.hoisted(
@@ -88,6 +89,8 @@ Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
 
 import mermaid from "mermaid";
 import { ReadonlyContent } from "./readonly-content";
+import { RichContent } from "../rich-content";
+import { HTML_BLOCK_DEFAULT_RESERVED_PX } from "./html-block-preview";
 import { composeAnnotatedReply } from "@multica/core/drafts/reply-annotation";
 
 beforeEach(() => {
@@ -600,6 +603,52 @@ describe("ReadonlyContent HTML block rendering", () => {
     expect(frame?.getAttribute("sandbox")).toBe("allow-scripts");
     expect(frame?.getAttribute("srcdoc")).toContain('<h1 id="x">hi</h1>');
     expect(container.querySelector("pre")).toBeNull();
+  });
+
+  it("loads a same-message src attachment after streaming without replacing the content node", async () => {
+    const content = [
+      '```html src="decision.html" title="Decision"',
+      "<p>Open the attachment below.</p>",
+      "```",
+    ].join("\n");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const ui = (attachments: Attachment[] | undefined, phase: "streaming" | "settled") => (
+      <QueryClientProvider client={client}>
+        <RichContent content={content} attachments={attachments} phase={phase} />
+      </QueryClientProvider>
+    );
+    const view = render(ui(undefined, "streaming"));
+    const contentNode = view.container.querySelector("[data-rich-content]");
+    const shell = view.container.querySelector("[data-rich-block-shell]");
+
+    expect(screen.getByText("The preview loads when the reply is complete.")).toBeInTheDocument();
+    expect(shell).toHaveStyle({ minHeight: `${HTML_BLOCK_DEFAULT_RESERVED_PX}px` });
+    expect(getAttachmentTextContentMock).not.toHaveBeenCalled();
+
+    view.rerender(ui(undefined, "settled"));
+    expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);
+    expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    const attachment = {
+      id: "att-streamed",
+      filename: "decision.html",
+      content_type: "text/html",
+      created_at: "2026-11-09T01:00:00Z",
+    } as Attachment;
+    getAttachmentTextContentMock.mockResolvedValue({
+      text: '<h1 id="from-attachment">Attachment</h1>',
+      originalContentType: "text/html",
+    });
+    view.rerender(ui([attachment], "settled"));
+
+    const frame = await screen.findByTitle("HTML preview");
+    expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);
+    expect(frame.getAttribute("srcdoc")).toContain('id="from-attachment"');
+    expect(frame.getAttribute("srcdoc")).not.toContain("Open the attachment below");
+    expect(getAttachmentTextContentMock).toHaveBeenCalledExactlyOnceWith("att-streamed");
   });
 
   it("keeps the <pre><code> wrapper for adjacent languages like htmlbars / mermaidx", () => {

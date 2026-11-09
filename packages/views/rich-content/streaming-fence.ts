@@ -12,10 +12,10 @@ import type { Root, RootContent, Code } from "mdast";
  *
  * This module answers one question — "which fenced code blocks in this source
  * are closed?" — and returns their offsets. Since it holds the only parse that
- * still sees a fence's info string, it also reads the block title from it
- * (```html title="Weekly p95", MUL-7649): rehype-raw rebuilds the tree and
- * drops the `meta` the code renderer would otherwise have received. It
- * deliberately does NOT render.
+ * still sees a fence's info string, it also reads the block title and optional
+ * HTML attachment source from it (```html title="Weekly p95", MUL-7649):
+ * rehype-raw rebuilds the tree and drops the `meta` the code renderer would
+ * otherwise have received. It deliberately does NOT render.
  * Rendering stays in the single ReactMarkdown pipeline; a gate that rendered
  * would become the second renderer this sweep exists to delete.
  *
@@ -75,21 +75,60 @@ function endsWithClosingFence(raw: string): boolean {
   return closeFence[0] === marker && closeFence.length >= openFence.length;
 }
 
-const TITLE_RE = /(?:^|\s)title=(?:"([^"]*)"|'([^']*)'|(\S+))/;
+function parseFenceMeta(meta: string | null | undefined): {
+  title: string | null;
+  src: string | null;
+} {
+  let title: string | null = null;
+  let src: string | null = null;
+  let index = 0;
+  while (meta && index < meta.length) {
+    while (/\s/.test(meta[index] ?? "")) index++;
+    const nameStart = index;
+    while (/[^\s=]/.test(meta[index] ?? "")) index++;
+    const name = meta.slice(nameStart, index);
+    if (meta[index] !== "=") continue;
+    index++;
+
+    let value = "";
+    let valid = true;
+    const quote = meta[index];
+    if (quote === '"' || quote === "'") {
+      index++;
+      const valueStart = index;
+      while (index < meta.length && meta[index] !== quote) index++;
+      value = meta.slice(valueStart, index);
+      if (index === meta.length) {
+        valid = false;
+      } else {
+        index++;
+        valid = index === meta.length || /\s/.test(meta[index] ?? "");
+      }
+    } else {
+      const valueStart = index;
+      while (/\S/.test(meta[index] ?? "")) index++;
+      value = meta.slice(valueStart, index);
+    }
+    if (!valid) continue;
+
+    const normalized = value.trim() || null;
+    if (name === "title" && title === null) title = normalized;
+    if (name === "src" && src === null) src = normalized;
+  }
+  return { title, src };
+}
 
 /**
  * The `title` attribute of a fence info string, e.g. `title="Weekly p95"` in
  * ```html title="Weekly p95". Double, single or no quotes.
  */
 export function parseFenceTitle(meta: string | null | undefined): string | null {
-  if (!meta) return null;
-  const match = TITLE_RE.exec(meta);
-  const title = (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
-  return title || null;
+  return parseFenceMeta(meta).title;
 }
 
 export interface ClosedFence {
   title: string | null;
+  src: string | null;
 }
 
 /**
@@ -120,7 +159,7 @@ export function computeClosedFences(source: string): Map<number, ClosedFence> {
     const end = node.position?.end.offset;
     if (start == null || end == null) continue;
     if (endsWithClosingFence(source.slice(start, end))) {
-      closed.set(start, { title: parseFenceTitle(node.meta) });
+      closed.set(start, parseFenceMeta(node.meta));
     }
   }
 
