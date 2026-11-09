@@ -111,6 +111,7 @@ vi.mock("@tiptap/react", () => ({
         },
         commands: {
           focus: mockEditorFocus,
+          blur: vi.fn(),
           clearContent: vi.fn(() => {
             editorState.markdown = "";
           }),
@@ -507,6 +508,19 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     });
   });
 
+  it("does not strand the last keystrokes when a lazy session create re-keys the draft mid-compose", () => {
+    // First send / first upload in a New Chat flips activeSessionId null → uuid
+    // under a live editor. Those bytes were typed in the New Chat slot, so they
+    // must land there, not be dropped or filed under the new session.
+    const { rerender } = render(element());
+    type("creating a session with this");
+
+    store().activeSessionId = "session-new";
+    rerender(element());
+
+    expect(store().inputDrafts["__new__"]).toBe("creating a session with this");
+    expect(store().inputDrafts["session-new"]).toBeUndefined();
+  });
 
   it("replaces unflushed typing when a card fills the compose draft", () => {
     // The chat fill action (chat-reply-actions-context) must land through
@@ -541,5 +555,34 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     });
     expect(mockEditorFocus).toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("applies a fill request once — switching sessions afterwards leaves the other draft alone", () => {
+    // Without the applied-id guard, the effect re-runs on every draftKey or
+    // submitting change with the stale adoptRequest in scope and would write
+    // the card's answer into whatever session is selected by then.
+    const fill: { current: (() => void) | null } = { current: null };
+    function FillProbe() {
+      const chat = useChatReplyActions();
+      fill.current = chat ? () => chat.fill("card answer") : null;
+      return null;
+    }
+    const withProvider = () => (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <ChatReplyActionsProvider handleSend={vi.fn().mockResolvedValue(true)}>
+          <FillProbe />
+          <ChatInput onSend={vi.fn()} agentName="Multica" />
+        </ChatReplyActionsProvider>
+      </I18nProvider>
+    );
+    const { rerender } = render(withProvider());
+    act(() => fill.current!());
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
+
+    store().activeSessionId = "session-b";
+    rerender(withProvider());
+
+    expect(store().inputDrafts["session-b"]).toBeUndefined();
+    expect(store().inputDrafts["__new__"]).toBe("card answer");
   });
 });

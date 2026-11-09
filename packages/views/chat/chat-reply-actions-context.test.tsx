@@ -211,7 +211,10 @@ describe("HTML block inside a chat conversation", () => {
     activation.isActive = false;
     Object.defineProperty(navigator, "userActivation", { configurable: true, value: activation });
   });
-  afterEach(() => { delete (navigator as { userActivation?: unknown }).userActivation; });
+  afterEach(() => {
+    delete (navigator as { userActivation?: unknown }).userActivation;
+    document.documentElement.className = "";
+  });
 
   it("submits through handleSend and acknowledges ok", async () => {
     activation.isActive = true;
@@ -258,6 +261,32 @@ describe("HTML block inside a chat conversation", () => {
     post(frame, { type: "submit-comment", content: "answer" });
     await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", false), "*"));
     expect(handleSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the card's retry identity across a theme rebuild (the srcdoc changes, the card key does not)", async () => {
+    activation.isActive = true;
+    const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { frame, reply } = mountCard(handleSend);
+    post(frame, { type: "submit-comment", content: "answer" });
+    await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", false), "*"));
+    const srcDocBefore = frame.getAttribute("srcdoc");
+
+    // Flip the theme the way the app does: a class change on <html> bumps
+    // useThemeVersion, and the rebuilt document picks up the new computed
+    // tokens — here a different font on the host, exactly what a real theme
+    // switch delivers through inheritance.
+    const host = frame.closest<HTMLElement>("div.contents")!;
+    expect(host).not.toBeNull();
+    host.style.fontFamily = "DarkThemeFont";
+    act(() => { document.documentElement.className = "theme-dark"; });
+    await waitFor(() => expect(inlineFrame().getAttribute("srcdoc")).not.toBe(srcDocBefore));
+
+    const rebuilt = inlineFrame();
+    const rebuiltReply = vi.spyOn(rebuilt.contentWindow!, "postMessage");
+    post(rebuilt, { type: "submit-comment", content: "answer" });
+    await waitFor(() => expect(rebuiltReply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
+    const [first, second] = handleSend.mock.calls;
+    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
   });
 
   it("fills the composer draft and acknowledges ok", async () => {
