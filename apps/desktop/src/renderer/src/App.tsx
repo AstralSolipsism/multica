@@ -40,11 +40,7 @@ import {
   tearDownOnSessionExpiry,
   type SessionTeardown,
 } from "./platform/session-teardown";
-import {
-  clearPendingEngineeringDestination,
-  engineeringReauthDestination,
-  preserveEngineeringDestinationForReauth,
-} from "./platform/engineering-deep-links";
+import { clearPendingEngineeringDestination, engineeringReauthDestination, preserveEngineeringDestinationForReauth } from "./platform/engineering-deep-links";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -393,10 +389,7 @@ function handleDaemonLogout() {
 }
 
 function handleSessionExpired() {
-  preserveEngineeringDestinationForReauth(
-    useAuthStore.getState().user?.id,
-    getActiveTab(useTabStore.getState())?.url,
-  );
+  preserveEngineeringDestinationForReauth(useAuthStore.getState().user?.id, getActiveTab(useTabStore.getState())?.url);
   tearDownOnSessionExpiry(sessionTeardown);
 }
 

@@ -7,8 +7,7 @@ export const projectKeys = {
   list: (wsId: string) => [...projectKeys.all(wsId), "list"] as const,
   detail: (wsId: string, id: string) =>
     [...projectKeys.all(wsId), "detail", id] as const,
-  // Engineering keys are fork-owned (engineering-queries.ts) and merged here
-  // so consumers keep importing them from projectKeys.
+  // Engineering keys are fork-owned; see engineering-queries.ts.
   ...engineeringProjectKeys,
 };
 

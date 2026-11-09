@@ -1495,7 +1495,6 @@ export function useRealtimeSync(
 
     const unsubLabrastroEngineeringEvents = subscribeLabrastroEngineeringEvents(ws, qc);
 
-
     // --- Side-effect handlers (toast, navigation) ---
 
     // After the current workspace disappears (deleted or we were kicked out),

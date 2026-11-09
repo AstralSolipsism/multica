@@ -32,9 +32,11 @@ func prepareLabrastroEngineeringIssue(ctx context.Context, q *db.Queries, p Issu
 // bindLabrastroEngineeringCarrier atomically attaches the review's carrier
 // issue and enqueues its assigned task inside the create transaction. No-op
 // without a batch ID.
-func bindLabrastroEngineeringCarrier(ctx context.Context, s *IssueService, q *db.Queries, p IssueCreateParams, issue db.Issue, opts IssueCreateOpts) (db.AgentTaskQueue, error) {
+func bindLabrastroEngineeringCarrier(ctx context.Context, s *IssueService, q *db.Queries, p IssueCreateParams, issue db.Issue, opts IssueCreateOpts, current db.AgentTaskQueue) (db.AgentTaskQueue, error) {
 	if !opts.BaselineAnnotationBatchID.Valid {
-		return db.AgentTaskQueue{}, nil
+		// Not a carrier create: keep whatever task earlier steps queued
+		// (e.g. the deferred channel-media task).
+		return current, nil
 	}
 	if !s.shouldEnqueueAgentTaskWithQueries(ctx, q, issue) {
 		return db.AgentTaskQueue{}, errors.New("baseline annotation agent unavailable")

@@ -538,7 +538,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if assignedTask, err = bindLabrastroEngineeringCarrier(ctx, s, qtx, p, issue, opts); err != nil {
+	if assignedTask, err = bindLabrastroEngineeringCarrier(ctx, s, qtx, p, issue, opts, assignedTask); err != nil {
 		return IssueCreateResult{}, err
 	}
 
