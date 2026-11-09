@@ -298,7 +298,7 @@ function ProjectTreeItem({
                 open={menuOpen}
                 onOpenChange={setMenuOpen}
               >
-                <ProjectEngineeringMenuItems projectId={project.id} userId={userId} active={open && menuOpen} />
+                <ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={open && menuOpen} />
               </RowMenu>
               <IconButton
                 label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}

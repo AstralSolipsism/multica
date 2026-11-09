@@ -74,3 +74,64 @@ was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
   Follow the workspace review rule, including two sequential expert approvals
   for CI/release changes. Leave merge to the reviewer; migration/deployment,
   release publication and live feed activation remain separately authorized.
+
+## Engineering module upstream insertion ledger
+
+The engineering module (project engineering overview / baseline wiki / baseline
+annotations, [labrastro-engineering-api.md](labrastro-engineering-api.md))
+lives in fork-owned files. Upstream files may only carry thin registration or
+call plugs. Before and after every upstream sync, walk this table and confirm
+each plug survived the merge: the import/registration line exists, the called
+fork symbol exists, and the residual footprint is within the expected range.
+
+New engineering features default to fork-owned files only. Adding or widening
+an upstream insertion requires updating this ledger in the same PR.
+
+| Upstream file | Purpose | Fork symbols used | Expected lines |
+| --- | --- | --- | --- |
+| `packages/views/projects/components/project-detail.tsx` | header entry links | `ProjectEngineeringHeaderActions` (`project-engineering-entry.tsx`) | ~2 |
+| `packages/views/layout/panels/work-tree.tsx` | sidebar row menu entry | `ProjectEngineeringMenuItems` (`project-engineering-menu-item.tsx`) | ~2 |
+| `packages/core/realtime/use-realtime-sync.ts` | WS subscriptions + workspace-wide invalidation | `subscribeLabrastroEngineeringEvents` (`labrastro-engineering-realtime.ts`), `projectKeys.engineeringRoot` | ~4 |
+| `packages/core/types/events.ts` | event names + payload-map entries | payload types from `labrastro-engineering-events.ts` (re-exported) | ~7 |
+| `packages/core/projects/queries.ts` | engineering keys merged into `projectKeys` + option re-exports | `engineeringProjectKeys` (`engineering-queries.ts`) | ~5 |
+| `packages/core/projects/mutations.ts` | delete-project cleanup + hook re-exports | `engineeringProjectKeys`, `export * from "./engineering-mutations"` | ~2 |
+| `packages/core/api/index.ts` | schema/type re-exports | `export * from "./labrastro-engineering-exports"` | 1 |
+| `apps/desktop/src/renderer/src/App.tsx` | re-auth destination restore, logout clear, expiry preserve | `engineeringReauthDestination` etc. (`platform/engineering-deep-links.ts`) | ~13 |
+| `apps/desktop/src/renderer/src/stores/tab-store.ts` | `?candidate=` landing on a matched tab | `applyEngineeringCandidateLanding` (`platform/engineering-deep-links.ts`) | ~3 |
+| `apps/desktop/src/renderer/src/routes.tsx` | desktop route entry | `ProjectEngineeringPage` | ~4 |
+| `packages/core/paths/paths.ts` | `projectEngineering(id, candidateId?)` path builder | — | ~6 |
+| `packages/views/projects/components/labels.ts` | chapter label helper | `useT("engineering")` | ~13 |
+| `packages/views/projects/components/index.ts` | barrel export | `EngineeringOverview` | 1 |
+| `packages/views/i18n/resources-types.ts` | locale resource typing | `engineering.json` | 2 |
+| `packages/core/diagnostics/diagnostic-context.ts` | redacted path pattern | — | 1 |
+| `server/cmd/server/router.go` | route registration | `RegisterLabrastroEngineeringRoutes` | ~5 |
+| `server/cmd/multica/main.go` | baseline CLI exit code hook | `labrastroBaselineExitCode` | ~2 |
+| `server/cmd/multica/cmd_project.go` | CLI subcommand registration | `newLabrastroProjectBaselineCmd`, `newLabrastroProjectEngineeringCmd` | 2 |
+| `server/internal/handler/project_resource.go` | claim-time engineering context injection | `appendEngineeringProjectDescription` | 1 |
+| `server/internal/handler/project.go` | delete-project cascade | `deleteProjectEngineering` (`labrastro_engineering.go`) | ~4 |
+| `server/internal/handler/workspace.go` | delete-workspace cascade | `deleteWorkspaceEngineeringAndProjects` | 1 |
+| `server/internal/middleware/task_token_workspace.go` | task-token baseline credential denial | `writeLabrastroBaselineCredentialDenied` | ~3 |
+| `server/internal/service/issue.go` | carrier-issue create hooks | `prepareLabrastroEngineeringIssue`, `bindLabrastroEngineeringCarrier`, `finalizeLabrastroEngineeringEnqueue` (`labrastro_engineering_issue.go`) + `IssueCreateOpts.BaselineAnnotationBatchID` | ~11 |
+| `server/pkg/db/generated/models.go` | sqlc-generated table structs (regenerated, not hand-edited) | — | generated |
+
+Key-generation guard: `engineeringProjectKeys.baselineAnnotationsAll`
+re-creates the `projects/{wsId}/detail/{id}` key prefix by value (no import
+cycle with `queries.ts`); `packages/core/projects/queries.test.ts` pins it to
+`projectKeys.detail` so an upstream key reshape fails tests instead of
+silently missing cache invalidation.
+
+## Plugin-route re-evaluation triggers
+
+OL-1298 (Master, 2026-11-09) decided the engineering module stays in the fork
+core repo. Re-evaluate migrating it to an upstream plugin service only when
+ALL of the following hold; until then, do not reopen the question:
+
+1. Upstream provides a project-level `Surface` mount point (`project_page`)
+   that supports a fill (viewport-covering) layout.
+2. The upstream `surface-bridge` natively supports URL-route synchronization
+   and deep-link navigation.
+3. Upstream fixes #8960 (daemon token issuance with HTTP-only agent hooks),
+   agent hooks carry `task`/`issue` context, and Antigravity supports MCP (or
+   our agents no longer run on AGY).
+4. Upstream provides plugin-triggered agent runs (#8851-class) plus read
+   interfaces for projects, members and roles.

@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Folder } from "@multica/ui/icons";
 import { DropdownMenuItem } from "@multica/ui/components/ui/dropdown-menu";
-import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectEngineeringConfigOptions } from "@multica/core/projects/queries";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -18,17 +17,18 @@ import { useNavigation } from "../../navigation";
  * enter (see docs/engineering/upstream-sync-checklist.md).
  */
 export function ProjectEngineeringMenuItems({
+  wsId,
   projectId,
   userId,
   active,
 }: {
+  wsId: string;
   projectId: string;
   userId: string | null | undefined;
   active: boolean;
 }) {
   const { t: tEngineering } = useT("engineering");
   const { t: tCommon } = useT("common");
-  const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const { push } = useNavigation();
   const { data: engineeringOverview, isPending: engineeringPending } = useQuery({
