@@ -437,20 +437,25 @@ func (b *Bridge) stepRun(ctx context.Context, r *run) error {
 			if continued {
 				r.SessionID = r.PriorSessionID
 				r.Continued = true
-				r.Phase = "created"
-				if err := b.persist(); err != nil {
-					return err
-				}
 				// A GitHub App credential rotates on every resolution; push the
-				// fresh token into the reused session so git operations do not
-				// fail when the token it was created with expires. A deferred
-				// refresh stops this tick; the message must not outrun it.
+				// fresh token into the reused session before any message goes
+				// out. The run stays "prepared" until the refresh completed, so
+				// a rate-limited or failed refresh retries the whole continue
+				// path next tick instead of sending with a stale credential.
 				if rotating {
 					if err := b.refreshSessionResources(ctx, r, repositoryCopies); err != nil {
 						return err
 					}
-					if time.Now().Before(r.RetryAt) {
+					if r.Continued && time.Now().Before(r.RetryAt) {
+						// Rate limited mid-refresh; the refresh persisted the
+						// deferred state itself.
 						return nil
+					}
+				}
+				if r.Continued {
+					r.Phase = "created"
+					if err := b.persist(); err != nil {
+						return err
 					}
 				}
 			}
@@ -655,8 +660,11 @@ func (b *Bridge) continueSession(ctx context.Context, r *run, fingerprint string
 }
 
 // refreshSessionResources updates the repository credentials of a reused
-// session. A definite refusal means the session cannot take the resource;
-// nothing was sent yet, so the run starts a fresh session instead.
+// session. It runs while the run is still "prepared": a rate limit defers via
+// r.RetryAt (persisted), a definite refusal resets the run to start a fresh
+// session, and only full success marks r.ResourcesRefreshed. The caller flips
+// the phase to "created" afterwards, so no message can outrun a pending or
+// failed refresh.
 func (b *Bridge) refreshSessionResources(ctx context.Context, r *run, resources []map[string]any) error {
 	if r.ResourcesRefreshed {
 		return nil
@@ -671,8 +679,6 @@ func (b *Bridge) refreshSessionResources(ctx context.Context, r *run, resources 
 			r.SessionID, r.PriorSessionID, r.Continued = "", "", false
 			r.Credits = runCredits{}
 			r.MountedFiles = 0
-			r.ResourcesRefreshed = false
-			r.Phase = "prepared"
 			return b.persist()
 		}
 		if err != nil {

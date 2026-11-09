@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon"
 )
@@ -35,6 +36,9 @@ type multiHarness struct {
 	uploads       int
 	mounts        map[string][]map[string]any
 	mountStatus   int
+	// resourceStatus queues one-time HTTP statuses for session resource
+	// POSTs; once empty, mounts are recorded normally.
+	resourceStatus []int
 	// calls records attachment mounts and message sends in order.
 	calls []string
 }
@@ -123,6 +127,12 @@ func setupMulti(t *testing.T, limit int, tasks ...*daemon.Task) *multiHarness {
 			h.uploads++
 			fmt.Fprintf(w, `{"id":"file_%d"}`, h.uploads)
 		case len(parts) == 3 && parts[2] == "resources" && r.Method == http.MethodPost:
+			if len(h.resourceStatus) > 0 {
+				status := h.resourceStatus[0]
+				h.resourceStatus = h.resourceStatus[1:]
+				w.WriteHeader(status)
+				return
+			}
 			if h.mountStatus != 0 {
 				w.WriteHeader(h.mountStatus)
 				return
@@ -489,6 +499,88 @@ func TestFollowUpRefreshesRotatingGitHubAppCredential(t *testing.T) {
 	mounts := h.mounts["sess_prev"]
 	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_fresh" || mounts[0]["url"] != "https://github.com/acme/app" {
 		t.Fatalf("rotating credential not refreshed into the session: %v", mounts)
+	}
+	if fmt.Sprint(h.calls) != "[mount sess_prev send sess_prev]" {
+		t.Fatalf("calls: %v", h.calls)
+	}
+}
+
+// A rotating credential refresh that is rate limited or fails transiently
+// must defer the follow-up message, not send it with the stale session
+// credential: the run stays "prepared" until the refresh completed, and the
+// retry re-resolves, refreshes and only then sends.
+func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	h.sessionStatus["sess_prev"] = "idle"
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.sessions["sess_prev"] = []map[string]any{
+		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
+		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
+	}
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "ghs_fresh", 424242, nil
+	}
+	refresh := func() *run {
+		t.Helper()
+		run := h.b.state.first()
+		if run == nil {
+			t.Fatal("run dropped while refresh deferred")
+		}
+		return run
+	}
+	// First resource POST is rate limited: the tick defers with the run still
+	// "prepared" and no message sent.
+	h.resourceStatus = []int{http.StatusTooManyRequests}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run := refresh()
+	if run.Phase != "prepared" || run.Continued != true || run.ResourcesRefreshed {
+		t.Fatalf("rate limit did not defer inside prepared: %#v", run)
+	}
+	if len(h.sentTo) != 0 || len(h.mounts["sess_prev"]) != 0 {
+		t.Fatalf("message or mount escaped the deferral: sentTo=%v mounts=%v", h.sentTo, h.mounts["sess_prev"])
+	}
+	// The backoff holds the run; a tick inside it changes nothing.
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sentTo) != 0 || len(h.mounts["sess_prev"]) != 0 {
+		t.Fatalf("backoff ignored: sentTo=%v mounts=%v", h.sentTo, h.mounts["sess_prev"])
+	}
+	// After the backoff, a transient server error also leaves the run
+	// prepared with nothing sent.
+	run = refresh()
+	run.RetryAt = time.Now().Add(-time.Second)
+	h.resourceStatus = []int{http.StatusInternalServerError}
+	if err := h.b.step(context.Background()); err == nil {
+		t.Fatal("transient refresh failure swallowed")
+	}
+	run = refresh()
+	if run.Phase != "prepared" || run.ResourcesRefreshed {
+		t.Fatalf("transient error changed state: %#v", run)
+	}
+	if len(h.sentTo) != 0 {
+		t.Fatalf("message sent despite failed refresh: %v", h.sentTo)
+	}
+	// A clean retry refreshes the credential and only then sends.
+	run = refresh()
+	run.RetryAt = time.Now().Add(-time.Second)
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run = refresh()
+	if run.Phase != "running" || !run.ResourcesRefreshed {
+		t.Fatalf("retry did not complete the refresh: phase=%s refreshed=%v", run.Phase, run.ResourcesRefreshed)
+	}
+	if len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" || h.creates != 0 {
+		t.Fatalf("follow-up did not continue after retry: creates=%d sentTo=%v", h.creates, h.sentTo)
+	}
+	mounts := h.mounts["sess_prev"]
+	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_fresh" {
+		t.Fatalf("credential not refreshed on retry: %v", mounts)
 	}
 	if fmt.Sprint(h.calls) != "[mount sess_prev send sess_prev]" {
 		t.Fatalf("calls: %v", h.calls)
