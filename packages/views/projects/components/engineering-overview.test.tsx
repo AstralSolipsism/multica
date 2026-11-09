@@ -8,6 +8,8 @@ import { RESOURCES } from "../../locales";
 import {
   setApiInstance,
   type BaselineChapter,
+  type BaselineAnnotationBatch,
+  type BaselineAnnotationDetail,
   type BaselineRevision,
   type ChapterState,
   type EngineeringConfig,
@@ -48,6 +50,8 @@ let chapters: ChapterState[];
 let histories: Record<BaselineChapter, BaselineRevision[]>;
 let graphNodes: IssueGraphNode[];
 let agents: Agent[];
+let annotationBatches: BaselineAnnotationBatch[];
+let annotationDetails: BaselineAnnotationDetail[];
 let decisionIssues: Issue[];
 let timelineEntries: TimelineEntry[];
 let decideProjectBaseline: ReturnType<typeof vi.fn>;
@@ -131,6 +135,8 @@ beforeEach(() => {
   currentUserId = OWNER;
   graphNodes = [];
   agents = [];
+  annotationBatches = [];
+  annotationDetails = [];
   decisionIssues = [];
   timelineEntries = [];
   config = {
@@ -210,8 +216,8 @@ beforeEach(() => {
       ...emptyHistory(),
       revisions: (histories[chapter] ?? []).slice(0, options.limit ?? 50),
     }),
-    getProjectBaselineAnnotationBatches: async () => ({ batches: [] }),
-    getProjectBaselineAnnotationBatch: async () => null,
+    getProjectBaselineAnnotationBatches: async () => ({ batches: annotationBatches }),
+    getProjectBaselineAnnotationBatch: async (_ws: string, _project: string, id: string) => annotationDetails.find((detail) => detail.batch.id === id) ?? null,
     listIssues: async () => ({ issues: decisionIssues, total: decisionIssues.length }),
     listTimeline: async () => timelineEntries,
     proposeProjectBaseline,
@@ -252,11 +258,6 @@ function renderOverview(search = "", currentLocale?: SupportedLocale) {
     return render(<I18nProvider locale={currentLocale} resources={{ [currentLocale]: RESOURCES[currentLocale] }}>{ui}</I18nProvider>);
   }
   return renderWithI18n(ui);
-}
-
-async function confirmBaselineDecision(user: ReturnType<typeof userEvent.setup>, name = "Adopt") {
-  const dialog = await screen.findByRole("dialog");
-  await user.click(within(dialog).getByRole("button", { name }));
 }
 
 describe("EngineeringOverview waiting decisions", () => {
@@ -485,10 +486,14 @@ describe("EngineeringOverview baseline navigation", () => {
         : chapter);
   });
 
+  const openRulesCandidate = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByText("Domain and rules", { selector: "[data-candidate-todo] *" }));
+  };
+
   it("opens the candidate from the waiting list in compare and management mode", async () => {
     const user = userEvent.setup();
     renderOverview();
-    await user.click(await screen.findByText("Baseline revision v2 needs confirmation"));
+    await openRulesCandidate(user);
     expect(await screen.findByText("RULES-CANDIDATE", { selector: "p" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Project baseline" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Project management" })).toHaveAttribute("aria-selected", "true");
@@ -516,19 +521,18 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(screen.queryByRole("tab", { name: "Project understanding" })).not.toBeInTheDocument();
   });
 
-  it("keeps the decided revision and decision result after adopting from the waiting list", async () => {
+  it("adopts successfully and immediately opens the next pending candidate", async () => {
     const user = userEvent.setup();
     renderOverview();
-    await user.click(await screen.findByText("Baseline revision v2 needs confirmation"));
+    await openRulesCandidate(user);
     await user.click(await screen.findByRole("button", { name: "Adopt" }));
-    await confirmBaselineDecision(user);
 
-    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
-    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-open-issues]")).toBeInTheDocument();
-    const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
-    await user.click(within(toc).getByRole("button", { name: "Architecture and decisions" }));
-    expect(screen.queryByText("The requested revision was not found")).not.toBeInTheDocument();
+    expect(await screen.findByText("ARCH-CANDIDATE", { selector: "p" })).toBeInTheDocument();
+    expect(screen.queryByText("RULES-CANDIDATE", { selector: "p" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "candidate");
+    expect(document.querySelector("[data-review-notice]")).toHaveTextContent("1 pending");
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-engineering-shell]")).toHaveProperty("scrollTop", 0);
   });
 
   it("opens a candidate deep link without adopting on navigation", async () => {
@@ -536,7 +540,8 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(await screen.findByText("RULES-CANDIDATE", { selector: "p" })).toBeInTheDocument();
     expect(decideProjectBaseline).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request changes" })).toBeEnabled();
   });
 
   it("does not substitute the current candidate when the requested revision is missing", async () => {
@@ -554,24 +559,94 @@ describe("EngineeringOverview baseline navigation", () => {
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
   });
 
-  it("selects the first pending chapter when opening the baseline tab directly", async () => {
+  it("returns to the overview after the last decision and opens read-only records with hierarchical Escape", async () => {
     const user = userEvent.setup();
     renderOverview();
-    await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
-    expect(await screen.findByText("RULES-CANDIDATE", { selector: "p" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Current v0" })).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("tab", { name: "Compare v2" }));
-    expect(document.querySelector('[data-diff-kind="added"]')).toBeInTheDocument();
+    await openRulesCandidate(user);
+    await user.click(await screen.findByRole("button", { name: "Adopt" }));
+    await user.click(await screen.findByRole("button", { name: "Adopt" }));
+
+    expect(await screen.findByText("This review batch is complete")).toBeInTheDocument();
+    expect(document.querySelector("[data-review-complete]")).toHaveTextContent("2 adopted · 0 rejected · 0 requested changes");
+    await user.click(screen.getByRole("button", { name: "View processed records" }));
+    expect(await screen.findAllByRole("button", { name: /Revision v/ })).toHaveLength(2);
+    await user.click(document.querySelector("[data-processed-record]")!);
+    expect(await screen.findByText("This revision cannot be decided again")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("heading", { name: "Processed records" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(await screen.findByText("This review batch is complete")).toBeInTheDocument();
   });
 
-  it("refreshes the deep-linked revision status after adoption", async () => {
+  it("keeps a failed decision in place and retries with the original parameters", async () => {
     const user = userEvent.setup();
-    renderOverview(`candidate=${RULES_CANDIDATE}`);
+    decideProjectBaseline.mockRejectedValueOnce(new Error("Service returned 502"));
+    renderOverview();
+    await openRulesCandidate(user);
     await user.click(await screen.findByRole("button", { name: "Adopt" }));
-    await confirmBaselineDecision(user);
-    await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalled());
-    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
-    expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
+
+    expect(await screen.findByText("Service returned 502")).toBeInTheDocument();
+    expect(screen.getByText("RULES-CANDIDATE", { selector: "p" })).toBeInTheDocument();
+    const firstInput = decideProjectBaseline.mock.calls[0]!.slice(2);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("ARCH-CANDIDATE", { selector: "p" })).toBeInTheDocument();
+    expect(decideProjectBaseline.mock.calls[1]!.slice(2)).toEqual(firstInput);
+  });
+
+  it("requires a change-request comment and submits a synthesized section annotation before advancing", async () => {
+    const user = userEvent.setup();
+    const sourceCandidate = { ...revision(RULES_CANDIDATE, "domain_rules", 2, "RULES-CANDIDATE"), sourceIssueId: "issue-source" };
+    chapters = chapters.map((chapter) => chapter.chapter === "domain_rules" ? { ...chapter, candidate: sourceCandidate } : chapter);
+    renderOverview();
+    await openRulesCandidate(user);
+    await user.click(await screen.findByRole("button", { name: "Request changes" }));
+    const dialog = screen.getByRole("dialog");
+    const submit = within(dialog).getByRole("button", { name: "Submit and open next" });
+    expect(submit).toBeDisabled();
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Clarify rollback handling");
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+
+    expect(await screen.findByText("ARCH-CANDIDATE", { selector: "p" })).toBeInTheDocument();
+    const input = submitProjectBaselineReview.mock.calls[0]![2];
+    expect(input).toMatchObject({ reviewedRevisionId: RULES_CANDIDATE, summary: "Clarify rollback handling" });
+    expect(input.annotations).toEqual([{
+      anchorKind: "section",
+      targetRevisionId: RULES_CANDIDATE,
+      sectionAnchor: "Rule-1",
+      sectionTitle: "RULES-CANDIDATE",
+      note: "Clarify rollback handling",
+    }]);
+  });
+
+  it("keeps a persistently reviewed candidate out of pending and exposes its read-only record", async () => {
+    const user = userEvent.setup();
+    const batch = { id: "batch-review", chapter: "domain_rules", state: "active" } as BaselineAnnotationBatch;
+    annotationBatches = [batch];
+    annotationDetails = [{
+      batch,
+      reviews: [{
+        id: "review-1",
+        batchId: batch.id,
+        clientKey: "client-1",
+        reviewedRevisionId: RULES_CANDIDATE,
+        summary: "Persisted review comment",
+        wakeCommentId: null,
+        createdById: OWNER,
+        createdAt: "2026-11-01T00:00:00Z",
+      }],
+      annotations: [],
+      sections: [],
+    }];
+    renderOverview();
+
+    await waitFor(() => expect(document.querySelector(`[data-candidate-todo="${ARCHITECTURE_CANDIDATE}"]`)).toBeInTheDocument());
+    await waitFor(() => expect(document.querySelector(`[data-candidate-todo="${RULES_CANDIDATE}"]`)).not.toBeInTheDocument());
+    await user.click((await screen.findAllByRole("button", { name: "Processed records (1)" }))[0]!);
+    expect(await screen.findByText("Changes requested")).toBeInTheDocument();
+    expect(screen.getByText("Persisted review comment")).toBeInTheDocument();
   });
 });
 
@@ -624,7 +699,6 @@ describe("EngineeringOverview baseline editing", () => {
       expectedAdoptedRevisionId: null,
     }]));
     expect(proposeProjectBaseline.mock.invocationCallOrder[0]).toBeLessThan(decideProjectBaseline.mock.invocationCallOrder[0]!);
-    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
     expect(document.querySelector("[data-baseline-editor]")).not.toBeInTheDocument();
   });
 
@@ -681,7 +755,7 @@ describe("EngineeringOverview baseline editing", () => {
     await user.type(screen.getByRole("textbox", { name: "Markdown content" }), "## Goal\nShip safely.");
     await user.type(screen.getByRole("textbox", { name: "Change summary" }), "Initialize overview");
     await user.click(screen.getByRole("button", { name: "Save and adopt" }));
-    await waitFor(() => expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "adopted"));
+    await waitFor(() => expect(decideProjectBaseline).toHaveBeenCalled());
     const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
 
     await user.click(within(toc).getByRole("button", { name: "Domain and rules" }));
@@ -690,7 +764,7 @@ describe("EngineeringOverview baseline editing", () => {
     expect(screen.getByRole("button", { name: "Initialize chapter" })).toBeEnabled();
   });
 
-  it("returns to the edited chapter and keeps its candidate actionable after cross-chapter browsing", async () => {
+  it("returns to the edited chapter and keeps its candidate comparison after cross-chapter browsing", async () => {
     const user = userEvent.setup();
     renderOverview();
     await user.click(await screen.findByRole("tab", { name: "Project baseline" }));
@@ -704,8 +778,6 @@ describe("EngineeringOverview baseline editing", () => {
     await user.click(screen.getByRole("button", { name: "Submit for review" }));
 
     expect(await screen.findByText("Cross chapter revision", { selector: "p" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
     expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Project understanding" })).toHaveAttribute("aria-selected", "true");
   });
@@ -725,7 +797,7 @@ describe("EngineeringOverview baseline editing", () => {
 
     expect(await screen.findByText("Deep link revision", { selector: "p" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Return for changes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(screen.queryByText(/historical revision is read-only/)).not.toBeInTheDocument();
     expect(decideProjectBaseline).not.toHaveBeenCalled();
   });
@@ -770,8 +842,7 @@ describe("EngineeringOverview baseline editing", () => {
 
     expect(await screen.findByText("The candidate was not decided")).toBeInTheDocument();
     expect(screen.queryByText("The baseline revision was not saved")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-baseline-revision-status]")).toHaveAttribute("data-baseline-revision-status", "candidate");
-    expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and adopt" })).toBeEnabled();
     expect(screen.getByRole("textbox", { name: "Markdown content" })).toHaveValue("## Goal\nKeep candidate.");
   });
 
@@ -795,6 +866,7 @@ describe("EngineeringOverview baseline editing", () => {
     expect(submitProjectBaselineReview).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Finish review" }));
     const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Address the section annotation");
     await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
 
     await waitFor(() => expect(submitProjectBaselineReview).toHaveBeenCalledTimes(1));

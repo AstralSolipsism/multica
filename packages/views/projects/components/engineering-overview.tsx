@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
-import { AlertCircle, LoaderCircle, Settings2 } from "@multica/ui/icons";
+import { AlertCircle, LoaderCircle, Settings2, X } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import { api, type BaselineChapter, type BaselineDecision, type BaselineRevision, type EngineeringStage as EngineeringStageConfig } from "@multica/core/api";
+import { api, errorCode, type BaselineChapter, type BaselineRevision, type EngineeringStage as EngineeringStageConfig, type SubmitProjectBaselineReviewInput } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
@@ -27,6 +27,8 @@ import { EngineeringBaseline, type BaselineSaveDraft, type BaselineSaveResult } 
 import type { BaselineLens } from "./engineering-baseline-markdown";
 import { orderedBaselineChapters } from "./engineering-baseline-utils";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
+import { BaselineProcessedRecords, type BaselineProcessedRecord } from "./engineering-baseline-processed";
+import { useEngineeringChapterLabel } from "./labels";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
@@ -46,6 +48,22 @@ type ConfigUpdate = {
   stages?: EngineeringStageConfig[];
 };
 
+type FailedReview =
+  | { kind: "decision"; action: "adopt" | "reject"; target: BaselineRevision; annotationBatchAction?: "close" | "keep" }
+  | { kind: "changes"; input: SubmitProjectBaselineReviewInput; target: BaselineRevision };
+
+interface ReviewSummary {
+  adopted: number;
+  rejected: number;
+  changes: number;
+}
+
+const emptyReviewSummary: ReviewSummary = { adopted: 0, rejected: 0, changes: 0 };
+
+function reviewErrorMessage(cause: unknown): string {
+  return cause instanceof Error && cause.message ? cause.message : errorCode(cause) ?? "Unknown review error";
+}
+
 export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOverviewProps) {
   const { t } = useT("engineering");
   const { t: tProjects } = useT("projects");
@@ -58,6 +76,15 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [selectedChapter, setSelectedChapter] = useState<BaselineChapter>("overview");
   const [selectedStage, setSelectedStage] = useState(1);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [sessionRecords, setSessionRecords] = useState<readonly BaselineProcessedRecord[]>([]);
+  const [reviewBatchIds, setReviewBatchIds] = useState<readonly string[]>([]);
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary>(emptyReviewSummary);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [reviewNotice, setReviewNotice] = useState<{ id: number; action: "adopted" | "rejected" | "changes"; chapter: BaselineChapter; remaining: number } | null>(null);
+  const [recordsOpen, setRecordsOpen] = useState(false);
+  const [selectedRecordKey, setSelectedRecordKey] = useState<string | null>(null);
+  const [failedReview, setFailedReview] = useState<FailedReview | null>(null);
+  const [decisionErrorMessage, setDecisionErrorMessage] = useState("");
   const baselineLensKey = `multica.engineering-baseline.lens.${projectId}`;
   const [baselineLensPreference, setBaselineLensPreference] = useState<BaselineLens | null>(() => {
     if (typeof window === "undefined") return null;
@@ -70,6 +97,12 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const overviewQuery = useQuery(projectEngineeringOptions(wsId, projectId));
   const membersQuery = useQuery(memberListOptions(wsId));
   const overview = overviewQuery.data;
+  const chapterLabel = useEngineeringChapterLabel(overview?.chapters ?? []);
+  useEffect(() => {
+    if (!reviewNotice) return;
+    const timeout = window.setTimeout(() => setReviewNotice(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [reviewNotice]);
   const config = overview?.engineering;
   const enabled = config?.enabled === true;
   const permissions = useMemo(
@@ -80,8 +113,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const skillBindings = useMemo(() => strixnovaSkillBindings(agentsQuery.data ?? []), [agentsQuery.data]);
 
   useEffect(() => {
-    if (candidateId) setActiveView("baseline");
-    setManualCandidateId("");
+    if (candidateId) {
+      setActiveView("baseline");
+      setManualCandidateId("");
+    }
   }, [candidateId]);
   const currentStage = config?.currentStage;
   useEffect(() => {
@@ -131,7 +166,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     () => buildEngineeringRoadmap(projectNodes, config?.stages ?? [], config?.currentStage ?? 1),
     [projectNodes, config?.stages, config?.currentStage],
   );
-  const pendingCandidates = useMemo(() => (overview?.chapters ?? []).flatMap((chapter) => chapter.candidate ? [chapter.candidate] : []), [overview?.chapters]);
+  const allCandidates = useMemo(() => (overview?.chapters ?? []).flatMap((chapter) => chapter.candidate ? [chapter.candidate] : []), [overview?.chapters]);
 
   const chapterState = overview?.chapters.find((chapter) => chapter.chapter === selectedChapter);
   const [conflictRevision, setConflictRevision] = useState<BaselineRevision | null>(null);
@@ -146,17 +181,15 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     ? manualRevision
     : showDeepLinkedRevision ? candidateQuery.data?.revision ?? null : chapterState?.candidate ?? null;
   const revision = conflictRevision ?? localRevision ?? queriedRevision;
-  const currentCandidate = !conflictRevision && revision?.status === "candidate" && chapterState?.candidate?.id === revision.id
-    && (manualCandidateId ? true : !showDeepLinkedRevision || candidateQuery.data?.current === true);
-  const [decisionResult, setDecisionResult] = useState<BaselineDecision | null>(null);
   const [decisionError, setDecisionError] = useState(false);
   useEffect(() => {
     const saved = savedRevisionRef.current;
     const selectedRevisionId = manualCandidateId || candidateId;
     if (saved?.chapter === selectedChapter && (!selectedRevisionId || saved.id === selectedRevisionId)) return;
     savedRevisionRef.current = null;
-    setDecisionResult(null);
     setDecisionError(false);
+    setDecisionErrorMessage("");
+    setFailedReview(null);
     setConflictRevision(null);
     setLocalRevision(null);
   }, [candidateId, manualCandidateId, selectedChapter]);
@@ -177,28 +210,92 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const baselineChapters = useMemo(() => orderedBaselineChapters(overview?.chapters ?? []), [overview?.chapters]);
   const recentQueries = useQueries({
     queries: baselineChapters.map((chapter) => ({
-      // Only anchorsDiff is read, to find each section's latest revision.
-      ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 10, withContent: false }),
-      enabled: enabled && activeView === "baseline",
+      ...projectBaselineHistoryOptions(wsId, projectId, chapter, { limit: 50, withContent: false }),
+      enabled,
     })),
   });
   const chapterRevisions = useMemo<Partial<Record<BaselineChapter, readonly BaselineRevision[]>>>(() => Object.fromEntries(
     baselineChapters.map((chapter, index) => [chapter, recentQueries[index]?.data?.revisions ?? []]),
   ), [baselineChapters, recentQueries]);
   const annotationBatchesQuery = useQuery({
-    ...projectBaselineAnnotationBatchesOptions(wsId, projectId, { chapter: selectedChapter, state: "all" }),
-    enabled: enabled && activeView === "baseline",
+    ...projectBaselineAnnotationBatchesOptions(wsId, projectId, { state: "all" }),
+    enabled,
   });
   const annotationBatches = useMemo(() => annotationBatchesQuery.data?.batches ?? [], [annotationBatchesQuery.data]);
   const annotationDetailQueries = useQueries({
     queries: annotationBatches.map((batch) => ({
       ...projectBaselineAnnotationBatchOptions(wsId, projectId, batch.id, { state: "all", withSections: false }),
-      enabled: enabled && activeView === "baseline",
+      enabled,
     })),
   });
   const annotationDetails = useMemo(() => annotationDetailQueries.flatMap((query) => query.data ? [query.data] : []), [annotationDetailQueries]);
   const annotationsLoading = annotationBatchesQuery.isLoading || annotationDetailQueries.some((query) => query.isLoading);
   const annotationsError = annotationBatchesQuery.isError || annotationBatchesQuery.data === null || annotationDetailQueries.some((query) => query.isError || query.data === null);
+  const reviewedCandidateIds = useMemo(() => new Set(annotationDetails.flatMap((detail) => detail.reviews.map((review) => review.reviewedRevisionId))), [annotationDetails]);
+  const pendingCandidates = useMemo(() => allCandidates.filter((candidate) =>
+    !reviewedCandidateIds.has(candidate.id) && !sessionRecords.some((record) => record.revision.id === candidate.id)
+  ), [allCandidates, reviewedCandidateIds, sessionRecords]);
+  const currentCandidate = !conflictRevision && revision?.status === "candidate" && chapterState?.candidate?.id === revision.id
+    && !reviewedCandidateIds.has(revision.id) && !sessionRecords.some((record) => record.revision.id === revision.id)
+    && (manualCandidateId ? true : !showDeepLinkedRevision || candidateQuery.data?.current === true);
+  const sourceLabels = useMemo<Record<string, string>>(() => Object.fromEntries([
+    ...roadmap.stages.flatMap((stage) => stage.tasks),
+    ...roadmap.outside,
+  ].map((node) => [node.id, node.identifier])), [roadmap]);
+  const processedRecords = useMemo<readonly BaselineProcessedRecord[]>(() => {
+    const records = new Map<string, BaselineProcessedRecord>();
+    const revisions = new Map<string, BaselineRevision>();
+    for (const candidate of allCandidates) revisions.set(candidate.id, candidate);
+    for (const state of overview?.chapters ?? []) {
+      if (state.adopted) revisions.set(state.adopted.id, state.adopted);
+    }
+    for (const history of Object.values(chapterRevisions)) {
+      for (const item of history ?? []) revisions.set(item.id, item);
+    }
+    const add = (revision: BaselineRevision, decision: BaselineProcessedRecord["decision"], decidedAt: string, summary?: string) => {
+      const key = `${revision.id}:${decision}`;
+      records.set(key, {
+        key,
+        revision,
+        decision,
+        decidedAt,
+        ...(summary ? { summary } : {}),
+        ...(revision.sourceIssueId ? { sourceLabel: sourceLabels[revision.sourceIssueId] } : {}),
+      });
+    };
+    for (const revision of revisions.values()) {
+      if (revision.status === "adopted" || revision.status === "rejected") {
+        add(revision, revision.status, revision.decidedAt ?? revision.createdAt);
+      }
+    }
+    for (const detail of annotationDetails) {
+      for (const review of detail.reviews) {
+        const reviewed = revisions.get(review.reviewedRevisionId);
+        if (reviewed) add(reviewed, "changes", review.createdAt, review.summary);
+      }
+    }
+    for (const record of sessionRecords) records.set(`${record.revision.id}:${record.decision}`, record);
+    return [...records.values()].sort((a, b) => b.decidedAt.localeCompare(a.decidedAt));
+  }, [allCandidates, overview?.chapters, chapterRevisions, annotationDetails, sessionRecords, sourceLabels]);
+  const selectedRecord = selectedRecordKey ? processedRecords.find((record) => record.key === selectedRecordKey) ?? null : null;
+  const recordDetailQuery = useQuery({
+    ...projectBaselineHistoryOptions(wsId, projectId, selectedRecord?.revision.chapter ?? selectedChapter, { limit: 50, withContent: true }),
+    enabled: enabled && recordsOpen && !!selectedRecord,
+  });
+  const detailRevision = selectedRecord
+    ? selectedRecord.revision.contentMarkdown
+      ? selectedRecord.revision
+      : recordDetailQuery.data?.revisions.find((item) => item.id === selectedRecord.revision.id) ?? null
+    : null;
+  const detailBaseRevision = selectedRecord
+    ? recordDetailQuery.data?.revisions.find((item) => item.id === selectedRecord.revision.baseRevisionId)
+      ?? (overview?.chapters.find((chapter) => chapter.chapter === selectedRecord.revision.chapter)?.adopted?.id === selectedRecord.revision.baseRevisionId
+        ? overview.chapters.find((chapter) => chapter.chapter === selectedRecord.revision.chapter)?.adopted ?? null
+        : null)
+    : null;
+  const recordsLoading = recentQueries.some((query) => query.isLoading) || annotationsLoading;
+  const recordsError = recentQueries.some((query) => query.isError) || annotationsError;
+  const processedRevisionIds = useMemo(() => new Set(processedRecords.map((record) => record.revision.id)), [processedRecords]);
 
   const updateEngineering = useUpdateProjectEngineering();
   const proposeBaseline = useProposeProjectBaseline();
@@ -220,9 +317,67 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       return false;
     }
   };
+  const recordDecision = (target: BaselineRevision, action: BaselineProcessedRecord["decision"], summary?: string) => {
+    const decidedAt = new Date().toISOString();
+    const key = `${target.id}:${action}`;
+    setSessionRecords((current) => [
+      ...current.filter((record) => record.key !== key),
+      {
+        key,
+        revision: target,
+        decision: action,
+        decidedAt,
+        ...(summary?.trim() ? { summary: summary.trim() } : {}),
+        ...(target.sourceIssueId ? { sourceLabel: sourceLabels[target.sourceIssueId] } : {}),
+      },
+    ]);
+    setReviewSummary((current) => ({ ...current, [action]: current[action] + 1 }));
+    const remaining = pendingCandidates.filter((candidate) => candidate.id !== target.id);
+    setReviewNotice({ id: Date.now(), action, chapter: target.chapter, remaining: remaining.length });
+    setFailedReview(null);
+    setDecisionError(false);
+    setDecisionErrorMessage("");
+    setLocalRevision(null);
+    setConflictRevision(null);
+    if (!remaining.length) {
+      setManualCandidateId("");
+      setActiveView("overview");
+      setCompletionOpen(true);
+      setRecordsOpen(false);
+      clearCandidateParam();
+      return;
+    }
+    const currentIndex = allCandidates.findIndex((candidate) => candidate.id === target.id);
+    const next = remaining.find((candidate) => allCandidates.findIndex((item) => item.id === candidate.id) > currentIndex) ?? remaining[0]!;
+    clearCandidateParam();
+    setManualCandidateId(next.id);
+    setSelectedChapter(next.chapter);
+    setActiveView("baseline");
+  };
+  const submitReview = async (input: SubmitProjectBaselineReviewInput) => {
+    const target = allCandidates.find((candidate) => candidate.id === input.reviewedRevisionId)
+      ?? (revision?.id === input.reviewedRevisionId ? revision : null)
+      ?? overview?.chapters.map((chapter) => chapter.adopted).find((adopted) => adopted?.id === input.reviewedRevisionId) ?? null;
+    if (!target) throw new Error("The reviewed candidate is no longer available");
+    setFailedReview(null);
+    setDecisionError(false);
+    setDecisionErrorMessage("");
+    try {
+      const result = await submitBaselineReview.mutateAsync({ projectId, ...input });
+      if (!result) throw new Error("Invalid review response");
+      if (target.status === "candidate") recordDecision(target, "changes", input.summary);
+      return result;
+    } catch (cause) {
+      setFailedReview({ kind: "changes", input, target });
+      setDecisionError(true);
+      setDecisionErrorMessage(reviewErrorMessage(cause));
+      throw cause;
+    }
+  };
   const decide = async (action: "adopt" | "reject", target: BaselineRevision, annotationBatchAction?: "close" | "keep"): Promise<boolean> => {
     setDecisionError(false);
-    setDecisionResult(null);
+    setDecisionErrorMessage("");
+    setFailedReview(null);
     setConflictRevision(null);
     setLocalRevision(null);
     const input = {
@@ -233,22 +388,25 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     try {
       const result = await (action === "adopt" ? adoptBaseline.mutateAsync(input) : rejectBaseline.mutateAsync(input));
       if (!result) throw new Error("Invalid decision response");
-      setLocalRevision({ ...target, status: action === "adopt" ? "adopted" : "rejected" });
-      setDecisionResult(result);
-      toast.success(t(($) => action === "adopt" ? $.messages.adopted : $.messages.rejected));
+      recordDecision(target, action === "adopt" ? "adopted" : "rejected");
       return true;
-    } catch {
-      setConflictRevision(target);
+    } catch (cause) {
+      setFailedReview({ kind: "decision", action, target, ...(annotationBatchAction ? { annotationBatchAction } : {}) });
       setDecisionError(true);
+      setDecisionErrorMessage(reviewErrorMessage(cause));
       return false;
     }
+  };
+  const retryFailedReview = async () => {
+    if (!failedReview) return;
+    if (failedReview.kind === "changes") await submitReview(failedReview.input);
+    else await decide(failedReview.action, failedReview.target, failedReview.annotationBatchAction);
   };
   const saveBaseline = async (
     draft: BaselineSaveDraft,
     adopt: boolean,
   ): Promise<BaselineSaveResult> => {
     setDecisionError(false);
-    setDecisionResult(null);
     setConflictRevision(null);
     setLocalRevision(null);
     savedRevisionRef.current = null;
@@ -284,7 +442,6 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       const adopted = { ...candidate, status: "adopted" as const };
       savedRevisionRef.current = adopted;
       setLocalRevision(adopted);
-      setDecisionResult(result);
       toast.success(t(($) => $.messages.adopted));
       return { revision: adopted };
     } catch {
@@ -306,6 +463,8 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const openOverview = () => {
     setManualCandidateId("");
     setActiveView("overview");
+    setRecordsOpen(false);
+    setSelectedRecordKey(null);
     clearCandidateParam();
   };
   const openBaseline = (id?: string) => {
@@ -313,14 +472,27 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       const chapter = overview?.chapters.find((item) => item.candidate?.id === id);
       if (chapter) setSelectedChapter(chapter.chapter);
       setManualCandidateId(id);
+      setReviewBatchIds(allCandidates.map((candidate) => candidate.id));
+      setReviewSummary(emptyReviewSummary);
+      setCompletionOpen(false);
+      setReviewNotice(null);
     } else {
       setManualCandidateId("");
-      const selectedCandidate = overview?.chapters.find((item) => item.chapter === selectedChapter)?.candidate;
+      const selectedCandidate = pendingCandidates.find((candidate) => candidate.chapter === selectedChapter);
       const firstCandidate = selectedCandidate ?? pendingCandidates[0];
-      const chapter = overview?.chapters.find((item) => item.candidate?.id === firstCandidate?.id);
-      if (chapter) setSelectedChapter(chapter.chapter);
+      if (firstCandidate) setSelectedChapter(firstCandidate.chapter);
     }
+    setRecordsOpen(false);
+    setSelectedRecordKey(null);
     setActiveView("baseline");
+  };
+  const openProcessed = () => {
+    setRecordsOpen(true);
+    setSelectedRecordKey(null);
+  };
+  const backFromProcessed = () => {
+    if (selectedRecordKey) setSelectedRecordKey(null);
+    else setRecordsOpen(false);
   };
   const openOverviewStage = (stage: number) => {
     setSelectedStage(stage);
@@ -404,9 +576,14 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       workspaceSlug={workspaceSlug}
       issues={decisionIssues}
       timelines={timelines}
+      chapters={overview.chapters}
       candidates={pendingCandidates}
+      processedCount={processedRecords.length}
+      sourceLabels={sourceLabels}
       reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
       onOpenCandidate={openBaseline}
+      onOpenProcessed={openProcessed}
+      onOpenWiki={() => openBaseline()}
       onReview={() => {
         setSelectedStage(config.currentStage);
         setReviewOpen(true);
@@ -416,11 +593,41 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   return (
     <div className={shellClass} data-engineering-shell>
       {topChrome}
-      <main className={cn("min-h-0 flex-1", activeView === "overview" ? "overflow-y-auto" : "overflow-hidden")}>
-        <div className={cn(activeView === "overview" ? "mx-auto w-full max-w-5xl p-4 md:p-6" : "h-full")}>
+      <main className={cn("min-h-0 flex-1", !recordsOpen && activeView === "overview" ? "overflow-y-auto" : "overflow-hidden")}>
+        <div className={cn(recordsOpen ? "h-full" : activeView === "overview" ? "mx-auto w-full max-w-5xl p-4 md:p-6" : "h-full")}>
         {configError ? <Alert className="m-4" variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
-        {activeView === "overview" ? (
+        {recordsOpen ? (
+          <BaselineProcessedRecords
+            chapters={overview.chapters}
+            records={processedRecords}
+            selectedRecord={selectedRecord}
+            detailRevision={detailRevision}
+            baseRevision={detailBaseRevision}
+            loading={recordsLoading}
+            error={recordsError}
+            detailLoading={!!selectedRecord && !detailRevision && recordDetailQuery.isLoading}
+            detailError={!detailRevision && (recordDetailQuery.isError || recordDetailQuery.data === null)}
+            onSelect={(record) => setSelectedRecordKey(record.key)}
+            onBack={backFromProcessed}
+            onRetry={() => {
+              for (const query of recentQueries) void query.refetch();
+              void annotationBatchesQuery.refetch();
+              for (const query of annotationDetailQueries) void query.refetch();
+              if (selectedRecord) void recordDetailQuery.refetch();
+            }}
+          />
+        ) : activeView === "overview" ? (
           <div className="mt-5 space-y-8">
+            {completionOpen ? (
+              <div className="flex flex-wrap items-center gap-3 rounded-md border border-success/30 bg-success/5 px-4 py-3" role="status" data-review-complete>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-success">{t(($) => $.completion.title)}</div>
+                  <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.completion.summary, { adopted: reviewSummary.adopted, rejected: reviewSummary.rejected, changes: reviewSummary.changes })}</div>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={openProcessed}>{t(($) => $.completion.viewRecords)}</Button>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.actions.close)} onClick={() => setCompletionOpen(false)}><X aria-hidden="true" /></Button>
+              </div>
+            ) : null}
             {decisionQueries.some((query) => query.isError) ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
             {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
               <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
@@ -462,9 +669,15 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             candidateLoading={showDeepLinkedRevision && candidateQuery.isLoading}
             candidateNotFound={(showDeepLinkedRevision || !!manualCandidateId) && !candidateQuery.isLoading && !candidateQuery.isError && !revision}
             canDecide={permissions.isDecider}
-            decisionPending={proposeBaseline.isPending || adoptBaseline.isPending || rejectBaseline.isPending}
+            decisionPending={proposeBaseline.isPending || adoptBaseline.isPending || rejectBaseline.isPending || submitBaselineReview.isPending}
             decisionError={decisionError || (showDeepLinkedRevision && candidateQuery.isError)}
-            decisionResult={decisionResult}
+            decisionErrorMessage={decisionErrorMessage}
+            onRetryDecision={failedReview ? retryFailedReview : undefined}
+            onClearDecisionError={() => {
+              setDecisionError(false);
+              setDecisionErrorMessage("");
+              setFailedReview(null);
+            }}
             onDecision={decide}
             annotations={{
               batches: annotationBatches,
@@ -474,7 +687,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
               actions: {
                 ownerId: userId ?? "",
                 agents: agentsQuery.data ?? [],
-                onSubmitReview: (input) => submitBaselineReview.mutateAsync({ projectId, ...input }),
+                onSubmitReview: submitReview,
                 onResolveAnnotations: (annotationIds, resolved) => resolveBaselineAnnotations.mutateAsync({ projectId, annotationIds, resolved }),
                 onCloseBatch: (batchId) => closeBaselineAnnotationBatch.mutateAsync({ projectId, batchId }),
               },
@@ -488,12 +701,32 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             chapterRevisions={chapterRevisions}
             roadmap={roadmap}
             reviewRequested={reviewRequested}
+            pendingCandidates={pendingCandidates}
+            batchIds={reviewBatchIds.length ? reviewBatchIds : allCandidates.map((candidate) => candidate.id)}
+            processedRevisionIds={processedRevisionIds}
+            processedCount={processedRecords.length}
+            returnLabel={t(($) => $.reviewQueue.backOverview)}
+            onReturnFromReview={openOverview}
+            onSelectCandidate={(id) => {
+              const candidate = pendingCandidates.find((item) => item.id === id);
+              if (!candidate) return;
+              setManualCandidateId(id);
+              setSelectedChapter(candidate.chapter);
+            }}
+            onOpenProcessed={openProcessed}
             lens={baselineLens}
             onOpenStage={openOverviewStage}
           />
         )}
         </div>
       </main>
+      {reviewNotice ? (
+        <div className="absolute bottom-4 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-[10px] bg-foreground px-3 py-2 text-caption text-background shadow-lg" role="status" data-review-notice>
+          <span className="truncate">{t(($) => $.reviewNotice[reviewNotice.action], { chapter: chapterLabel(reviewNotice.chapter) })} · {t(($) => reviewNotice.remaining ? $.reviewNotice.remaining : $.reviewNotice.complete, { count: reviewNotice.remaining })}</span>
+          <button type="button" className="shrink-0 underline underline-offset-2" onClick={openProcessed}>{t(($) => $.decisions.processed, { count: processedRecords.length })}</button>
+          <button type="button" className="shrink-0 rounded-sm p-1" aria-label={t(($) => $.actions.close)} onClick={() => setReviewNotice(null)}><X className="size-3.5" aria-hidden="true" /></button>
+        </div>
+      ) : null}
     </div>
   );
 }

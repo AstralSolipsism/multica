@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -10,13 +10,13 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
+import type { BaselineChapter, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
 import { matchLocale } from "@multica/core/i18n";
 import { paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
-import { useNavigation } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
   baselineModuleSlug,
@@ -43,6 +43,7 @@ import type { EngineeringRoadmap } from "./engineering-utils";
 import {
   activeBaselineBatch,
   buildBaselineAnnotationThreads,
+  isBatchRelatedToCandidate,
   reviewDraftItems,
   type BaselineAnnotationData,
   type BaselineComposerAnchor,
@@ -50,7 +51,7 @@ import {
 } from "./engineering-baseline-annotation-model";
 import { BaselineSourceDiff, baselineSourceDisplaySections } from "./engineering-baseline-source-diff";
 import { BaselineReviewDialog } from "./engineering-baseline-review-dialog";
-import { BaselineBatchDialog, BaselineReviewBar, type BaselineCompareView, type BaselineReviewMode } from "./engineering-baseline-review-bar";
+import { BaselineBatchDialog, BaselineReviewBar, type BaselineCompareView, type BaselineDecisionAction, type BaselineReviewMode } from "./engineering-baseline-review-bar";
 import {
   BaselineAnnotateSectionButton,
   BaselineReadingAnnotations,
@@ -97,7 +98,9 @@ interface EngineeringBaselineProps {
   canDecide: boolean;
   decisionPending: boolean;
   decisionError: boolean;
-  decisionResult: BaselineDecision | null;
+  decisionErrorMessage: string;
+  onRetryDecision?: () => Promise<void>;
+  onClearDecisionError: () => void;
   onDecision: (action: DecisionAction, revision: BaselineRevision, annotationBatchAction?: "close" | "keep") => Promise<boolean>;
   annotations: BaselineAnnotationData;
   savePending: boolean;
@@ -109,6 +112,14 @@ interface EngineeringBaselineProps {
   chapterRevisions: Partial<Record<BaselineChapter, readonly BaselineRevision[]>>;
   roadmap: EngineeringRoadmap;
   reviewRequested: boolean;
+  pendingCandidates: readonly BaselineRevision[];
+  batchIds: readonly string[];
+  processedRevisionIds: ReadonlySet<string>;
+  processedCount: number;
+  returnLabel: string;
+  onReturnFromReview: () => void;
+  onSelectCandidate: (candidateId: string) => void;
+  onOpenProcessed: () => void;
   lens: BaselineLens;
   onOpenStage: (stage: number) => void;
 }
@@ -348,6 +359,8 @@ function SectionRelations({ section, relations, lens, onConcept }: {
 
 export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const chapterLabel = useEngineeringChapterLabel(props.chapters);
+  const { getActorName } = useActorName();
+  const formatRelativeDate = useFormatRelativeDate();
   const { t } = useT("engineering");
   const navigation = useNavigation();
   const articleRef = useRef<HTMLDivElement>(null);
@@ -362,6 +375,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [hoveredAnnotation, setHoveredAnnotation] = useState<string | null>(null);
   const [inlineAnnotations, setInlineAnnotations] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches);
   const [reviewDialog, setReviewDialog] = useState<{ initialOutcome: BaselineReviewOutcome | null; candidateMode: boolean } | null>(null);
+  const [decisionAction, setDecisionAction] = useState<BaselineDecisionAction | null>(null);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
   const [editingSection, setEditingSection] = useState<{ chapter: BaselineChapter; key: string; query: string } | null>(null);
@@ -406,8 +420,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     [annotationDrafts.items, currentTargetIds, activeRootIds],
   );
   const annotationThreads = useMemo(
-    () => buildBaselineAnnotationThreads(props.annotations.details, currentPendingItems),
-    [props.annotations.details, currentPendingItems],
+    () => buildBaselineAnnotationThreads(props.annotations.details.filter((detail) => detail.batch.chapter === props.selectedChapter), currentPendingItems),
+    [props.annotations.details, currentPendingItems, props.selectedChapter],
   );
   const resolveAnnotation = useCallback(async (annotationId: string, resolved: boolean) => {
     try {
@@ -740,6 +754,20 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     setReadingComposer(null);
     setHoveredAnnotation(null);
   };
+  const decideCandidate = (action: BaselineDecisionAction) => {
+    if (!revision || props.decisionPending) return;
+    if (action === "changes") {
+      setReviewDialog({ initialOutcome: "changes", candidateMode: true });
+      return;
+    }
+    const relatedBatch = activeBatch && isBatchRelatedToCandidate(activeBatch, revision, props.annotations.details);
+    if (currentPendingItems.length || relatedBatch) {
+      setReviewDialog({ initialOutcome: action, candidateMode: true });
+      return;
+    }
+    setDecisionAction(action);
+    void props.onDecision(action, revision).finally(() => setDecisionAction(null));
+  };
   const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
     <div key={chapter.chapter} className="mb-3">
       <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
@@ -759,16 +787,25 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   return (
     <BaselineWikiProvider value={wikiContext}>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-4 md:p-6" data-engineering-region="baseline">
-        <header>
-          <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
-          <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
-          <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
+        <header className="shrink-0">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
+              <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
+              <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
+            </div>
+            {!props.reviewRequested ? (
+              <div className="flex items-center gap-2">
+                {selectedAdopted ? <Button type="button" role="switch" aria-checked={readingAnnotationsVisible} variant="ghost" size="sm" onClick={() => setShowAnnotations(!readingAnnotationsVisible)}>{t(($) => $.annotations.showAnnotations, { count: readingAnnotationCount })}</Button> : null}
+                {currentPendingItems.length ? <Button type="button" size="sm" onClick={() => setReviewDialog({ initialOutcome: "changes", candidateMode: mode === "compare" && !!revision })}>{t(($) => $.annotations.finishReview)}</Button> : null}
+              </div>
+            ) : null}
+          </div>
         </header>
 
         {props.candidateLoading ? <Skeleton className="mt-5 h-24 w-full" /> : null}
         {!props.candidateLoading && props.candidateNotFound ? <div className="mt-5"><CollectionPageState icon={XCircle} tone="warning" title={t(($) => $.baseline.candidateMissing)} description={t(($) => $.baseline.candidateMissingDescription)} /></div> : null}
-        {!props.candidateLoading && props.decisionError ? <Alert className="mt-5" variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => $.errors.decisionTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.decision)}</AlertDescription></Alert> : null}
-        {!props.candidateLoading ? (
+        {!props.candidateLoading && props.reviewRequested ? (
           <BaselineReviewBar
             workspaceSlug={props.workspaceSlug}
             workspaceId={props.workspaceId}
@@ -779,28 +816,56 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             currentCandidate={props.currentCandidate}
             canDecide={props.canDecide}
             decisionPending={props.decisionPending}
-            decisionResult={props.decisionResult}
             mode={mode}
-            compareView={compareView}
             changeCount={changeCount}
-            changedCount={changedSections.length}
-            changeCursor={changeCursor}
-            pendingCount={currentPendingItems.length}
             activeBatch={activeBatch}
             sourceIssueIdentifier={sourceIssue?.identifier}
-            annotationCount={readingAnnotationCount}
-            annotationsVisible={readingAnnotationsVisible}
-            onAnnotationsVisibleChange={setShowAnnotations}
+            queue={props.pendingCandidates}
+            batchIds={props.batchIds}
+            processedIds={props.processedRevisionIds}
+            processedCount={props.processedCount}
+            returnLabel={props.returnLabel}
+            decisionAction={decisionAction}
+            onReturn={props.onReturnFromReview}
+            onSelectCandidate={props.onSelectCandidate}
+            onOpenProcessed={props.onOpenProcessed}
+            onDecide={decideCandidate}
             onModeChange={changeReviewMode}
-            onCompareViewChange={setCompareView}
-            onJumpChange={jumpChange}
-            onOpenReview={(initialOutcome, candidateMode) => setReviewDialog({ initialOutcome, candidateMode })}
             onOpenBatch={() => setBatchDialogOpen(true)}
           />
         ) : null}
+        {!props.candidateLoading && props.decisionError ? <Alert className="mt-3 shrink-0" variant="destructive" role="alert"><AlertTriangle /><AlertTitle>{t(($) => $.errors.decisionTitle)}</AlertTitle><AlertDescription><p>{props.decisionErrorMessage || t(($) => $.errors.decision)}</p><div className="mt-2 flex gap-2">{props.onRetryDecision ? <Button type="button" size="sm" variant="outline" disabled={props.decisionPending} onClick={() => void props.onRetryDecision?.()}>{t(($) => $.actions.retry)}</Button> : null}<Button type="button" size="sm" variant="ghost" onClick={props.onClearDecisionError}>{t(($) => $.actions.close)}</Button></div></AlertDescription></Alert> : null}
         {props.annotations.loading ? <Skeleton className="mt-3 h-10 w-full" /> : null}
         {props.annotations.error ? <Alert className="mt-3" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
         <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-baseline-reader>
+        {(props.reviewRequested || mode === "compare") && revision ? (
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-3 border-b pb-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2"><p className="text-body font-medium">{revision.changeSummary || t(($) => $.recent.noSummary)}</p><Badge variant="outline">{t(($) => $.status[revision.status] ?? $.status.unknown)}</Badge></div>
+              <div className="mt-1 flex flex-wrap gap-x-2 text-caption text-muted-foreground">
+                <span>{getActorName(revision.createdByType, revision.createdById)}</span>
+                <time dateTime={revision.createdAt}>{formatRelativeDate(revision.createdAt)}</time>
+                {revision.sourceIssueId ? <AppLink className="underline underline-offset-2" href={paths.workspace(props.workspaceSlug).issueDetail(revision.sourceIssueId)}>{sourceIssue?.identifier ?? t(($) => $.baseline.sourceIssue)}</AppLink> : null}
+              </div>
+              {!props.currentCandidate ? <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.readOnlyRevision)}</p> : null}
+            </div>
+            {mode === "compare" ? (
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.annotations.compareViewLabel)}>
+                  <button type="button" role="tab" aria-selected={compareView === "render"} className={cn("rounded-sm px-3 py-1 text-caption", compareView === "render" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setCompareView("render")}>{t(($) => $.annotations.renderedView)}</button>
+                  <button type="button" role="tab" aria-selected={compareView === "source"} className={cn("rounded-sm px-3 py-1 text-caption", compareView === "source" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setCompareView("source")}>{t(($) => $.annotations.sourceDiff)}</button>
+                </div>
+                {compareView === "render" && changedSections.length ? (
+                  <div className="flex items-center gap-1 text-caption">
+                    <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.previousChange)} onClick={() => jumpChange(changeCursor - 1)}><ChevronUp aria-hidden="true" /></Button>
+                    <span className="min-w-10 text-center tabular-nums" data-change-cursor>{changeCursor + 1}/{changedSections.length}</span>
+                    <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.nextChange)} onClick={() => jumpChange(changeCursor + 1)}><ChevronDown aria-hidden="true" /></Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <BaselineReadingHighlights
           articleRef={articleRef}
           sections={readingSections}
@@ -1095,6 +1160,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
             key={`${reviewDialog.candidateMode}-${revision?.id ?? selectedAdopted?.id ?? props.selectedChapter}`}
             workspaceSlug={props.workspaceSlug}
             chapter={props.selectedChapter}
+            chapterTitle={chapterLabel(props.selectedChapter)}
+            remainingCount={props.pendingCandidates.length}
             candidateMode={reviewDialog.candidateMode}
             candidate={reviewDialog.candidateMode ? revision : null}
             sourceIssueIdentifier={sourceIssue?.identifier}

@@ -176,7 +176,8 @@ function renderBaseline(options: {
         canDecide={options.canDecide ?? true}
         decisionPending={false}
         decisionError={false}
-        decisionResult={null}
+        decisionErrorMessage=""
+        onClearDecisionError={vi.fn()}
         onDecision={onDecision}
         annotations={{
           batches: options.batches ?? [], details: options.details ?? [], loading: false, error: false,
@@ -191,6 +192,14 @@ function renderBaseline(options: {
         chapterRevisions={{}}
         roadmap={roadmap}
         reviewRequested={options.reviewRequested ?? true}
+        pendingCandidates={[candidate]}
+        batchIds={[candidate.id]}
+        processedRevisionIds={new Set<string>()}
+        processedCount={0}
+        returnLabel="Back to overview"
+        onReturnFromReview={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onOpenProcessed={vi.fn()}
         lens="manage"
         onOpenStage={vi.fn()}
       />
@@ -211,6 +220,7 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
+  HTMLElement.prototype.scrollTo = vi.fn();
   Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 1440 });
   Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 900 });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 600, 400));
@@ -305,7 +315,6 @@ describe("baseline source annotations", () => {
     expect(screen.getByText("Baseline annotations")).toBeInTheDocument();
     expect(screen.getByText("Baseline orphan")).toBeInTheDocument();
     expect(screen.queryByText("Do not submit")).not.toBeInTheDocument();
-    expect(screen.getByText("Reviewing · 3 pending items")).toBeInTheDocument();
     expect(screen.getByText("Pending reply")).toBeInTheDocument();
   });
 
@@ -321,8 +330,9 @@ describe("baseline source annotations", () => {
     ]);
     const onSubmitReview = vi.fn<BaselineAnnotationActions["onSubmitReview"]>(async () => reviewResult());
     renderBaseline({ batches: [batch()], details: [detail([root])], onSubmitReview });
-    await user.click(screen.getByRole("button", { name: "Finish review" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Please revise the candidate");
     await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
     const input = onSubmitReview.mock.calls[0]![0];
@@ -342,15 +352,15 @@ describe("baseline source annotations", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(reviewResult());
     renderBaseline({ batches: [batch()], details: [detail()], onSubmitReview });
-    await user.click(screen.getByRole("button", { name: "Finish review" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByRole("textbox", { name: "Overall note (optional)" }), "Keep this summary");
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Keep this summary");
     await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
     expect(await within(dialog).findByText("The review was not submitted")).toBeInTheDocument();
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toHaveLength(1);
-    expect(within(dialog).getByRole("textbox", { name: "Overall note (optional)" })).toHaveValue("Keep this summary");
+    expect(within(dialog).getByRole("textbox", { name: "Review comment (required)" })).toHaveValue("Keep this summary");
     const firstKey = onSubmitReview.mock.calls[0]![0].clientKey;
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(2));
     expect(onSubmitReview.mock.calls[1]![0].clientKey).toBe(firstKey);
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toEqual([]);
@@ -361,15 +371,17 @@ describe("baseline source annotations", () => {
     seed([pending()]);
     const onSubmitReview = vi.fn(async () => null);
     renderBaseline({ batches: [batch()], details: [detail()], onSubmitReview });
-    await user.click(screen.getByRole("button", { name: "Finish review" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Request changes" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Revise this section");
+    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
     expect(await screen.findByText("The review was not submitted")).toBeInTheDocument();
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toHaveLength(1);
   });
 
   it.each([
     { action: "Adopt", pending: true, batchAction: "keep", confirm: "Discard and adopt" },
-    { action: "Return for changes", pending: false, batchAction: "close", confirm: "Return for changes" },
+    { action: "Reject", pending: false, batchAction: "close", confirm: "Reject" },
   ])("confirms $action and passes $batchAction for the related batch", async ({ action, pending: hasPending, batchAction, confirm }) => {
     const user = userEvent.setup();
     if (hasPending) seed([pending()]);
@@ -433,8 +445,10 @@ describe("baseline source annotations", () => {
     seed([pending()]);
     const onSubmitReview = vi.fn(async () => { throw new ApiError("Conflict", 409, "Conflict", { code }); });
     renderBaseline({ onSubmitReview });
-    await user.click(screen.getByRole("button", { name: "Finish review" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Request changes" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Resolve the candidate conflict");
+    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     if (code === "baseline_review_conflict") expect(screen.getByRole("link", { name: "OL-42" })).toBeInTheDocument();
@@ -446,9 +460,9 @@ describe("baseline source annotations", () => {
     seed([pending()]);
     const onDecision = vi.fn(async () => true);
     renderBaseline({ batches: [batch()], details: [detail()], onDecision });
-    await user.click(screen.getByRole("button", { name: "Return for changes" }));
+    await user.click(screen.getByRole("button", { name: "Reject" }));
     let dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Return for changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Reject" }));
     dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Discard 1 pending items?")).toBeInTheDocument();
     expect(onDecision).not.toHaveBeenCalled();
@@ -457,17 +471,28 @@ describe("baseline source annotations", () => {
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toEqual([]);
   });
 
-  it("disables requesting changes when only an overall note exists", async () => {
+  it("submits a required overall comment as a section annotation when no inline drafts exist", async () => {
     const user = userEvent.setup();
-    const onSubmitReview = vi.fn(async () => reviewResult());
+    const onSubmitReview = vi.fn<BaselineAnnotationActions["onSubmitReview"]>(async () => reviewResult());
     renderBaseline({ onSubmitReview });
-    await user.click(screen.getByRole("button", { name: "Finish review" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByRole("textbox", { name: "Overall note (optional)" }), "Summary only");
-    const option = within(dialog).getByRole("radio", { name: /Request changes/ });
-    expect(option).toBeDisabled();
+    const comment = within(dialog).getByRole("textbox", { name: "Review comment (required)" });
     expect(within(dialog).getByRole("button", { name: "Request changes" })).toBeDisabled();
-    expect(onSubmitReview).not.toHaveBeenCalled();
+    await user.type(comment, "Summary only");
+    const submit = within(dialog).getByRole("button", { name: "Request changes" });
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+    await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
+    const input = onSubmitReview.mock.calls[0]![0];
+    expect(input.summary).toBe("Summary only");
+    expect(input.annotations).toEqual([{
+      anchorKind: "section",
+      targetRevisionId: "rev-candidate",
+      sectionAnchor: "domain_rules",
+      sectionTitle: "Domain and rules",
+      note: "Summary only",
+    }]);
   });
 
   it("places working-version annotations on their original diff lines and marks foreign targets outdated", () => {
@@ -777,6 +802,7 @@ describe("baseline Word-style reading annotations", () => {
     await user.click(screen.getByRole("button", { name: "Finish review" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Reading pending")).toBeInTheDocument();
+    await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Revise the baseline draft");
     await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
     expect(onSubmitReview.mock.calls[0]![0]).toMatchObject({ reviewedRevisionId: "rev-candidate" });

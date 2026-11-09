@@ -56,7 +56,12 @@
     "noComment": "Todavía no hay contexto para decidir.",
     "baselinePending": "La revisión v{{number}} de la línea base necesita confirmación",
     "reviewPending": "Revisar la etapa {{stage}} y desbloquear la siguiente",
-    "reviewHint": "Todas las tareas están completas. Revisa el resultado antes de continuar."
+    "reviewHint": "Todas las tareas están completas. Revisa el resultado antes de continuar.",
+    "processed": "Registros procesados ({{count}})",
+    "startContinuous": "Iniciar revisión continua ({{count}})",
+    "noPendingCandidates": "No hay candidatas de línea base pendientes de revisión",
+    "openWiki": "Abrir Wiki de la línea base",
+    "changeMeta": "+{{added}} / -{{removed}} · {{count}} cambios"
   },
   "progress": {
     "blockedGroup": "Bloqueadas",
@@ -207,7 +212,9 @@
     "batchDetails": "Lote de anotaciones",
     "responsibleAgent": "Agente responsable",
     "annotationsLabel": "Anotaciones",
-    "loadError": "No se pudieron cargar las anotaciones. La línea base sigue disponible. Inténtalo de nuevo más tarde."
+    "loadError": "No se pudieron cargar las anotaciones. La línea base sigue disponible. Inténtalo de nuevo más tarde.",
+    "summaryRequired": "Comentario de revisión (obligatorio)",
+    "submitAndNext": "Enviar y abrir la siguiente"
   },
   "wiki": {
     "meta": "{{chapters}} capítulos · {{sections}} secciones",
@@ -281,7 +288,7 @@
     "close": "Cerrar",
     "expand": "Mostrar más",
     "collapse": "Mostrar menos",
-    "reject": "Devolver para cambios",
+    "reject": "Rechazar",
     "adopt": "Adoptar",
     "enable": "Activar resumen",
     "open_baseline": "Abrir línea base de ingeniería",
@@ -292,7 +299,8 @@
     "editSection": "Editar sección",
     "saveAndAdopt": "Guardar y adoptar",
     "submitForReview": "Enviar para revisión",
-    "submitRevisionCandidate": "Enviar candidata de revisión"
+    "submitRevisionCandidate": "Enviar candidata de revisión",
+    "retry": "Reintentar"
   },
   "disabled": {
     "title": "El resumen de ingeniería no está activado",
@@ -322,5 +330,48 @@
     "rejected": "Candidata devuelta para cambios",
     "candidateSubmitted": "Candidata de revisión enviada",
     "serverAuthoritative": "El servidor verifica los permisos y las revisiones"
+  },
+  "reviewQueue": {
+    "backOverview": "Volver al resumen",
+    "label": "Cola de revisiones pendientes",
+    "previous": "Candidata pendiente anterior",
+    "next": "Candidata pendiente siguiente",
+    "processedRecords": "Registros procesados ({{count}}) · Solo lectura"
+  },
+  "completion": {
+    "title": "Este lote de revisión está completo",
+    "summary": "{{adopted}} adoptadas · {{rejected}} rechazadas · {{changes}} con cambios solicitados",
+    "viewRecords": "Ver registros procesados"
+  },
+  "reviewNotice": {
+    "adopted": "Se adoptó \"{{chapter}}\"",
+    "rejected": "Se rechazó \"{{chapter}}\"",
+    "changes": "Se solicitaron cambios en \"{{chapter}}\"",
+    "remaining": "{{count}} pendientes",
+    "complete": "Lote completado"
+  },
+  "processed": {
+    "title": "Registros procesados",
+    "description": "Decisiones de línea base y comentarios de revisión de solo lectura.",
+    "revision": "Revisión v{{number}}",
+    "adopted": "Adoptada",
+    "rejected": "Rechazada",
+    "changes": "Cambios solicitados",
+    "noSummary": "Sin resumen de cambios",
+    "requestChanges": "Comentario de revisión",
+    "noReviewComment": "Sin comentario de revisión",
+    "back": "Volver a los registros procesados",
+    "backToSource": "Volver",
+    "readOnly": "Solo lectura",
+    "cannotDecideAgain": "No se puede volver a decidir esta revisión",
+    "loading": "Cargando registros procesados",
+    "emptyTitle": "Todavía no hay registros procesados",
+    "emptyDescription": "Las decisiones de línea base completadas aparecerán aquí.",
+    "errorTitle": "No se pudieron cargar los registros procesados",
+    "errorDescription": "Vuelve a intentarlo para cargar el historial y las revisiones más recientes de la línea base.",
+    "retry": "Reintentar",
+    "detailLoading": "Cargando detalles de la revisión",
+    "detailErrorTitle": "No se pudieron cargar los detalles de la revisión",
+    "detailErrorDescription": "Vuelve a intentarlo para cargar el Diff completo de la revisión."
   }
 }

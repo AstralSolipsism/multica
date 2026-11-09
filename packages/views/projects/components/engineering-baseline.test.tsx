@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import type { BaselineDecision, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
+import type { BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
 import { useBaselineAnnotationDraftStore } from "@multica/core/projects/baseline-annotation-draft-store";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { renderWithI18n } from "../../test/i18n";
@@ -91,7 +91,8 @@ const baseProps = {
   canDecide: true,
   decisionPending: false,
   decisionError: false,
-  decisionResult: null,
+  decisionErrorMessage: "",
+  onClearDecisionError: vi.fn(),
   annotations: {
     batches: [],
     details: [],
@@ -114,6 +115,14 @@ const baseProps = {
   chapterRevisions: {},
   roadmap,
   reviewRequested: false,
+  pendingCandidates: [revision()],
+  batchIds: ["rev-1"],
+  processedRevisionIds: new Set<string>(),
+  processedCount: 0,
+  returnLabel: "Back to overview",
+  onReturnFromReview: vi.fn(),
+  onSelectCandidate: vi.fn(),
+  onOpenProcessed: vi.fn(),
   lens: "understand" as const,
   onOpenStage: vi.fn(),
 };
@@ -147,14 +156,12 @@ describe("EngineeringBaseline review", () => {
     expect(screen.getByText(/Agent agent-1/)).toBeInTheDocument();
     expect(screen.queryByText("Source task")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Adopt" }));
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Adopt" }));
     await waitFor(() => expect(onDecision).toHaveBeenCalledWith("adopt", current));
   });
 
   it("keeps a historical withdrawn revision read-only", () => {
     const historical = revision("withdrawn");
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={historical} currentCandidate={false} onDecision={vi.fn()} />);
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={historical} currentCandidate={false} reviewRequested onDecision={vi.fn()} />);
 
     expect(screen.getByText("Withdrawn")).toBeInTheDocument();
     expect(screen.getByText(/historical revision is read-only/)).toBeInTheDocument();
@@ -169,15 +176,10 @@ describe("EngineeringBaseline review", () => {
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
   });
 
-  it("shows decision open issues and history credentials", () => {
+  it("shows history credentials", () => {
     const current = revision();
-    const result = {
-      chapters: [],
-      openIssues: { inFlight: [{ id: "issue-1", identifier: "OL-92", title: "Frontend", status: "in_progress", statusCategory: "started", assigneeType: "member", assigneeId: "user-1" }], queued: [], truncated: false },
-    } as BaselineDecision;
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(current, adopted())]} revision={current} currentCandidate decisionResult={result} history={{ revisions: [revision("adopted")], hasMore: false, nextBefore: null }} onDecision={vi.fn()} />);
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(current, adopted())]} revision={current} currentCandidate history={{ revisions: [revision("adopted")], hasMore: false, nextBefore: null }} onDecision={vi.fn()} />);
 
-    expect(document.querySelector("[data-open-issues]")).toHaveTextContent("OL-92");
     expect(screen.getByText("Confirmed with a personal token")).toBeInTheDocument();
   });
 });

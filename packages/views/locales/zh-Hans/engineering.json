@@ -56,7 +56,12 @@
     "noComment": "暂时没有决策卡或讲解评论。",
     "baselinePending": "基线修订 v{{number}} 待确认",
     "reviewPending": "复盘 Stage {{stage}}，解锁下一阶段",
-    "reviewHint": "任务已全部完成，确认结果后再往下走。"
+    "reviewHint": "任务已全部完成，确认结果后再往下走。",
+    "processed": "已处理记录（{{count}}）",
+    "startContinuous": "开始连续审阅（{{count}}）",
+    "noPendingCandidates": "没有待审阅的基线候选",
+    "openWiki": "打开基线 Wiki",
+    "changeMeta": "+{{added}} / -{{removed}} · {{count}} 处变更"
   },
   "progress": {
     "blockedGroup": "卡住了",
@@ -204,7 +209,9 @@
     "batchDetails": "批注批次",
     "responsibleAgent": "负责智能体",
     "annotationsLabel": "批注",
-    "loadError": "无法加载批注。基线内容仍可使用，请稍后重试。"
+    "loadError": "无法加载批注。基线内容仍可使用，请稍后重试。",
+    "summaryRequired": "审阅评论（必填）",
+    "submitAndNext": "提交并打开下一条"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 节",
@@ -278,7 +285,7 @@
     "close": "关闭",
     "expand": "展开全文",
     "collapse": "收起",
-    "reject": "退回修改",
+    "reject": "驳回",
     "adopt": "采用",
     "enable": "启用总览",
     "open_baseline": "打开工程基线",
@@ -289,7 +296,8 @@
     "editSection": "编辑本节",
     "saveAndAdopt": "保存并直接生效",
     "submitForReview": "仅提交为待审候选",
-    "submitRevisionCandidate": "提交修订候选"
+    "submitRevisionCandidate": "提交修订候选",
+    "retry": "重试"
   },
   "disabled": {
     "title": "尚未启用工程总览",
@@ -319,5 +327,48 @@
     "rejected": "候选已退回修改",
     "candidateSubmitted": "修订候选已提交",
     "serverAuthoritative": "权限与版本校验均由服务端执行"
+  },
+  "reviewQueue": {
+    "backOverview": "返回总览",
+    "label": "待审阅队列",
+    "previous": "上一个待审阅候选",
+    "next": "下一个待审阅候选",
+    "processedRecords": "已处理记录（{{count}}） · 只读"
+  },
+  "completion": {
+    "title": "本批次审阅已完成",
+    "summary": "已采用 {{adopted}} · 已驳回 {{rejected}} · 已要求修改 {{changes}}",
+    "viewRecords": "查看已处理记录"
+  },
+  "reviewNotice": {
+    "adopted": "已采用\"{{chapter}}\"",
+    "rejected": "已驳回\"{{chapter}}\"",
+    "changes": "已要求修改\"{{chapter}}\"",
+    "remaining": "还有 {{count}} 项待审阅",
+    "complete": "批次已完成"
+  },
+  "processed": {
+    "title": "已处理记录",
+    "description": "基线决策和审阅评论均为只读。",
+    "revision": "修订 v{{number}}",
+    "adopted": "已采用",
+    "rejected": "已驳回",
+    "changes": "已要求修改",
+    "noSummary": "无修改说明",
+    "requestChanges": "审阅评论",
+    "noReviewComment": "无审阅评论",
+    "back": "返回已处理记录",
+    "backToSource": "返回",
+    "readOnly": "只读",
+    "cannotDecideAgain": "此修订不可再次决策",
+    "loading": "正在加载已处理记录",
+    "emptyTitle": "暂无已处理记录",
+    "emptyDescription": "已完成的基线决策将显示在这里。",
+    "errorTitle": "无法加载已处理记录",
+    "errorDescription": "请重试加载最新的基线历史和审阅记录。",
+    "retry": "重试",
+    "detailLoading": "正在加载修订详情",
+    "detailErrorTitle": "无法加载修订详情",
+    "detailErrorDescription": "请重试加载完整的修订 Diff。"
   }
 }

@@ -56,7 +56,12 @@
     "noComment": "決定カードや説明コメントはまだありません。",
     "baselinePending": "基線改訂 v{{number}} の確認が必要です",
     "reviewPending": "Stage {{stage}} を振り返り、次を解放",
-    "reviewHint": "すべてのタスクが完了しました。結果を確認して次へ進みましょう。"
+    "reviewHint": "すべてのタスクが完了しました。結果を確認して次へ進みましょう。",
+    "processed": "処理済みレコード（{{count}}）",
+    "startContinuous": "連続レビューを開始（{{count}}）",
+    "noPendingCandidates": "レビュー待ちの基線候補はありません",
+    "openWiki": "基線 Wiki を開く",
+    "changeMeta": "+{{added}} / -{{removed}} · 変更 {{count}} 件"
   },
   "progress": {
     "blockedGroup": "ブロック中",
@@ -204,7 +209,9 @@
     "batchDetails": "注釈バッチ",
     "responsibleAgent": "担当エージェント",
     "annotationsLabel": "注釈",
-    "loadError": "注釈を読み込めませんでした。基線は引き続き利用できます。しばらくしてから再試行してください。"
+    "loadError": "注釈を読み込めませんでした。基線は引き続き利用できます。しばらくしてから再試行してください。",
+    "summaryRequired": "レビューコメント（必須）",
+    "submitAndNext": "提出して次を開く"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -278,7 +285,7 @@
     "close": "閉じる",
     "expand": "全文を表示",
     "collapse": "折りたたむ",
-    "reject": "修正を依頼",
+    "reject": "却下",
     "adopt": "採用",
     "enable": "概要を有効化",
     "open_baseline": "エンジニアリング基線を開く",
@@ -289,7 +296,8 @@
     "editSection": "この節を編集",
     "saveAndAdopt": "保存して採用",
     "submitForReview": "レビュー候補として提出",
-    "submitRevisionCandidate": "改訂候補を提出"
+    "submitRevisionCandidate": "改訂候補を提出",
+    "retry": "再試行"
   },
   "disabled": {
     "title": "工程概要は有効ではありません",
@@ -319,5 +327,48 @@
     "rejected": "候補を修正依頼に戻しました",
     "candidateSubmitted": "改訂候補を提出しました",
     "serverAuthoritative": "権限と版のチェックはサーバーで検証されます"
+  },
+  "reviewQueue": {
+    "backOverview": "概要に戻る",
+    "label": "レビュー待ちキュー",
+    "previous": "前のレビュー待ち候補",
+    "next": "次のレビュー待ち候補",
+    "processedRecords": "処理済みレコード（{{count}}） · 読み取り専用"
+  },
+  "completion": {
+    "title": "このレビューバッチは完了しました",
+    "summary": "採用 {{adopted}} 件 · 却下 {{rejected}} 件 · 修正依頼 {{changes}} 件",
+    "viewRecords": "処理済みレコードを表示"
+  },
+  "reviewNotice": {
+    "adopted": "「{{chapter}}」を採用しました",
+    "rejected": "「{{chapter}}」を却下しました",
+    "changes": "「{{chapter}}」に修正を依頼しました",
+    "remaining": "レビュー待ち {{count}} 件",
+    "complete": "バッチ完了"
+  },
+  "processed": {
+    "title": "処理済みレコード",
+    "description": "基線の決定とレビューコメントは読み取り専用です。",
+    "revision": "改訂 v{{number}}",
+    "adopted": "採用済み",
+    "rejected": "却下済み",
+    "changes": "修正依頼済み",
+    "noSummary": "変更概要なし",
+    "requestChanges": "レビューコメント",
+    "noReviewComment": "レビューコメントなし",
+    "back": "処理済みレコードに戻る",
+    "backToSource": "戻る",
+    "readOnly": "読み取り専用",
+    "cannotDecideAgain": "この改訂は再度決定できません",
+    "loading": "処理済みレコードを読み込み中",
+    "emptyTitle": "処理済みレコードはまだありません",
+    "emptyDescription": "完了した基線の決定がここに表示されます。",
+    "errorTitle": "処理済みレコードを読み込めませんでした",
+    "errorDescription": "再試行して、最新の基線履歴とレビューを読み込んでください。",
+    "retry": "再試行",
+    "detailLoading": "改訂の詳細を読み込み中",
+    "detailErrorTitle": "改訂の詳細を読み込めませんでした",
+    "detailErrorDescription": "再試行して、改訂の完全な Diff を読み込んでください。"
   }
 }

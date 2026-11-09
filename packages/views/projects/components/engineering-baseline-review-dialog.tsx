@@ -25,6 +25,8 @@ import {
 interface BaselineReviewDialogProps {
   workspaceSlug: string;
   chapter: BaselineChapter;
+  chapterTitle: string;
+  remainingCount: number;
   candidateMode: boolean;
   candidate: BaselineRevision | null;
   sourceIssueIdentifier?: string;
@@ -63,9 +65,9 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
     details: props.details,
   });
   const pendingCount = props.pendingItems.length;
-  // Server rejects reviews without annotations; the summary alone is not a
-  // submittable review, so requesting changes requires pending items.
-  const canRequestChanges = pendingCount > 0 && route !== "conflict" && route !== "candidate_open";
+  // The server requires an annotation. A required overall note becomes a
+  // chapter-level annotation when the reviewer did not add inline drafts.
+  const canRequestChanges = route !== "conflict" && route !== "candidate_open";
   const needsAgent = route === "new";
   const selectedAgent = props.actions.agents.find((agent) => agent.id === agentId);
   const routeAgentName = route === "append" && activeBatch
@@ -78,7 +80,7 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
     ? t(($) => $.actions.adopt)
     : outcome === "reject"
       ? t(($) => $.actions.reject)
-      : t(($) => $.annotations.requestChanges);
+      : t(($) => props.remainingCount > 1 ? $.annotations.submitAndNext : $.annotations.requestChanges);
   const targetTitle = props.candidateMode && candidate
     ? t(($) => $.baseline.compareMode, { number: candidate.revisionNumber })
     : t(($) => $.baseline.baseMode, { number: props.adopted?.revisionNumber ?? 0 });
@@ -104,15 +106,31 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
     setSubmitting(true);
     try {
       if (outcome === "changes") {
-        const reviewedRevisionId = props.candidateMode ? candidate?.id : props.adopted?.id;
-        if (!reviewedRevisionId || !canRequestChanges || (needsAgent && !agentId)) throw new Error("Incomplete review");
+        const reviewedRevision = props.candidateMode ? candidate : props.adopted;
+        const reviewedRevisionId = reviewedRevision?.id;
+        const note = summary.trim();
+        if (!reviewedRevision || !reviewedRevisionId || !canRequestChanges || !note || (needsAgent && !agentId)) throw new Error("Incomplete review");
+        const firstChange = [
+          ...reviewedRevision.anchorsDiff.added,
+          ...reviewedRevision.anchorsDiff.modified,
+          ...reviewedRevision.anchorsDiff.removed,
+        ][0];
+        const annotations = submittedItems.length
+          ? submittedItems.map(toBaselineReviewAnnotation)
+          : [{
+              anchorKind: "section" as const,
+              targetRevisionId: reviewedRevisionId,
+              sectionAnchor: firstChange?.anchor || reviewedRevision.chapter,
+              sectionTitle: firstChange?.title || props.chapterTitle,
+              note,
+            }];
         const result = await props.actions.onSubmitReview({
           clientKey: clientKeyRef.current,
-          chapter: (candidate ?? props.adopted ?? props.chapterCandidate)!.chapter,
+          chapter: reviewedRevision.chapter,
           reviewedRevisionId,
           ...(needsAgent ? { assignee: { type: "agent" as const, id: agentId } } : {}),
-          summary: summary.trim(),
-          annotations: submittedItems.map(toBaselineReviewAnnotation),
+          summary: note,
+          annotations,
         });
         if (!result) throw new Error("Invalid review response");
       } else {
@@ -168,10 +186,10 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
               {pendingCount ? <PendingReviewList items={props.pendingItems} /> : null}
               <div>
                 <div className="mb-1 flex items-center justify-between gap-3">
-                  <label htmlFor="baseline-review-summary" className="text-caption font-medium">{t(($) => $.annotations.summaryLabel)}</label>
+                  <label htmlFor="baseline-review-summary" className="text-caption font-medium">{t(($) => outcome === "changes" ? $.annotations.summaryRequired : $.annotations.summaryLabel)}</label>
                   <span className="text-micro text-muted-foreground">{Array.from(summary).length}/500</span>
                 </div>
-                <Textarea id="baseline-review-summary" value={summary} maxLength={500} rows={3} disabled={submitting} onChange={(event) => setSummary(event.target.value)} />
+                <Textarea id="baseline-review-summary" value={summary} maxLength={500} rows={3} disabled={submitting} required={outcome === "changes"} onChange={(event) => setSummary(event.target.value)} />
               </div>
               {props.candidateMode ? (
                 <fieldset className="space-y-2" disabled={submitting}>
@@ -242,6 +260,7 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
                     {activeBatch ? <Button type="button" size="xs" variant="outline" onClick={() => setStep("closeBatch")}>{t(($) => $.annotations.closeBatch)}</Button> : null}
                   </div>
                 ) : null}
+                {error !== "baseline_review_conflict" && error !== "baseline_candidate_open" ? <Button type="button" size="xs" variant="outline" className="mt-2" disabled={submitting} onClick={() => void (error === "close_failed" ? closeBatch() : submit())}>{t(($) => $.actions.retry)}</Button> : null}
               </AlertDescription>
             </Alert>
           ) : null}
@@ -250,7 +269,7 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
           {step === "form" ? (
             <>
               <Button type="button" variant="outline" disabled={submitting} onClick={props.onClose}>{t(($) => $.actions.cancel)}</Button>
-              <Button type="button" disabled={submitting || !outcome || (outcome === "changes" && (!canRequestChanges || (needsAgent && !agentId)))} aria-busy={submitting} onClick={() => void submit()}>
+              <Button type="button" disabled={submitting || !outcome || (outcome === "changes" && (!summary.trim() || !canRequestChanges || (needsAgent && !agentId)))} aria-busy={submitting} onClick={() => void submit()}>
                 {submitting ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{submitLabel}
               </Button>
             </>

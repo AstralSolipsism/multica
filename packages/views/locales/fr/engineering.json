@@ -56,7 +56,12 @@
     "noComment": "Aucune carte de décision ni explication pour le moment.",
     "baselinePending": "La révision v{{number}} de la référence doit être confirmée",
     "reviewPending": "Faire le bilan de l’étape {{stage}} et débloquer la suivante",
-    "reviewHint": "Toutes les tâches sont terminées. Vérifiez le résultat avant de continuer."
+    "reviewHint": "Toutes les tâches sont terminées. Vérifiez le résultat avant de continuer.",
+    "processed": "Enregistrements traités ({{count}})",
+    "startContinuous": "Lancer la revue continue ({{count}})",
+    "noPendingCandidates": "Aucun candidat de référence n’est en attente de revue",
+    "openWiki": "Ouvrir le Wiki de référence",
+    "changeMeta": "+{{added}} / -{{removed}} · {{count}} modifications"
   },
   "progress": {
     "blockedGroup": "Bloquées",
@@ -207,7 +212,9 @@
     "batchDetails": "Lot d’annotations",
     "responsibleAgent": "Agent responsable",
     "annotationsLabel": "Annotations",
-    "loadError": "Impossible de charger les annotations. La référence reste disponible. Réessayez plus tard."
+    "loadError": "Impossible de charger les annotations. La référence reste disponible. Réessayez plus tard.",
+    "summaryRequired": "Commentaire de revue (obligatoire)",
+    "submitAndNext": "Envoyer et ouvrir le suivant"
   },
   "wiki": {
     "meta": "{{chapters}} chapitres · {{sections}} sections",
@@ -281,7 +288,7 @@
     "close": "Fermer",
     "expand": "Tout afficher",
     "collapse": "Réduire",
-    "reject": "Renvoyer pour modification",
+    "reject": "Rejeter",
     "adopt": "Adopter",
     "enable": "Activer la vue",
     "open_baseline": "Ouvrir la baseline d’ingénierie",
@@ -292,7 +299,8 @@
     "editSection": "Modifier la section",
     "saveAndAdopt": "Enregistrer et adopter",
     "submitForReview": "Soumettre pour relecture",
-    "submitRevisionCandidate": "Soumettre le candidat de révision"
+    "submitRevisionCandidate": "Soumettre le candidat de révision",
+    "retry": "Réessayer"
   },
   "disabled": {
     "title": "La vue d’ensemble de l’ingénierie n’est pas activée",
@@ -322,5 +330,48 @@
     "rejected": "Candidat renvoyé pour modification",
     "candidateSubmitted": "Candidat de révision soumis",
     "serverAuthoritative": "Les permissions et les révisions sont vérifiées par le serveur"
+  },
+  "reviewQueue": {
+    "backOverview": "Retour à la vue d’ensemble",
+    "label": "File d’attente des revues",
+    "previous": "Candidat en attente précédent",
+    "next": "Candidat en attente suivant",
+    "processedRecords": "Enregistrements traités ({{count}}) · Lecture seule"
+  },
+  "completion": {
+    "title": "Ce lot de revue est terminé",
+    "summary": "{{adopted}} adoptés · {{rejected}} rejetés · {{changes}} avec modifications demandées",
+    "viewRecords": "Voir les enregistrements traités"
+  },
+  "reviewNotice": {
+    "adopted": "\"{{chapter}}\" adopté",
+    "rejected": "\"{{chapter}}\" rejeté",
+    "changes": "Modifications demandées pour \"{{chapter}}\"",
+    "remaining": "{{count}} en attente",
+    "complete": "Lot terminé"
+  },
+  "processed": {
+    "title": "Enregistrements traités",
+    "description": "Décisions de référence et commentaires de revue en lecture seule.",
+    "revision": "Révision v{{number}}",
+    "adopted": "Adopté",
+    "rejected": "Rejeté",
+    "changes": "Modifications demandées",
+    "noSummary": "Aucun résumé des modifications",
+    "requestChanges": "Commentaire de revue",
+    "noReviewComment": "Aucun commentaire de revue",
+    "back": "Retour aux enregistrements traités",
+    "backToSource": "Retour",
+    "readOnly": "Lecture seule",
+    "cannotDecideAgain": "Impossible de statuer à nouveau sur cette révision",
+    "loading": "Chargement des enregistrements traités",
+    "emptyTitle": "Aucun enregistrement traité pour le moment",
+    "emptyDescription": "Les décisions de référence terminées apparaîtront ici.",
+    "errorTitle": "Impossible de charger les enregistrements traités",
+    "errorDescription": "Réessayez de charger l’historique de la référence et les revues les plus récentes.",
+    "retry": "Réessayer",
+    "detailLoading": "Chargement des détails de la révision",
+    "detailErrorTitle": "Impossible de charger les détails de la révision",
+    "detailErrorDescription": "Réessayez de charger le Diff complet de la révision."
   }
 }
