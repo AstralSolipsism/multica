@@ -9,6 +9,7 @@ import type { Project } from "./project";
 import type { Label } from "./label";
 import type { z } from "zod";
 import type { IssueTipSchema } from "../api/labrastro-ysk-schemas";
+import type * as Eng from "./labrastro-engineering-events";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -629,20 +630,7 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
-export interface ProjectEngineeringUpdatedPayload {
-  project_id: string;
-}
-
-export interface ProjectBaselineChangedPayload {
-  project_id: string;
-  chapter: import("../api/labrastro-engineering-schemas").BaselineChapter;
-}
-
-export interface ProjectBaselineAnnotationChangedPayload {
-  project_id: string;
-  chapter: import("../api/labrastro-engineering-schemas").BaselineChapter;
-  batch_id: string;
-}
+export type * from "./labrastro-engineering-events";
 
 export interface InvitationCreatedPayload {
   invitation: Invitation;
@@ -755,9 +743,9 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
-  "project_engineering:updated": ProjectEngineeringUpdatedPayload;
-  "project_baseline:changed": ProjectBaselineChangedPayload;
-  "project_baseline_annotation:changed": ProjectBaselineAnnotationChangedPayload;
+  "project_engineering:updated": Eng.ProjectEngineeringUpdatedPayload;
+  "project_baseline:changed": Eng.ProjectBaselineChangedPayload;
+  "project_baseline_annotation:changed": Eng.ProjectBaselineAnnotationChangedPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;

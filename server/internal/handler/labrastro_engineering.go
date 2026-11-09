@@ -1092,3 +1092,7 @@ func deleteWorkspaceEngineeringAndProjects(ctx context.Context, q *db.Queries, w
 	}
 	return q.DeleteWorkspaceRuntimesAndProjects(ctx, workspace)
 }
+
+func deleteProjectEngineering(ctx context.Context, q *db.Queries, workspaceID, projectID pgtype.UUID) error {
+	return q.LabrastroDeleteProjectEngineering(ctx, db.LabrastroDeleteProjectEngineeringParams{WorkspaceID: workspaceID, ProjectID: projectID})
+}
