@@ -552,6 +552,13 @@ export function QoderRepositoriesCard({
   const [editing, setEditing] = useState<{ url: string | null } | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const repositories = data.repositories;
+  const accounts = data.githubAppAccounts
+    .map((account) => account.login)
+    .filter(Boolean);
+  const accountsLabel = accounts.join(", ");
+  const hint = accountsLabel
+    ? t(($) => $.qoder.page.repositories_hint_override)
+    : t(($) => $.qoder.page.repositories_hint);
 
   return (
     <QoderSection
@@ -569,15 +576,25 @@ export function QoderRepositoriesCard({
           </Button>
         ) : null
       }
-      footer={
-        repositories.length > 0
-          ? t(($) => $.qoder.page.repositories_hint)
-          : undefined
-      }
+      footer={repositories.length > 0 ? hint : undefined}
     >
+      {accountsLabel ? (
+        <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-success/30 bg-success/5 px-3 py-2.5">
+          <ShieldCheck
+            aria-hidden="true"
+            className="mt-0.5 size-3.5 shrink-0 text-success"
+          />
+          <p className="leading-relaxed text-caption text-muted-foreground">
+            {t(($) => $.qoder.page.github_app_auto_auth, {
+              accounts: accountsLabel,
+            })}{" "}
+            {t(($) => $.qoder.page.github_app_auto_auth_hint)}
+          </p>
+        </div>
+      ) : null}
       {repositories.length === 0 ? (
         <p className="px-4 py-6 text-center text-caption text-muted-foreground">
-          {t(($) => $.qoder.page.repositories_hint)}
+          {hint}
         </p>
       ) : (
         <ul className="divide-y">
@@ -714,7 +731,9 @@ function RepositoryDialog({
               : t(($) => $.qoder.add_repository)}
           </DialogTitle>
           <DialogDescription>
-            {t(($) => $.qoder.page.repositories_hint)}
+            {data.githubAppAccounts.length > 0
+              ? t(($) => $.qoder.page.repositories_hint_override)
+              : t(($) => $.qoder.page.repositories_hint)}
           </DialogDescription>
         </DialogHeader>
         <form

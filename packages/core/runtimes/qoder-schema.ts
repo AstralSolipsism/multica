@@ -14,6 +14,13 @@ export const QODER_REGIONS = {
 } as const;
 export type QoderRegion = keyof typeof QODER_REGIONS;
 
+const githubAppAccountSchema = z
+  .object({
+    login: z.string().catch(""),
+    type: z.string().catch(""),
+  })
+  .transform((v) => ({ login: v.login, type: v.type }));
+
 const schema = z
   .object({
     configured: z.boolean().catch(false),
@@ -23,6 +30,7 @@ const schema = z
     environment_id: z.string().catch(""),
     has_token: z.boolean().catch(false),
     repositories: z.array(z.string()).catch([]),
+    github_app_accounts: z.array(githubAppAccountSchema).catch([]),
     enabled: z.boolean().catch(false),
     status: z.string().catch(""),
     last_error: z.string().catch(""),
@@ -39,6 +47,7 @@ const schema = z
     environmentId: v.environment_id,
     hasToken: v.has_token,
     repositories: v.repositories,
+    githubAppAccounts: v.github_app_accounts,
     enabled: v.enabled,
     status: v.status,
     lastError: v.last_error,
@@ -71,6 +80,7 @@ export function parseQoderConnection(data: unknown): QoderConnection {
       environmentId: "",
       hasToken: false,
       repositories: [],
+      githubAppAccounts: [],
       enabled: false,
       status: "",
       lastError: "",

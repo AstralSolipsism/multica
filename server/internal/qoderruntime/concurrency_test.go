@@ -444,10 +444,76 @@ func TestResourceFingerprintSurvivesJournalRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := resourceFingerprint(restored.Resources), resourceFingerprint([]map[string]any{release}); got != want {
+	entries := func(resources ...map[string]any) []fingerprintEntry {
+		out := make([]fingerprintEntry, 0, len(resources))
+		for _, res := range resources {
+			key, err := repositoryKey(res["url"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, fingerprintEntry{key: key, branch: checkoutBranch(res["checkout"]), credential: "credential"})
+		}
+		return out
+	}
+	if got, want := resourceFingerprint(entries(restored.Resources...)), resourceFingerprint(entries(release)); got != want {
 		t.Fatal("restored resources fingerprint differently")
 	}
-	if resourceFingerprint(restored.Resources) == resourceFingerprint([]map[string]any{defaultBranch}) {
+	if resourceFingerprint(entries(restored.Resources...)) == resourceFingerprint(entries(defaultBranch)) {
 		t.Fatal("restored branch dropped from fingerprint")
+	}
+}
+
+// A follow-up whose repository credential comes from the GitHub App
+// integration keeps reusing the idle session — the fingerprint hashes the
+// installation binding, not the rotating token — and pushes the fresh token
+// into the session before the follow-up message.
+func TestFollowUpRefreshesRotatingGitHubAppCredential(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	h.sessionStatus["sess_prev"] = "idle"
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.sessions["sess_prev"] = []map[string]any{
+		{"id": "evt_old_0", "type": "user.message", "content": []map[string]string{{"type": "text", "text": "earlier run"}}},
+		{"id": "evt_old_1", "type": "session.status_idle", "stop_reason": map[string]string{"type": "end_turn"}},
+	}
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "ghs_fresh", 424242, nil
+	}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.creates != 0 || len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" {
+		t.Fatalf("follow-up did not continue: creates=%d sentTo=%v", h.creates, h.sentTo)
+	}
+	mounts := h.mounts["sess_prev"]
+	if len(mounts) != 1 || mounts[0]["authorization_token"] != "ghs_fresh" || mounts[0]["url"] != "https://github.com/acme/app" {
+		t.Fatalf("rotating credential not refreshed into the session: %v", mounts)
+	}
+	if fmt.Sprint(h.calls) != "[mount sess_prev send sess_prev]" {
+		t.Fatalf("calls: %v", h.calls)
+	}
+}
+
+// Once the workspace installation no longer covers the repository, the
+// pre-run credential re-resolution rejects the follow-up instead of reusing
+// the idle session with a stale credential.
+func TestFollowUpBlockedWhenInstallationRevoked(t *testing.T) {
+	task := newTask("task-1", "sess_prev")
+	task.Agent.RuntimeConfig = json.RawMessage(`{"qoder_agent_id":"agent_1","repository":{"url":"https://github.com/acme/app","ref":"main"}}`)
+	h := setupMulti(t, 1, task)
+	h.sessionStatus["sess_prev"] = "idle"
+	h.metadata["sess_prev"] = map[string]string{resourcesMetadataKey: resourceFingerprint([]fingerprintEntry{{key: "https://github.com/acme/app", branch: "main", credential: "github_app:424242"}})}
+	h.b.cfg.GitHubAppToken = func(context.Context, string, string) (string, int64, error) {
+		return "", 0, ErrGitHubAppNotCovered
+	}
+	if err := h.b.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.failed["task-1"] == nil || h.failed["task-1"]["error"] != "no GitHub credential configured for project repository" {
+		t.Fatalf("revoked installation not blocked: %#v", h.failed["task-1"])
+	}
+	if h.creates != 0 || len(h.sentTo) != 0 {
+		t.Fatalf("revoked installation still ran: creates=%d sentTo=%v", h.creates, h.sentTo)
 	}
 }

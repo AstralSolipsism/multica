@@ -104,6 +104,7 @@ function qoder(overrides: Partial<QoderConnection> = {}): QoderConnection {
     environmentId: "",
     hasToken: false,
     repositories: [],
+    githubAppAccounts: [],
     enabled: false,
     status: "",
     lastError: "",
