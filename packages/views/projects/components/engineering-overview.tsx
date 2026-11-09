@@ -481,7 +481,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       const chapter = overview?.chapters.find((item) => item.candidate?.id === id);
       if (chapter) setSelectedChapter(chapter.chapter);
       setManualCandidateId(id);
-      setReviewBatchIds(allCandidates.map((candidate) => candidate.id));
+      setReviewBatchIds(pendingCandidates.map((candidate) => candidate.id));
       setReviewSummary(emptyReviewSummary);
       setCompletionOpen(false);
       setReviewNotice(null);
@@ -734,7 +734,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             roadmap={roadmap}
             reviewRequested={reviewRequested}
             pendingCandidates={pendingCandidates}
-            batchIds={reviewBatchIds.length ? reviewBatchIds : allCandidates.map((candidate) => candidate.id)}
+            batchIds={reviewBatchIds.length ? reviewBatchIds : pendingCandidates.map((candidate) => candidate.id)}
             processedRevisionIds={processedRevisionIds}
             processedCount={processedRecords.length}
             returnLabel={reviewReturnLabel}

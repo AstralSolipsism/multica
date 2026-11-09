@@ -59,7 +59,7 @@
     "reviewHint": "任務已全部完成，確認結果後再往下走。",
     "processed": "已處理記錄（{{count}}）",
     "startContinuous": "開始連續審閱（{{count}}）",
-    "noPendingCandidates": "沒有待審閱的基線候選",
+    "noPendingCandidates": "暫無待審基線候選",
     "openWiki": "開啟基線 Wiki",
     "changeMeta": "+{{added}} / -{{removed}} · {{count}} 處變更"
   },
@@ -211,7 +211,8 @@
     "annotationsLabel": "批註",
     "loadError": "無法載入批註。基線內容仍可使用，請稍後重試。",
     "summaryRequired": "審閱評論（必填）",
-    "submitAndNext": "提交並開啟下一條"
+    "submit": "提交",
+    "submitAndNext": "提交並進入下一條"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -245,12 +246,12 @@
     "noStage": "未分階段",
     "backTo": "返回「{{title}}」",
     "emptyChapter": "本章還沒有已採用的基線內容。",
-    "pendingReview": "待審閱",
+    "pendingReview": "待審",
     "readingMode": "閱讀模式",
     "readingTab": "閱讀",
     "annotationsTab": "批註（{{count}}）",
-    "pendingNotice": "本章有 {{count}} 個待審閱候選 · {{source}} · {{changes}} 處變更",
-    "compareCandidate": "比較候選",
+    "pendingNotice": "本章有 {{count}} 條待審候選（{{source}} · {{changes}} 處變更）",
+    "compareCandidate": "對比候選 →",
     "previousChapter": "上一章",
     "nextChapter": "下一章"
   },
@@ -340,9 +341,10 @@
     "backOverview": "返回總覽",
     "backChapter": "返回第 {{number}} 章",
     "label": "待審閱佇列",
+    "pendingCount": "待審 {{current}}/{{total}}",
     "previous": "上一個待審閱候選",
     "next": "下一個待審閱候選",
-    "processedRecords": "已處理記錄（{{count}}） · 唯讀"
+    "processedRecords": "已處理記錄（{{count}}）· 只讀查看"
   },
   "completion": {
     "title": "本批次審閱已完成",
@@ -353,8 +355,8 @@
     "adopted": "已採用\"{{chapter}}\"",
     "rejected": "已駁回\"{{chapter}}\"",
     "changes": "已要求修改\"{{chapter}}\"",
-    "remaining": "還有 {{count}} 項待審閱",
-    "complete": "批次已完成"
+    "remaining": "待審還剩 {{count}} 條",
+    "complete": "本批全部處理完畢"
   },
   "processed": {
     "title": "已處理記錄",
@@ -371,7 +373,7 @@
     "readOnly": "唯讀",
     "cannotDecideAgain": "此修訂不可再次決策",
     "loading": "正在載入已處理記錄",
-    "emptyTitle": "暫無已處理記錄",
+    "emptyTitle": "還沒有已處理記錄",
     "emptyDescription": "已完成的基線決策將顯示在這裡。",
     "errorTitle": "無法載入已處理記錄",
     "errorDescription": "請重試載入最新的基線歷史和審閱記錄。",

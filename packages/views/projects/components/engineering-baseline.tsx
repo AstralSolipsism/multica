@@ -393,6 +393,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [readingComposer, setReadingComposer] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor } | null>(null);
   const [readingSelection, setReadingSelection] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor; range: Range; root: HTMLElement } | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
+  const [annotationDrawerOpen, setAnnotationDrawerOpen] = useState(false);
   const [readerProgress, setReaderProgress] = useState(0);
   const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
   const [hoveredAnnotation, setHoveredAnnotation] = useState<string | null>(null);
@@ -461,12 +462,14 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     setReadingComposer(null);
     setReadingSelection(null);
     setHoveredAnnotation(null);
+    setAnnotationDrawerOpen(false);
   }, [revision?.id, selectedChapter]);
   useEffect(() => {
     if (!showAnnotations) {
       setReadingComposer(null);
       setReadingSelection(null);
       setHoveredAnnotation(null);
+      setAnnotationDrawerOpen(false);
     }
   }, [showAnnotations]);
   useEffect(() => {
@@ -744,9 +747,9 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return;
       if (document.querySelector('[role="dialog"]')) return;
-      if (event.key === "Escape" && showAnnotations && !reviewRequested) {
+      if (event.key === "Escape" && annotationDrawerOpen && !reviewRequested) {
         event.preventDefault();
-        setShowAnnotations(false);
+        setAnnotationDrawerOpen(false);
         return;
       }
       if (reviewRequested || (event.key !== "[" && event.key !== "]")) return;
@@ -758,7 +761,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [displayChapters, selectedChapter, reviewRequested, onChapterChange, showAnnotations]);
+  }, [displayChapters, selectedChapter, reviewRequested, onChapterChange, annotationDrawerOpen]);
 
   const updateReaderPosition = () => {
     const reader = readerRef.current;
@@ -1010,7 +1013,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                               {selectedAdopted ? (
                                 <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.readingMode)}>
                                   <button type="button" role="tab" aria-selected={!readingAnnotationsVisible} className={cn("rounded-sm px-3 py-1.5 text-caption", !readingAnnotationsVisible ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setShowAnnotations(false)}>{t(($) => $.wiki.readingTab)}</button>
-                                  <button type="button" role="tab" aria-selected={readingAnnotationsVisible} className={cn("rounded-sm px-3 py-1.5 text-caption", readingAnnotationsVisible ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setShowAnnotations(true)}>{t(($) => $.wiki.annotationsTab, { count: readingAnnotationCount })}</button>
+                                  <button type="button" role="tab" aria-selected={readingAnnotationsVisible} className={cn("rounded-sm px-3 py-1.5 text-caption", readingAnnotationsVisible ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => { setShowAnnotations(true); setAnnotationDrawerOpen(true); }}>{t(($) => $.wiki.annotationsTab, { count: readingAnnotationCount })}</button>
                                 </div>
                               ) : null}
                               {currentPendingItems.length ? <Button type="button" size="sm" onClick={() => setReviewDialog({ initialOutcome: "changes", candidateMode: mode === "compare" && !!revision })}>{t(($) => $.annotations.finishReview)}</Button> : null}
@@ -1144,6 +1147,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                                 {props.canDecide && readingAnnotationsVisible && selectedAdopted && !editingChapter && !editingSection ? (
                                   <BaselineAnnotateSectionButton onClick={() => {
                                     setReadingSelection(null);
+                                    setAnnotationDrawerOpen(true);
                                     setReadingComposer({
                                       sectionKey: section.key,
                                       anchor: {
@@ -1242,20 +1246,30 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                   </div>
                 </section>
 
-                {showReadingRail && !reviewRequested ? <div className="hidden min-h-0 overflow-y-auto border-l p-3 @min-[960px]:block">{readingRail}</div> : null}
-              </div>
-              {showReadingRail && !reviewRequested ? (
-                <div className="absolute inset-0 z-30 @min-[960px]:hidden" data-annotation-drawer>
-                  <button type="button" className="absolute inset-0 bg-black/35" aria-label={t(($) => $.actions.close)} onClick={() => setShowAnnotations(false)} />
-                  <div className="absolute inset-y-0 right-0 w-[300px] max-w-[86%] border-l bg-background shadow-xl">
-                    <div className="flex h-11 items-center justify-between border-b px-3">
-                      <span className="text-caption font-medium">{t(($) => $.annotations.annotationRail)}</span>
-                      <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.actions.close)} onClick={() => setShowAnnotations(false)}><X aria-hidden="true" /></Button>
+                {showReadingRail && !reviewRequested ? (
+                  <div
+                    className={cn(
+                      "min-h-0",
+                      annotationDrawerOpen ? "absolute inset-0 z-30" : "hidden",
+                      "@min-[960px]:relative @min-[960px]:inset-auto @min-[960px]:z-auto @min-[960px]:block",
+                    )}
+                    data-annotation-drawer={annotationDrawerOpen ? "" : undefined}
+                  >
+                    {annotationDrawerOpen ? <button type="button" className="absolute inset-0 bg-black/35 @min-[960px]:hidden" aria-label={t(($) => $.actions.close)} onClick={() => setAnnotationDrawerOpen(false)} /> : null}
+                    <div className={cn(
+                      "flex h-full min-h-0 flex-col border-l bg-background",
+                      annotationDrawerOpen && "absolute inset-y-0 right-0 w-[300px] max-w-[86%] shadow-xl",
+                      "@min-[960px]:relative @min-[960px]:inset-auto @min-[960px]:w-auto @min-[960px]:max-w-none @min-[960px]:shadow-none",
+                    )}>
+                      <div className={cn("h-11 shrink-0 items-center justify-between border-b px-3", annotationDrawerOpen ? "flex" : "hidden", "@min-[960px]:hidden")}>
+                        <span className="text-caption font-medium">{t(($) => $.annotations.annotationRail)}</span>
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.actions.close)} onClick={() => setAnnotationDrawerOpen(false)}><X aria-hidden="true" /></Button>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3">{readingRail}</div>
                     </div>
-                    <div className="h-[calc(100%-2.75rem)] overflow-y-auto p-3">{readingRail}</div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
 
             {readingSelection && readingAnnotationsVisible ? (
@@ -1263,6 +1277,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                 <div className="bubble-menu" data-baseline-selection-action>
                   <Button type="button" variant="ghost" size="sm" onMouseDown={(event) => event.preventDefault()} onClick={() => {
                     setReadingComposer({ sectionKey: readingSelection.sectionKey, anchor: readingSelection.anchor });
+                    setAnnotationDrawerOpen(true);
                     setReadingSelection(null);
                     window.getSelection()?.removeAllRanges();
                   }}><MessageSquarePlus aria-hidden="true" />{t(($) => $.annotations.annotate)}</Button>
@@ -1287,7 +1302,6 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
                 key={`${reviewDialog.candidateMode}-${revision?.id ?? selectedAdopted?.id ?? selectedChapter}`}
                 workspaceSlug={props.workspaceSlug}
                 chapter={selectedChapter}
-                chapterTitle={chapterLabel(selectedChapter)}
                 remainingCount={props.pendingCandidates.length}
                 candidateMode={reviewDialog.candidateMode}
                 candidate={reviewDialog.candidateMode ? revision : null}

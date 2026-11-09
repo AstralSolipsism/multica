@@ -17,6 +17,7 @@ import {
   baselineReviewRoute,
   isBaselineAnnotationReply,
   isBatchRelatedToCandidate,
+  synthesizeBaselineReviewAnnotation,
   toBaselineReviewAnnotation,
   type BaselineAnnotationActions,
   type BaselineReviewOutcome,
@@ -25,7 +26,6 @@ import {
 interface BaselineReviewDialogProps {
   workspaceSlug: string;
   chapter: BaselineChapter;
-  chapterTitle: string;
   remainingCount: number;
   candidateMode: boolean;
   candidate: BaselineRevision | null;
@@ -80,7 +80,9 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
     ? t(($) => $.actions.adopt)
     : outcome === "reject"
       ? t(($) => $.actions.reject)
-      : t(($) => props.remainingCount > 1 ? $.annotations.submitAndNext : $.annotations.requestChanges);
+      : t(($) => props.candidateMode
+        ? props.remainingCount > 1 ? $.annotations.submitAndNext : $.annotations.submit
+        : $.annotations.requestChanges);
   const targetTitle = props.candidateMode && candidate
     ? t(($) => $.baseline.compareMode, { number: candidate.revisionNumber })
     : t(($) => $.baseline.baseMode, { number: props.adopted?.revisionNumber ?? 0 });
@@ -109,21 +111,12 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
         const reviewedRevision = props.candidateMode ? candidate : props.adopted;
         const reviewedRevisionId = reviewedRevision?.id;
         const note = summary.trim();
-        if (!reviewedRevision || !reviewedRevisionId || !canRequestChanges || !note || (needsAgent && !agentId)) throw new Error("Incomplete review");
-        const firstChange = [
-          ...reviewedRevision.anchorsDiff.added,
-          ...reviewedRevision.anchorsDiff.modified,
-          ...reviewedRevision.anchorsDiff.removed,
-        ][0];
+        if (!reviewedRevision || !reviewedRevisionId || !canRequestChanges || (props.candidateMode && !note) || (needsAgent && !agentId)) throw new Error("Incomplete review");
+        const synthesized = submittedItems.length ? null : synthesizeBaselineReviewAnnotation(reviewedRevision, note);
+        if (!submittedItems.length && (!note || !synthesized)) throw new Error("No valid annotation section");
         const annotations = submittedItems.length
           ? submittedItems.map(toBaselineReviewAnnotation)
-          : [{
-              anchorKind: "section" as const,
-              targetRevisionId: reviewedRevisionId,
-              sectionAnchor: firstChange?.anchor || reviewedRevision.chapter,
-              sectionTitle: firstChange?.title || props.chapterTitle,
-              note,
-            }];
+          : [synthesized!];
         const result = await props.actions.onSubmitReview({
           clientKey: clientKeyRef.current,
           chapter: reviewedRevision.chapter,
@@ -186,10 +179,10 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
               {pendingCount ? <PendingReviewList items={props.pendingItems} /> : null}
               <div>
                 <div className="mb-1 flex items-center justify-between gap-3">
-                  <label htmlFor="baseline-review-summary" className="text-caption font-medium">{t(($) => outcome === "changes" ? $.annotations.summaryRequired : $.annotations.summaryLabel)}</label>
+                  <label htmlFor="baseline-review-summary" className="text-caption font-medium">{t(($) => props.candidateMode && outcome === "changes" ? $.annotations.summaryRequired : $.annotations.summaryLabel)}</label>
                   <span className="text-micro text-muted-foreground">{Array.from(summary).length}/500</span>
                 </div>
-                <Textarea id="baseline-review-summary" value={summary} maxLength={500} rows={3} disabled={submitting} required={outcome === "changes"} onChange={(event) => setSummary(event.target.value)} />
+                <Textarea id="baseline-review-summary" value={summary} maxLength={500} rows={3} disabled={submitting} required={props.candidateMode && outcome === "changes"} onChange={(event) => setSummary(event.target.value)} />
               </div>
               {props.candidateMode ? (
                 <fieldset className="space-y-2" disabled={submitting}>
@@ -269,7 +262,7 @@ export function BaselineReviewDialog(props: BaselineReviewDialogProps) {
           {step === "form" ? (
             <>
               <Button type="button" variant="outline" disabled={submitting} onClick={props.onClose}>{t(($) => $.actions.cancel)}</Button>
-              <Button type="button" disabled={submitting || !outcome || (outcome === "changes" && (!summary.trim() || !canRequestChanges || (needsAgent && !agentId)))} aria-busy={submitting} onClick={() => void submit()}>
+              <Button type="button" disabled={submitting || !outcome || (outcome === "changes" && ((props.candidateMode && !summary.trim()) || !canRequestChanges || (needsAgent && !agentId)))} aria-busy={submitting} onClick={() => void submit()}>
                 {submitting ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{submitLabel}
               </Button>
             </>

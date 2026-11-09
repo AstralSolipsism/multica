@@ -211,7 +211,8 @@
     "annotationsLabel": "注釈",
     "loadError": "注釈を読み込めませんでした。基線は引き続き利用できます。しばらくしてから再試行してください。",
     "summaryRequired": "レビューコメント（必須）",
-    "submitAndNext": "提出して次を開く"
+    "submit": "提出",
+    "submitAndNext": "提出して次へ進む"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -249,8 +250,8 @@
     "readingMode": "読書モード",
     "readingTab": "読む",
     "annotationsTab": "注釈（{{count}}）",
-    "pendingNotice": "この章にはレビュー待ち候補 {{count}} 件があります · {{source}} · 変更 {{changes}} 件",
-    "compareCandidate": "候補を比較",
+    "pendingNotice": "この章にはレビュー待ち候補 {{count}} 件があります（{{source}} · 変更 {{changes}} 件）",
+    "compareCandidate": "候補を比較 →",
     "previousChapter": "前の章",
     "nextChapter": "次の章"
   },
@@ -340,9 +341,10 @@
     "backOverview": "概要に戻る",
     "backChapter": "第 {{number}} 章に戻る",
     "label": "レビュー待ちキュー",
+    "pendingCount": "レビュー待ち {{current}}/{{total}}",
     "previous": "前のレビュー待ち候補",
     "next": "次のレビュー待ち候補",
-    "processedRecords": "処理済みレコード（{{count}}） · 読み取り専用"
+    "processedRecords": "処理済みレコード（{{count}}） · 読み取り専用で表示"
   },
   "completion": {
     "title": "このレビューバッチは完了しました",
@@ -353,8 +355,8 @@
     "adopted": "「{{chapter}}」を採用しました",
     "rejected": "「{{chapter}}」を却下しました",
     "changes": "「{{chapter}}」に修正を依頼しました",
-    "remaining": "レビュー待ち {{count}} 件",
-    "complete": "バッチ完了"
+    "remaining": "レビュー待ちの候補が残り {{count}} 件です",
+    "complete": "このバッチの候補はすべて処理されました"
   },
   "processed": {
     "title": "処理済みレコード",

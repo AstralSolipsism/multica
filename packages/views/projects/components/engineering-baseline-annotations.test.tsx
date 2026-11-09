@@ -338,7 +338,7 @@ describe("baseline source annotations", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Please revise the candidate");
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Submit" }));
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
     const input = onSubmitReview.mock.calls[0]![0];
     expect(input.reviewedRevisionId).toBe("rev-candidate");
@@ -360,7 +360,7 @@ describe("baseline source annotations", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Keep this summary");
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Submit" }));
     expect(await within(dialog).findByText("The review was not submitted")).toBeInTheDocument();
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toHaveLength(1);
     expect(within(dialog).getByRole("textbox", { name: "Review comment (required)" })).toHaveValue("Keep this summary");
@@ -379,7 +379,7 @@ describe("baseline source annotations", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Revise this section");
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("The review was not submitted")).toBeInTheDocument();
     expect(useBaselineAnnotationDraftStore.getState().draft.annotations).toHaveLength(1);
   });
@@ -453,7 +453,7 @@ describe("baseline source annotations", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Resolve the candidate conflict");
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Submit" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: action })).toBeInTheDocument();
     if (code === "baseline_review_conflict") expect(screen.getByRole("link", { name: "OL-42" })).toBeInTheDocument();
@@ -483,9 +483,9 @@ describe("baseline source annotations", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }));
     const dialog = screen.getByRole("dialog");
     const comment = within(dialog).getByRole("textbox", { name: "Review comment (required)" });
-    expect(within(dialog).getByRole("button", { name: "Request changes" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Submit" })).toBeDisabled();
     await user.type(comment, "Summary only");
-    const submit = within(dialog).getByRole("button", { name: "Request changes" });
+    const submit = within(dialog).getByRole("button", { name: "Submit" });
     expect(submit).toBeEnabled();
     await user.click(submit);
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
@@ -494,8 +494,8 @@ describe("baseline source annotations", () => {
     expect(input.annotations).toEqual([{
       anchorKind: "section",
       targetRevisionId: "rev-candidate",
-      sectionAnchor: "domain_rules",
-      sectionTitle: "Domain and rules",
+      sectionAnchor: "Rule-1",
+      sectionTitle: "幂等键",
       note: "Summary only",
     }]);
   });
@@ -621,6 +621,7 @@ describe("baseline Word-style reading annotations", () => {
   it("annotates rendered block lines through a selection bubble without a single-send action", async () => {
     const user = userEvent.setup();
     const { onSubmitReview } = renderBaseline({ reviewRequested: false });
+    fireEvent.click(document.querySelector<HTMLElement>("[data-annotation-drawer] > button")!);
     const article = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-1"]')!;
     const block = article.querySelector<HTMLElement>('p[data-source-start="2"][data-source-end="2"]')!;
     expect(block).toHaveTextContent("所有写接口应该携带幂等键。");
@@ -637,6 +638,7 @@ describe("baseline Word-style reading annotations", () => {
 
     expect(document.querySelector("[data-annotation-composer]")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Annotate" }));
+    expect(document.querySelector("[data-annotation-drawer]")).toBeInTheDocument();
     const composer = document.querySelector("[data-annotation-composer]") as HTMLElement;
     expect(composer).toHaveTextContent("Annotate selected text");
     expect(within(composer).queryByRole("button", { name: /Send/ })).not.toBeInTheDocument();
@@ -713,13 +715,17 @@ describe("baseline Word-style reading annotations", () => {
     toc.scrollTop = 36;
 
     const drawer = document.querySelector<HTMLElement>("[data-annotation-drawer]")!;
-    expect(drawer).toHaveClass("@min-[960px]:hidden");
+    expect(document.querySelectorAll("[data-reading-rail]")).toHaveLength(1);
     expect(drawer.querySelector("button")).toHaveClass("bg-black/35");
     expect(drawer.textContent).toContain("Clarify retries");
     await user.keyboard("{Escape}");
     expect(document.querySelector("[data-annotation-drawer]")).not.toBeInTheDocument();
     expect(reader.scrollTop).toBe(120);
     expect(toc.scrollTop).toBe(36);
+
+    await user.click(within(document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-1"]')!).getByRole("button", { name: "Annotate section" }));
+    expect(document.querySelector("[data-annotation-drawer]")).toBeInTheDocument();
+    expect(document.querySelector("[data-annotation-composer]")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Annotations (1)" }));
     const mask = document.querySelector<HTMLElement>("[data-annotation-drawer] > button")!;
@@ -814,7 +820,7 @@ describe("baseline Word-style reading annotations", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Reading pending")).toBeInTheDocument();
     await user.type(within(dialog).getByRole("textbox", { name: "Review comment (required)" }), "Revise the baseline draft");
-    await user.click(within(dialog).getByRole("button", { name: "Request changes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Submit" }));
     await waitFor(() => expect(onSubmitReview).toHaveBeenCalledTimes(1));
     expect(onSubmitReview.mock.calls[0]![0]).toMatchObject({ reviewedRevisionId: "rev-candidate" });
     expect(onSubmitReview.mock.calls[0]![0].annotations).toHaveLength(1);

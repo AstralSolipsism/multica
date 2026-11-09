@@ -214,7 +214,8 @@
     "annotationsLabel": "Anotaciones",
     "loadError": "No se pudieron cargar las anotaciones. La línea base sigue disponible. Inténtalo de nuevo más tarde.",
     "summaryRequired": "Comentario de revisión (obligatorio)",
-    "submitAndNext": "Enviar y abrir la siguiente"
+    "submit": "Enviar",
+    "submitAndNext": "Enviar y continuar con la siguiente"
   },
   "wiki": {
     "meta": "{{chapters}} capítulos · {{sections}} secciones",
@@ -248,12 +249,12 @@
     "noStage": "Sin etapa de entrega",
     "backTo": "Volver a \"{{title}}\"",
     "emptyChapter": "Todavía no se ha adoptado contenido de línea base en este capítulo.",
-    "pendingReview": "Pendiente de revisión",
+    "pendingReview": "Pendiente",
     "readingMode": "Modo de lectura",
     "readingTab": "Leer",
     "annotationsTab": "Anotaciones ({{count}})",
-    "pendingNotice": "Este capítulo tiene {{count}} candidata pendiente · {{source}} · {{changes}} cambios",
-    "compareCandidate": "Comparar candidata",
+    "pendingNotice": "Este capítulo tiene {{count}} candidata pendiente ({{source}} · {{changes}} cambios)",
+    "compareCandidate": "Comparar candidata →",
     "previousChapter": "Capítulo anterior",
     "nextChapter": "Capítulo siguiente"
   },
@@ -343,9 +344,10 @@
     "backOverview": "Volver al resumen",
     "backChapter": "Volver al capítulo {{number}}",
     "label": "Cola de revisiones pendientes",
+    "pendingCount": "Pendientes {{current}}/{{total}}",
     "previous": "Candidata pendiente anterior",
     "next": "Candidata pendiente siguiente",
-    "processedRecords": "Registros procesados ({{count}}) · Solo lectura"
+    "processedRecords": "Registros procesados ({{count}}) · Vista de solo lectura"
   },
   "completion": {
     "title": "Este lote de revisión está completo",
@@ -356,8 +358,8 @@
     "adopted": "Se adoptó \"{{chapter}}\"",
     "rejected": "Se rechazó \"{{chapter}}\"",
     "changes": "Se solicitaron cambios en \"{{chapter}}\"",
-    "remaining": "{{count}} pendientes",
-    "complete": "Lote completado"
+    "remaining": "Quedan {{count}} candidatas pendientes de revisión",
+    "complete": "Se han procesado todas las candidatas de este lote"
   },
   "processed": {
     "title": "Registros procesados",

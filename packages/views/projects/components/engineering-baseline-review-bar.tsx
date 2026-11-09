@@ -128,12 +128,12 @@ export function BaselineReviewBar(props: BaselineReviewBarProps) {
               render={<Button type="button" variant="outline" size="sm" />}
               aria-label={t(($) => $.reviewQueue.label)}
             >
-              <span className="tabular-nums">{currentIndex < 0 ? 0 : currentIndex + 1}/{queue.length}</span>
+              <span className="tabular-nums">{t(($) => $.reviewQueue.pendingCount, { current: currentIndex < 0 ? 0 : currentIndex + 1, total: queue.length })}</span>
               <ChevronDown aria-hidden="true" />
             </PopoverTrigger>
             <PopoverContent align="start" className="min-w-[300px] gap-0 p-0">
               <ul className="max-h-80 overflow-y-auto p-1">
-                {queue.map((candidate) => (
+                {queue.map((candidate, index) => (
                   <li key={candidate.id}>
                     <button
                       type="button"
@@ -147,7 +147,7 @@ export function BaselineReviewBar(props: BaselineReviewBarProps) {
                         setQueueOpen(false);
                       }}
                     >
-                      <span>{t(($) => $.baseline.compareMode, { number: candidate.revisionNumber })}</span>
+                      <span className="min-w-0"><span className="mr-2 tabular-nums text-muted-foreground">{index + 1}</span>· {chapterLabel(candidate.chapter)}</span>
                       <span className="shrink-0 text-muted-foreground">{t(($) => $.baseline.changeCount, { count: candidate.anchorsDiff.added.length + candidate.anchorsDiff.modified.length + candidate.anchorsDiff.removed.length })}</span>
                     </button>
                   </li>
@@ -199,6 +199,7 @@ export function BaselineReviewBar(props: BaselineReviewBarProps) {
                   type="button"
                   size="sm"
                   variant={action === "adopt" ? "default" : "outline"}
+                  className={action === "reject" ? "text-destructive" : action === "adopt" ? "bg-success hover:bg-success/90" : undefined}
                   disabled={props.decisionPending}
                   aria-busy={props.decisionAction === action}
                   onClick={() => props.onDecide(action)}

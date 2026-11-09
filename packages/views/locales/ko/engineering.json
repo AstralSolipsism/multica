@@ -211,7 +211,8 @@
     "annotationsLabel": "주석",
     "loadError": "주석을 불러오지 못했습니다. 기준 내용은 계속 사용할 수 있습니다. 잠시 후 다시 시도하세요.",
     "summaryRequired": "검토 의견(필수)",
-    "submitAndNext": "제출하고 다음 열기"
+    "submit": "제출",
+    "submitAndNext": "제출하고 다음으로 이동"
   },
   "wiki": {
     "meta": "장 {{chapters}}개 · 섹션 {{sections}}개",
@@ -249,8 +250,8 @@
     "readingMode": "읽기 모드",
     "readingTab": "읽기",
     "annotationsTab": "주석({{count}})",
-    "pendingNotice": "이 장에는 검토 대기 후보 {{count}}개가 있습니다 · {{source}} · 변경 사항 {{changes}}건",
-    "compareCandidate": "후보 비교",
+    "pendingNotice": "이 장에는 검토 대기 후보 {{count}}개가 있습니다 ({{source}} · 변경 사항 {{changes}}건)",
+    "compareCandidate": "후보 비교 →",
     "previousChapter": "이전 장",
     "nextChapter": "다음 장"
   },
@@ -340,9 +341,10 @@
     "backOverview": "개요로 돌아가기",
     "backChapter": "{{number}}장으로 돌아가기",
     "label": "검토 대기 큐",
+    "pendingCount": "검토 대기 {{current}}/{{total}}",
     "previous": "이전 검토 대기 후보",
     "next": "다음 검토 대기 후보",
-    "processedRecords": "처리된 기록({{count}}) · 읽기 전용"
+    "processedRecords": "처리된 기록({{count}}) · 읽기 전용 보기"
   },
   "completion": {
     "title": "이 검토 배치가 완료되었습니다",
@@ -353,8 +355,8 @@
     "adopted": "\"{{chapter}}\"을(를) 채택했습니다",
     "rejected": "\"{{chapter}}\"을(를) 거절했습니다",
     "changes": "\"{{chapter}}\"에 수정을 요청했습니다",
-    "remaining": "대기 중 {{count}}건",
-    "complete": "배치 완료"
+    "remaining": "검토 대기 후보가 {{count}}개 남았습니다",
+    "complete": "이 배치의 모든 후보가 처리되었습니다"
   },
   "processed": {
     "title": "처리된 기록",

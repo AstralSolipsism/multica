@@ -11,6 +11,7 @@ import {
   baselineReviewRoute,
   isBatchRelatedToCandidate,
   reviewDraftItems,
+  synthesizeBaselineReviewAnnotation,
   toBaselineReviewAnnotation,
 } from "./engineering-baseline-annotation-model";
 
@@ -72,6 +73,55 @@ describe("baseline annotation review payload", () => {
     });
     expect(toBaselineReviewAnnotation(reply)).not.toHaveProperty("id");
     expect(toBaselineReviewAnnotation(reply)).not.toHaveProperty("ownerId");
+  });
+});
+
+describe("baseline summary annotation synthesis", () => {
+  const emptyDiff = {
+    chapter: "domain_rules", baseRevisionNumber: 1,
+    added: [], modified: [], removed: [], unchangedCount: 0, warnings: [],
+  } as BaselineRevision["anchorsDiff"];
+
+  it("targets the base revision for a removed-only candidate", () => {
+    const reviewed = {
+      ...candidate,
+      baseRevisionId: "base-1",
+      contentMarkdown: "### Retained\nKeep this section.",
+      anchorsDiff: {
+        ...emptyDiff,
+        removed: [{ anchor: "Rule-old", title: "Old rule", before: "Remove", after: "", beforeChars: 6, afterChars: 0 }],
+      },
+    } as BaselineRevision;
+    expect(synthesizeBaselineReviewAnnotation(reviewed, " Revise the deletion ")).toEqual({
+      anchorKind: "section", targetRevisionId: "base-1",
+      sectionAnchor: "Rule-old", sectionTitle: "Old rule", note: "Revise the deletion",
+    });
+  });
+
+  it("skips preamble changes and uses the first editable heading", () => {
+    const reviewed = {
+      ...candidate,
+      contentMarkdown: "Intro text\n\n### Actual rule\nCandidate body.",
+      anchorsDiff: {
+        ...emptyDiff,
+        added: [{ anchor: "_preamble", title: "", before: "", after: "Intro", beforeChars: 0, afterChars: 5 }],
+        modified: [{ anchor: "Rule-1", title: "Actual rule", before: "Old", after: "New", beforeChars: 3, afterChars: 3 }],
+      },
+    } as BaselineRevision;
+    expect(synthesizeBaselineReviewAnnotation(reviewed, "Clarify the rule")).toMatchObject({
+      targetRevisionId: candidate.id, sectionAnchor: "Rule-1", sectionTitle: "Actual rule",
+    });
+  });
+
+  it("parses the first real heading when no section diff exists", () => {
+    const reviewed = {
+      ...candidate,
+      contentMarkdown: "Module introduction\n\n### First heading\nContent.",
+      anchorsDiff: emptyDiff,
+    } as BaselineRevision;
+    expect(synthesizeBaselineReviewAnnotation(reviewed, "Rename the module")).toMatchObject({
+      targetRevisionId: candidate.id, sectionAnchor: "First heading", sectionTitle: "First heading", note: "Rename the module",
+    });
   });
 });
 

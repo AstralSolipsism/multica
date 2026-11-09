@@ -214,7 +214,8 @@
     "annotationsLabel": "Annotations",
     "loadError": "Impossible de charger les annotations. La référence reste disponible. Réessayez plus tard.",
     "summaryRequired": "Commentaire de revue (obligatoire)",
-    "submitAndNext": "Envoyer et ouvrir le suivant"
+    "submit": "Envoyer",
+    "submitAndNext": "Envoyer et passer au suivant"
   },
   "wiki": {
     "meta": "{{chapters}} chapitres · {{sections}} sections",
@@ -248,12 +249,12 @@
     "noStage": "Aucune étape de livraison",
     "backTo": "Revenir à « {{title}} »",
     "emptyChapter": "Aucun contenu de référence n’a été adopté dans ce chapitre.",
-    "pendingReview": "En attente de relecture",
+    "pendingReview": "En attente",
     "readingMode": "Mode lecture",
     "readingTab": "Lire",
     "annotationsTab": "Annotations ({{count}})",
-    "pendingNotice": "Ce chapitre a {{count}} candidat en attente · {{source}} · {{changes}} modifications",
-    "compareCandidate": "Comparer le candidat",
+    "pendingNotice": "Ce chapitre a {{count}} candidat en attente ({{source}} · {{changes}} modifications)",
+    "compareCandidate": "Comparer le candidat →",
     "previousChapter": "Chapitre précédent",
     "nextChapter": "Chapitre suivant"
   },
@@ -343,9 +344,10 @@
     "backOverview": "Retour à la vue d’ensemble",
     "backChapter": "Revenir au chapitre {{number}}",
     "label": "File d’attente des revues",
+    "pendingCount": "En attente {{current}}/{{total}}",
     "previous": "Candidat en attente précédent",
     "next": "Candidat en attente suivant",
-    "processedRecords": "Enregistrements traités ({{count}}) · Lecture seule"
+    "processedRecords": "Enregistrements traités ({{count}}) · Vue en lecture seule"
   },
   "completion": {
     "title": "Ce lot de revue est terminé",
@@ -356,8 +358,8 @@
     "adopted": "\"{{chapter}}\" adopté",
     "rejected": "\"{{chapter}}\" rejeté",
     "changes": "Modifications demandées pour \"{{chapter}}\"",
-    "remaining": "{{count}} en attente",
-    "complete": "Lot terminé"
+    "remaining": "Il reste {{count}} candidats en attente de revue",
+    "complete": "Tous les candidats de ce lot ont été traités"
   },
   "processed": {
     "title": "Enregistrements traités",

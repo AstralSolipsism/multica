@@ -11,6 +11,7 @@ import type {
   SubmitProjectBaselineReviewInput,
 } from "@multica/core/api";
 import type { Agent } from "@multica/core/types";
+import { parseBaselineChapter } from "./engineering-baseline-utils";
 import type {
   BaselineAnnotationDraft,
   BaselineAnnotationDraftAnchor,
@@ -99,6 +100,43 @@ export function toBaselineReviewAnnotation(
     ...(item.start !== undefined ? { start: item.start } : {}),
     ...(isBaselineAnnotationReply(item) ? { parentAnnotationId: item.parentAnnotationId } : {}),
     note: item.note,
+  };
+}
+
+export function synthesizeBaselineReviewAnnotation(
+  revision: BaselineRevision,
+  note: string,
+): BaselineReviewAnnotationInput | null {
+  const firstEditable = [...revision.anchorsDiff.added, ...revision.anchorsDiff.modified]
+    .find((change) => change.anchor !== "_preamble");
+  if (firstEditable) {
+    return {
+      anchorKind: "section",
+      targetRevisionId: revision.id,
+      sectionAnchor: firstEditable.anchor,
+      sectionTitle: firstEditable.title,
+      note: note.trim(),
+    };
+  }
+  const firstRemoved = revision.anchorsDiff.removed[0];
+  if (firstRemoved && revision.baseRevisionId) {
+    return {
+      anchorKind: "section",
+      targetRevisionId: revision.baseRevisionId,
+      sectionAnchor: firstRemoved.anchor,
+      sectionTitle: firstRemoved.title,
+      note: note.trim(),
+    };
+  }
+  const firstHeading = parseBaselineChapter(revision.chapter, revision.contentMarkdown).sections
+    .find((section) => section.level > 0);
+  if (!firstHeading) return null;
+  return {
+    anchorKind: "section",
+    targetRevisionId: revision.id,
+    sectionAnchor: firstHeading.anchor,
+    sectionTitle: firstHeading.title,
+    note: note.trim(),
   };
 }
 

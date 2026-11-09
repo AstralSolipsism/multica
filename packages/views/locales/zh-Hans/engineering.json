@@ -59,7 +59,7 @@
     "reviewHint": "任务已全部完成，确认结果后再往下走。",
     "processed": "已处理记录（{{count}}）",
     "startContinuous": "开始连续审阅（{{count}}）",
-    "noPendingCandidates": "没有待审阅的基线候选",
+    "noPendingCandidates": "暂无待审基线候选",
     "openWiki": "打开基线 Wiki",
     "changeMeta": "+{{added}} / -{{removed}} · {{count}} 处变更"
   },
@@ -211,7 +211,8 @@
     "annotationsLabel": "批注",
     "loadError": "无法加载批注。基线内容仍可使用，请稍后重试。",
     "summaryRequired": "审阅评论（必填）",
-    "submitAndNext": "提交并打开下一条"
+    "submit": "提交",
+    "submitAndNext": "提交并进入下一条"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 节",
@@ -245,12 +246,12 @@
     "noStage": "未分阶段",
     "backTo": "返回「{{title}}」",
     "emptyChapter": "本章还没有已采用的基线内容。",
-    "pendingReview": "待审阅",
+    "pendingReview": "待审",
     "readingMode": "阅读模式",
     "readingTab": "阅读",
     "annotationsTab": "批注（{{count}}）",
-    "pendingNotice": "本章有 {{count}} 个待审阅候选 · {{source}} · {{changes}} 处变更",
-    "compareCandidate": "对比候选",
+    "pendingNotice": "本章有 {{count}} 条待审候选（{{source}} · {{changes}} 处变更）",
+    "compareCandidate": "对比候选 →",
     "previousChapter": "上一章",
     "nextChapter": "下一章"
   },
@@ -340,9 +341,10 @@
     "backOverview": "返回总览",
     "backChapter": "返回第 {{number}} 章",
     "label": "待审阅队列",
+    "pendingCount": "待审 {{current}}/{{total}}",
     "previous": "上一个待审阅候选",
     "next": "下一个待审阅候选",
-    "processedRecords": "已处理记录（{{count}}） · 只读"
+    "processedRecords": "已处理记录（{{count}}）· 只读查看"
   },
   "completion": {
     "title": "本批次审阅已完成",
@@ -353,8 +355,8 @@
     "adopted": "已采用\"{{chapter}}\"",
     "rejected": "已驳回\"{{chapter}}\"",
     "changes": "已要求修改\"{{chapter}}\"",
-    "remaining": "还有 {{count}} 项待审阅",
-    "complete": "批次已完成"
+    "remaining": "待审还剩 {{count}} 条",
+    "complete": "本批全部处理完毕"
   },
   "processed": {
     "title": "已处理记录",
@@ -371,7 +373,7 @@
     "readOnly": "只读",
     "cannotDecideAgain": "此修订不可再次决策",
     "loading": "正在加载已处理记录",
-    "emptyTitle": "暂无已处理记录",
+    "emptyTitle": "还没有已处理记录",
     "emptyDescription": "已完成的基线决策将显示在这里。",
     "errorTitle": "无法加载已处理记录",
     "errorDescription": "请重试加载最新的基线历史和审阅记录。",

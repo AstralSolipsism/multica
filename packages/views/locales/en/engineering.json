@@ -59,7 +59,7 @@
     "reviewHint": "All tasks are complete. Check the outcome before moving on.",
     "processed": "Processed records ({{count}})",
     "startContinuous": "Start continuous review ({{count}})",
-    "noPendingCandidates": "No baseline candidates are waiting for review",
+    "noPendingCandidates": "No baseline candidates are pending review",
     "openWiki": "Open baseline Wiki",
     "changeMeta": "+{{added}} / -{{removed}} · {{count}} changes"
   },
@@ -214,7 +214,8 @@
     "annotationsLabel": "Annotations",
     "loadError": "Annotations could not be loaded. The baseline remains available; try again later.",
     "summaryRequired": "Review comment (required)",
-    "submitAndNext": "Submit and open next"
+    "submit": "Submit",
+    "submitAndNext": "Submit and continue to next"
   },
   "wiki": {
     "meta": "{{chapters}} chapters · {{sections}} sections",
@@ -248,12 +249,12 @@
     "noStage": "No delivery stage",
     "backTo": "Back to \"{{title}}\"",
     "emptyChapter": "No baseline content has been adopted in this chapter.",
-    "pendingReview": "Pending review",
+    "pendingReview": "Pending",
     "readingMode": "Reading mode",
     "readingTab": "Read",
     "annotationsTab": "Annotations ({{count}})",
-    "pendingNotice": "This chapter has {{count}} pending candidate · {{source}} · {{changes}} changes",
-    "compareCandidate": "Compare candidate",
+    "pendingNotice": "This chapter has {{count}} pending candidate ({{source}} · {{changes}} changes)",
+    "compareCandidate": "Compare candidate →",
     "previousChapter": "Previous chapter",
     "nextChapter": "Next chapter"
   },
@@ -343,9 +344,10 @@
     "backOverview": "Back to overview",
     "backChapter": "Back to chapter {{number}}",
     "label": "Pending review queue",
+    "pendingCount": "Pending {{current}}/{{total}}",
     "previous": "Previous pending candidate",
     "next": "Next pending candidate",
-    "processedRecords": "Processed records ({{count}}) · Read-only"
+    "processedRecords": "Processed records ({{count}}) · Read-only view"
   },
   "completion": {
     "title": "This review batch is complete",
@@ -356,8 +358,8 @@
     "adopted": "Adopted \"{{chapter}}\"",
     "rejected": "Rejected \"{{chapter}}\"",
     "changes": "Requested changes to \"{{chapter}}\"",
-    "remaining": "{{count}} pending",
-    "complete": "Batch complete"
+    "remaining": "{{count}} pending candidates left",
+    "complete": "All candidates in this batch are processed"
   },
   "processed": {
     "title": "Processed records",
