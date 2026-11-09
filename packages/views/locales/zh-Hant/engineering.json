@@ -56,7 +56,12 @@
     "noComment": "暫時沒有決策卡或講解評論。",
     "baselinePending": "基線修訂 v{{number}} 待確認",
     "reviewPending": "復盤 Stage {{stage}}，解鎖下一階段",
-    "reviewHint": "任務已全部完成，確認結果後再往下走。"
+    "reviewHint": "任務已全部完成，確認結果後再往下走。",
+    "processed": "已處理記錄（{{count}}）",
+    "startContinuous": "開始連續審閱（{{count}}）",
+    "noPendingCandidates": "暫無待審基線候選",
+    "openWiki": "開啟基線 Wiki",
+    "changeMeta": "+{{added}} / -{{removed}} · {{count}} 處變更"
   },
   "progress": {
     "blockedGroup": "卡住了",
@@ -204,7 +209,10 @@
     "batchDetails": "批註批次",
     "responsibleAgent": "負責 AI 代理",
     "annotationsLabel": "批註",
-    "loadError": "無法載入批註。基線內容仍可使用，請稍後重試。"
+    "loadError": "無法載入批註。基線內容仍可使用，請稍後重試。",
+    "summaryRequired": "審閱評論（必填）",
+    "submit": "提交",
+    "submitAndNext": "提交並進入下一條"
   },
   "wiki": {
     "meta": "{{chapters}} 章 · {{sections}} 節",
@@ -237,7 +245,15 @@
     "openInOverview": "開啟",
     "noStage": "未分階段",
     "backTo": "返回「{{title}}」",
-    "emptyChapter": "本章還沒有已採用的基線內容。"
+    "emptyChapter": "本章還沒有已採用的基線內容。",
+    "pendingReview": "待審",
+    "readingMode": "閱讀模式",
+    "readingTab": "閱讀",
+    "annotationsTab": "批註（{{count}}）",
+    "pendingNotice": "本章有 {{count}} 條待審候選（{{source}} · {{changes}} 處變更）",
+    "compareCandidate": "對比候選 →",
+    "previousChapter": "上一章",
+    "nextChapter": "下一章"
   },
   "chapters": {
     "overview": "專案概覽",
@@ -278,7 +294,7 @@
     "close": "關閉",
     "expand": "展開全文",
     "collapse": "收起",
-    "reject": "退回修改",
+    "reject": "駁回",
     "adopt": "採用",
     "enable": "啟用總覽",
     "open_baseline": "開啟工程基線",
@@ -289,7 +305,8 @@
     "editSection": "編輯本節",
     "saveAndAdopt": "儲存並直接生效",
     "submitForReview": "僅提交為待審候選",
-    "submitRevisionCandidate": "提交修訂候選"
+    "submitRevisionCandidate": "提交修訂候選",
+    "retry": "重試"
   },
   "disabled": {
     "title": "尚未啟用工程總覽",
@@ -319,5 +336,50 @@
     "rejected": "候選已退回修改",
     "candidateSubmitted": "修訂候選已提交",
     "serverAuthoritative": "權限與版本校驗均由伺服器執行"
+  },
+  "reviewQueue": {
+    "backOverview": "返回總覽",
+    "backChapter": "返回第 {{number}} 章",
+    "label": "待審閱佇列",
+    "pendingCount": "待審 {{current}}/{{total}}",
+    "previous": "上一個待審閱候選",
+    "next": "下一個待審閱候選",
+    "processedRecords": "已處理記錄（{{count}}）· 只讀查看"
+  },
+  "completion": {
+    "title": "本批次審閱已完成",
+    "summary": "已採用 {{adopted}} · 已駁回 {{rejected}} · 已要求修改 {{changes}}",
+    "viewRecords": "查看已處理記錄"
+  },
+  "reviewNotice": {
+    "adopted": "已採用\"{{chapter}}\"",
+    "rejected": "已駁回\"{{chapter}}\"",
+    "changes": "已要求修改\"{{chapter}}\"",
+    "remaining": "待審還剩 {{count}} 條",
+    "complete": "本批全部處理完畢"
+  },
+  "processed": {
+    "title": "已處理記錄",
+    "description": "基線決策和審閱評論均為唯讀。",
+    "revision": "修訂 v{{number}}",
+    "adopted": "已採用",
+    "rejected": "已駁回",
+    "changes": "已要求修改",
+    "noSummary": "無修改說明",
+    "requestChanges": "審閱評論",
+    "noReviewComment": "無審閱評論",
+    "back": "返回已處理記錄",
+    "backToSource": "返回",
+    "readOnly": "唯讀",
+    "cannotDecideAgain": "此修訂不可再次決策",
+    "loading": "正在載入已處理記錄",
+    "emptyTitle": "還沒有已處理記錄",
+    "emptyDescription": "已完成的基線決策將顯示在這裡。",
+    "errorTitle": "無法載入已處理記錄",
+    "errorDescription": "請重試載入最新的基線歷史和審閱記錄。",
+    "retry": "重試",
+    "detailLoading": "正在載入修訂詳情",
+    "detailErrorTitle": "無法載入修訂詳情",
+    "detailErrorDescription": "請重試載入完整的修訂 Diff。"
   }
 }

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import type { BaselineDecision, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
+import { useState } from "react";
+import type { BaselineChapter, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
 import { useBaselineAnnotationDraftStore } from "@multica/core/projects/baseline-annotation-draft-store";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { renderWithI18n } from "../../test/i18n";
@@ -91,7 +92,8 @@ const baseProps = {
   canDecide: true,
   decisionPending: false,
   decisionError: false,
-  decisionResult: null,
+  decisionErrorMessage: "",
+  onClearDecisionError: vi.fn(),
   annotations: {
     batches: [],
     details: [],
@@ -114,6 +116,16 @@ const baseProps = {
   chapterRevisions: {},
   roadmap,
   reviewRequested: false,
+  pendingCandidates: [revision()],
+  batchIds: ["rev-1"],
+  processedRevisionIds: new Set<string>(),
+  processedCount: 0,
+  returnLabel: "Back to overview",
+  onReturnFromReview: vi.fn(),
+  onSelectCandidate: vi.fn(),
+  onOpenProcessed: vi.fn(),
+  onReviewCandidate: vi.fn(),
+  restorePosition: null,
   lens: "understand" as const,
   onOpenStage: vi.fn(),
 };
@@ -122,11 +134,23 @@ function renderBaseline(ui: ReactElement) {
   return renderWithI18n(<NavigationProvider value={navigation}>{ui}</NavigationProvider>);
 }
 
+function WikiChapterHarness({ chapters, initialChapter = "domain_rules", lens = "understand" }: {
+  chapters: readonly ChapterState[];
+  initialChapter?: BaselineChapter;
+  lens?: "understand" | "manage";
+}) {
+  const [selectedChapter, setSelectedChapter] = useState<BaselineChapter>(initialChapter);
+  return <EngineeringBaseline {...baseProps} chapters={chapters} selectedChapter={selectedChapter} onChapterChange={setSelectedChapter} revision={null} currentCandidate={false} onDecision={vi.fn()} lens={lens} />;
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   useBaselineAnnotationDraftStore.getState().clearDraft();
   vi.clearAllMocks();
   window.scrollTo = vi.fn();
+  HTMLElement.prototype.scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
+    if (options && typeof options === "object") this.scrollTop = options.top ?? 0;
+  });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -146,14 +170,12 @@ describe("EngineeringBaseline review", () => {
     expect(screen.getByText(/Agent agent-1/)).toBeInTheDocument();
     expect(screen.queryByText("Source task")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Adopt" }));
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Adopt" }));
     await waitFor(() => expect(onDecision).toHaveBeenCalledWith("adopt", current));
   });
 
   it("keeps a historical withdrawn revision read-only", () => {
     const historical = revision("withdrawn");
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={historical} currentCandidate={false} onDecision={vi.fn()} />);
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={historical} currentCandidate={false} reviewRequested onDecision={vi.fn()} />);
 
     expect(screen.getByText("Withdrawn")).toBeInTheDocument();
     expect(screen.getByText(/historical revision is read-only/)).toBeInTheDocument();
@@ -168,15 +190,10 @@ describe("EngineeringBaseline review", () => {
     expect(screen.queryByRole("button", { name: "Adopt" })).not.toBeInTheDocument();
   });
 
-  it("shows decision open issues and history credentials", () => {
+  it("shows history credentials", () => {
     const current = revision();
-    const result = {
-      chapters: [],
-      openIssues: { inFlight: [{ id: "issue-1", identifier: "OL-92", title: "Frontend", status: "in_progress", statusCategory: "started", assigneeType: "member", assigneeId: "user-1" }], queued: [], truncated: false },
-    } as BaselineDecision;
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(current, adopted())]} revision={current} currentCandidate decisionResult={result} history={{ revisions: [revision("adopted")], hasMore: false, nextBefore: null }} onDecision={vi.fn()} />);
+    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(current, adopted())]} revision={current} currentCandidate history={{ revisions: [revision("adopted")], hasMore: false, nextBefore: null }} onDecision={vi.fn()} />);
 
-    expect(document.querySelector("[data-open-issues]")).toHaveTextContent("OL-92");
     expect(screen.getByText("Confirmed with a personal token")).toBeInTheDocument();
   });
 });
@@ -225,21 +242,92 @@ describe("EngineeringBaseline Wiki", () => {
     expect(document.querySelector("[data-search-results]")).toHaveTextContent("预占快照");
   });
 
-  it("folds the contents below the large breakpoint until expanded", async () => {
+  it("renders one chapter, resets only the reader on chapter changes, and supports buttons and bracket keys", async () => {
     const user = userEvent.setup();
-    renderBaseline(<EngineeringBaseline {...baseProps} chapters={[chapter(null, adopted())]} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
-    const toggle = screen.getByRole("button", { name: "Baseline contents" });
-    const contents = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    const architecture = {
+      ...adopted(), id: "architecture-base", chapter: "architecture" as const,
+      contentMarkdown: "### Rollback\nRollback plan.",
+      anchorsDiff: { ...adopted().anchorsDiff, chapter: "architecture" as const },
+    };
+    const chapters = [chapter(null, adopted()), { chapter: "architecture" as const, title: "", position: 0, adopted: architecture, candidate: null }];
+    renderBaseline(<WikiChapterHarness chapters={chapters} />);
+    const reader = document.querySelector<HTMLElement>("[data-baseline-reader]")!;
+    const toc = document.querySelector<HTMLElement>("[data-baseline-toc]")!;
+    reader.scrollTop = 140;
+    toc.scrollTop = 36;
 
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle).toHaveClass("lg:hidden");
-    expect(contents).toHaveClass("hidden", "lg:block");
-    expect(contents.querySelector("nav")).not.toBeNull();
+    expect(document.querySelector('[data-baseline-chapter="domain_rules"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-baseline-chapter="architecture"]')).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Next chapter/ }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="architecture"]')).toBeInTheDocument());
+    expect(reader.scrollTop).toBe(0);
+    expect(toc.scrollTop).toBe(36);
+    expect(document.querySelector('[data-baseline-chapter="domain_rules"]')).not.toBeInTheDocument();
 
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(contents).not.toHaveClass("hidden");
-    expect(contents).toHaveClass("lg:block");
+    fireEvent.keyDown(document, { key: "[" });
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="domain_rules"]')).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "]" });
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="architecture"]')).toBeInTheDocument());
+    expect(toc.scrollTop).toBe(36);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(window.scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("disables previous on the first chapter and next on the last chapter", async () => {
+    renderBaseline(<WikiChapterHarness chapters={[chapter(null, adopted())]} initialChapter="overview" />);
+    expect(screen.getByRole("button", { name: /Previous chapter/ })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "]" });
+    fireEvent.keyDown(document, { key: "]" });
+    fireEvent.keyDown(document, { key: "]" });
+    expect(await screen.findByRole("button", { name: /Next chapter/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Previous chapter/ })).toBeEnabled();
+  });
+
+  it("returns from a cross-chapter search result to the original reader and TOC positions", async () => {
+    const user = userEvent.setup();
+    const architecture = {
+      ...adopted(), id: "architecture-base", chapter: "architecture" as const,
+      contentMarkdown: "### Rollback\nRollback plan.",
+      anchorsDiff: { ...adopted().anchorsDiff, chapter: "architecture" as const },
+    };
+    const chapters = [chapter(null, adopted()), { chapter: "architecture" as const, title: "", position: 0, adopted: architecture, candidate: null }];
+    renderBaseline(<WikiChapterHarness chapters={chapters} />);
+    const reader = document.querySelector<HTMLElement>("[data-baseline-reader]")!;
+    const toc = document.querySelector<HTMLElement>("[data-baseline-toc]")!;
+    reader.scrollTop = 120;
+    toc.scrollTop = 36;
+
+    await user.type(screen.getByRole("searchbox", { name: "Search the baseline" }), "Rollback");
+    await user.click(screen.getByRole("button", { name: /Rollback plan/ }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="architecture"]')).toBeInTheDocument());
+    await user.click(await screen.findByRole("button", { name: /Back to/ }));
+    await waitFor(() => expect(document.querySelector('[data-baseline-chapter="domain_rules"]')).toBeInTheDocument());
+    expect(reader.scrollTop).toBe(120);
+    expect(toc.scrollTop).toBe(36);
+  });
+
+  it("updates reader progress and the active TOC section from reader scrolling", async () => {
+    renderBaseline(<WikiChapterHarness chapters={[chapter(null, adopted())]} />);
+    const reader = document.querySelector<HTMLElement>("[data-baseline-reader]")!;
+    const toc = document.querySelector<HTMLElement>("[data-baseline-toc]")!;
+    Object.defineProperty(reader, "clientHeight", { configurable: true, value: 500 });
+    Object.defineProperty(reader, "scrollHeight", { configurable: true, value: 1000 });
+    vi.spyOn(reader, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 700, 500));
+    const first = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-1"]')!;
+    const second = document.querySelector<HTMLElement>('[data-baseline-section-key="domain_rules:Rule-old"]')!;
+    vi.spyOn(first, "getBoundingClientRect").mockReturnValue(new DOMRect(0, -100, 600, 100));
+    let secondTop = 200;
+    vi.spyOn(second, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, secondTop, 600, 100));
+
+    reader.scrollTop = 250;
+    fireEvent.scroll(reader);
+    expect(document.querySelector("[data-reader-progress]")).toHaveStyle({ width: "50%" });
+    expect(within(toc).getByRole("button", { name: "幂等键" })).toHaveAttribute("aria-current", "location");
+    secondTop = 50;
+    reader.scrollTop = 500;
+    fireEvent.scroll(reader);
+    expect(document.querySelector("[data-reader-progress]")).toHaveStyle({ width: "100%" });
+    expect(within(toc).getByRole("button", { name: "旧规则" })).toHaveAttribute("aria-current", "location");
   });
 
   it("renders dynamic modules with cross-chapter cards, backlinks, and return navigation", async () => {
@@ -256,13 +344,14 @@ describe("EngineeringBaseline Wiki", () => {
       chapter(null, global),
       { chapter: "module:billing" as const, title: "Billing and settlement", position: 1, adopted: module, candidate: null },
     ];
-    const view = renderBaseline(<EngineeringBaseline {...baseProps} chapters={chapters} revision={null} currentCandidate={false} onDecision={vi.fn()} />);
+    const view = renderBaseline(<WikiChapterHarness chapters={chapters} />);
 
     const toc = document.querySelector('aside[aria-label="Baseline contents"]') as HTMLElement;
     expect(within(toc).getByText("Global outline")).toBeInTheDocument();
     expect(within(toc).getByText("Functional modules")).toBeInTheDocument();
-    expect(within(toc).getByRole("button", { name: "Billing and settlement" })).toBeInTheDocument();
+    await user.click(within(toc).getByRole("button", { name: "Billing and settlement" }));
     const moduleArticle = document.querySelector('[data-baseline-section-key="module:billing:计费请求"]') as HTMLElement;
+    expect(document.querySelector('[data-baseline-section-key="domain_rules:幂等键"]')).not.toBeInTheDocument();
     const concept = within(moduleArticle.querySelector("[data-baseline-markdown]") as HTMLElement).getByRole("button", { name: "幂等键" });
     await user.hover(concept);
     await waitFor(() => expect(document.querySelector('[data-reference-card="concept"]')).toHaveTextContent("Domain and rules"));
@@ -270,10 +359,15 @@ describe("EngineeringBaseline Wiki", () => {
 
     await user.click(concept);
     expect(await screen.findByText('Back to "计费请求"')).toBeInTheDocument();
+    expect(document.querySelector('[data-baseline-section-key="domain_rules:幂等键"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-baseline-section-key="module:billing:计费请求"]')).not.toBeInTheDocument();
     await user.click(screen.getByText('Back to "计费请求"'));
     expect(screen.queryByText('Back to "计费请求"')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-baseline-section-key="module:billing:计费请求"]')).toBeInTheDocument();
 
-    view.rerender(<NavigationProvider value={navigation}><EngineeringBaseline {...baseProps} chapters={chapters} revision={null} currentCandidate={false} onDecision={vi.fn()} lens="manage" /></NavigationProvider>);
+    view.rerender(<NavigationProvider value={navigation}><WikiChapterHarness chapters={chapters} lens="manage" /></NavigationProvider>);
+    const managedModule = document.querySelector('[data-baseline-section-key="module:billing:计费请求"]') as HTMLElement;
+    await user.click(within(managedModule.querySelector("[data-baseline-markdown]") as HTMLElement).getByRole("button", { name: "幂等键" }));
     const globalArticle = document.querySelector('[data-baseline-section-key="domain_rules:幂等键"]') as HTMLElement;
     expect(globalArticle.querySelector('[data-section-relations="management"]')).toHaveTextContent("Referenced by");
     expect(within(globalArticle).getByRole("button", { name: "计费请求" })).toBeInTheDocument();

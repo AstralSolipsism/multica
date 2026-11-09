@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, History as FileClock, LoaderCircle, MessageSquarePlus, Pencil, Plus, Search, X, XCircle } from "@multica/ui/icons";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -10,13 +10,13 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import type { BaselineChapter, BaselineDecision, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
+import type { BaselineChapter, BaselineHistory, BaselineRevision, ChapterState, IssueGraphNode } from "@multica/core/api";
 import { matchLocale } from "@multica/core/i18n";
 import { paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { CollectionPageState } from "../../layout/collection-page";
-import { useNavigation } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { useEngineeringChapterLabel, useFormatRelativeDate } from "./labels";
 import {
   baselineModuleSlug,
@@ -43,6 +43,7 @@ import type { EngineeringRoadmap } from "./engineering-utils";
 import {
   activeBaselineBatch,
   buildBaselineAnnotationThreads,
+  isBatchRelatedToCandidate,
   reviewDraftItems,
   type BaselineAnnotationData,
   type BaselineComposerAnchor,
@@ -50,10 +51,9 @@ import {
 } from "./engineering-baseline-annotation-model";
 import { BaselineSourceDiff, baselineSourceDisplaySections } from "./engineering-baseline-source-diff";
 import { BaselineReviewDialog } from "./engineering-baseline-review-dialog";
-import { BaselineBatchDialog, BaselineReviewBar, type BaselineCompareView, type BaselineReviewMode } from "./engineering-baseline-review-bar";
+import { BaselineBatchDialog, BaselineReviewBar, type BaselineCompareView, type BaselineDecisionAction, type BaselineReviewMode } from "./engineering-baseline-review-bar";
 import {
   BaselineAnnotateSectionButton,
-  BaselineReadingAnnotations,
   BaselineStandaloneThreads,
   captureBaselineTextAnchor,
 } from "./engineering-baseline-reading-annotations";
@@ -82,6 +82,16 @@ export interface BaselineSaveResult {
   error?: BaselineSaveError;
 }
 
+export interface BaselineWikiPosition {
+  chapter: BaselineChapter;
+  readerScrollTop: number;
+  tocScrollTop: number;
+}
+
+export interface BaselineWikiRestorePosition extends BaselineWikiPosition {
+  version: number;
+}
+
 interface EngineeringBaselineProps {
   workspaceSlug: string;
   workspaceId: string;
@@ -97,7 +107,9 @@ interface EngineeringBaselineProps {
   canDecide: boolean;
   decisionPending: boolean;
   decisionError: boolean;
-  decisionResult: BaselineDecision | null;
+  decisionErrorMessage: string;
+  onRetryDecision?: () => Promise<void>;
+  onClearDecisionError: () => void;
   onDecision: (action: DecisionAction, revision: BaselineRevision, annotationBatchAction?: "close" | "keep") => Promise<boolean>;
   annotations: BaselineAnnotationData;
   savePending: boolean;
@@ -109,6 +121,16 @@ interface EngineeringBaselineProps {
   chapterRevisions: Partial<Record<BaselineChapter, readonly BaselineRevision[]>>;
   roadmap: EngineeringRoadmap;
   reviewRequested: boolean;
+  pendingCandidates: readonly BaselineRevision[];
+  batchIds: readonly string[];
+  processedRevisionIds: ReadonlySet<string>;
+  processedCount: number;
+  returnLabel: string;
+  onReturnFromReview: () => void;
+  onSelectCandidate: (candidateId: string) => void;
+  onOpenProcessed: () => void;
+  onReviewCandidate: (candidateId: string, position: BaselineWikiPosition) => void;
+  restorePosition: BaselineWikiRestorePosition | null;
   lens: BaselineLens;
   onOpenStage: (stage: number) => void;
 }
@@ -127,9 +149,15 @@ function sectionDomId(key: string): string {
   return `baseline-section-${encodeURIComponent(key)}`;
 }
 
-function scrollToKey(key: string) {
-  const element = document.getElementById(sectionDomId(key));
-  element?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+function scrollToElement(reader: HTMLDivElement | null, element: HTMLElement | null) {
+  if (!reader || !element) return;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const top = element.getBoundingClientRect().top - reader.getBoundingClientRect().top + reader.scrollTop - 52;
+  reader.scrollTo({ top: Math.max(0, top), behavior: reduceMotion ? "auto" : "smooth" });
+}
+
+function scrollToKey(reader: HTMLDivElement | null, key: string) {
+  scrollToElement(reader, document.getElementById(sectionDomId(key)));
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -342,19 +370,35 @@ function SectionRelations({ section, relations, lens, onConcept }: {
 
 export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const chapterLabel = useEngineeringChapterLabel(props.chapters);
+  const selectedChapter = props.selectedChapter;
+  const onChapterChange = props.onChapterChange;
+  const reviewRequested = props.reviewRequested;
+  const restorePosition = props.restorePosition;
+  const { getActorName } = useActorName();
+  const formatRelativeDate = useFormatRelativeDate();
   const { t } = useT("engineering");
   const navigation = useNavigation();
   const articleRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const tocRef = useRef<HTMLElement>(null);
+  const pendingScrollKeyRef = useRef<string | null>(null);
+  const pendingPositionRef = useRef<BaselineWikiPosition | null>(null);
+  const previousChapterRef = useRef(selectedChapter);
+  const consumedRestoreVersionRef = useRef(0);
   const readKey = `multica.engineering-baseline.read.${props.projectId}`;
   const lens = props.lens;
-  const [mode, setMode] = useState<BaselineReviewMode>(props.reviewRequested ? "compare" : "base");
+  const [mode, setMode] = useState<BaselineReviewMode>(reviewRequested ? "compare" : "base");
+  const previousReviewRequestedRef = useRef(reviewRequested);
   const [compareView, setCompareView] = useState<BaselineCompareView>("source");
   const [readingComposer, setReadingComposer] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor } | null>(null);
   const [readingSelection, setReadingSelection] = useState<{ sectionKey: string; anchor: BaselineComposerAnchor; range: Range; root: HTMLElement } | null>(null);
-  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [showAnnotations, setShowAnnotations] = useState(false);
+  const [annotationDrawerOpen, setAnnotationDrawerOpen] = useState(false);
+  const [readerProgress, setReaderProgress] = useState(0);
+  const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
   const [hoveredAnnotation, setHoveredAnnotation] = useState<string | null>(null);
-  const [inlineAnnotations, setInlineAnnotations] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches);
   const [reviewDialog, setReviewDialog] = useState<{ initialOutcome: BaselineReviewOutcome | null; candidateMode: boolean } | null>(null);
+  const [decisionAction, setDecisionAction] = useState<BaselineDecisionAction | null>(null);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<BaselineChapter | null>(null);
   const [editingSection, setEditingSection] = useState<{ chapter: BaselineChapter; key: string; query: string } | null>(null);
@@ -364,8 +408,6 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   const [changeSummary, setChangeSummary] = useState("");
   const [saveError, setSaveError] = useState<BaselineSaveError | null>(null);
   const [query, setQuery] = useState("");
-  const [tocOpen, setTocOpen] = useState(false);
-  const tocId = useId();
   const [readIds, setReadIds] = useState<readonly string[]>(() => {
     try {
       const value = JSON.parse(readStorage(readKey) ?? "[]");
@@ -373,34 +415,34 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     } catch { return []; }
   });
   const readIdsRef = useRef(readIds);
-  const [back, setBack] = useState<{ key: string; label: string; y: number } | null>(null);
+  const [back, setBack] = useState<BaselineWikiPosition & { key: string; label: string } | null>(null);
   const [changeCursor, setChangeCursor] = useState(0);
   const revision = props.revision;
-  const selectedState = props.chapters.find((chapter) => chapter.chapter === props.selectedChapter);
+  const selectedState = props.chapters.find((chapter) => chapter.chapter === selectedChapter);
   const selectedAdopted = selectedState?.adopted ?? null;
   const selectedCandidate = selectedState?.candidate ?? null;
   const annotationDrafts = useBaselineAnnotationDrafts({
     projectId: props.projectId,
-    chapter: props.selectedChapter,
+    chapter: selectedChapter,
     ownerId: props.annotations.actions.ownerId,
     canDecide: props.canDecide,
   });
-  const activeBatch = activeBaselineBatch(props.annotations.batches, props.selectedChapter);
+  const activeBatch = activeBaselineBatch(props.annotations.batches, selectedChapter);
   const activeDetail = props.annotations.details.find((detail) => detail.batch.id === activeBatch?.id);
   const activeRootIds = useMemo(() => new Set(activeDetail?.annotations.map((annotation) => annotation.id) ?? []), [activeDetail]);
   const currentTargetIds = useMemo(() => {
-    if (mode === "compare" && revision?.chapter === props.selectedChapter) {
+    if (mode === "compare" && revision?.chapter === selectedChapter) {
       return new Set([revision.id, revision.baseRevisionId ?? selectedAdopted?.id].filter((id): id is string => !!id));
     }
     return new Set(selectedAdopted ? [selectedAdopted.id] : []);
-  }, [mode, revision, props.selectedChapter, selectedAdopted]);
+  }, [mode, revision, selectedChapter, selectedAdopted]);
   const currentPendingItems = useMemo(
     () => reviewDraftItems(annotationDrafts.items, currentTargetIds, activeRootIds),
     [annotationDrafts.items, currentTargetIds, activeRootIds],
   );
   const annotationThreads = useMemo(
-    () => buildBaselineAnnotationThreads(props.annotations.details, currentPendingItems),
-    [props.annotations.details, currentPendingItems],
+    () => buildBaselineAnnotationThreads(props.annotations.details.filter((detail) => detail.batch.chapter === selectedChapter), currentPendingItems),
+    [props.annotations.details, currentPendingItems, selectedChapter],
   );
   const resolveAnnotation = useCallback(async (annotationId: string, resolved: boolean) => {
     try {
@@ -411,27 +453,23 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   }, [props.annotations.actions]);
 
   useEffect(() => {
-    if (props.reviewRequested && revision) setMode("compare");
-    else if (!revision) setMode("base");
-  }, [props.reviewRequested, revision]);
+    if (reviewRequested && revision) setMode("compare");
+    else if (!revision || previousReviewRequestedRef.current) setMode("base");
+    previousReviewRequestedRef.current = reviewRequested;
+  }, [reviewRequested, revision]);
   useEffect(() => {
     setCompareView("source");
     setReadingComposer(null);
     setReadingSelection(null);
     setHoveredAnnotation(null);
-  }, [revision?.id, props.selectedChapter]);
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 1279px)");
-    const update = () => setInlineAnnotations(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+    setAnnotationDrawerOpen(false);
+  }, [revision?.id, selectedChapter]);
   useEffect(() => {
     if (!showAnnotations) {
       setReadingComposer(null);
       setReadingSelection(null);
       setHoveredAnnotation(null);
+      setAnnotationDrawerOpen(false);
     }
   }, [showAnnotations]);
   useEffect(() => {
@@ -450,7 +488,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     };
   }, [readingSelection]);
   useEffect(() => setBack(null), [lens]);
-  useEffect(() => setSaveError(null), [props.selectedChapter]);
+  useEffect(() => setSaveError(null), [selectedChapter]);
 
   const openModuleEditor = (chapter: BaselineChapter | null, trigger: HTMLButtonElement) => {
     moduleTriggerRef.current = trigger;
@@ -463,7 +501,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   };
   const openChapterEditor = (chapter: BaselineChapter) => {
     const state = props.chapters.find((item) => item.chapter === chapter);
-    props.onChapterChange(chapter);
+    onChapterChange(chapter);
     setDraftContent(state?.candidate?.contentMarkdown ?? state?.adopted?.contentMarkdown ?? "");
     setChangeSummary("");
     setSaveError(null);
@@ -528,7 +566,8 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
       };
     });
   }, [props.chapters, revision, mode, compareView]);
-  const readingSections = useMemo(() => displayChapters.find((chapter) => chapter.chapter === props.selectedChapter)?.sections.filter((section) => section.change !== "removed") ?? [], [displayChapters, props.selectedChapter]);
+  const visibleChapter = displayChapters.find((chapter) => chapter.chapter === selectedChapter) ?? displayChapters[0];
+  const readingSections = useMemo(() => visibleChapter?.sections.filter((section) => section.change !== "removed") ?? [], [visibleChapter]);
   const readingSectionAnchors = useMemo(() => new Set(readingSections.map((section) => section.anchor)), [readingSections]);
   const readingThreads = useMemo(() => annotationThreads.filter((thread) => readingSectionAnchors.has(thread.root.sectionAnchor)), [annotationThreads, readingSectionAnchors]);
   const readingPendingItems = useMemo(() => currentPendingItems.filter((item) => readingSectionAnchors.has(item.sectionAnchor)), [currentPendingItems, readingSectionAnchors]);
@@ -539,7 +578,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   );
   const readingMode = mode === "base" && !!selectedAdopted;
   const readingAnnotationsVisible = readingMode && showAnnotations;
-  const showReadingRail = readingAnnotationsVisible && !inlineAnnotations;
+  const showReadingRail = readingAnnotationsVisible;
   const readingAnnotationCount = readingEntries.filter((entry) => entry.kind !== "composer" && (entry.kind !== "thread" || entry.thread.root.state !== "resolved")).length;
   useEffect(() => {
     if (!readingAnnotationsVisible) return;
@@ -591,7 +630,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     return targets;
   }, [props.chapters, revision]);
   const activeSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "removed"), [displayChapters]);
-  const changedSections = useMemo(() => displayChapters.flatMap((chapter) => chapter.sections).filter((section) => section.change !== "same"), [displayChapters]);
+  const changedSections = useMemo(() => visibleChapter?.sections.filter((section) => section.change !== "same") ?? [], [visibleChapter]);
   const referencesBySection = useMemo(() => new Map(activeSections.map((section) => [
     section.key,
     scanBaselineReferences(section, activeSections, nodes, props.roadmap.stages),
@@ -636,10 +675,10 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         const key = (entry.target as HTMLElement).dataset.baselineSectionKey;
         if (key) markRead(key);
       }
-    }, { rootMargin: "0px 0px -35% 0px", threshold: 0.1 });
+    }, { root: readerRef.current, rootMargin: "0px 0px -35% 0px", threshold: 0.1 });
     articleRef.current.querySelectorAll("[data-baseline-section-key]").forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, [displayChapters, lens, markRead]);
+  }, [visibleChapter, lens, markRead]);
 
   const onConcept = useCallback((section: BaselineSection, recordBack = true) => {
     if (recordBack && articleRef.current) {
@@ -647,12 +686,95 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
         .filter((element) => element.getBoundingClientRect().top < 180)
         .at(-1);
       if (source && source.dataset.baselineSectionKey !== section.key) {
-        setBack({ key: source.dataset.baselineSectionKey!, label: source.dataset.baselineSectionTitle ?? "", y: window.scrollY });
+        setBack({
+          key: source.dataset.baselineSectionKey!,
+          label: source.dataset.baselineSectionTitle ?? "",
+          chapter: selectedChapter,
+          readerScrollTop: readerRef.current?.scrollTop ?? 0,
+          tocScrollTop: tocRef.current?.scrollTop ?? 0,
+        });
       }
     }
-    scrollToKey(section.key);
+    if (section.chapter !== selectedChapter) {
+      pendingScrollKeyRef.current = section.key;
+      onChapterChange(section.chapter);
+    } else {
+      scrollToKey(readerRef.current, section.key);
+    }
     if (lens === "understand") markRead(section.key);
-  }, [lens, markRead]);
+  }, [lens, markRead, selectedChapter, onChapterChange]);
+
+  useEffect(() => {
+    const reader = readerRef.current;
+    if (!reader) return;
+    const chapterChanged = previousChapterRef.current !== selectedChapter;
+    previousChapterRef.current = selectedChapter;
+    const restore = restorePosition;
+    if (restore && restore.chapter === selectedChapter && consumedRestoreVersionRef.current !== restore.version) {
+      consumedRestoreVersionRef.current = restore.version;
+      pendingScrollKeyRef.current = null;
+      pendingPositionRef.current = null;
+      reader.scrollTo({ top: restore.readerScrollTop, behavior: "instant" });
+      tocRef.current?.scrollTo({ top: restore.tocScrollTop, behavior: "instant" });
+      setActiveSectionKey(readingSections[0]?.key ?? null);
+      return;
+    }
+    const pendingPosition = pendingPositionRef.current;
+    if (pendingPosition?.chapter === selectedChapter) {
+      pendingPositionRef.current = null;
+      pendingScrollKeyRef.current = null;
+      reader.scrollTo({ top: pendingPosition.readerScrollTop, behavior: "instant" });
+      tocRef.current?.scrollTo({ top: pendingPosition.tocScrollTop, behavior: "instant" });
+      return;
+    }
+    const key = pendingScrollKeyRef.current;
+    if (key) {
+      pendingScrollKeyRef.current = null;
+      setActiveSectionKey(key);
+      scrollToKey(reader, key);
+      return;
+    }
+    if (chapterChanged) {
+      reader.scrollTo({ top: 0, behavior: "instant" });
+      setReaderProgress(0);
+      setActiveSectionKey(readingSections[0]?.key ?? null);
+    }
+  }, [selectedChapter, restorePosition, visibleChapter, readingSections]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (event.key === "Escape" && annotationDrawerOpen && !reviewRequested) {
+        event.preventDefault();
+        setAnnotationDrawerOpen(false);
+        return;
+      }
+      if (reviewRequested || (event.key !== "[" && event.key !== "]")) return;
+      const index = displayChapters.findIndex((chapter) => chapter.chapter === selectedChapter);
+      const next = displayChapters[index + (event.key === "]" ? 1 : -1)];
+      if (!next) return;
+      event.preventDefault();
+      onChapterChange(next.chapter);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [displayChapters, selectedChapter, reviewRequested, onChapterChange, annotationDrawerOpen]);
+
+  const updateReaderPosition = () => {
+    const reader = readerRef.current;
+    if (!reader) return;
+    const available = reader.scrollHeight - reader.clientHeight;
+    setReaderProgress(available > 0 ? Math.min(100, Math.max(0, Math.round(reader.scrollTop / available * 100))) : 100);
+    const readerTop = reader.getBoundingClientRect().top;
+    const current = readingSections.filter((section) => {
+      const element = document.getElementById(sectionDomId(section.key));
+      return element && element.getBoundingClientRect().top <= readerTop + 96;
+    }).at(-1) ?? readingSections[0];
+    setActiveSectionKey(current?.key ?? null);
+  };
   const { workspaceSlug, onOpenStage } = props;
   const onNavigate = useCallback((reference: BaselineReference) => {
     if (reference.kind === "concept") onConcept(reference.section);
@@ -678,12 +800,12 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     if (!changedSections.length) return;
     const next = (index + changedSections.length) % changedSections.length;
     setChangeCursor(next);
-    scrollToKey(changedSections[next]!.key);
+    scrollToKey(readerRef.current, changedSections[next]!.key);
   }, [changedSections]);
   useEffect(() => {
     setChangeCursor(0);
     if (mode !== "compare" || !changedSections.length) return;
-    const timeout = window.setTimeout(() => scrollToKey(changedSections[0]!.key), 0);
+    const timeout = window.setTimeout(() => scrollToKey(readerRef.current, changedSections[0]!.key), 0);
     return () => window.clearTimeout(timeout);
   }, [mode, revision?.id, changedSections]);
 
@@ -712,7 +834,11 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     : 0;
   const globalChapters = displayChapters.filter((chapter) => !chapter.chapter.startsWith("module:"));
   const moduleChapters = displayChapters.filter((chapter) => chapter.chapter.startsWith("module:"));
-  const selectedChapterHasCandidate = props.chapters.some((chapter) => chapter.chapter === props.selectedChapter && chapter.candidate);
+  const selectedChapterHasCandidate = props.chapters.some((chapter) => chapter.chapter === selectedChapter && chapter.candidate);
+  const selectedPendingCandidate = props.pendingCandidates.find((candidate) => candidate.chapter === selectedChapter) ?? null;
+  const visibleChapterIndex = displayChapters.findIndex((chapter) => chapter.chapter === selectedChapter);
+  const previousChapter = visibleChapterIndex > 0 ? displayChapters[visibleChapterIndex - 1] : undefined;
+  const nextChapter = visibleChapterIndex >= 0 ? displayChapters[visibleChapterIndex + 1] : undefined;
   const dialogTargetIds = new Set(
     reviewDialog?.candidateMode && revision
       ? [revision.id, revision.baseRevisionId ?? selectedAdopted?.id].filter((id): id is string => !!id)
@@ -720,7 +846,7 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
   );
   const dialogPendingItems = reviewDraftItems(annotationDrafts.items, dialogTargetIds, activeRootIds);
   const captureReadingSelection = (article: HTMLElement, section: BaselineDisplaySection) => {
-    if (!selectedAdopted || !props.canDecide || !readingAnnotationsVisible || props.selectedChapter !== section.chapter) {
+    if (!selectedAdopted || !props.canDecide || !readingAnnotationsVisible || selectedChapter !== section.chapter) {
       setReadingSelection(null);
       return;
     }
@@ -733,397 +859,493 @@ export function EngineeringBaseline(props: EngineeringBaselineProps) {
     setReadingComposer(null);
     setHoveredAnnotation(null);
   };
-  const renderChapterNavigation = (chapter: BaselineDisplayChapter) => (
-    <div key={chapter.chapter} className="mb-3">
-      <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => {
-        props.onChapterChange(chapter.chapter);
-        document.getElementById(`baseline-chapter-${chapter.chapter}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-      }}>{chapterLabel(chapter.chapter)}</button>
-      {chapter.sections.filter((section) => mode !== "compare" || compareView !== "source" || revision?.chapter !== chapter.chapter || section.change !== "same").map((section) => (
-        <button key={section.key} type="button" className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", readIds.includes(section.key) && lens === "understand" ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
-          <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
-          {section.change !== "same" ? <span className="size-1.5 rounded-full bg-destructive" aria-label={t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)} /> : null}
-          {readIds.includes(section.key) && lens === "understand" ? <CheckCircle2 className="size-3 text-success" aria-label={t(($) => $.wiki.read)} /> : null}
-        </button>
-      ))}
-    </div>
-  );
+  const decideCandidate = (action: BaselineDecisionAction) => {
+    if (!revision || props.decisionPending) return;
+    if (action === "changes") {
+      setReviewDialog({ initialOutcome: "changes", candidateMode: true });
+      return;
+    }
+    const relatedBatch = activeBatch && isBatchRelatedToCandidate(activeBatch, revision, props.annotations.details);
+    if (currentPendingItems.length || relatedBatch) {
+      setReviewDialog({ initialOutcome: action, candidateMode: true });
+      return;
+    }
+    setDecisionAction(action);
+    void props.onDecision(action, revision).finally(() => setDecisionAction(null));
+  };
+  const renderChapterNavigation = (chapter: BaselineDisplayChapter) => {
+    const selected = chapter.chapter === selectedChapter;
+    const pending = props.pendingCandidates.some((candidate) => candidate.chapter === chapter.chapter);
+    return (
+      <div key={chapter.chapter} className="mb-3">
+        <div className="flex items-center gap-1">
+          <button type="button" aria-current={selected ? "page" : undefined} className={cn("block min-w-0 flex-1 truncate py-1 text-left text-caption font-medium hover:underline", selected ? "text-foreground" : "text-muted-foreground")} onClick={() => onChapterChange(chapter.chapter)}>{chapterLabel(chapter.chapter)}</button>
+          {pending ? <Badge variant="secondary" className="bg-warning/10 text-warning">{t(($) => $.wiki.pendingReview)}</Badge> : null}
+        </div>
+        {selected ? chapter.sections.filter((section) => mode !== "compare" || compareView !== "source" || revision?.chapter !== chapter.chapter || section.change !== "same").map((section) => {
+          const active = section.key === (activeSectionKey ?? readingSections[0]?.key);
+          return (
+            <button key={section.key} type="button" aria-current={active ? "location" : undefined} className={cn("flex w-full items-center gap-1 border-l py-1 pl-2 text-left text-caption", active || (readIds.includes(section.key) && lens === "understand") ? "border-foreground text-foreground" : "text-muted-foreground hover:text-foreground")} onClick={() => onConcept(section, false)}>
+              <span className={cn("min-w-0 flex-1", section.change === "removed" && "line-through")}>{section.title || t(($) => $.wiki.untitled)}</span>
+              {section.change !== "same" ? <span className="size-1.5 rounded-full bg-destructive" aria-label={t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)} /> : null}
+              {readIds.includes(section.key) && lens === "understand" ? <CheckCircle2 className="size-3 text-success" aria-label={t(($) => $.wiki.read)} /> : null}
+            </button>
+          );
+        }) : null}
+      </div>
+    );
+  };
+  const readingRail = selectedAdopted ? (
+    <BaselineReadingRail
+      sections={readingSections}
+      entries={readingEntries}
+      adopted={selectedAdopted}
+      candidate={selectedCandidate ?? selectedAdopted}
+      canDecide={props.canDecide}
+      limitReached={annotationDrafts.limitReached}
+      hoveredId={hoveredAnnotation}
+      onHover={setHoveredAnnotation}
+      onAddAnnotation={annotationDrafts.addAnnotation}
+      onCancelComposer={() => setReadingComposer(null)}
+      onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+      onUpdatePending={annotationDrafts.update}
+      onDeletePending={annotationDrafts.remove}
+      onResolve={resolveAnnotation}
+    />
+  ) : null;
 
   return (
     <BaselineWikiProvider value={wikiContext}>
-      <div className="mt-5" data-engineering-region="baseline">
-        <header>
-          <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
-          <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
-          <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
-        </header>
+          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden @container" data-engineering-region="baseline">
+            {!props.candidateLoading && reviewRequested ? (
+              <BaselineReviewBar
+                workspaceSlug={props.workspaceSlug}
+                workspaceId={props.workspaceId}
+                chapters={props.chapters}
+                chapter={selectedChapter}
+                revision={revision}
+                adopted={adoptedRevision ?? selectedAdopted}
+                currentCandidate={props.currentCandidate}
+                canDecide={props.canDecide}
+                decisionPending={props.decisionPending}
+                mode={mode}
+                changeCount={changeCount}
+                activeBatch={activeBatch}
+                sourceIssueIdentifier={sourceIssue?.identifier}
+                queue={props.pendingCandidates}
+                batchIds={props.batchIds}
+                processedIds={props.processedRevisionIds}
+                processedCount={props.processedCount}
+                returnLabel={props.returnLabel}
+                decisionAction={decisionAction}
+                onReturn={props.onReturnFromReview}
+                onSelectCandidate={props.onSelectCandidate}
+                onOpenProcessed={props.onOpenProcessed}
+                onDecide={decideCandidate}
+                onModeChange={changeReviewMode}
+                onOpenBatch={() => setBatchDialogOpen(true)}
+              />
+            ) : null}
+            {!props.candidateLoading && props.decisionError ? <Alert className="shrink-0 border-x-0 border-t-0" variant="destructive" role="alert"><AlertTriangle /><AlertTitle>{t(($) => $.errors.decisionTitle)}</AlertTitle><AlertDescription><p>{props.decisionErrorMessage || t(($) => $.errors.decision)}</p><div className="mt-2 flex gap-2">{props.onRetryDecision ? <Button type="button" size="sm" variant="outline" disabled={props.decisionPending} onClick={() => void props.onRetryDecision?.()}>{t(($) => $.actions.retry)}</Button> : null}<Button type="button" size="sm" variant="ghost" onClick={props.onClearDecisionError}>{t(($) => $.actions.close)}</Button></div></AlertDescription></Alert> : null}
+            {props.annotations.loading ? <Skeleton className="mx-4 mt-3 h-10 shrink-0" /> : null}
+            {props.annotations.error ? <Alert className="mx-4 mt-3 shrink-0" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
 
-        {props.candidateLoading ? <Skeleton className="mt-5 h-24 w-full" /> : null}
-        {!props.candidateLoading && props.candidateNotFound ? <div className="mt-5"><CollectionPageState icon={XCircle} tone="warning" title={t(($) => $.baseline.candidateMissing)} description={t(($) => $.baseline.candidateMissingDescription)} /></div> : null}
-        {!props.candidateLoading && props.decisionError ? <Alert className="mt-5" variant="destructive"><AlertTriangle /><AlertTitle>{t(($) => $.errors.decisionTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.decision)}</AlertDescription></Alert> : null}
-        {!props.candidateLoading ? (
-          <BaselineReviewBar
-            workspaceSlug={props.workspaceSlug}
-            workspaceId={props.workspaceId}
-            chapters={props.chapters}
-            chapter={props.selectedChapter}
-            revision={revision}
-            adopted={adoptedRevision ?? selectedAdopted}
-            currentCandidate={props.currentCandidate}
-            canDecide={props.canDecide}
-            decisionPending={props.decisionPending}
-            decisionResult={props.decisionResult}
-            mode={mode}
-            compareView={compareView}
-            changeCount={changeCount}
-            changedCount={changedSections.length}
-            changeCursor={changeCursor}
-            pendingCount={currentPendingItems.length}
-            activeBatch={activeBatch}
-            sourceIssueIdentifier={sourceIssue?.identifier}
-            annotationCount={readingAnnotationCount}
-            annotationsVisible={readingAnnotationsVisible}
-            onAnnotationsVisibleChange={setShowAnnotations}
-            onModeChange={changeReviewMode}
-            onCompareViewChange={setCompareView}
-            onJumpChange={jumpChange}
-            onOpenReview={(initialOutcome, candidateMode) => setReviewDialog({ initialOutcome, candidateMode })}
-            onOpenBatch={() => setBatchDialogOpen(true)}
-          />
-        ) : null}
-        {props.annotations.loading ? <Skeleton className="mt-3 h-10 w-full" /> : null}
-        {props.annotations.error ? <Alert className="mt-3" variant="destructive"><AlertTriangle /><AlertDescription>{t(($) => $.annotations.loadError)}</AlertDescription></Alert> : null}
-        <BaselineReadingHighlights
-          articleRef={articleRef}
-          sections={readingSections}
-          entries={readingEntries}
-          enabled={readingAnnotationsVisible}
-          hoveredId={hoveredAnnotation}
-          contentKey={`${props.selectedChapter}:${selectedAdopted?.id ?? ""}`}
-        />
-
-        <div className={cn("mt-7 grid gap-8 lg:grid-cols-[13rem_minmax(0,1fr)]", showReadingRail ? "xl:grid-cols-[13rem_minmax(0,1fr)_20rem] xl:gap-8" : "xl:gap-12")}>
-          <aside className="top-24 max-h-none overflow-y-auto lg:sticky lg:max-h-[calc(100vh-7rem)]" aria-label={t(($) => $.wiki.tocLabel)}>
-            <label className="relative block">
-              <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-              <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(($) => $.wiki.searchPlaceholder)} aria-label={t(($) => $.wiki.searchPlaceholder)} className="pl-8" />
-            </label>
-            {query.trim() ? (
-              <div className="mt-3" data-search-results>
-                <div className="mb-2 text-caption text-muted-foreground">{t(($) => $.wiki.searchCount, { count: searchResults.length })}</div>
-                {searchResults.length ? searchResults.map(({ section, snippet }) => (
-                  <button key={section.key} type="button" className="block w-full border-b py-2 text-left" onClick={() => onConcept(section, false)}>
-                    <span className="block text-caption font-medium"><Highlight text={section.title || t(($) => $.wiki.untitled)} query={query.trim()} /></span>
-                    <span className="line-clamp-2 text-micro text-muted-foreground"><Highlight text={snippet} query={query.trim()} /></span>
-                    <span className="block text-micro text-muted-foreground">{chapterLabel(section.chapter)}</span>
-                  </button>
-                )) : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.searchEmpty, { query: query.trim() })}</p>}
-              </div>
-            ) : (
-              <div className="mt-4">
-                <button type="button" className="flex w-full items-center justify-between py-1 text-caption font-medium lg:hidden" aria-expanded={tocOpen} aria-controls={tocId} onClick={() => setTocOpen((open) => !open)}>
-                  {t(($) => $.wiki.tocLabel)}
-                  <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", tocOpen && "rotate-180")} aria-hidden="true" />
-                </button>
-                {/* Below lg the contents sit above the article; keep them folded until asked for. */}
-                <div id={tocId} data-baseline-toc className={cn(tocOpen ? "mt-2" : "hidden", "lg:mt-0 lg:block")}>
-                  {lens === "understand" ? (
-                    <div className="mb-4" data-read-progress>
-                      <div className="h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground transition-[width]" style={{ width: `${activeSections.length ? Math.round(readCount / activeSections.length * 100) : 0}%` }} /></div>
-                      <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.readProgress, { read: readCount, total: activeSections.length })}</div>
-                      {nextUnread ? <button type="button" className="mt-1 text-left text-caption font-medium hover:underline" onClick={() => onConcept(nextUnread, false)}>{readCount ? t(($) => $.wiki.continueReading) : t(($) => $.wiki.startReading)}: {nextUnread.title || t(($) => $.wiki.untitled)} →</button> : <div className="mt-1 text-caption text-success">{t(($) => $.wiki.allRead)}</div>}
+            <div className="relative min-h-0 flex-1 overflow-hidden">
+              <div className={cn("grid h-full min-h-0", reviewRequested ? "grid-cols-[minmax(0,1fr)]" : "grid-cols-[160px_minmax(0,1fr)] @min-[720px]:grid-cols-[232px_minmax(0,1fr)]", showReadingRail && !reviewRequested && "@min-[960px]:grid-cols-[232px_minmax(0,1fr)_260px]")}>
+                <aside ref={tocRef} className={cn("min-h-0 overflow-y-auto border-r bg-canvas/30 p-3", reviewRequested && "hidden")} aria-label={t(($) => $.wiki.tocLabel)} data-baseline-toc>
+                  <label className="relative block">
+                    <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+                    <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(($) => $.wiki.searchPlaceholder)} aria-label={t(($) => $.wiki.searchPlaceholder)} className="pl-8" />
+                  </label>
+                  {query.trim() ? (
+                    <div className="mt-3" data-search-results>
+                      <div className="mb-2 text-caption text-muted-foreground">{t(($) => $.wiki.searchCount, { count: searchResults.length })}</div>
+                      {searchResults.length ? searchResults.map(({ section, snippet }) => (
+                        <button key={section.key} type="button" className="block w-full border-b py-2 text-left" onClick={() => onConcept(section)}>
+                          <span className="block text-caption font-medium"><Highlight text={section.title || t(($) => $.wiki.untitled)} query={query.trim()} /></span>
+                          <span className="line-clamp-2 text-micro text-muted-foreground"><Highlight text={snippet} query={query.trim()} /></span>
+                          <span className="block text-micro text-muted-foreground">{chapterLabel(section.chapter)}</span>
+                        </button>
+                      )) : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.searchEmpty, { query: query.trim() })}</p>}
                     </div>
-                  ) : null}
-                  <nav>
-                    <section aria-label={t(($) => $.wiki.globalChapters)}>
-                      <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.globalChapters)}</h3>
-                      {globalChapters.map(renderChapterNavigation)}
-                    </section>
-                    <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
-                      <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
-                      {moduleChapters.map(renderChapterNavigation)}
-                      <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
-                        <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
-                      </Button>
-                    </section>
-                    <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => document.getElementById("baseline-history")?.scrollIntoView?.({ behavior: "smooth", block: "start" })}>{t(($) => $.history.title)}</button>
-                  </nav>
-                </div>
-              </div>
-            )}
-          </aside>
-
-          <div ref={articleRef} className="min-w-0 max-w-3xl">
-            {displayChapters.map((chapter, chapterIndex) => (
-              <section key={chapter.chapter} id={`baseline-chapter-${chapter.chapter}`} className="mb-10 scroll-mt-28" data-baseline-chapter={chapter.chapter}>
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2">
-                  <h2 className="text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{chapterIndex + 1}</span>{chapterLabel(chapter.chapter)}</h2>
-                  {props.selectedChapter === chapter.chapter && !editingChapter && !editingSection ? (
-                    <div className="flex flex-wrap gap-2">
-                      {chapter.chapter.startsWith("module:") ? (
-                        <Button type="button" variant="ghost" size="sm" disabled={props.savePending} onClick={(event) => openModuleEditor(chapter.chapter, event.currentTarget)}>
-                          <Pencil aria-hidden="true" />{t(($) => $.actions.editModuleTitle)}
-                        </Button>
+                  ) : (
+                    <div className="mt-4">
+                      {lens === "understand" ? (
+                        <div className="mb-4" data-read-progress>
+                          <div className="h-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-foreground transition-[width]" style={{ width: `${activeSections.length ? Math.round(readCount / activeSections.length * 100) : 0}%` }} /></div>
+                          <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.readProgress, { read: readCount, total: activeSections.length })}</div>
+                          {nextUnread ? <button type="button" className="mt-1 text-left text-caption font-medium hover:underline" onClick={() => onConcept(nextUnread)}>{readCount ? t(($) => $.wiki.continueReading) : t(($) => $.wiki.startReading)}: {nextUnread.title || t(($) => $.wiki.untitled)} →</button> : <div className="mt-1 text-caption text-success">{t(($) => $.wiki.allRead)}</div>}
+                        </div>
                       ) : null}
-                      <Button type="button" variant="outline" size="sm" disabled={props.savePending} onClick={() => openChapterEditor(chapter.chapter)}>
-                        {t(($) => props.chapters.some((item) => item.chapter === chapter.chapter && (item.adopted || item.candidate)) ? $.actions.editChapter : $.actions.initializeChapter)}
-                      </Button>
+                      <nav>
+                        <section aria-label={t(($) => $.wiki.globalChapters)}>
+                          <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.globalChapters)}</h3>
+                          {globalChapters.map(renderChapterNavigation)}
+                        </section>
+                        <section className="mt-5" aria-label={t(($) => $.wiki.moduleChapters)}>
+                          <h3 className="mb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.moduleChapters)}</h3>
+                          {moduleChapters.map(renderChapterNavigation)}
+                          <Button type="button" variant="ghost" size="sm" className="w-full justify-start px-0" disabled={props.savePending || !!editingChapter || !!editingSection} onClick={(event) => openModuleEditor(null, event.currentTarget)}>
+                            <Plus aria-hidden="true" />{t(($) => $.actions.addModule)}
+                          </Button>
+                        </section>
+                        <button type="button" className="block w-full py-1 text-left text-caption font-medium hover:underline" onClick={() => scrollToElement(readerRef.current, document.getElementById("baseline-history"))}>{t(($) => $.history.title)}</button>
+                      </nav>
                     </div>
-                  ) : null}
-                </div>
-                {props.selectedChapter === chapter.chapter && selectedChapterHasCandidate && !editingChapter ? <p className="mt-2 text-caption text-muted-foreground" data-section-edit-hint>{t(($) => $.baseline.pendingCandidateSectionEdit)}</p> : null}
-                {editingChapter === chapter.chapter ? (
-                  <BaselineEditorForm
-                    idPrefix={`baseline-chapter-${chapter.chapter}`}
-                    content={draftContent}
-                    summary={changeSummary}
-                    pending={props.savePending}
-                    canDecide={props.canDecide}
-                    error={saveError}
-                    onContentChange={setDraftContent}
-                    onSummaryChange={setChangeSummary}
-                    onCancel={() => { setEditingChapter(null); setSaveError(null); }}
-                    onSave={saveDraft}
-                  />
-                ) : null}
-                {mode === "compare" && compareView === "source" && revision?.chapter === chapter.chapter ? (
-                  <BaselineSourceDiff
-                    chapter={chapter.chapter}
-                    sections={chapter.sections}
-                    beforeContent={selectedAdopted?.contentMarkdown ?? ""}
-                    afterContent={revision.contentMarkdown}
-                    candidate={revision}
-                    adopted={selectedAdopted}
-                    threads={annotationThreads}
-                    pendingItems={currentPendingItems}
-                    canDecide={props.canDecide && props.currentCandidate}
-                    limitReached={annotationDrafts.limitReached}
-                    onAddAnnotation={annotationDrafts.addAnnotation}
-                    onUpdatePending={annotationDrafts.update}
-                    onDeletePending={annotationDrafts.remove}
-                    onResolve={resolveAnnotation}
-                    onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
-                  />
-                ) : chapter.sections.length ? chapter.sections.map((section, sectionIndex) => (
-                  <article
-                    key={section.key}
-                    id={sectionDomId(section.key)}
-                    data-baseline-section-key={section.key}
-                    data-baseline-section-title={section.title}
-                    data-change={section.change !== "same" ? "" : undefined}
-                    data-diff-kind={section.change !== "same" ? section.change : undefined}
-                    className={cn("group/section mt-5 scroll-mt-32 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
-                    onMouseUp={(event) => {
-                      if (event.target instanceof Element && event.target.closest("button, input, textarea, [data-reading-annotations]")) return;
-                      captureReadingSelection(event.currentTarget, section);
-                    }}
-                    onKeyUp={(event) => {
-                      if (event.shiftKey && event.key.startsWith("Arrow")) captureReadingSelection(event.currentTarget, section);
-                    }}
-                  >
-                    <h3 className="flex flex-wrap items-center gap-2 text-title-sm font-medium">
-                      <span className="font-mono text-caption font-normal text-muted-foreground">{section.change === "removed" ? "—" : `${chapterIndex + 1}.${sectionIndex + 1}`}</span>
-                      <span className={section.change === "removed" ? "line-through opacity-70" : undefined}>{section.title || t(($) => $.wiki.untitled)}</span>
-                      {section.change !== "same" ? <Badge variant={section.change === "removed" ? "destructive" : "secondary"}>{t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)}</Badge> : null}
-                      {props.selectedChapter === chapter.chapter && sectionEditTargets.has(section.key) && section.change !== "removed" && !editingChapter && !editingSection ? (
-                        <Button type="button" variant="ghost" size="xs" disabled={props.savePending} onClick={() => {
-                          const target = sectionEditTargets.get(section.key);
-                          if (target) openSectionEditor(target);
-                        }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
+                  )}
+                </aside>
+
+                <section className="relative min-h-0 min-w-0" aria-label={t(($) => $.baseline.title)}>
+                  {!reviewRequested ? <div className="absolute inset-x-0 top-0 z-10 h-0.5 bg-muted" aria-hidden="true"><div className="h-full bg-brand transition-[width]" style={{ width: `${readerProgress}%` }} data-reader-progress /></div> : null}
+                  <div ref={readerRef} onScroll={updateReaderPosition} className="h-full min-h-0 overflow-y-auto overscroll-contain" data-baseline-reader>
+                    <div ref={articleRef} className={cn("mx-auto min-w-0 p-4 md:p-6", reviewRequested ? "max-w-none" : "max-w-[720px]")}>
+                      {props.candidateLoading ? <Skeleton className="h-24 w-full" /> : null}
+                      {!props.candidateLoading && props.candidateNotFound ? <CollectionPageState icon={XCircle} tone="warning" title={t(($) => $.baseline.candidateMissing)} description={t(($) => $.baseline.candidateMissingDescription)} /> : null}
+                      {!reviewRequested ? (
+                        <header>
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="text-caption text-muted-foreground">{t(($) => $.views.baseline)}</div>
+                              <h1 className="mt-1 text-title-lg font-semibold">{props.projectTitle} · {t(($) => $.baseline.title)}</h1>
+                              <div className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.meta, { chapters: displayChapters.length, sections: activeSections.length })}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {selectedAdopted ? (
+                                <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.readingMode)}>
+                                  <button type="button" role="tab" aria-selected={!readingAnnotationsVisible} className={cn("rounded-sm px-3 py-1.5 text-caption", !readingAnnotationsVisible ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setShowAnnotations(false)}>{t(($) => $.wiki.readingTab)}</button>
+                                  <button type="button" role="tab" aria-selected={readingAnnotationsVisible} className={cn("rounded-sm px-3 py-1.5 text-caption", readingAnnotationsVisible ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => { setShowAnnotations(true); setAnnotationDrawerOpen(true); }}>{t(($) => $.wiki.annotationsTab, { count: readingAnnotationCount })}</button>
+                                </div>
+                              ) : null}
+                              {currentPendingItems.length ? <Button type="button" size="sm" onClick={() => setReviewDialog({ initialOutcome: "changes", candidateMode: mode === "compare" && !!revision })}>{t(($) => $.annotations.finishReview)}</Button> : null}
+                            </div>
+                          </div>
+                        </header>
                       ) : null}
-                      {props.canDecide && readingAnnotationsVisible && props.selectedChapter === chapter.chapter && selectedAdopted && !editingChapter && !editingSection ? (
-                        <BaselineAnnotateSectionButton onClick={() => {
-                          setReadingSelection(null);
-                          setReadingComposer({
-                            sectionKey: section.key,
-                            anchor: {
-                              anchorKind: "section",
-                              targetRevisionId: selectedAdopted.id,
-                              sectionAnchor: section.anchor,
-                              sectionTitle: section.title,
-                              targetLabel: t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }),
-                            },
-                          });
-                        }} />
+
+                      {(reviewRequested || mode === "compare") && revision ? (
+                        <div className="mt-4 flex flex-wrap items-start justify-between gap-3 border-b pb-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2"><p className="text-body font-medium">{revision.changeSummary || t(($) => $.recent.noSummary)}</p><Badge variant="outline">{t(($) => $.status[revision.status] ?? $.status.unknown)}</Badge></div>
+                            <div className="mt-1 flex flex-wrap gap-x-2 text-caption text-muted-foreground">
+                              <span>{getActorName(revision.createdByType, revision.createdById)}</span>
+                              <time dateTime={revision.createdAt}>{formatRelativeDate(revision.createdAt)}</time>
+                              {revision.sourceIssueId ? <AppLink className="underline underline-offset-2" href={paths.workspace(props.workspaceSlug).issueDetail(revision.sourceIssueId)}>{sourceIssue?.identifier ?? t(($) => $.baseline.sourceIssue)}</AppLink> : null}
+                            </div>
+                            {!props.currentCandidate ? <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.baseline.readOnlyRevision)}</p> : null}
+                          </div>
+                          {mode === "compare" ? (
+                            <div className="flex items-center gap-2">
+                              <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.annotations.compareViewLabel)}>
+                                <button type="button" role="tab" aria-selected={compareView === "render"} className={cn("rounded-sm px-3 py-1 text-caption", compareView === "render" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setCompareView("render")}>{t(($) => $.annotations.renderedView)}</button>
+                                <button type="button" role="tab" aria-selected={compareView === "source"} className={cn("rounded-sm px-3 py-1 text-caption", compareView === "source" ? "bg-foreground text-background" : "text-muted-foreground")} onClick={() => setCompareView("source")}>{t(($) => $.annotations.sourceDiff)}</button>
+                              </div>
+                              {compareView === "render" && changedSections.length ? (
+                                <div className="flex items-center gap-1 text-caption">
+                                  <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.previousChange)} onClick={() => jumpChange(changeCursor - 1)}><ChevronUp aria-hidden="true" /></Button>
+                                  <span className="min-w-10 text-center tabular-nums" data-change-cursor>{changeCursor + 1}/{changedSections.length}</span>
+                                  <Button variant="outline" size="icon-sm" aria-label={t(($) => $.baseline.nextChange)} onClick={() => jumpChange(changeCursor + 1)}><ChevronDown aria-hidden="true" /></Button>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       ) : null}
-                    </h3>
-                    {editingSection?.key === section.key ? (
-                      <BaselineEditorForm
-                        idPrefix={`baseline-section-${encodeURIComponent(section.key)}`}
-                        content={draftContent}
-                        summary={changeSummary}
-                        pending={props.savePending}
-                        canDecide={props.canDecide}
-                        error={saveError}
-                        section
-                        onContentChange={setDraftContent}
-                        onSummaryChange={setChangeSummary}
-                        onCancel={() => { setEditingSection(null); setSaveError(null); }}
-                        onSave={saveDraft}
+
+                      {!reviewRequested && selectedPendingCandidate ? (
+                        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2" data-chapter-pending>
+                          <span className="min-w-0 flex-1 text-caption">{t(($) => $.wiki.pendingNotice, { count: 1, source: nodes.find((node) => node.id === selectedPendingCandidate.sourceIssueId)?.identifier ?? selectedPendingCandidate.sourceIssueId ?? t(($) => $.baseline.sourceIssue), changes: selectedPendingCandidate.anchorsDiff.added.length + selectedPendingCandidate.anchorsDiff.modified.length + selectedPendingCandidate.anchorsDiff.removed.length })}</span>
+                          <Button type="button" size="sm" variant="outline" onClick={() => props.onReviewCandidate(selectedPendingCandidate.id, { chapter: selectedChapter, readerScrollTop: readerRef.current?.scrollTop ?? 0, tocScrollTop: tocRef.current?.scrollTop ?? 0 })}>{t(($) => $.wiki.compareCandidate)}</Button>
+                        </div>
+                      ) : null}
+
+                      <BaselineReadingHighlights
+                        articleRef={articleRef}
+                        sections={readingSections}
+                        entries={readingEntries}
+                        enabled={readingAnnotationsVisible}
+                        hoveredId={hoveredAnnotation}
+                        contentKey={`${selectedChapter}:${selectedAdopted?.id ?? ""}`}
                       />
-                    ) : (
-                      <>
-                        {section.change === "modified" && section.beforeBody ? (
-                          <div className="mt-3 space-y-3">
-                            <div className="rounded-md bg-destructive/5 px-3 py-1 text-muted-foreground line-through decoration-destructive/60" data-diff-before>
-                              <BaselineMarkdown content={section.beforeBody} currentSection={section} />
-                            </div>
-                            <div className="rounded-md bg-success/5 px-3 py-1" data-diff-after>
-                              <BaselineMarkdown content={section.body} currentSection={section} />
-                            </div>
+
+                      {visibleChapter ? (
+                        <section key={visibleChapter.chapter} id={`baseline-chapter-${visibleChapter.chapter}`} data-baseline-chapter={visibleChapter.chapter}>
+                          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-b pb-2">
+                            <h2 className="text-title font-semibold"><span className="mr-3 font-normal text-muted-foreground">{visibleChapterIndex + 1}</span>{chapterLabel(visibleChapter.chapter)}</h2>
+                            {!editingChapter && !editingSection ? (
+                              <div className="flex flex-wrap gap-2">
+                                {visibleChapter.chapter.startsWith("module:") ? (
+                                  <Button type="button" variant="ghost" size="sm" disabled={props.savePending} onClick={(event) => openModuleEditor(visibleChapter.chapter, event.currentTarget)}>
+                                    <Pencil aria-hidden="true" />{t(($) => $.actions.editModuleTitle)}
+                                  </Button>
+                                ) : null}
+                                <Button type="button" variant="outline" size="sm" disabled={props.savePending} onClick={() => openChapterEditor(visibleChapter.chapter)}>
+                                  {t(($) => props.chapters.some((item) => item.chapter === visibleChapter.chapter && (item.adopted || item.candidate)) ? $.actions.editChapter : $.actions.initializeChapter)}
+                                </Button>
+                              </div>
+                            ) : null}
                           </div>
-                        ) : (
-                          <div className={cn(section.change === "removed" && "line-through opacity-70")}>
-                            <BaselineMarkdown content={section.body} currentSection={section} />
+                          {selectedChapterHasCandidate && !editingChapter ? <p className="mt-2 text-caption text-muted-foreground" data-section-edit-hint>{t(($) => $.baseline.pendingCandidateSectionEdit)}</p> : null}
+                          {editingChapter === visibleChapter.chapter ? (
+                            <BaselineEditorForm
+                              idPrefix={`baseline-chapter-${visibleChapter.chapter}`}
+                              content={draftContent}
+                              summary={changeSummary}
+                              pending={props.savePending}
+                              canDecide={props.canDecide}
+                              error={saveError}
+                              onContentChange={setDraftContent}
+                              onSummaryChange={setChangeSummary}
+                              onCancel={() => { setEditingChapter(null); setSaveError(null); }}
+                              onSave={saveDraft}
+                            />
+                          ) : null}
+                          {mode === "compare" && compareView === "source" && revision?.chapter === visibleChapter.chapter ? (
+                            <BaselineSourceDiff
+                              chapter={visibleChapter.chapter}
+                              sections={visibleChapter.sections}
+                              beforeContent={selectedAdopted?.contentMarkdown ?? ""}
+                              afterContent={revision.contentMarkdown}
+                              candidate={revision}
+                              adopted={selectedAdopted}
+                              threads={annotationThreads}
+                              pendingItems={currentPendingItems}
+                              canDecide={props.canDecide && props.currentCandidate}
+                              limitReached={annotationDrafts.limitReached}
+                              onAddAnnotation={annotationDrafts.addAnnotation}
+                              onUpdatePending={annotationDrafts.update}
+                              onDeletePending={annotationDrafts.remove}
+                              onResolve={resolveAnnotation}
+                              onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+                            />
+                          ) : visibleChapter.sections.length ? visibleChapter.sections.map((section, sectionIndex) => (
+                            <article
+                              key={section.key}
+                              id={sectionDomId(section.key)}
+                              data-baseline-section-key={section.key}
+                              data-baseline-section-title={section.title}
+                              data-change={section.change !== "same" ? "" : undefined}
+                              data-diff-kind={section.change !== "same" ? section.change : undefined}
+                              className={cn("group/section mt-5 border-l-2 py-1 pl-4", section.change === "same" ? "border-transparent" : section.change === "added" ? "border-success bg-success/5" : section.change === "modified" ? "border-accent bg-accent/30" : "border-destructive bg-destructive/5")}
+                              onMouseUp={(event) => {
+                                if (event.target instanceof Element && event.target.closest("button, input, textarea, [data-reading-annotations]")) return;
+                                captureReadingSelection(event.currentTarget, section);
+                              }}
+                              onKeyUp={(event) => {
+                                if (event.shiftKey && event.key.startsWith("Arrow")) captureReadingSelection(event.currentTarget, section);
+                              }}
+                            >
+                              <h3 className="flex flex-wrap items-center gap-2 text-title-sm font-medium">
+                                <span className="font-mono text-caption font-normal text-muted-foreground">{section.change === "removed" ? "—" : `${visibleChapterIndex + 1}.${sectionIndex + 1}`}</span>
+                                <span className={section.change === "removed" ? "line-through opacity-70" : undefined}>{section.title || t(($) => $.wiki.untitled)}</span>
+                                {section.change !== "same" ? <Badge variant={section.change === "removed" ? "destructive" : "secondary"}>{t(($) => section.change === "added" ? $.baseline.added : section.change === "removed" ? $.baseline.removed : $.baseline.modified)}</Badge> : null}
+                                {sectionEditTargets.has(section.key) && section.change !== "removed" && !editingChapter && !editingSection ? (
+                                  <Button type="button" variant="ghost" size="xs" disabled={props.savePending} onClick={() => {
+                                    const target = sectionEditTargets.get(section.key);
+                                    if (target) openSectionEditor(target);
+                                  }}><Pencil aria-hidden="true" />{t(($) => $.actions.editSection)}</Button>
+                                ) : null}
+                                {props.canDecide && readingAnnotationsVisible && selectedAdopted && !editingChapter && !editingSection ? (
+                                  <BaselineAnnotateSectionButton onClick={() => {
+                                    setReadingSelection(null);
+                                    setAnnotationDrawerOpen(true);
+                                    setReadingComposer({
+                                      sectionKey: section.key,
+                                      anchor: {
+                                        anchorKind: "section",
+                                        targetRevisionId: selectedAdopted.id,
+                                        sectionAnchor: section.anchor,
+                                        sectionTitle: section.title,
+                                        targetLabel: t(($) => $.baseline.baseMode, { number: selectedAdopted.revisionNumber }),
+                                      },
+                                    });
+                                  }} />
+                                ) : null}
+                              </h3>
+                              {editingSection?.key === section.key ? (
+                                <BaselineEditorForm
+                                  idPrefix={`baseline-section-${encodeURIComponent(section.key)}`}
+                                  content={draftContent}
+                                  summary={changeSummary}
+                                  pending={props.savePending}
+                                  canDecide={props.canDecide}
+                                  error={saveError}
+                                  section
+                                  onContentChange={setDraftContent}
+                                  onSummaryChange={setChangeSummary}
+                                  onCancel={() => { setEditingSection(null); setSaveError(null); }}
+                                  onSave={saveDraft}
+                                />
+                              ) : (
+                                <>
+                                  {section.change === "modified" && section.beforeBody ? (
+                                    <div className="mt-3 space-y-3">
+                                      <div className="rounded-md bg-destructive/5 px-3 py-1 text-muted-foreground line-through decoration-destructive/60" data-diff-before>
+                                        <BaselineMarkdown content={section.beforeBody} currentSection={section} />
+                                      </div>
+                                      <div className="rounded-md bg-success/5 px-3 py-1" data-diff-after>
+                                        <BaselineMarkdown content={section.body} currentSection={section} />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className={cn(section.change === "removed" && "line-through opacity-70")}>
+                                      <BaselineMarkdown content={section.body} currentSection={section} />
+                                    </div>
+                                  )}
+                                  {section.change === "removed" ? <p className="text-caption text-muted-foreground">{t(($) => $.baseline.removedSection)}</p> : null}
+                                  {lens === "understand" && (section.why || section.example) && section.change !== "removed" ? (
+                                    <details className="mt-2" data-section-why>
+                                      <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">{t(($) => $.wiki.whyLabel)}</summary>
+                                      {section.why ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground">{plainBaselineText(section.why)}</p> : null}
+                                      {section.example ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground"><span className="mr-2 font-medium text-foreground">{t(($) => $.wiki.exampleShort)}</span>{plainBaselineText(section.example)}</p> : null}
+                                    </details>
+                                  ) : null}
+                                  <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
+                                </>
+                              )}
+                            </article>
+                          )) : <p className="mt-4 text-body text-muted-foreground">{t(($) => $.wiki.emptyChapter)}</p>}
+                          {readingAnnotationsVisible ? (
+                            <BaselineStandaloneThreads
+                              title={t(($) => $.annotations.outdatedThreads)}
+                              threads={annotationThreads.filter((thread) => !visibleChapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
+                              baseRevisionId={selectedAdopted?.id ?? null}
+                              candidate={selectedCandidate ?? selectedAdopted}
+                              canDecide={props.canDecide}
+                              limitReached={annotationDrafts.limitReached}
+                              onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
+                              onUpdatePending={annotationDrafts.update}
+                              onDeletePending={annotationDrafts.remove}
+                              onResolve={resolveAnnotation}
+                            />
+                          ) : null}
+                        </section>
+                      ) : null}
+
+                      {!reviewRequested ? (
+                        <>
+                          <div className="mt-8 grid grid-cols-2 gap-3">
+                            <Button type="button" variant="outline" disabled={!previousChapter} onClick={() => previousChapter && onChapterChange(previousChapter.chapter)} className="justify-start">
+                              <ArrowLeft aria-hidden="true" /><span className="min-w-0 truncate">{t(($) => $.wiki.previousChapter)}{previousChapter ? `: ${chapterLabel(previousChapter.chapter)}` : ""}</span>
+                            </Button>
+                            <Button type="button" variant="outline" disabled={!nextChapter} onClick={() => nextChapter && onChapterChange(nextChapter.chapter)} className="justify-end">
+                              <span className="min-w-0 truncate">{t(($) => $.wiki.nextChapter)}{nextChapter ? `: ${chapterLabel(nextChapter.chapter)}` : ""}</span><ArrowLeft className="rotate-180" aria-hidden="true" />
+                            </Button>
                           </div>
-                        )}
-                        {section.change === "removed" ? <p className="text-caption text-muted-foreground">{t(($) => $.baseline.removedSection)}</p> : null}
-                        {lens === "understand" && (section.why || section.example) && section.change !== "removed" ? (
-                          <details className="mt-2" data-section-why>
-                            <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">{t(($) => $.wiki.whyLabel)}</summary>
-                            {section.why ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground">{plainBaselineText(section.why)}</p> : null}
-                            {section.example ? <p className="mt-1 whitespace-pre-wrap text-body text-muted-foreground"><span className="mr-2 font-medium text-foreground">{t(($) => $.wiki.exampleShort)}</span>{plainBaselineText(section.example)}</p> : null}
-                          </details>
-                        ) : null}
-                        <SectionRelations section={section} relations={relations.get(section.key)} lens={lens} onConcept={onConcept} />
-                        {readingAnnotationsVisible && inlineAnnotations && props.selectedChapter === chapter.chapter && selectedAdopted ? (
-                          <BaselineReadingAnnotations
-                            section={section}
-                            adopted={selectedAdopted}
-                            candidate={selectedCandidate ?? selectedAdopted}
-                            threads={annotationThreads.filter((thread) => thread.root.sectionAnchor === section.anchor)}
-                            pendingItems={currentPendingItems.filter((item) => item.sectionAnchor === section.anchor)}
-                            composer={readingComposer?.sectionKey === section.key ? readingComposer.anchor : null}
-                            canDecide={props.canDecide}
-                            limitReached={annotationDrafts.limitReached}
-                            hoveredId={hoveredAnnotation}
-                            onHover={setHoveredAnnotation}
-                            onAddAnnotation={annotationDrafts.addAnnotation}
-                            onCancelComposer={() => setReadingComposer(null)}
-                            onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
-                            onUpdatePending={annotationDrafts.update}
-                            onDeletePending={annotationDrafts.remove}
-                            onResolve={resolveAnnotation}
-                          />
-                        ) : null}
-                      </>
+                          <section id="baseline-history" className="mt-8 border-t pt-5" data-baseline-history>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <h2 className="flex items-center gap-2 text-title-sm font-medium"><FileClock className="size-4" aria-hidden="true" />{t(($) => $.history.title)}</h2>
+                              <div className="flex flex-wrap gap-1" role="tablist" aria-label={t(($) => $.baseline.chaptersLabel)}>
+                                {displayChapters.map(({ chapter }) => <Button key={chapter} type="button" role="tab" aria-selected={selectedChapter === chapter} size="sm" variant={selectedChapter === chapter ? "brand" : "ghost"} onClick={() => onChapterChange(chapter)}>{chapterLabel(chapter)}</Button>)}
+                              </div>
+                            </div>
+                            <div className="mt-3"><BaselineHistoryList history={props.history} loading={props.historyLoading} error={props.historyError} onMore={props.onHistoryMore} /></div>
+                          </section>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+
+                {showReadingRail && !reviewRequested ? (
+                  <div
+                    className={cn(
+                      "min-h-0",
+                      annotationDrawerOpen ? "absolute inset-0 z-30" : "hidden",
+                      "@min-[960px]:relative @min-[960px]:inset-auto @min-[960px]:z-auto @min-[960px]:block",
                     )}
-                  </article>
-                )) : <p className="mt-4 text-body text-muted-foreground">{t(($) => $.wiki.emptyChapter)}</p>}
-                {readingAnnotationsVisible && props.selectedChapter === chapter.chapter ? (
-                  <BaselineStandaloneThreads
-                    title={t(($) => $.annotations.outdatedThreads)}
-                    threads={annotationThreads.filter((thread) => !chapter.sections.some((section) => section.anchor === thread.root.sectionAnchor))}
-                    baseRevisionId={selectedAdopted?.id ?? null}
-                    candidate={selectedCandidate ?? selectedAdopted}
-                    canDecide={props.canDecide}
-                    limitReached={annotationDrafts.limitReached}
-                    onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
-                    onUpdatePending={annotationDrafts.update}
-                    onDeletePending={annotationDrafts.remove}
-                    onResolve={resolveAnnotation}
-                  />
+                    data-annotation-drawer={annotationDrawerOpen ? "" : undefined}
+                  >
+                    {annotationDrawerOpen ? <button type="button" className="absolute inset-0 bg-black/35 @min-[960px]:hidden" aria-label={t(($) => $.actions.close)} onClick={() => setAnnotationDrawerOpen(false)} /> : null}
+                    <div className={cn(
+                      "flex h-full min-h-0 flex-col border-l bg-background",
+                      annotationDrawerOpen && "absolute inset-y-0 right-0 w-[300px] max-w-[86%] shadow-xl",
+                      "@min-[960px]:relative @min-[960px]:inset-auto @min-[960px]:w-auto @min-[960px]:max-w-none @min-[960px]:shadow-none",
+                    )}>
+                      <div className={cn("h-11 shrink-0 items-center justify-between border-b px-3", annotationDrawerOpen ? "flex" : "hidden", "@min-[960px]:hidden")}>
+                        <span className="text-caption font-medium">{t(($) => $.annotations.annotationRail)}</span>
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.actions.close)} onClick={() => setAnnotationDrawerOpen(false)}><X aria-hidden="true" /></Button>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3">{readingRail}</div>
+                    </div>
+                  </div>
                 ) : null}
-              </section>
-            ))}
-
-            <section id="baseline-history" className="scroll-mt-28 border-t pt-5" data-baseline-history>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="flex items-center gap-2 text-title-sm font-medium"><FileClock className="size-4" aria-hidden="true" />{t(($) => $.history.title)}</h2>
-                <div className="flex flex-wrap gap-1" role="tablist" aria-label={t(($) => $.baseline.chaptersLabel)}>
-                  {displayChapters.map(({ chapter }) => <Button key={chapter} type="button" role="tab" aria-selected={props.selectedChapter === chapter} size="sm" variant={props.selectedChapter === chapter ? "brand" : "ghost"} onClick={() => props.onChapterChange(chapter)}>{chapterLabel(chapter)}</Button>)}
-                </div>
               </div>
-              <div className="mt-3"><BaselineHistoryList history={props.history} loading={props.historyLoading} error={props.historyError} onMore={props.onHistoryMore} /></div>
-            </section>
-          </div>
-          {showReadingRail && selectedAdopted ? (
-            <BaselineReadingRail
-              sections={readingSections}
-              entries={readingEntries}
-              adopted={selectedAdopted}
-              candidate={selectedCandidate ?? selectedAdopted}
-              canDecide={props.canDecide}
-              limitReached={annotationDrafts.limitReached}
-              hoveredId={hoveredAnnotation}
-              onHover={setHoveredAnnotation}
-              onAddAnnotation={annotationDrafts.addAnnotation}
-              onCancelComposer={() => setReadingComposer(null)}
-              onAddReply={(thread, note) => annotationDrafts.addReply(thread.root, note)}
-              onUpdatePending={annotationDrafts.update}
-              onDeletePending={annotationDrafts.remove}
-              onResolve={resolveAnnotation}
-            />
-          ) : null}
-        </div>
-
-        {readingSelection && readingAnnotationsVisible ? (
-          <CommentSelectionBubble range={readingSelection.range} source={readingSelection.root} owner={`baseline-${props.projectId}`}>
-            <div className="bubble-menu" data-baseline-selection-action>
-              <Button type="button" variant="ghost" size="sm" onMouseDown={(event) => event.preventDefault()} onClick={() => {
-                setReadingComposer({ sectionKey: readingSelection.sectionKey, anchor: readingSelection.anchor });
-                setReadingSelection(null);
-                window.getSelection()?.removeAllRanges();
-              }}><MessageSquarePlus aria-hidden="true" />{t(($) => $.annotations.annotate)}</Button>
             </div>
-          </CommentSelectionBubble>
-        ) : null}
 
-        {moduleEditor ? (
-          <BaselineModuleDialog
-            key={moduleEditor.chapter ?? "new"}
-            chapter={moduleEditor.chapter}
-            chapters={props.chapters}
-            canDecide={props.canDecide}
-            pending={props.savePending}
-            onClose={closeModuleEditor}
-            onSave={saveModule}
-          />
-        ) : null}
+            {readingSelection && readingAnnotationsVisible ? (
+              <CommentSelectionBubble range={readingSelection.range} source={readingSelection.root} owner={`baseline-${props.projectId}`}>
+                <div className="bubble-menu" data-baseline-selection-action>
+                  <Button type="button" variant="ghost" size="sm" onMouseDown={(event) => event.preventDefault()} onClick={() => {
+                    setReadingComposer({ sectionKey: readingSelection.sectionKey, anchor: readingSelection.anchor });
+                    setAnnotationDrawerOpen(true);
+                    setReadingSelection(null);
+                    window.getSelection()?.removeAllRanges();
+                  }}><MessageSquarePlus aria-hidden="true" />{t(($) => $.annotations.annotate)}</Button>
+                </div>
+              </CommentSelectionBubble>
+            ) : null}
 
-        {reviewDialog ? (
-          <BaselineReviewDialog
-            key={`${reviewDialog.candidateMode}-${revision?.id ?? selectedAdopted?.id ?? props.selectedChapter}`}
-            workspaceSlug={props.workspaceSlug}
-            chapter={props.selectedChapter}
-            candidateMode={reviewDialog.candidateMode}
-            candidate={reviewDialog.candidateMode ? revision : null}
-            sourceIssueIdentifier={sourceIssue?.identifier}
-            chapterCandidate={selectedCandidate}
-            adopted={selectedAdopted}
-            batches={props.annotations.batches}
-            details={props.annotations.details}
-            pendingItems={dialogPendingItems}
-            initialOutcome={reviewDialog.initialOutcome}
-            actions={props.annotations.actions}
-            onDecision={props.onDecision}
-            onClearPending={annotationDrafts.clear}
-            onReviewCandidate={() => { changeReviewMode("compare"); setCompareView("source"); }}
-            onClose={() => setReviewDialog(null)}
-          />
-        ) : null}
-        {batchDialogOpen && activeBatch ? (
-          <BaselineBatchDialog
-            batch={activeBatch}
-            workspaceSlug={props.workspaceSlug}
-            canDecide={props.canDecide}
-            onCloseBatch={props.annotations.actions.onCloseBatch}
-            onClose={() => setBatchDialogOpen(false)}
-          />
-        ) : null}
+            {moduleEditor ? (
+              <BaselineModuleDialog
+                key={moduleEditor.chapter ?? "new"}
+                chapter={moduleEditor.chapter}
+                chapters={props.chapters}
+                canDecide={props.canDecide}
+                pending={props.savePending}
+                onClose={closeModuleEditor}
+                onSave={saveModule}
+              />
+            ) : null}
 
-        {back ? (
-          <div className="fixed bottom-5 left-5 z-30 flex items-center rounded-md bg-foreground text-background shadow-lg" data-back-to-section>
-            <button type="button" className="flex items-center gap-2 px-3 py-2 text-caption" onClick={() => {
-              const target = back;
-              setBack(null);
-              scrollToKey(target.key);
-              window.scrollTo?.({ top: target.y, behavior: "smooth" });
-            }}><ArrowLeft className="size-3.5" aria-hidden="true" />{t(($) => $.wiki.backTo, { title: back.label })}</button>
-            <button type="button" className="border-l border-background/30 px-2 py-2" aria-label={t(($) => $.actions.close)} onClick={() => setBack(null)}><X className="size-3.5" aria-hidden="true" /></button>
+            {reviewDialog ? (
+              <BaselineReviewDialog
+                key={`${reviewDialog.candidateMode}-${revision?.id ?? selectedAdopted?.id ?? selectedChapter}`}
+                workspaceSlug={props.workspaceSlug}
+                chapter={selectedChapter}
+                remainingCount={props.pendingCandidates.length}
+                candidateMode={reviewDialog.candidateMode}
+                candidate={reviewDialog.candidateMode ? revision : null}
+                sourceIssueIdentifier={sourceIssue?.identifier}
+                chapterCandidate={selectedCandidate}
+                adopted={selectedAdopted}
+                batches={props.annotations.batches}
+                details={props.annotations.details}
+                pendingItems={dialogPendingItems}
+                initialOutcome={reviewDialog.initialOutcome}
+                actions={props.annotations.actions}
+                onDecision={props.onDecision}
+                onClearPending={annotationDrafts.clear}
+                onReviewCandidate={() => { changeReviewMode("compare"); setCompareView("source"); }}
+                onClose={() => setReviewDialog(null)}
+              />
+            ) : null}
+            {batchDialogOpen && activeBatch ? (
+              <BaselineBatchDialog
+                batch={activeBatch}
+                workspaceSlug={props.workspaceSlug}
+                canDecide={props.canDecide}
+                onCloseBatch={props.annotations.actions.onCloseBatch}
+                onClose={() => setBatchDialogOpen(false)}
+              />
+            ) : null}
+
+            {back ? (
+              <div className="absolute bottom-5 left-5 z-40 flex items-center rounded-md bg-foreground text-background shadow-lg" data-back-to-section>
+                <button type="button" className="flex items-center gap-2 px-3 py-2 text-caption" onClick={() => {
+                  const target = back;
+                  setBack(null);
+                  if (target.chapter !== selectedChapter) {
+                    pendingPositionRef.current = target;
+                    onChapterChange(target.chapter);
+                  } else {
+                    readerRef.current?.scrollTo({ top: target.readerScrollTop, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+                    tocRef.current?.scrollTo({ top: target.tocScrollTop, behavior: "instant" });
+                  }
+                }}><ArrowLeft className="size-3.5" aria-hidden="true" />{t(($) => $.wiki.backTo, { title: back.label })}</button>
+                <button type="button" className="border-l border-background/30 px-2 py-2" aria-label={t(($) => $.actions.close)} onClick={() => setBack(null)}><X className="size-3.5" aria-hidden="true" /></button>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
-    </BaselineWikiProvider>
+        </BaselineWikiProvider>
   );
 }

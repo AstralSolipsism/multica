@@ -56,7 +56,12 @@
     "noComment": "아직 결정 카드나 설명 댓글이 없습니다.",
     "baselinePending": "기준 수정 v{{number}} 확인 필요",
     "reviewPending": "Stage {{stage}} 회고 후 다음 단계 열기",
-    "reviewHint": "모든 작업이 완료되었습니다. 결과를 확인하고 다음으로 이동하세요."
+    "reviewHint": "모든 작업이 완료되었습니다. 결과를 확인하고 다음으로 이동하세요.",
+    "processed": "처리된 기록({{count}})",
+    "startContinuous": "연속 검토 시작({{count}})",
+    "noPendingCandidates": "검토 대기 중인 기준 후보가 없습니다",
+    "openWiki": "기준 Wiki 열기",
+    "changeMeta": "+{{added}} / -{{removed}} · 변경 {{count}}건"
   },
   "progress": {
     "blockedGroup": "막힘",
@@ -204,7 +209,10 @@
     "batchDetails": "주석 배치",
     "responsibleAgent": "담당 에이전트",
     "annotationsLabel": "주석",
-    "loadError": "주석을 불러오지 못했습니다. 기준 내용은 계속 사용할 수 있습니다. 잠시 후 다시 시도하세요."
+    "loadError": "주석을 불러오지 못했습니다. 기준 내용은 계속 사용할 수 있습니다. 잠시 후 다시 시도하세요.",
+    "summaryRequired": "검토 의견(필수)",
+    "submit": "제출",
+    "submitAndNext": "제출하고 다음으로 이동"
   },
   "wiki": {
     "meta": "장 {{chapters}}개 · 섹션 {{sections}}개",
@@ -237,7 +245,15 @@
     "openInOverview": "열기",
     "noStage": "단계 없음",
     "backTo": "‘{{title}}’(으)로 돌아가기",
-    "emptyChapter": "이 장에는 채택된 기준 내용이 없습니다."
+    "emptyChapter": "이 장에는 채택된 기준 내용이 없습니다.",
+    "pendingReview": "검토 대기",
+    "readingMode": "읽기 모드",
+    "readingTab": "읽기",
+    "annotationsTab": "주석({{count}})",
+    "pendingNotice": "이 장에는 검토 대기 후보 {{count}}개가 있습니다 ({{source}} · 변경 사항 {{changes}}건)",
+    "compareCandidate": "후보 비교 →",
+    "previousChapter": "이전 장",
+    "nextChapter": "다음 장"
   },
   "chapters": {
     "overview": "프로젝트 개요",
@@ -278,7 +294,7 @@
     "close": "닫기",
     "expand": "전체 보기",
     "collapse": "접기",
-    "reject": "수정 요청",
+    "reject": "거절",
     "adopt": "채택",
     "enable": "개요 사용",
     "open_baseline": "엔지니어링 기준선 열기",
@@ -289,7 +305,8 @@
     "editSection": "이 섹션 편집",
     "saveAndAdopt": "저장하고 채택",
     "submitForReview": "검토 후보로 제출",
-    "submitRevisionCandidate": "수정 후보 제출"
+    "submitRevisionCandidate": "수정 후보 제출",
+    "retry": "다시 시도"
   },
   "disabled": {
     "title": "엔지니어링 개요가 활성화되지 않았습니다",
@@ -319,5 +336,50 @@
     "rejected": "후보에 수정을 요청했습니다",
     "candidateSubmitted": "수정 후보를 제출했습니다",
     "serverAuthoritative": "권한과 버전 검사는 서버에서 확인합니다"
+  },
+  "reviewQueue": {
+    "backOverview": "개요로 돌아가기",
+    "backChapter": "{{number}}장으로 돌아가기",
+    "label": "검토 대기 큐",
+    "pendingCount": "검토 대기 {{current}}/{{total}}",
+    "previous": "이전 검토 대기 후보",
+    "next": "다음 검토 대기 후보",
+    "processedRecords": "처리된 기록({{count}}) · 읽기 전용 보기"
+  },
+  "completion": {
+    "title": "이 검토 배치가 완료되었습니다",
+    "summary": "채택 {{adopted}}건 · 거절 {{rejected}}건 · 수정 요청 {{changes}}건",
+    "viewRecords": "처리된 기록 보기"
+  },
+  "reviewNotice": {
+    "adopted": "\"{{chapter}}\"을(를) 채택했습니다",
+    "rejected": "\"{{chapter}}\"을(를) 거절했습니다",
+    "changes": "\"{{chapter}}\"에 수정을 요청했습니다",
+    "remaining": "검토 대기 후보가 {{count}}개 남았습니다",
+    "complete": "이 배치의 모든 후보가 처리되었습니다"
+  },
+  "processed": {
+    "title": "처리된 기록",
+    "description": "기준 결정과 검토 의견을 읽기 전용으로 표시합니다.",
+    "revision": "수정 v{{number}}",
+    "adopted": "채택됨",
+    "rejected": "거절됨",
+    "changes": "수정 요청됨",
+    "noSummary": "변경 요약 없음",
+    "requestChanges": "검토 의견",
+    "noReviewComment": "검토 의견 없음",
+    "back": "처리된 기록으로 돌아가기",
+    "backToSource": "뒤로",
+    "readOnly": "읽기 전용",
+    "cannotDecideAgain": "이 수정 버전은 다시 결정할 수 없습니다",
+    "loading": "처리된 기록을 불러오는 중",
+    "emptyTitle": "아직 처리된 기록이 없습니다",
+    "emptyDescription": "완료된 기준 결정이 여기에 표시됩니다.",
+    "errorTitle": "처리된 기록을 불러오지 못했습니다",
+    "errorDescription": "다시 시도하여 최신 기준 이력과 검토를 불러오세요.",
+    "retry": "다시 시도",
+    "detailLoading": "수정 세부 정보를 불러오는 중",
+    "detailErrorTitle": "수정 세부 정보를 불러오지 못했습니다",
+    "detailErrorDescription": "다시 시도하여 전체 수정 Diff를 불러오세요."
   }
 }
