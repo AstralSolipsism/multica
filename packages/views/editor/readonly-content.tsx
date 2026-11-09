@@ -15,7 +15,7 @@
  */
 
 import { memo } from "react";
-import type { Attachment } from "@multica/core/types";
+import type { EntityAttachment } from "../rich-content/entity-attachments-context";
 import { RichContent } from "../rich-content";
 
 interface ReadonlyContentProps {
@@ -26,7 +26,7 @@ interface ReadonlyContentProps {
    * Callers SHOULD pass a stable reference; a fresh array on every parent
    * render busts the memo.
    */
-  attachments?: Attachment[];
+  attachments?: readonly EntityAttachment[];
 }
 
 export const ReadonlyContent = memo(function ReadonlyContent({

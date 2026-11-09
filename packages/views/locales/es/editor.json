@@ -59,6 +59,8 @@
     "preview_failed": "No se ha podido cargar la vista previa",
     "preview_too_large": "El archivo es demasiado grande para previsualizar. Descárgalo.",
     "preview_unsupported": "Este tipo de archivo no se puede previsualizar.",
+    "preview_after_reply": "La vista previa se carga cuando finaliza la respuesta.",
+    "preview_attachment_missing": "No se encontró el adjunto HTML \"{{filename}}\" en este comentario o respuesta.",
     "close": "Cerrar",
     "open_in_new_tab": "Abrir en una pestaña nueva",
     "remove": "Quitar adjunto",

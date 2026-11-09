@@ -59,6 +59,8 @@
     "preview_failed": "預覽載入失敗",
     "preview_too_large": "檔案太大，無法線上預覽，請下載檢視。",
     "preview_unsupported": "該檔案型別暫不支援預覽。",
+    "preview_after_reply": "回覆完成後載入預覽。",
+    "preview_attachment_missing": "找不到本則評論或回覆的 HTML 附件 \"{{filename}}\"。",
     "close": "關閉",
     "open_in_new_tab": "在新標籤頁開啟",
     "remove": "移除附件",

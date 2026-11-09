@@ -254,14 +254,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	if _, err := qtx.LockWorkspaceForDependencyWrite(ctx, p.WorkspaceID); err != nil {
 		return IssueCreateResult{}, err
 	}
-	if opts.BaselineAnnotationBatchID.Valid {
-		existing, err := prepareBaselineAnnotationIssue(ctx, qtx, p, opts.BaselineAnnotationBatchID)
-		if err != nil {
-			return IssueCreateResult{}, err
-		}
-		if existing != nil {
-			return *existing, nil
-		}
+	if existing, handled, err := prepareLabrastroEngineeringIssue(ctx, qtx, p, opts); handled || err != nil {
+		return existing, err
 	}
 
 	properties, err := validateIssueCreateProperties(ctx, tx, qtx, p.WorkspaceID, p.Properties)
@@ -544,17 +538,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if opts.BaselineAnnotationBatchID.Valid {
-		if !s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, issue) {
-			return IssueCreateResult{}, errors.New("baseline annotation agent unavailable")
-		}
-		if _, err := qtx.LabrastroSetAnnotationCarrier(ctx, db.LabrastroSetAnnotationCarrierParams{WorkspaceID: p.WorkspaceID, ProjectID: p.ProjectID, ID: opts.BaselineAnnotationBatchID, IssueID: issue.ID}); err != nil {
-			return IssueCreateResult{}, err
-		}
-		assignedTask, err = s.TaskService.EnqueueBaselineAnnotationInTx(ctx, qtx, issue, issue.AssigneeID, pgtype.UUID{})
-		if err != nil {
-			return IssueCreateResult{}, err
-		}
+	if assignedTask, err = bindLabrastroEngineeringCarrier(ctx, s, qtx, p, issue, opts, assignedTask); err != nil {
+		return IssueCreateResult{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -594,9 +579,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	if opts.BaselineAnnotationBatchID.Valid {
-		assignedTaskID = assignedTask.ID
-		s.TaskService.FinalizeBaselineAnnotationEnqueue(ctx, assignedTask)
+	if taskID, ok := finalizeLabrastroEngineeringEnqueue(ctx, s, opts, assignedTask); ok {
+		assignedTaskID = taskID
 	} else if opts.AssignedAgentRunFireAt.IsZero() {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
