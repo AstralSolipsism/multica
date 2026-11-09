@@ -755,7 +755,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
         </div>
       </main>
       {reviewNotice ? (
-        <div className="absolute bottom-4 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-[10px] bg-foreground px-3 py-2 text-caption text-background shadow-lg" role="status" data-review-notice>
+        <div className="absolute bottom-4 left-1/2 z-40 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg bg-foreground px-3 py-2 text-caption text-background shadow-lg" role="status" data-review-notice>
           <span className="truncate">{t(($) => $.reviewNotice[reviewNotice.action], { chapter: chapterLabel(reviewNotice.chapter) })} · {t(($) => reviewNotice.remaining ? $.reviewNotice.remaining : $.reviewNotice.complete, { count: reviewNotice.remaining })}</span>
           <button type="button" className="shrink-0 underline underline-offset-2" onClick={openProcessed}>{t(($) => $.decisions.processed, { count: processedRecords.length })}</button>
           <button type="button" className="shrink-0 rounded-sm p-1" aria-label={t(($) => $.actions.close)} onClick={() => setReviewNotice(null)}><X className="size-3.5" aria-hidden="true" /></button>
