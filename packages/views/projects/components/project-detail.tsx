@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import type { Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { canDeleteProject } from "@multica/core/projects/deletion-permissions";
-import { projectEngineeringConfigOptions, projectDetailOptions } from "@multica/core/projects/queries";
+import { projectDetailOptions } from "@multica/core/projects/queries";
 import { Spinner } from "@multica/ui/components/ui/spinner";
 import { useUpdateProject, useDeleteProject, ProjectDeletionOfflineError } from "@multica/core/projects/mutations";
 import { pinListOptions } from "@multica/core/pins";
@@ -27,6 +27,7 @@ import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink, currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
+import { ProjectEngineeringHeaderActions } from "./project-engineering-entry";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { ProjectStartDatePicker } from "./project-start-date-picker";
@@ -114,7 +115,6 @@ function ProjectWorkflowPropRow({ project }: { project: Project }) {
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
-  const { t: tEngineering } = useT("engineering");
   const statusLabels = useProjectStatusLabels();
   const priorityLabels = useProjectPriorityLabels();
   const wsId = useWorkspaceId();
@@ -127,7 +127,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     ...projectDetailOptions(wsId, projectId),
     enabled: !deleted,
   });
-  const { data: engineeringOverview } = useQuery(projectEngineeringConfigOptions(wsId, projectId));
   useRegisterCommandBarContext(
     useMemo(() => (project ? { kind: "project", project } : null), [project]),
   );
@@ -160,7 +159,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   });
   const isPinned = pinnedItems.some((p) => p.item_type === "project" && p.item_id === projectId);
   const role = members.find((m) => m.user_id === userId)?.role ?? null;
-  const isWorkspaceAdmin = role === "owner" || role === "admin";
   const canDelete = !!project && canDeleteProject(project, userId ?? null, role, agents);
   const createPin = useCreatePin();
   const deletePinMut = useDeletePin();
@@ -579,24 +577,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     }
                     trailing={
                       <>
-                        {engineeringOverview?.engineering?.enabled === true && (
-                          <AppLink
-                            href={wsPaths.projectEngineering(project.id)}
-                            newTabTitle={tEngineering(($) => $.title)}
-                            className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          >
-                            {tEngineering(($) => $.title)}
-                          </AppLink>
-                        )}
-                        {isWorkspaceAdmin && engineeringOverview?.engineering && engineeringOverview.engineering.enabled !== true && (
-                          <AppLink
-                            href={wsPaths.projectEngineering(project.id)}
-                            newTabTitle={tEngineering(($) => $.actions.enable)}
-                            className="rounded-md px-2 py-1 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                          >
-                            {tEngineering(($) => $.actions.enable)}
-                          </AppLink>
-                        )}
+                        <ProjectEngineeringHeaderActions projectId={project.id} />
                         <Tooltip>
                           <TooltipTrigger
                             render={

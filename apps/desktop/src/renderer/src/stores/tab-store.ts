@@ -8,7 +8,7 @@ import {
 } from "./tab-store-storage";
 import { createSafeId } from "@multica/core/utils";
 import { workspaceSlugForPath } from "@multica/core/paths";
-import { isEngineeringCandidatePath } from "@/platform/engineering-deep-links";
+import { applyEngineeringCandidateLanding } from "@/platform/engineering-deep-links";
 
 // Tab sessions hold serializable URLs, identity, virtual history, and view
 // mementos. The coordinator projects the active session onto the single router;
@@ -447,22 +447,6 @@ function makeSession(url: string, title: string): TabSession {
   };
 }
 
-function withRequestedEngineeringCandidate(
-  tab: TabSession,
-  url: string,
-): TabSession {
-  if (!isEngineeringCandidatePath(url) || tab.url === url) return tab;
-  return {
-    ...tab,
-    url,
-    resourceKey: resourceKeyForUrl(url),
-    history: {
-      stack: [...tab.history.stack.slice(0, tab.history.index + 1), url],
-      index: tab.history.index + 1,
-    },
-  };
-}
-
 /** Index of the first unpinned tab in a group (== pinned count). */
 function pinnedBoundary(tabs: TabSession[]): number {
   let i = 0;
@@ -810,14 +794,11 @@ export const useTabStore = create<TabStore>()(
             const key = resourceKeyForUrl(clean);
             const match = existing.tabs.find((t) => t.resourceKey === key);
             if (match) {
-              const nextMatch = withRequestedEngineeringCandidate(match, clean);
-              const nextTabs = nextMatch === match
-                ? existing.tabs
-                : existing.tabs.map((tab) => tab.id === match.id ? nextMatch : tab);
+              const landed = applyEngineeringCandidateLanding(existing.tabs, match, clean, resourceKeyForUrl);
               const nextGroup = withBrowsingVisit(
-                reconcileGroup(existing, nextTabs, match.id),
+                reconcileGroup(existing, landed.tabs, match.id),
                 slug,
-                nextMatch.url,
+                landed.tab.url,
                 { title: match.title },
               );
               set({
@@ -871,18 +852,15 @@ export const useTabStore = create<TabStore>()(
         const key = resourceKeyForUrl(clean);
         const existing = group.tabs.find((t) => t.resourceKey === key);
         if (existing) {
-          const nextExisting = withRequestedEngineeringCandidate(existing, clean);
-          const nextTabs = nextExisting === existing
-            ? group.tabs
-            : group.tabs.map((tab) => tab.id === existing.id ? nextExisting : tab);
+          const landed = applyEngineeringCandidateLanding(group.tabs, existing, clean, resourceKeyForUrl);
           const historyBase = withActiveSessionVisit(
             group,
             activeWorkspaceSlug,
           );
           const nextGroup = withBrowsingVisit(
-            reconcileGroup(historyBase, nextTabs, existing.id),
+            reconcileGroup(historyBase, landed.tabs, existing.id),
             activeWorkspaceSlug,
-            nextExisting.url,
+            landed.tab.url,
             { title: existing.title },
           );
           set({

@@ -32,52 +32,7 @@ export { parseWithFallback, setSchemaLogger } from "./schema";
 export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
-export {
-  BaselineChapterSchema,
-  BaselineDecisionSchema,
-  BaselineDiffSchema,
-  BaselineHistorySchema,
-  BaselineRevisionSchema,
-  EngineeringConfigSchema,
-  EngineeringStageSchema,
-  EngineeringOverviewSchema,
-  EngineeringUpdatedSchema,
-} from "./labrastro-engineering-schemas";
-export type {
-  BaselineChapter,
-  BaselineDecision,
-  BaselineDiff,
-  BaselineHistory,
-  BaselineRevision,
-  EngineeringConfig,
-  EngineeringStage,
-  EngineeringOverview,
-} from "./labrastro-engineering-schemas";
-export type {
-  BaselineAnnotationBatchRow,
-  BaselineAnnotationBatch,
-  BaselineAnnotationBatches,
-  BaselineReview,
-  BaselineAnnotation,
-  BaselineAnnotationDetail,
-  BaselineAnnotationSection,
-  BaselineReviewSubmitted,
-  BaselineAnnotationsUpdated,
-  BaselineAnnotationBatchClosed,
-} from "./labrastro-baseline-annotation-schemas";
-export type { BaselineHistoryOptions } from "./labrastro-engineering-api";
-export type {
-  BaselineAnnotationBatchListState,
-  BaselineAnnotationDetailState,
-  GetProjectBaselineAnnotationBatchesOptions,
-  GetProjectBaselineAnnotationBatchOptions,
-  BaselineReviewAnnotationInput,
-  SubmitProjectBaselineReviewInput,
-  ResolveProjectBaselineAnnotationsInput,
-} from "./labrastro-baseline-annotation-api";
-export type BaselineChange = import("./labrastro-engineering-schemas").BaselineDiff["added"][number];
-export type ChapterState = import("./labrastro-engineering-schemas").EngineeringOverview["chapters"][number];
-export type OpenIssue = import("./labrastro-engineering-schemas").BaselineDecision["openIssues"]["inFlight"][number];
+export * from "./labrastro-engineering-exports";
 export type {
   DependencyView, IssuePrerequisite, IssueWithDependencies,
   CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest,
