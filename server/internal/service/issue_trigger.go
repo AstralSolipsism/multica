@@ -63,10 +63,11 @@ type IssueTriggerInput struct {
 // paths. AgentID is the agent that will actually run — the assignee for an
 // agent issue, the squad leader for a squad issue.
 type IssueRunTrigger struct {
-	IssueID      pgtype.UUID
-	AgentID      pgtype.UUID
-	AssigneeType string
-	Source       RunEnqueueSource
+	IssueID         pgtype.UUID
+	AgentID         pgtype.UUID
+	AssigneeType    string
+	Source          RunEnqueueSource
+	WorkflowHandoff bool
 }
 
 func allowAllAgents(db.Agent) bool { return true }
@@ -198,10 +199,11 @@ func (s *IssueService) WillEnqueueRun(ctx context.Context, in IssueTriggerInput,
 			return IssueRunTrigger{}, false
 		}
 		return IssueRunTrigger{
-			IssueID:      issue.ID,
-			AgentID:      squad.LeaderID,
-			AssigneeType: "squad",
-			Source:       source,
+			IssueID:         issue.ID,
+			AgentID:         squad.LeaderID,
+			AssigneeType:    "squad",
+			Source:          source,
+			WorkflowHandoff: in.EnteredHandoffStep,
 		}, true
 	}
 	return IssueRunTrigger{}, false
