@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ExternalLink,
   FolderGit2,
@@ -25,6 +26,7 @@ import {
   type QoderConnection,
   type QoderInput,
 } from "@multica/core/runtimes/qoder";
+import { githubInstallationsOptions } from "@multica/core/github";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -552,8 +554,15 @@ export function QoderRepositoriesCard({
   const [editing, setEditing] = useState<{ url: string | null } | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const repositories = data.repositories;
-  const accounts = data.githubAppAccounts
-    .map((account) => account.login)
+  // The workspace's GitHub App accounts come from the same installations
+  // query the rest of the app uses; repositories under them need no manual
+  // token.
+  const { data: installationData } = useQuery({
+    ...githubInstallationsOptions(wsId),
+    enabled: !!wsId,
+  });
+  const accounts = (installationData?.installations ?? [])
+    .map((installation) => installation.account_login)
     .filter(Boolean);
   const accountsLabel = accounts.join(", ");
   const hint = accountsLabel
@@ -663,6 +672,7 @@ export function QoderRepositoriesCard({
           wsId={wsId}
           data={data}
           url={editing.url}
+          autoAuthorized={!!accountsLabel}
           onClose={() => setEditing(null)}
         />
       )}
@@ -683,11 +693,13 @@ function RepositoryDialog({
   wsId,
   data,
   url: fixedUrl,
+  autoAuthorized,
   onClose,
 }: {
   wsId: string;
   data: QoderConnection;
   url: string | null;
+  autoAuthorized: boolean;
   onClose: () => void;
 }) {
   const { t } = useT("runtimes");
@@ -731,7 +743,7 @@ function RepositoryDialog({
               : t(($) => $.qoder.add_repository)}
           </DialogTitle>
           <DialogDescription>
-            {data.githubAppAccounts.length > 0
+            {autoAuthorized
               ? t(($) => $.qoder.page.repositories_hint_override)
               : t(($) => $.qoder.page.repositories_hint)}
           </DialogDescription>

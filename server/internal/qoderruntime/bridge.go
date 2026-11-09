@@ -432,11 +432,12 @@ func (b *Bridge) stepRun(ctx context.Context, r *run) error {
 		if err != nil {
 			return b.reject(ctx, r, err.Error())
 		}
-		r.RotatingCredentials = rotating
+		// A rotating credential is timestamped for the live refresh; only the
+		// timestamp is journaled, never the token.
 		if rotating {
-			// Only the issuance timestamp is journaled, never the token; the
-			// running phase refreshes from it before the 1-hour expiry.
 			r.CredentialIssuedAt = time.Now()
+		} else {
+			r.CredentialIssuedAt = time.Time{}
 		}
 		repositoryCopies := resources
 		resources = append(resources, r.Files...)
@@ -454,16 +455,25 @@ func (b *Bridge) stepRun(ctx context.Context, r *run) error {
 				// a rate-limited or failed refresh retries the whole continue
 				// path next tick instead of sending with a stale credential.
 				if rotating {
-					if err := b.refreshSessionResources(ctx, r, repositoryCopies); err != nil {
+					switch err := b.refreshRepositoryCredentials(ctx, r.SessionID, repositoryCopies); {
+					case err == nil:
+					case errors.Is(err, errRefreshDeferred):
+						r.RetryAt = time.Now().Add(30 * time.Second)
+						return b.persist()
+					case errors.Is(err, errRefreshRefused):
+						// The session cannot take the update (for example the
+						// repository is no longer mounted there); start a fresh
+						// session below.
+						r.SessionID, r.PriorSessionID, r.Continued = "", "", false
+						r.Credits = runCredits{}
+						r.MountedFiles = 0
+					default:
 						return err
-					}
-					if r.Continued && time.Now().Before(r.RetryAt) {
-						// Rate limited mid-refresh; the refresh persisted the
-						// deferred state itself.
-						return nil
 					}
 				}
 				if r.Continued {
+					// One journal write covers both the completed refresh and
+					// the phase flip.
 					r.Phase = "created"
 					if err := b.persist(); err != nil {
 						return err
@@ -479,7 +489,6 @@ func (b *Bridge) stepRun(ctx context.Context, r *run) error {
 				// remounted files, no stale credit base).
 				r.SessionID, r.PriorSessionID, r.Continued = "", "", false
 				r.Credits = runCredits{}
-				r.ResourcesRefreshed = false
 			}
 			if err := b.createSession(ctx, r, resources, fingerprint); err != nil || r.Phase != "created" {
 				return err
@@ -762,34 +771,6 @@ func (b *Bridge) refreshRepositoryCredentials(ctx context.Context, sessionID str
 	return nil
 }
 
-// refreshSessionResources updates the repository credentials of a reused
-// session. It runs while the run is still "prepared": a rate limit defers via
-// r.RetryAt (persisted), a refusal — including a repository no longer mounted
-// there — resets the run to start a fresh session, and only full success marks
-// r.ResourcesRefreshed. The caller flips the phase to "created" afterwards, so
-// no message can outrun a pending or failed refresh.
-func (b *Bridge) refreshSessionResources(ctx context.Context, r *run, resources []map[string]any) error {
-	if r.ResourcesRefreshed {
-		return nil
-	}
-	err := b.refreshRepositoryCredentials(ctx, r.SessionID, resources)
-	switch {
-	case err == nil:
-		r.ResourcesRefreshed = true
-		return b.persist()
-	case errors.Is(err, errRefreshDeferred):
-		r.RetryAt = time.Now().Add(30 * time.Second)
-		return b.persist()
-	case errors.Is(err, errRefreshRefused):
-		r.SessionID, r.PriorSessionID, r.Continued = "", "", false
-		r.Credits = runCredits{}
-		r.MountedFiles = 0
-		return b.persist()
-	default:
-		return err
-	}
-}
-
 // credentialRefreshInterval is how long a run waits before re-issuing a
 // rotating GitHub App credential into its live session; GitHub installation
 // tokens expire after one hour, so the refresh lands with margin to spare.
@@ -798,11 +779,11 @@ const credentialRefreshInterval = 45 * time.Minute
 // refreshRunningCredentials keeps a live session's short-lived GitHub token
 // usable for runs longer than the token's lifetime: about 45 minutes after
 // the last issuance it re-resolves the credentials and pushes them into the
-// session. Only the issuance timestamp is journaled, never the token. A
-// definite refusal stops further attempts (the session keeps its old token);
-// transient failures back off for a minute and retry.
+// session. Only the issuance timestamp is journaled, never the token; its
+// zero value disables the refresh (static credentials, or a session that
+// refused the update for good). Transient failures back off and retry.
 func (b *Bridge) refreshRunningCredentials(ctx context.Context, r *run) error {
-	if !r.RotatingCredentials || r.CredentialRefreshDisabled || time.Now().Before(r.CredentialIssuedAt.Add(credentialRefreshInterval)) {
+	if r.CredentialIssuedAt.IsZero() || time.Now().Before(r.CredentialIssuedAt.Add(credentialRefreshInterval)) {
 		return nil
 	}
 	resources, _, rotating, err := b.sessionResources(ctx, r.Resources)
@@ -816,14 +797,15 @@ func (b *Bridge) refreshRunningCredentials(ctx context.Context, r *run) error {
 	if !rotating {
 		// Credentials became manual mid-flight (for example an operator bound
 		// a PAT); nothing expires anymore.
-		r.RotatingCredentials = false
+		r.CredentialIssuedAt = time.Time{}
 		return b.persist()
 	}
 	if err := b.refreshRepositoryCredentials(ctx, r.SessionID, resources); err != nil {
 		b.log.WarnContext(ctx, "Qoder credential refresh push failed", "task_id", r.TaskID, "error", err)
-		r.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval + time.Minute)
 		if errors.Is(err, errRefreshRefused) {
-			r.CredentialRefreshDisabled = true
+			r.CredentialIssuedAt = time.Time{}
+		} else {
+			r.CredentialIssuedAt = time.Now().Add(-credentialRefreshInterval + time.Minute)
 		}
 		return b.persist()
 	}

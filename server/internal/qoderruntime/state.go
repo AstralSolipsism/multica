@@ -43,29 +43,24 @@ type run struct {
 	Files        []map[string]any `json:"files,omitempty"`
 	MountFiles   bool             `json:"mount_files,omitempty"`
 	MountedFiles int              `json:"mounted_files,omitempty"`
-	// ResourcesRefreshed marks that a continued session already received the
-	// follow-up's fresh repository credentials (GitHub App tokens rotate).
-	ResourcesRefreshed bool `json:"resources_refreshed,omitempty"`
-	// RotatingCredentials marks that this run's repository credential is a
-	// short-lived GitHub App token; CredentialIssuedAt times the proactive
-	// refresh that pushes a fresh token into the live session before the
-	// one-hour expiry. Only the timestamp is journaled, never the token.
-	// CredentialRefreshDisabled stops retrying after a definite refusal.
-	RotatingCredentials       bool                `json:"rotating_credentials,omitempty"`
-	CredentialIssuedAt        time.Time           `json:"credential_issued_at,omitempty"`
-	CredentialRefreshDisabled bool                `json:"credential_refresh_disabled,omitempty"`
-	Images                    []map[string]string `json:"images,omitempty"`
-	Phase                     string              `json:"phase"`
-	Cursor                    string              `json:"cursor,omitempty"`
-	Seq                       int                 `json:"seq"`
-	Started                   bool                `json:"started"`
-	Output                    string              `json:"output,omitempty"`
-	Failure                   string              `json:"failure,omitempty"`
-	Outcome                   string              `json:"outcome,omitempty"`
-	QuickCreate               *quickCreate        `json:"quick_create,omitempty"`
-	Reply                     *replyFiles         `json:"reply,omitempty"`
-	Credits                   runCredits          `json:"credits"`
-	Leader                    *squadLeader        `json:"leader,omitempty"`
+	// CredentialIssuedAt timestamps the last GitHub App token issuance for
+	// this run. Non-zero means the repository credential rotates and the live
+	// session gets a fresh token before the one-hour expiry; the zero value
+	// covers static credentials and refreshes that were refused for good.
+	// Only the timestamp is journaled, never the token.
+	CredentialIssuedAt time.Time           `json:"credential_issued_at,omitempty"`
+	Images             []map[string]string `json:"images,omitempty"`
+	Phase              string              `json:"phase"`
+	Cursor             string              `json:"cursor,omitempty"`
+	Seq                int                 `json:"seq"`
+	Started            bool                `json:"started"`
+	Output             string              `json:"output,omitempty"`
+	Failure            string              `json:"failure,omitempty"`
+	Outcome            string              `json:"outcome,omitempty"`
+	QuickCreate        *quickCreate        `json:"quick_create,omitempty"`
+	Reply              *replyFiles         `json:"reply,omitempty"`
+	Credits            runCredits          `json:"credits"`
+	Leader             *squadLeader        `json:"leader,omitempty"`
 }
 
 func save(path string, j *journal) error {
