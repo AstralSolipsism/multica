@@ -149,8 +149,7 @@ Repository permissions：
 | 權限 | 級別 |
 |---|---|
 | Metadata | Read-only |
-| Contents | Read & write；僅 Qoder Cloud Agents 需要它來克隆倉庫、推送分支 |
-| Pull requests | Read & write；PR 關聯只需讀權限，寫權限供 Qoder Cloud Agents 使用 |
+| Pull requests | Read-only |
 | Checks | Read-only；用於顯示 CI 狀態 |
 | Commit statuses | Read-only；用於彙總 legacy status 形式的 CI |
 | Actions | 可選，Read-only；同一提交上，被同一工作流的新執行取代的已取消執行不再計入 CI 狀態 |
@@ -160,7 +159,7 @@ Repository permissions：
 - **Pull request**；
 - **Check suite**、**Check run** 和 **Status**，用於觸發 CI 與可合併性重新整理。
 
-PR 快照透過 Pull requests、Checks 和 Commit statuses 的 REST API 獲取，這部分唯讀權限即可。Contents 與 Pull requests 的寫權限用於 Qoder Cloud Agents 的自動授權：它透過本 App 按需簽發僅限單一倉庫、短時效的權杖來掛載倉庫並推送分支。如果不使用該執行時，可把這兩項降回唯讀；給已安裝的 App 補加權限後，需要各 installation 的所有者在 GitHub 上批准才會生效。授予可選的 Actions 權限後，還會讀取該提交的工作流執行記錄；未授予時，即使同一工作流的新執行已通過，被取消的舊執行仍按失敗計算。
+PR 快照透過 Pull requests、Checks 和 Commit statuses 的 REST API 獲取，不需要 Contents 權限。授予可選的 Actions 權限後，還會讀取該提交的工作流執行記錄；未授予時，即使同一工作流的新執行已通過，被取消的舊執行仍按失敗計算。
 
 <Callout type="warning">
 這裡需要的是 **Webhook secret**，不是 OAuth Client secret。兩邊填寫的 Webhook secret 不一致時，GitHub delivery 會返回 `401 invalid signature`。
@@ -212,8 +211,7 @@ make migrate-up
 - **Webhook 返回 401**：確認 GitHub App 與 API 使用同一個 Webhook secret，然後在 GitHub 的 **Recent Deliveries** 中重新投遞。
 - **PR 沒有關聯**：檢查倉庫是否在 App 授權範圍內、自動關聯是否開啟、編號是否屬於當前工作區，以及是否有人把它從任務上移除過。
 - **正文寫了編號但沒關聯**：改用 `Closes MUL-123`，或把編號放到分支名、PR 標題中，或者手動關聯。
-- **沒有 CI 狀態**：確認 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 已配置，App 具有 Pull requests、Checks 與 Commit statuses 的只讀權限並訂閱了對應事件。PR 關聯與 CI 狀態只需唯讀權限。給已安裝的 App 補加權限後，需要各 installation 的所有者在 GitHub 上批准才會生效。
-- **Qoder 執行報「workspace GitHub App has not granted repository write permissions」**：該 installation 早於寫權限配置。在 GitHub App 上授予 Contents 與 Pull requests 的 Read & write，並讓各 installation 的所有者在 GitHub 上批准變更；或在該倉庫的 Qoder Cloud Agents 設定中改用手動權杖。
+- **沒有 CI 狀態**：確認 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 已配置，App 具有 Pull requests、Checks 與 Commit statuses 的只讀權限並訂閱了對應事件。不需要 Contents 權限。給已安裝的 App 補加權限後，需要各 installation 的所有者在 GitHub 上批准才會生效。
 - **PR 合併後任務狀態沒變**：看任務 **Pull requests** 列表下方的說明，它會指出仍未合併或已關閉未合併的 PR，或者說明此任務合併後不改狀態。沒有這行說明，表示工作區設定為**不改變**，或者任務已經是目標狀態。
 
 ## 接下來

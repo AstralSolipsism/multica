@@ -624,7 +624,7 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := refresh()
-	if run.Phase != "prepared" || run.Continued != true || run.ResourcesRefreshed {
+	if run.Phase != "prepared" || run.Continued != true {
 		t.Fatalf("rate limit did not defer inside prepared: %#v", run)
 	}
 	if len(h.sentTo) != 0 || len(h.mounts["sess_prev"]) != 0 {
@@ -646,7 +646,7 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 		t.Fatal("transient refresh failure swallowed")
 	}
 	run = refresh()
-	if run.Phase != "prepared" || run.ResourcesRefreshed {
+	if run.Phase != "prepared" {
 		t.Fatalf("transient error changed state: %#v", run)
 	}
 	if len(h.sentTo) != 0 {
@@ -659,8 +659,8 @@ func TestFollowUpRefreshRetriesAfterDeferral(t *testing.T) {
 		t.Fatal(err)
 	}
 	run = refresh()
-	if run.Phase != "running" || !run.ResourcesRefreshed {
-		t.Fatalf("retry did not complete the refresh: phase=%s refreshed=%v", run.Phase, run.ResourcesRefreshed)
+	if run.Phase != "running" {
+		t.Fatalf("retry did not complete the refresh: phase=%s", run.Phase)
 	}
 	if len(h.sentTo) != 1 || h.sentTo[0] != "sess_prev" || h.creates != 0 {
 		t.Fatalf("follow-up did not continue after retry: creates=%d sentTo=%v", h.creates, h.sentTo)
@@ -691,7 +691,7 @@ func TestRunningSessionRefreshesRotatingCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := h.b.state.first()
-	if run == nil || run.Phase != "running" || !run.RotatingCredentials || run.CredentialIssuedAt.IsZero() {
+	if run == nil || run.Phase != "running" || run.CredentialIssuedAt.IsZero() {
 		t.Fatalf("run did not start with a rotating credential: %#v", run)
 	}
 	if h.resources["sess_new_1"][0]["authorization_token"] != "ghs_first" {

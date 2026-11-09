@@ -149,8 +149,7 @@ Permissions de dépôt (Repository permissions) :
 | Permission | Niveau |
 |---|---|
 | Metadata | Read-only |
-| Contents | Read & write ; uniquement pour que Qoder Cloud Agents puisse cloner les dépôts et pousser des branches |
-| Pull requests | Read & write ; l'accès en lecture suffit pour associer les PR, l'écriture sert à Qoder Cloud Agents |
+| Pull requests | Read-only |
 | Checks | Read-only ; sert à afficher le statut CI |
 | Commit statuses | Read-only ; sert à agréger la CI basée sur les statuts hérités (legacy statuses) |
 | Actions | Facultatif, Read-only ; permet au statut CI d'ignorer une exécution annulée remplacée par une exécution plus récente du même workflow sur le même commit |
@@ -160,7 +159,7 @@ Abonnez-vous à ces événements :
 - **Pull request** ;
 - **Check suite**, **Check run** et **Status**, qui déclenchent l'actualisation de la CI et de la possibilité de fusion.
 
-Les instantanés de PR utilisent les API REST Pull requests, Checks et Commit statuses, et l'accès en lecture suffit pour cela. Les niveaux d'écriture sur Contents et Pull requests servent à l'autorisation automatique de Qoder Cloud Agents : elle monte les dépôts et pousse des branches avec des jetons de courte durée limités à un seul dépôt, émis depuis cette App. Si vous n'utilisez pas ce runtime, vous pouvez remettre ces deux permissions en lecture seule ; quand vous ajoutez des permissions à une App déjà installée, chaque propriétaire d'installation doit les approuver sur GitHub avant qu'elles ne prennent effet. Avec la permission facultative Actions, Multica lit aussi les exécutions de workflow du commit. Sans elle, une exécution annulée compte toujours comme un échec, même après la réussite d'une exécution plus récente du même workflow.
+Les instantanés de PR utilisent les API REST Pull requests, Checks et Commit statuses. La permission Contents n'est pas nécessaire. Avec la permission facultative Actions, Multica lit aussi les exécutions de workflow du commit. Sans elle, une exécution annulée compte toujours comme un échec, même après la réussite d'une exécution plus récente du même workflow.
 
 <Callout type="warning">
 Il s'agit du **Webhook secret**, et non du Client secret OAuth. Si les deux côtés n'ont pas le même secret de webhook, les livraisons GitHub renvoient `401 invalid signature`.
@@ -215,8 +214,7 @@ Redémarrez le serveur API, puis effectuez la connexion dans **Paramètres → C
 - **Le webhook renvoie 401** : vérifiez que la GitHub App et l'API utilisent le même secret de webhook, puis relancez la livraison depuis **Recent Deliveries** sur GitHub.
 - **PR non associée** : vérifiez que le dépôt fait partie du périmètre autorisé de l'App, que l'association automatique est activée, que l'identifiant appartient à l'espace de travail courant et que personne n'a retiré la PR de la tâche.
 - **Identifiant dans la description, mais PR non associée** : placez-le juste après un mot-clé de clôture (`Closes MUL-123`), ou dans le nom de branche ou le titre de la PR, ou associez la PR à la main.
-- **Aucun statut CI** : vérifiez que `GITHUB_APP_ID` et `GITHUB_APP_PRIVATE_KEY` sont configurées, et que l'App dispose des permissions Pull requests, Checks et Commit statuses en lecture seule, avec les événements correspondants souscrits. L'accès en lecture suffit pour l'association des PR et le statut CI. Après l'ajout de permissions à une App déjà installée, le propriétaire de chaque installation doit les approuver sur GitHub pour qu'elles prennent effet.
-- **Une exécution Qoder échoue avec « workspace GitHub App has not granted repository write permissions »** : l'installation est antérieure à l'ajout des permissions d'écriture. Passez Contents et Pull requests en Read & write sur la GitHub App et faites approuver le changement par le propriétaire de chaque installation sur GitHub, ou enregistrez un jeton manuel pour ce dépôt dans les réglages Qoder Cloud Agents.
+- **Aucun statut CI** : vérifiez que `GITHUB_APP_ID` et `GITHUB_APP_PRIVATE_KEY` sont configurées, et que l'App dispose des permissions Pull requests, Checks et Commit statuses en lecture seule, avec les événements correspondants souscrits. La permission Contents n'est pas nécessaire. Après l'ajout de permissions à une App déjà installée, le propriétaire de chaque installation doit les approuver sur GitHub pour qu'elles prennent effet.
 - **Statut de la tâche inchangé après la fusion de la PR** : lisez la ligne sous la liste **Pull requests** de la tâche. Elle nomme les PR encore ouvertes ou fermées sans fusion, ou indique que la tâche garde son statut à la fusion des PR. Si aucune ligne n'apparaît, le réglage de l'espace de travail est **Ne pas changer**, ou la tâche a déjà le statut cible.
 
 ## Étapes suivantes

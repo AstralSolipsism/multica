@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/qoderruntime"
-	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -148,25 +147,5 @@ func TestIssueQoderRepositoryTokenRejectsWiderScope(t *testing.T) {
 	})
 	if token, _, err := testHandler.issueQoderRepositoryToken(context.Background(), testWorkspaceID, "acme", "app"); err == nil || token != "" {
 		t.Fatalf("wide-scope token accepted: token=%q err=%v", token, err)
-	}
-}
-
-// The Qoder connection view reports the workspace's GitHub App accounts so
-// the runtime page can explain automatic authorization.
-func TestGetQoderConnectionIncludesGitHubAppAccounts(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	withQoderGitHubApp(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
-	withVCSBox(t)
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM daemon_token WHERE id IN (SELECT token_id FROM cloud_agent_connection WHERE provider='qoder_cloud' AND workspace_id=$1)`, testWorkspaceID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM cloud_agent_connection WHERE provider='qoder_cloud' AND workspace_id=$1`, testWorkspaceID)
-	})
-	body := map[string]any{"name": "Managed QCA", "base_url": "https://api.qoder.com/api/v1/cloud", "environment_id": "env_test", "qoder_token": "qca-test-secret"}
-	var view qoderSettingsView
-	testutil.Call(t, testHandler.SaveQoderConnection, vcsHandlerRequest("PUT", "/qoder", body, "")).Want(200).JSON(&view)
-	if len(view.GitHubAppAccounts) != 1 || view.GitHubAppAccounts[0].Login != "acme" {
-		t.Fatalf("github_app_accounts = %+v", view.GitHubAppAccounts)
 	}
 }

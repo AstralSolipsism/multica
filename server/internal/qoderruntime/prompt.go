@@ -106,7 +106,10 @@ func (b *Bridge) prepare(ctx context.Context, t *claimedTask) (*run, error) {
 		}
 	}
 	// Project repositories win; otherwise use the agent's default repository,
-	// and finally the workspace's only repository when it has a credential.
+	// and finally the workspace's only repository when a credential source
+	// exists for it. The check is local: minting happens once, later, in the
+	// prepared phase, so claim-time network trouble cannot silently drop the
+	// repository (an uncoverable one fails the run with the standard message).
 	if len(r.Resources) == 0 && binding.Repository != nil && binding.Repository.URL != "" {
 		resource, err := repositoryResource(*binding.Repository)
 		if err != nil {
@@ -115,10 +118,8 @@ func (b *Bridge) prepare(ctx context.Context, t *claimedTask) (*run, error) {
 		r.Resources = append(r.Resources, resource)
 	}
 	if len(r.Resources) == 0 && len(t.Repos) == 1 {
-		if resource, err := repositoryResource(Repository{URL: t.Repos[0].URL}); err == nil {
-			if _, _, _, err := b.sessionResources(ctx, []map[string]any{resource}); err == nil {
-				r.Resources = append(r.Resources, resource)
-			}
+		if resource, err := repositoryResource(Repository{URL: t.Repos[0].URL}); err == nil && b.repositoryMountable(resource) {
+			r.Resources = append(r.Resources, resource)
 		}
 	}
 	for _, repo := range t.Repos {

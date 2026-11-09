@@ -37,6 +37,7 @@ const { ApiError, mocks, nav } = vi.hoisted(() => {
       resumeQoderConnection: vi.fn(),
       disconnectQoderConnection: vi.fn(),
       listQoderEnvironments: vi.fn(),
+      listGitHubInstallations: vi.fn(),
       checkQoderConnection: vi.fn(),
     },
     nav: { push: vi.fn(), replace: vi.fn() },
@@ -93,7 +94,6 @@ const connection = {
   environmentId: "env_one",
   hasToken: true,
   repositories: ["https://github.com/acme/web"],
-  githubAppAccounts: [],
   enabled: true,
   status: "online",
   lastError: "",
@@ -117,6 +117,7 @@ beforeEach(() => {
     { id: "env_one", name: "Web environment" },
     { id: "env_two", name: "Build environment" },
   ]);
+  mocks.listGitHubInstallations.mockResolvedValue({ installations: [] });
   mocks.checkQoderConnection.mockResolvedValue(undefined);
   mocks.saveQoderConnection.mockResolvedValue(connection);
 });
@@ -352,9 +353,8 @@ it("adds a repository and keeps the saved tokens", async () => {
 });
 
 it("explains automatic authorization for connected GitHub App accounts", async () => {
-  mocks.getQoderConnection.mockResolvedValue({
-    ...connection,
-    githubAppAccounts: [{ login: "acme", type: "Organization" }],
+  mocks.listGitHubInstallations.mockResolvedValue({
+    installations: [{ account_login: "acme", account_type: "Organization" }],
   });
   const client = mount();
   expect(

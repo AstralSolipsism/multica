@@ -116,6 +116,27 @@ func repositoryParts(key string) (owner, repo string, ok bool) {
 	return parts[0], parts[1], true
 }
 
+// repositoryMountable reports whether a credential source exists for the
+// repository: a manual token binding, or a configured GitHub App issuer. It
+// is a local check with no side effects; the single token issuance and any
+// coverage failure happen in the prepared phase.
+func (b *Bridge) repositoryMountable(resource map[string]any) bool {
+	raw, _ := resource["url"].(string)
+	key, err := repositoryKey(raw)
+	if err != nil {
+		return false
+	}
+	if b.cfg.GitHubTokens[key] != "" {
+		return true
+	}
+	for configured := range b.cfg.GitHubTokenFiles {
+		if candidate, err := repositoryKey(configured); err == nil && candidate == key {
+			return true
+		}
+	}
+	return b.cfg.GitHubAppToken != nil
+}
+
 func readRepositoryToken(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

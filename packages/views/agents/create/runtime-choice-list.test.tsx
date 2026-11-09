@@ -79,7 +79,6 @@ const unconnectedQoder: QoderConnection = {
   environmentId: "",
   hasToken: false,
   repositories: [],
-  githubAppAccounts: [],
   enabled: false,
   status: "stopped",
   lastError: "",

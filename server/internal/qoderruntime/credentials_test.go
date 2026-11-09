@@ -138,6 +138,30 @@ func TestGitHubAppPermissionErrorIsActionable(t *testing.T) {
 	}
 }
 
+// The single-repository fallback decides mountability locally: no token is
+// minted (or dropped) at claim time, and a workspace with no credential
+// source at all skips the mount.
+func TestRepositoryMountableIsLocal(t *testing.T) {
+	resource, err := repositoryResource(Repository{URL: "https://github.com/acme/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := &Bridge{cfg: Config{GitHubAppToken: func(context.Context, string, string) (string, int64, error) {
+		t.Fatal("claim-time mountability check must not mint a token")
+		return "", 0, nil
+	}}}
+	if !issuer.repositoryMountable(resource) {
+		t.Fatal("issuer-backed repository not mountable")
+	}
+	manual := &Bridge{cfg: Config{GitHubTokens: map[string]string{"https://github.com/acme/app": "pat"}}}
+	if !manual.repositoryMountable(resource) {
+		t.Fatal("manual-token repository not mountable")
+	}
+	if (&Bridge{}).repositoryMountable(resource) {
+		t.Fatal("repository mountable without any credential source")
+	}
+}
+
 func TestRepositoryCredentialValidation(t *testing.T) {
 	for _, raw := range []string{"https://github.com/owner", "https://github.com:443/a/b", "https://github.com/a/b?token=x", "https://user@github.com/a/b", "https://github.com/a/b/extra", "https://github.com/a/%62", "https://github.com/a/.."} {
 		if _, err := repositoryKey(raw); err == nil {

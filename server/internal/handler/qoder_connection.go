@@ -52,30 +52,20 @@ func (s qoderSettings) withDefaults() qoderSettings {
 }
 
 type qoderSettingsView struct {
-	Configured    bool     `json:"configured"`
-	Available     bool     `json:"available"`
-	Name          string   `json:"name"`
-	BaseURL       string   `json:"base_url"`
-	EnvironmentID string   `json:"environment_id"`
-	HasToken      bool     `json:"has_token"`
-	Repositories  []string `json:"repositories"`
-	// GitHubAppAccounts lists the accounts the workspace's GitHub App
-	// integration covers; repositories under them need no manual token.
-	GitHubAppAccounts []qoderGitHubAccount `json:"github_app_accounts"`
-	Enabled           bool                 `json:"enabled"`
-	Status            string               `json:"status"`
-	LastError         string               `json:"last_error"`
-	MaxConcurrency    int                  `json:"max_concurrency"`
-	RunTimeoutMinutes int                  `json:"run_timeout_minutes"`
-	ActiveRuns        int                  `json:"active_runs"`
-	QueuedRuns        int                  `json:"queued_runs"`
-}
-
-// qoderGitHubAccount mirrors the login and type of a workspace GitHub
-// installation; it never carries the numeric installation_id.
-type qoderGitHubAccount struct {
-	Login string `json:"login"`
-	Type  string `json:"type"`
+	Configured        bool     `json:"configured"`
+	Available         bool     `json:"available"`
+	Name              string   `json:"name"`
+	BaseURL           string   `json:"base_url"`
+	EnvironmentID     string   `json:"environment_id"`
+	HasToken          bool     `json:"has_token"`
+	Repositories      []string `json:"repositories"`
+	Enabled           bool     `json:"enabled"`
+	Status            string   `json:"status"`
+	LastError         string   `json:"last_error"`
+	MaxConcurrency    int      `json:"max_concurrency"`
+	RunTimeoutMinutes int      `json:"run_timeout_minutes"`
+	ActiveRuns        int      `json:"active_runs"`
+	QueuedRuns        int      `json:"queued_runs"`
 }
 
 func (h *Handler) readQoderSettings(ctx context.Context, ws string) (qoderSettings, bool, string, string, error) {
@@ -99,7 +89,7 @@ func (h *Handler) GetQoderConnection(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view := qoderSettingsView{Available: h.VCSSecretBox != nil, Repositories: []string{}, GitHubAppAccounts: []qoderGitHubAccount{}}
+	view := qoderSettingsView{Available: h.VCSSecretBox != nil, Repositories: []string{}}
 	if !view.Available {
 		writeJSON(w, 200, view)
 		return
@@ -113,7 +103,6 @@ func (h *Handler) GetQoderConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "cannot read Qoder Cloud Agents configuration")
 		return
 	}
-	view.GitHubAppAccounts = h.qoderGitHubAccounts(r.Context(), ws)
 	var online bool
 	_ = h.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM agent_runtime WHERE workspace_id=$1 AND provider='qoder_cloud' AND last_seen_at>now()-interval '45 seconds' AND status='online')`, ws).Scan(&online)
 	if status == "online" && enabled && !online {
@@ -135,25 +124,6 @@ func (h *Handler) GetQoderConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(view.Repositories)
 	writeJSON(w, 200, view)
-}
-
-// qoderGitHubAccounts reads the accounts behind the workspace's GitHub App
-// installations. The Qoder runtime page shows them as auto-authorized; a
-// lookup failure degrades to "none" rather than blocking the page.
-func (h *Handler) qoderGitHubAccounts(ctx context.Context, ws pgtype.UUID) []qoderGitHubAccount {
-	rows, err := h.Queries.ListGitHubInstallationsByWorkspace(ctx, ws)
-	if err != nil {
-		slog.WarnContext(ctx, "cannot list workspace GitHub installations for Qoder", "error", err)
-		return []qoderGitHubAccount{}
-	}
-	accounts := make([]qoderGitHubAccount, 0, len(rows))
-	for _, row := range rows {
-		if row.AccountLogin == "" {
-			continue
-		}
-		accounts = append(accounts, qoderGitHubAccount{Login: row.AccountLogin, Type: row.AccountType})
-	}
-	return accounts
 }
 
 func (h *Handler) qoderInput(w http.ResponseWriter, r *http.Request, ws string) (qoderSettings, bool) {
