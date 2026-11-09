@@ -104,7 +104,7 @@ function qoder(overrides: Partial<QoderConnection> = {}): QoderConnection {
     environmentId: "",
     hasToken: false,
     repositories: [],
-      enabled: false,
+    enabled: false,
     status: "",
     lastError: "",
     maxConcurrency: 3,
