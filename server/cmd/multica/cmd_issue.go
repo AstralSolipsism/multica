@@ -1456,6 +1456,11 @@ type uploadedIssueAttachment struct {
 	response  cli.AttachmentResponse
 }
 
+type attachmentDestSpan struct {
+	start int
+	end   int
+}
+
 type attachmentSpanParser struct{ parser.InlineParser }
 
 func (p attachmentSpanParser) Parse(parent ast.Node, reader text.Reader, pc parser.Context) ast.Node {
@@ -1473,10 +1478,8 @@ func (p attachmentSpanParser) Parse(parent ast.Node, reader text.Reader, pc pars
 	default:
 		return n
 	}
-	endLine, end := reader.Position()
-	n.SetAttributeString("label_end", before.Start)
-	n.SetAttributeString("source_end", end.Start)
 	if !hasRef && len(dest) > 0 {
+		endLine, end := reader.Position()
 		reader.SetPosition(beforeLine, before)
 		reader.Advance(1) // closing label bracket ']'
 		if reader.Peek() == '(' {
@@ -1497,8 +1500,7 @@ func (p attachmentSpanParser) Parse(parent ast.Node, reader text.Reader, pc pars
 					startOffset = destStartPos.Start
 					endOffset = stop + 1
 				}
-				n.SetAttributeString("dest_start", startOffset)
-				n.SetAttributeString("dest_end", endOffset)
+				n.SetAttributeString("dest_span", attachmentDestSpan{start: startOffset, end: endOffset})
 			}
 		}
 		reader.SetPosition(endLine, end)
@@ -1559,30 +1561,27 @@ func decodeMarkdownEscapes(raw string) string {
 
 func normalizeRelativeAttachmentTarget(raw string, markdownEscaped bool) (relPath string, baseName string, ok bool) {
 	clean := strings.TrimSpace(raw)
-	if clean == "" {
-		return "", "", false
-	}
-	if strings.HasPrefix(clean, "/") ||
+	if clean == "" ||
+		strings.HasPrefix(clean, "/") ||
 		strings.HasPrefix(clean, `\`) ||
-		strings.HasPrefix(clean, "#") ||
-		strings.HasPrefix(clean, "?") ||
-		strings.ContainsAny(clean, "?#") ||
 		filepath.IsAbs(clean) ||
 		uriSchemePrefixRe.MatchString(clean) {
 		return "", "", false
 	}
 	if markdownEscaped {
 		clean = decodeMarkdownEscapes(clean)
+		if strings.ContainsAny(clean, "?#") {
+			return "", "", false
+		}
 		if unescaped, err := url.PathUnescape(clean); err == nil {
 			clean = unescaped
 		}
+	} else if strings.ContainsAny(clean, "?#") {
+		return "", "", false
 	}
 	clean = strings.ReplaceAll(clean, `\`, "/")
 	for strings.HasPrefix(clean, "./") {
 		clean = strings.TrimPrefix(clean, "./")
-	}
-	if clean == "" || clean == "." || clean == ".." {
-		return "", "", false
 	}
 	segments := strings.Split(clean, "/")
 	for _, seg := range segments {
@@ -1608,9 +1607,6 @@ func matchUploadedAttachmentURL(destination string, uploaded []uploadedIssueAtta
 	}
 	if exactCount == 1 {
 		return exactMatch
-	}
-	if exactCount > 1 {
-		return ""
 	}
 	var baseMatch string
 	baseCount := 0
@@ -1652,35 +1648,25 @@ func resolveUploadedAttachmentReferences(body string, uploaded []uploadedIssueAt
 		if !entering {
 			return ast.WalkContinue, nil
 		}
+		spanVal, ok := n.AttributeString("dest_span")
+		if !ok {
+			return ast.WalkContinue, nil
+		}
 		var dest []byte
-		var hasRef bool
 		switch node := n.(type) {
 		case *ast.Image:
 			dest = node.Destination
-			hasRef = node.Reference != nil
 		case *ast.Link:
 			dest = node.Destination
-			hasRef = node.Reference != nil
-		default:
-			return ast.WalkContinue, nil
 		}
-		if hasRef {
-			return ast.WalkContinue, nil
-		}
-		destStartVal, ok1 := n.AttributeString("dest_start")
-		destEndVal, ok2 := n.AttributeString("dest_end")
-		destStart, ok3 := destStartVal.(int)
-		destEnd, ok4 := destEndVal.(int)
-		if !ok1 || !ok2 || !ok3 || !ok4 || destStart < 0 || destStart >= destEnd || destEnd > len(source) {
-			return ast.WalkContinue, nil
-		}
+		span := spanVal.(attachmentDestSpan)
 		targetURL := matchUploadedAttachmentURL(string(dest), uploaded)
 		if targetURL == "" || targetURL == string(dest) {
 			return ast.WalkContinue, nil
 		}
 		edits = append(edits, attachmentSpanEdit{
-			start:       destStart,
-			end:         destEnd,
+			start:       span.start,
+			end:         span.end,
 			replacement: targetURL,
 		})
 		return ast.WalkContinue, nil

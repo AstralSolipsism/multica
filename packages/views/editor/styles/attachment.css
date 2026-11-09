@@ -97,7 +97,12 @@
 }
 
 .image-figure[data-error] .image-content {
-  display: none;
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .image-error-fallback {

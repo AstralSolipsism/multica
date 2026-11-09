@@ -91,19 +91,17 @@ function matchesAttachmentURL(
   return embeddedStable !== "" && normalizeUri(embeddedStable) === normalizeUri(attachmentStable);
 }
 
-function relativeFilenameFromURL(
-  rawURL: string,
-): { path: string; basename: string } | undefined {
-  const clean = stripQueryAndFragment(rawURL).trim();
-  if (!clean) return undefined;
-  // Reject site-relative ("/foo"), protocol-relative ("//foo"), fragment/query-only,
-  // and any URI with a scheme ("http:", "https:", "data:", "blob:", "file:", "mention:", etc.)
-  // or Windows drive letter ("C:\foo").
+function relativeFilenameFromURL(rawURL: string): string | undefined {
+  const clean = rawURL.trim();
+  // Reject site-relative ("/foo"), protocol-relative ("//foo"), query/fragment
+  // URLs, and any URI with a scheme ("http:", "https:", "data:", "blob:",
+  // "file:", "mention:", etc.) or Windows drive letter ("C:\foo").
   if (
+    !clean ||
     clean.startsWith("/") ||
     clean.startsWith("\\") ||
-    clean.startsWith("#") ||
-    clean.startsWith("?") ||
+    clean.includes("?") ||
+    clean.includes("#") ||
     /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(clean)
   ) {
     return undefined;
@@ -115,13 +113,11 @@ function relativeFilenameFromURL(
     // Keep raw string when percent-encoding is malformed.
   }
   const normalized = decoded.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
-  if (!normalized || normalized === "." || normalized === "..") return undefined;
   const segments = normalized.split("/");
   if (segments.some((seg) => seg === "" || seg === "." || seg === "..")) {
     return undefined;
   }
-  const basename = segments[segments.length - 1]!;
-  return { path: normalized, basename };
+  return segments[segments.length - 1];
 }
 
 /**
@@ -158,17 +154,12 @@ export function matchAttachmentByURL(
   );
   if (byFullUrl) return byFullUrl;
 
-  const rel = relativeFilenameFromURL(url);
-  if (rel) {
-    const exactMatches = attachments.filter(
-      (a) => Boolean(a.filename) && a.filename === rel.path,
+  const relFilename = relativeFilenameFromURL(url);
+  if (relFilename) {
+    const matches = attachments.filter(
+      (a) => Boolean(a.filename) && a.filename === relFilename,
     );
-    if (exactMatches.length === 1) return exactMatches[0];
-    if (exactMatches.length > 1) return undefined;
-    const basenameMatches = attachments.filter(
-      (a) => Boolean(a.filename) && a.filename === rel.basename,
-    );
-    return basenameMatches.length === 1 ? basenameMatches[0] : undefined;
+    return matches.length === 1 ? matches[0] : undefined;
   }
   return undefined;
 }

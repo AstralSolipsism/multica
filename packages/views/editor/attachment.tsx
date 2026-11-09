@@ -525,8 +525,9 @@ function ImageAttachmentView({
         "--image-aspect": `${width! / height!}`,
       } as CSSProperties)
     : undefined;
-  const showToolbar =
-    !uploading && (!failed ? Boolean(src) : Boolean(editable && onDelete));
+  const showActions = !uploading && !failed && Boolean(src);
+  const showDelete = !uploading && Boolean(editable && onDelete);
+  const errorLabel = alt || linkUrl;
 
   // DOM mirrors the original ReadonlyImage (span-only chain so it stays
   // valid HTML5 when rendered inside a markdown <p>). In editor surfaces
@@ -556,7 +557,7 @@ function ImageAttachmentView({
           height={failed ? undefined : height}
           loading="lazy"
           decoding="async"
-          data-loaded={loaded || failed || undefined}
+          data-loaded={loaded || undefined}
           className={cn("image-content", uploading && "image-uploading")}
           draggable={false}
           onLoad={() => {
@@ -568,17 +569,17 @@ function ImageAttachmentView({
         {failed && (
           <span className="image-error-fallback">
             <ImageIcon className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="image-error-label">{alt || linkUrl || "Image"}</span>
+            {errorLabel && <span className="image-error-label">{errorLabel}</span>}
           </span>
         )}
-        {showToolbar && (
+        {(showActions || showDelete) && (
           <span
             className="image-toolbar"
             style={downloading ? { opacity: 1 } : undefined}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            {!failed && (
+            {showActions && (
               <>
                 <DeferredTooltip
                   content={t(($) => $.image.view)}
@@ -616,7 +617,7 @@ function ImageAttachmentView({
                 />
               </>
             )}
-            {editable && onDelete && (
+            {showDelete && (
               <DeferredTooltip
                 content={t(($) => $.image.delete)}
                 trigger={

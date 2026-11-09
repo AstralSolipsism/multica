@@ -1340,7 +1340,7 @@ func TestRunIssueCreateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 	srv := newIssueCreateAttachmentServer(t)
 
 	descFile := "desc.md"
-	rawDesc := "Step 1\n\n![第一步](shot\\(1\\).png \"say \\\"hi\\\"\")\n\n![第二步](a&amp;b.png)\n\nStep 2"
+	rawDesc := "Step 1\n\n![step 1](shot\\(1\\).png \"say \\\"hi\\\"\")\n\n![step 2](a&amp;b.png)\n\nStep 2"
 	if err := os.WriteFile(descFile, []byte(rawDesc), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1355,7 +1355,7 @@ func TestRunIssueCreateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 	}
 
 	desc, _ := srv.createBody["description"].(string)
-	want := "Step 1\n\n![第一步](https://api.example/api/attachments/att-1/download \"say \\\"hi\\\"\")\n\n![第二步](https://api.example/api/attachments/att-2/download)\n\nStep 2"
+	want := "Step 1\n\n![step 1](https://api.example/api/attachments/att-1/download \"say \\\"hi\\\"\")\n\n![step 2](https://api.example/api/attachments/att-2/download)\n\nStep 2"
 	if desc != want {
 		t.Fatalf("description = %q, want %q", desc, want)
 	}
@@ -1416,6 +1416,7 @@ func TestResolveUploadedAttachmentReferencesEscapesAndTitles(t *testing.T) {
 	body := strings.Join([]string{
 		`![escaped parens](shot\(1\).png "say \"hi\"")`,
 		`![html entity](a&amp;b.png 'single "quoted" title')`,
+		`![numeric entity](a&#38;b.png)`,
 		`![angle bracketed](<./sub/my file (1).png> "kept \"as-is\"")`,
 		`![basename fallback](only-basename.png)`,
 		`![exact path 1](before/dup.png)`,
@@ -1429,6 +1430,7 @@ func TestResolveUploadedAttachmentReferencesEscapesAndTitles(t *testing.T) {
 	want := strings.Join([]string{
 		`![escaped parens](https://api.example/api/attachments/att-1/download "say \"hi\"")`,
 		`![html entity](https://api.example/api/attachments/att-2/download 'single "quoted" title')`,
+		`![numeric entity](https://api.example/api/attachments/att-2/download)`,
 		`![angle bracketed](https://api.example/api/attachments/att-3/download "kept \"as-is\"")`,
 		`![basename fallback](https://api.example/api/attachments/att-4/download)`,
 		`![exact path 1](https://api.example/api/attachments/att-5/download)`,
@@ -1490,14 +1492,14 @@ func TestRunIssueCommentAddRewritesInlineRelativeAttachmentReferences(t *testing
 	}
 
 	cmd := newIssueCommentAddTestCmd()
-	_ = cmd.Flags().Set("content", "Inline: ![决策失败](s-fail.png)\n\nCode: `![code](s-fail.png)`\n\n!file[日志](./sub/run.log)")
+	_ = cmd.Flags().Set("content", "Inline: ![shot](s-fail.png)\n\nCode: `![code](s-fail.png)`\n\n!file[run.log](./sub/run.log)")
 	_ = cmd.Flags().Set("attachment", "s-fail.png")
 	_ = cmd.Flags().Set("attachment", "./sub/run.log")
 	if err := runIssueCommentAdd(cmd, []string{issueID}); err != nil {
 		t.Fatalf("runIssueCommentAdd: %v", err)
 	}
 
-	want := "Inline: ![决策失败](https://api.example/api/attachments/att-1/download)\n\nCode: `![code](s-fail.png)`\n\n!file[日志](https://api.example/api/attachments/att-2/download)"
+	want := "Inline: ![shot](https://api.example/api/attachments/att-1/download)\n\nCode: `![code](s-fail.png)`\n\n!file[run.log](https://api.example/api/attachments/att-2/download)"
 	if postedContent != want {
 		t.Fatalf("postedContent = %q, want %q", postedContent, want)
 	}
@@ -4120,7 +4122,7 @@ func TestRunIssueUpdateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 		t.Chdir(t.TempDir())
 		path := writeIssueCreateAttachment(t, "revised(1).png")
 		descFile := "desc.md"
-		if err := os.WriteFile(descFile, []byte("Before\n\n![修订图](revised\\(1\\).png \"say \\\"hi\\\"\")\n\nAfter"), 0o600); err != nil {
+		if err := os.WriteFile(descFile, []byte("Before\n\n![revised](revised\\(1\\).png \"say \\\"hi\\\"\")\n\nAfter"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		var body map[string]any
@@ -4153,7 +4155,7 @@ func TestRunIssueUpdateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 			t.Fatalf("runIssueUpdate: %v", err)
 		}
 		got, _ := body["description"].(string)
-		want := "Before\n\n![修订图](https://api.example/api/attachments/" + attachmentID + "/download \"say \\\"hi\\\"\")\n\nAfter"
+		want := "Before\n\n![revised](https://api.example/api/attachments/" + attachmentID + "/download \"say \\\"hi\\\"\")\n\nAfter"
 		if got != want {
 			t.Fatalf("description = %q, want %q", got, want)
 		}
@@ -4173,7 +4175,7 @@ func TestRunIssueUpdateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 			case "/api/issues/" + issueID:
 				if r.Method == http.MethodGet {
 					_ = json.NewEncoder(w).Encode(map[string]any{
-						"description": "Existing intro\n\n![现有附图](revised.png)\n\nExisting outro",
+						"description": "Existing intro\n\n![existing](revised.png)\n\nExisting outro",
 					})
 					return
 				}
@@ -4194,7 +4196,7 @@ func TestRunIssueUpdateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 			t.Fatalf("runIssueUpdate: %v", err)
 		}
 		got, _ := body["description"].(string)
-		want := "Existing intro\n\n![现有附图](https://api.example/api/attachments/" + attachmentID + "/download)\n\nExisting outro"
+		want := "Existing intro\n\n![existing](https://api.example/api/attachments/" + attachmentID + "/download)\n\nExisting outro"
 		if got != want {
 			t.Fatalf("description = %q, want %q", got, want)
 		}

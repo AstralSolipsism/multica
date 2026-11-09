@@ -101,13 +101,15 @@ describe("matchAttachmentByURL", () => {
     expect(matchAttachmentByURL("screenshots/s-fail.png", list)).toBe(failShot);
     expect(matchAttachmentByURL("%E5%9B%BE%20v2.png", list)).toBe(unicodeShot);
 
-    // Site-relative, scheme-bearing, and traversal URLs must not match by filename.
+    // Site-relative, scheme-bearing, query/fragment, and traversal URLs must not match by filename.
     expect(matchAttachmentByURL("/s-fail.png", list)).toBeUndefined();
     expect(matchAttachmentByURL("https://example.com/s-fail.png", list)).toBeUndefined();
     expect(matchAttachmentByURL("file:///tmp/s-fail.png", list)).toBeUndefined();
+    expect(matchAttachmentByURL("s-fail.png?v=1", list)).toBeUndefined();
+    expect(matchAttachmentByURL("s-fail.png#section", list)).toBeUndefined();
     expect(matchAttachmentByURL("../s-fail.png", list)).toBeUndefined();
 
-    // Ambiguous duplicate basenames without a unique exact path match return undefined instead of guessing.
+    // Ambiguous duplicate filenames return undefined instead of guessing.
     const dupA = attachment({ id: UUID_A, filename: "shot.png" });
     const dupB = attachment({ id: UUID_B, filename: "shot.png" });
     expect(matchAttachmentByURL("before/shot.png", [dupA, dupB])).toBeUndefined();
@@ -130,7 +132,7 @@ describe("selectStandaloneAttachments", () => {
     const proseMentioned = attachment({ id: UUID_B, filename: "alone.png" });
     const content = [
       "See alone.png and `![code](alone.png)` below:",
-      "![决策失败](./s-fail.png)",
+      "![failure](./s-fail.png)",
     ].join("\n\n");
     expect(
       selectStandaloneAttachments(content, [inlineRel, proseMentioned]).map((a) => a.id),
