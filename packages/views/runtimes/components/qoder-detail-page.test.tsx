@@ -93,6 +93,7 @@ const connection = {
   environmentId: "env_one",
   hasToken: true,
   repositories: ["https://github.com/acme/web"],
+  githubAppAccounts: [],
   enabled: true,
   status: "online",
   lastError: "",
@@ -347,6 +348,43 @@ it("adds a repository and keeps the saved tokens", async () => {
       "https://github.com/acme/api": "ghp_new",
     },
   });
+  client.clear();
+});
+
+it("explains automatic authorization for connected GitHub App accounts", async () => {
+  mocks.getQoderConnection.mockResolvedValue({
+    ...connection,
+    githubAppAccounts: [{ login: "acme", type: "Organization" }],
+  });
+  const client = mount();
+  expect(
+    await screen.findByText(
+      /Repositories under acme are authorized automatically through the workspace GitHub integration/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/fresh 1-hour token limited to that single repository/),
+  ).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Add repository" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByText(
+      "Add a personal access token only for repositories outside the connected accounts, or to override their authorization.",
+    ),
+  ).toBeInTheDocument();
+  client.clear();
+});
+
+it("keeps the plain repository hint without a GitHub App connection", async () => {
+  const client = mount();
+  expect(
+    await screen.findByText("Agents can only clone the repositories authorized here."),
+  ).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Add repository" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByText("Agents can only clone the repositories authorized here."),
+  ).toBeInTheDocument();
   client.clear();
 });
 

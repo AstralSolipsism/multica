@@ -149,7 +149,8 @@ Repository permissions:
 | Permission | Level |
 |---|---|
 | Metadata | Read-only |
-| Pull requests | Read-only |
+| Contents | Read & write; only needed so Qoder Cloud Agents can clone repositories and push branches |
+| Pull requests | Read & write; read access is enough for PR linking, write access is needed for Qoder Cloud Agents |
 | Checks | Read-only; used to show CI status |
 | Commit statuses | Read-only; used to aggregate legacy-status CI |
 | Actions | Optional, read-only; lets CI status ignore a cancelled run that a newer run of the same workflow replaced on the same commit |
@@ -159,7 +160,7 @@ Subscribe to these events:
 - **Pull request**;
 - **Check suite**, **Check run**, and **Status**, which trigger CI and mergeability refreshes.
 
-PR snapshots use the Pull requests, Checks, and Commit statuses REST APIs. Contents access is not required. With the optional Actions permission, Multica also reads the commit's workflow runs. Without it, a cancelled run still counts as failed even after a newer run of the same workflow passes.
+PR snapshots use the Pull requests, Checks, and Commit statuses REST APIs, and read access is enough for that. The write levels for Contents and Pull requests exist for Qoder Cloud Agents auto-authorization: it mounts repositories and pushes branches using short-lived, single-repository tokens issued from this App. If you never use that runtime, you can lower both permissions back to read-only; when you add permissions to an already-installed App, each installation owner must approve them on GitHub before they take effect. With the optional Actions permission, Multica also reads the commit's workflow runs. Without it, a cancelled run still counts as failed even after a newer run of the same workflow passes.
 
 <Callout type="warning">
 This is the **Webhook secret**, not the OAuth Client secret. If the two sides have different webhook secrets, GitHub deliveries return `401 invalid signature`.
@@ -215,7 +216,8 @@ Restart the API server, then complete the connection in **Settings → Code**.
 - **Webhook returns 401**: confirm the GitHub App and the API use the same webhook secret, then redeliver from GitHub's **Recent Deliveries**.
 - **PR not linked**: check that the repository is in the App's authorized scope, auto-linking is on, the identifier belongs to the current workspace, and nobody removed the PR from the issue.
 - **Identifier in the body but not linked**: put it right after a closing keyword (`Closes MUL-123`), or in the branch name or PR title, or link the PR by hand.
-- **No CI status**: confirm `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are configured, and that the App has read-only Pull requests, Checks, and Commit statuses permissions with the matching events subscribed. Contents access is not required. If permissions were added to an installed App, each installation owner must approve them on GitHub before they take effect.
+- **No CI status**: confirm `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are configured, and that the App has read-only Pull requests, Checks, and Commit statuses permissions with the matching events subscribed. Read access is enough for PR linking and CI status. If permissions were added to an installed App, each installation owner must approve them on GitHub before they take effect.
+- **Qoder run fails with "workspace GitHub App has not granted repository write permissions"**: the App installation predates the write permissions. Grant Contents and Pull requests read & write on the GitHub App, then have each installation owner approve the change on GitHub — or add a manual repository token in the Qoder Cloud Agents settings for that repository.
 - **Issue didn't move after the PR merged**: read the line under the issue's **Pull requests** list. It names any PR still open or closed without merging, or says the issue keeps its status when PRs merge. No line means the workspace setting is **Don't change**, or the issue already has the target status.
 
 ## Next steps
