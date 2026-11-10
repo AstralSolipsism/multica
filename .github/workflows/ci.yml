@@ -255,7 +255,10 @@ jobs:
   retained-e2e-tests:
     needs: changes
     if: ${{ needs.changes.outputs.e2e == 'true' }}
-    runs-on: ubuntu-latest
+    # @playwright/test@1.58.2 cannot install Chromium on ubuntu-26.04 (what
+    # ubuntu-latest now resolves to); pin ubuntu-24.04 until Playwright
+    # gains ubuntu-26.04 support.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -1028,7 +1031,10 @@ jobs:
   candidate-checks:
     needs: changes
     if: ${{ needs.changes.outputs.candidate == 'true' }}
-    runs-on: ubuntu-latest
+    # ubuntu-26.04 (what ubuntu-latest now resolves to) ships qemu-user-static
+    # as a virtual package with no installation candidate; pin ubuntu-24.04
+    # until the package or image strategy moves past it.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4

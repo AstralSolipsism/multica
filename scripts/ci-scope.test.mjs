@@ -205,7 +205,11 @@ test("required aggregates own the format and isolated browser gates", () => {
   assert.match(jobs["backend-format"], /^        run: bash scripts\/check-gofmt\.sh$/m);
   assert.equal(productionMapping("frontend")["retained-e2e-tests"], "e2e");
   assert.match(jobs["retained-e2e-tests"], /POSTGRES_DB: labrastro_e2e/);
+  assert.match(jobs["retained-e2e-tests"], /^    runs-on: ubuntu-24\.04$/m);
   assert.match(jobs["retained-e2e-tests"], /^        run: bash scripts\/test-retained-e2e\.sh$/m);
+  assert.equal(productionMapping("backend")["candidate-checks"], "candidate");
+  assert.match(jobs["candidate-checks"], /^    runs-on: ubuntu-24\.04$/m);
+  assert.doesNotMatch(jobs["candidate-checks"], /continue-on-error:/);
   assert.match(jobs.changes, /^          bash scripts\/test-retained-e2e\.test\.sh$/m);
   assert.doesNotMatch(jobs["backend-format"] + jobs["retained-e2e-tests"], /continue-on-error:/);
 });
