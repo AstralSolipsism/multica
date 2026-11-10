@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,70 @@ func TestRelayPublish_InboxWithNoHolderIsNoHolder(t *testing.T) {
 	}, eventID)
 	if got != relayNoHolder {
 		t.Fatalf("publish = %v, want relayNoHolder", got)
+	}
+	if v := dedupe.valueOf(dedupeKey(eventID)); v == "" || v == claimSettledValue || v == claimLostValue {
+		t.Fatalf("claim value = %q, want a fencing token: a late holder must find the delivery taken", v)
+	}
+}
+
+// stallFirstPollDedupe holds the FIRST ClaimState read until `until`, so a
+// poll's next wait starts a known distance from the deadline instead of
+// wherever eight sleeps happened to land — the alignment the overshoot needs
+// cannot be left to timer luck.
+type stallFirstPollDedupe struct {
+	*sharedDedupe
+	mu    sync.Mutex
+	until time.Time
+	reads []time.Time
+}
+
+func (d *stallFirstPollDedupe) ClaimState(ctx context.Context, key string) (claimState, error) {
+	d.mu.Lock()
+	first := len(d.reads) == 0
+	d.reads = append(d.reads, time.Now())
+	until := d.until
+	d.mu.Unlock()
+	if first {
+		time.Sleep(time.Until(until))
+	}
+	return d.sharedDedupe.ClaimState(ctx, key)
+}
+
+// TestRelayPublish_AcceptancePollEndsOnDeadline: a poll whose wait began near
+// the deadline must be CLAMPED to what remains of the window. An unclamped
+// full step crosses the deadline into pollCtx's backstop — whose only room
+// beyond the deadline is window/8 + 1ms — and the wait then ends as
+// relayUncertain for a bot nobody holds, giving up the fallback route. The
+// stalled first read places the second wait 4ms before the deadline, so the
+// clamp is the only thing that can keep the total inside the window.
+func TestRelayPublish_AcceptancePollEndsOnDeadline(t *testing.T) {
+	t.Parallel()
+	const window = 160 * time.Millisecond
+	step := window / 8
+	dedupe := &stallFirstPollDedupe{sharedDedupe: newSharedDedupe()}
+	router := inboxPublishRouter(t, &fanoutRelay{}, dedupe,
+		RelayConfig{AcceptanceWindow: window},
+		&Outbound{senders: newSendersRegistry(), logger: slog.Default()})
+	instID := util.UUIDToString(mustTestUUID(t))
+	eventID := relayInboxEventID("item-deadline", "recipient-deadline", instID)
+
+	start := time.Now()
+	dedupe.mu.Lock()
+	dedupe.until = start.Add(window - 4*time.Millisecond)
+	dedupe.mu.Unlock()
+	got := router.publishAwaitingHolder(context.Background(), relayFrame{
+		Kind: relayKindInbox, InstallationID: instID,
+		ChatID: "T_USER", ChatType: chatTypeSingleInt, Content: "card",
+	}, eventID)
+	if got != relayNoHolder {
+		t.Fatalf("publish = %v, want relayNoHolder", got)
+	}
+	over := time.Since(start) - window
+	dedupe.mu.Lock()
+	polls := len(dedupe.reads)
+	dedupe.mu.Unlock()
+	if over > step/2 {
+		t.Fatalf("publish ran %v past the window over %d polls; each wait must be clamped to the time the window has left", over, polls)
 	}
 	if v := dedupe.valueOf(dedupeKey(eventID)); v == "" || v == claimSettledValue || v == claimLostValue {
 		t.Fatalf("claim value = %q, want a fencing token: a late holder must find the delivery taken", v)
