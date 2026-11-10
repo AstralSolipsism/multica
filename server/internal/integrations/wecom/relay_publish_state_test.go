@@ -10,6 +10,7 @@ package wecom
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -53,6 +54,38 @@ func TestRelayPublish_InboxWithNoHolderIsNoHolder(t *testing.T) {
 	}
 	if v := dedupe.valueOf(dedupeKey(eventID)); v == "" || v == claimSettledValue || v == claimLostValue {
 		t.Fatalf("claim value = %q, want a fencing token: a late holder must find the delivery taken", v)
+	}
+}
+
+// TestRelayPublish_InboxNoHolderConvergesOnCompactWindow: the acceptance poll
+// must converge ON its window rather than sleep one trailing step past it. A
+// full step beyond the deadline lands in the pollCtx backstop — whose only
+// room beyond the deadline is window/8 + 1ms — and under -race load that
+// select race answered relayUncertain for a bot nobody holds, silently
+// dropping the fallback the caller needed (the CI flake this pins). A compact
+// window keeps a full -count=20 sweep fast while the in-process loop gives
+// the race one chance per iteration to show itself.
+func TestRelayPublish_InboxNoHolderConvergesOnCompactWindow(t *testing.T) {
+	t.Parallel()
+	const window = 20 * time.Millisecond
+	relay, dedupe := &fanoutRelay{}, newSharedDedupe()
+	router := inboxPublishRouter(t, relay, dedupe,
+		RelayConfig{AcceptanceWindow: window},
+		&Outbound{senders: newSendersRegistry(), logger: slog.Default()})
+
+	for i := range 12 {
+		instID := util.UUIDToString(mustTestUUID(t))
+		eventID := relayInboxEventID("item-compact", fmt.Sprintf("recipient-%d", i), instID)
+		got := router.publishAwaitingHolder(context.Background(), relayFrame{
+			Kind: relayKindInbox, InstallationID: instID,
+			ChatID: "T_USER", ChatType: chatTypeSingleInt, Content: "card",
+		}, eventID)
+		if got != relayNoHolder {
+			t.Fatalf("publish %d = %v, want relayNoHolder: the poll overslept its window into the backstop", i, got)
+		}
+		if v := dedupe.valueOf(dedupeKey(eventID)); v == "" || v == claimSettledValue || v == claimLostValue {
+			t.Fatalf("claim value = %q, want a fencing token: a late holder must find the delivery taken", v)
+		}
 	}
 }
 
