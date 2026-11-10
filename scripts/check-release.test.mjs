@@ -363,6 +363,15 @@ test("candidate entry isolates draft writing and keeps compatible CLI archives",
   const jobs = workflow.split("\njobs:\n")[1];
   assert.deepEqual([...jobs.matchAll(/^  ([\w-]+):$/gm)].map(m => m[1]),
     ["verify", "prepare", "qa-go", "qa-web", "cli", "backend", "web", "desktop", "images", "assemble", "draft"]);
+  // qa-web, backend and assemble install qemu-user-static for cross-arch
+  // version verification; ubuntu-latest now resolves to ubuntu-26.04, where
+  // it is a virtual package with no installation candidate, so those jobs pin
+  // ubuntu-24.04. Guard each job block so a quiet revert to ubuntu-latest
+  // fails this test instead of the next candidate dispatch.
+  const jobBlock = name => jobs.split(`\n  ${name}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
+  for (const job of ["qa-web", "backend", "assemble"]) {
+    assert.match(jobBlock(job), /^    runs-on: ubuntu-24\.04$/m, `${job} must stay pinned to ubuntu-24.04`);
+  }
   assert.match(jobs, /test "\$GITHUB_REPOSITORY" = AstralSolipsism\/multica/);
   assert.match(jobs, /^          repository: AstralSolipsism\/multica$/m);
   assert.match(jobs, /^          persist-credentials: false$/m);
