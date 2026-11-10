@@ -26,7 +26,7 @@ points and update retained regression coverage.
   remain unchanged. Independent fork skill-invocation and usage-accounting
   extensions remain. OL-1074 later replaced these completion rules with turn
   evidence and kept the classifier only for legacy streams; the current rules
-  are in `antigravity-completion.md`.
+  are in `server/pkg/agent/antigravity.go`.
 - Workflow handoffs use the existing assignment checks and DAG transaction
   guards. The generated assignee must be included in the transaction's explicit
   write fields: otherwise refreshing untouched fields under the row lock

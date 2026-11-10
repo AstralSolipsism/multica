@@ -14,9 +14,9 @@ func TestAntigravityUsagePresenceAndResume(t *testing.T) {
 	const zero = `{"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"total_tokens":0}`
 	const historical = `{"input_tokens":100,"output_tokens":10,"total_tokens":110}`
 	for _, tc := range []struct {
-		name, resume, step, aggregate string
-		reported                      bool
-		want                          TokenUsage
+		name, resume, step, aggregate, prefix string
+		reported                              bool
+		want                                  TokenUsage
 	}{
 		{name: "fresh terminal zero", aggregate: zero, reported: true},
 		{name: "fresh terminal usage", aggregate: historical, reported: true, want: TokenUsage{InputTokens: 100, OutputTokens: 10}},
@@ -26,12 +26,21 @@ func TestAntigravityUsagePresenceAndResume(t *testing.T) {
 		{name: "resume unreported step", resume: "prior-conversation", step: "null", aggregate: historical},
 		{name: "resume confirmed zero step", resume: "prior-conversation", step: zero, aggregate: historical, reported: true},
 		{name: "fresh zero step overrides aggregate", step: zero, aggregate: historical, reported: true},
+		{name: "history before boundary", resume: "prior-conversation", step: zero, aggregate: historical, reported: true,
+			prefix: `{"event":"step_update","step_update":{"step_index":0,"state":"DONE","usage":` + historical + `}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"user_input"}}`},
+		{name: "history after boundary", resume: "prior-conversation", step: zero, aggregate: historical, reported: true,
+			prefix: `{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"step_index":0,"state":"DONE","usage":` + historical + `}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			script := "#!/bin/sh\n"
 			script += `printf '%s\n' '{"event":"init","conversation_id":"current-conversation","init":{"model":"fixture-model"}}'` + "\n"
+			if tc.prefix != "" {
+				script += "cat <<'JSONL'\n" + tc.prefix + "\nJSONL\n"
+			}
 			if tc.step != "" {
-				script += `printf '%s\n' '{"event":"step_update","step_update":{"step_index":1,"state":"DONE","usage":` + tc.step + `}}'` + "\n"
+				script += `printf '%s\n' '{"event":"step_update","step_update":{"step_index":2,"state":"DONE","usage":` + tc.step + `}}'` + "\n"
 			}
 			script += `printf '%s\n' '{"event":"result","result":{"status":"ERROR","error":"fixture failure","usage":` + tc.aggregate + `}}'` + "\nexit 1\n"
 			fakePath := filepath.Join(t.TempDir(), "agy")
