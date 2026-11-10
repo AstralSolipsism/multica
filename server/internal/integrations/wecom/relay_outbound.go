@@ -1025,10 +1025,8 @@ func (r *RelayOutbound) confirmInbox(ctx context.Context, eventID string) relayP
 			return relayAccepted
 		}
 		// Converge ON the deadline, never past it: a trailing wait of a
-		// full step (~window/8) would push the total past the deadline
-		// into the pollCtx backstop, whose only room beyond it is
-		// window/8 + 1ms — a collision the race detector loses as
-		// "uncertain" for a bot nobody holds.
+		// full step (~window/8) would cross the deadline into the pollCtx
+		// backstop, whose only room beyond it is window/8 + 1ms.
 		rem := time.Until(deadline)
 		if rem <= 0 {
 			break

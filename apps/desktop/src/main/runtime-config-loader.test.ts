@@ -8,8 +8,8 @@ const ctx = vi.hoisted(() => ({ homePath: "" }));
 
 // runtime-config-loader pulls `app` from electron at module load. Without this
 // mock Vitest loads the real electron package, whose index.js downloads the
-// platform binary on first run — a network round trip (and a CI 504) that has
-// no place in a unit test. Same shape as updater.test.ts.
+// platform binary on first run — a network round trip that has no place in a
+// unit test. Same shape as updater.test.ts.
 vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(() => ctx.homePath),
