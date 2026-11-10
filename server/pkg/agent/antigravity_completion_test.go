@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-// Every agy stream in this file is synthetic: invented conversation IDs, step
+// The fixtures in this file are synthetic (captured projections are in
+// antigravity_recovery_test.go): invented conversation IDs, step
 // indices, text and usage, written by a fake agy executable and read by the
 // real backend. None of it is a captured agy stream, and no test runs a real
 // agy or reads production data.
@@ -73,6 +74,7 @@ type agyRun struct {
 	err          string  // result.error
 	response     *string // result.response; agyFixtureAnswer when nil
 	log          string  // one line agy writes to --log-file
+	stderr       string
 	exit         int
 	kill         bool
 	fresh        bool
@@ -129,6 +131,9 @@ func runAgyFixture(t *testing.T, run agyRun) agyRunOutput {
 		script += "while [ $# -gt 0 ]; do\n  case \"$1\" in\n    --log-file) printf '%s\\n' '" + run.log + "' > \"$2\"; shift 2 ;;\n    *) shift ;;\n  esac\ndone\n"
 	}
 	script += "cat <<'JSONL'\n" + stream.String() + "JSONL\n"
+	if run.stderr != "" {
+		script += "cat >&2 <<'STDERR'\n" + run.stderr + "\nSTDERR\n"
+	}
 	if run.kill {
 		script += "kill -KILL $$\n"
 	}
@@ -190,10 +195,12 @@ func TestAntigravityTurnEvidenceOverridesStaleError(t *testing.T) {
 		name, err string
 		exit      int
 	}{
-		{name: "OL-910 interruption", err: "The stream was interrupted. Please continue the task you were working on.", exit: 1},
-		{name: "legacy network sentence", err: antigravityNetworkIssueError, exit: 1},
-		{name: "stream idle timeout", err: agyIdleTimeoutError, exit: 3},
-		{name: "quota", err: "RESOURCE_EXHAUSTED (code 429): Individual quota reached for this model.", exit: 1},
+		{name: "OL-910 interruption", err: "The stream was interrupted. Please continue the task you were working on.", exit: 0},
+		{name: "legacy network sentence", err: antigravityNetworkIssueError, exit: 0},
+		{name: "stream idle timeout", err: agyIdleTimeoutError, exit: 0},
+		{name: "quota", err: "RESOURCE_EXHAUSTED (code 429): Individual quota reached for this model.", exit: 0},
+		{name: "service unavailable", err: "UNAVAILABLE (code 503): temporary provider failure"},
+		{name: "malformed call", err: "Malformed function call: Function call is empty - no input to parse. Retries remaining: 3"},
 		{name: "unknown wording", err: "synthetic failure the adapter has never seen", exit: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,8 +238,8 @@ func TestAntigravityTurnEvidenceCompletes(t *testing.T) {
 	}{
 		{name: "error recovered before the answer", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolActive, agyFixtureToolDone, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "earlier tool never finished", run: agyRun{steps: []string{agyFixtureBoundary, agyFixtureToolActive, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
-		{name: "narration without an error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
-		{name: "narration and tools before recovered error", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureToolActive, agyFixtureToolDone, `{"step_index":103,"state":"ERROR","step_type":"error_message"}`, `{"step_index":104,"state":"DONE","step_type":"tool","tool_name":"read_file"}`, `{"step_index":105,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`}}},
+		{name: "narration without an error", run: agyRun{response: agyString("Working.\n" + agyFixtureAnswer), steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
+		{name: "narration and tools before recovered error", run: agyRun{response: agyString("Working.\n" + agyFixtureAnswer), steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, agyFixtureToolActive, agyFixtureToolDone, `{"step_index":103,"state":"ERROR","step_type":"error_message"}`, `{"step_index":104,"state":"DONE","step_type":"tool","tool_name":"read_file"}`, `{"step_index":105,"state":"DONE","step_type":"agent_response","text_delta":"Current answer.\n"}`}}},
 		{name: "open world intermediate steps", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":101,"state":"DONE","step_type":"system_message"}`, agyFixtureToolActive, `{"step_index":103,"state":"WAITING_FOR_EXTENSION","step_type":"future_step","future_field":{"value":true}}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "future tool state before answer", run: agyRun{steps: []string{agyFixtureBoundary, `{"step_index":102,"state":"QUEUED","step_type":"tool"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}}},
 		{name: "done metadata after answer", run: agyRun{steps: agyFixtureTurn(agyFixtureCheckpoint, `{"step_index":106,"state":"DONE","step_type":"finish"}`, `{"step_index":107,"state":"DONE","step_type":"future_metadata"}`, `{"step_index":108,"state":"DONE","step_type":"system_message"}`)}},
@@ -388,10 +395,10 @@ func TestAntigravityTurnEvidenceKeepsFailures(t *testing.T) {
 		{name: "missing init payload", run: agyRun{init: `{"event":"init","conversation_id":"fixture-conversation"}`, steps: agyFixtureTurn()}},
 		{name: "event after result", run: agyRun{steps: agyFixtureTurn(), afterResult: []string{`{"event":"step_update","step_update":{"step_index":105,"state":"DONE","step_type":"checkpoint"}}`}}},
 		{name: "unknown event after result", run: agyRun{steps: agyFixtureTurn(), afterResult: []string{`{"event":"future_event"}`}}},
+		{name: "exit 1", run: agyRun{steps: agyFixtureTurn(), exit: 1}},
+		{name: "exit 3", run: agyRun{steps: agyFixtureTurn(), exit: 3}},
 		{name: "other exit code", run: agyRun{steps: agyFixtureTurn(), exit: 2}},
 		{name: "signal", run: agyRun{steps: agyFixtureTurn(), kill: true}},
-		{name: "print timeout in log", run: agyRun{steps: agyFixtureTurn(), log: "Print mode: timed out after 100 polls"}},
-		{name: "provider error in log", run: agyRun{steps: agyFixtureTurn(), log: "agent executor error: synthetic provider failure"}},
 		{name: "cancelled result", run: agyRun{steps: agyFixtureTurn(), status: "CANCELLED"}, wantStatus: "cancelled"},
 		{name: "timed out result", run: agyRun{steps: agyFixtureTurn(), status: "TIMEOUT"}, wantStatus: "timeout"},
 		{name: "interrupted result", run: agyRun{steps: agyFixtureTurn(), status: "INTERRUPTED"}},
@@ -587,7 +594,7 @@ func TestAntigravityLegacyFreshStream(t *testing.T) {
 		{name: "quota", run: agyRun{fresh: true, steps: answer, err: "RESOURCE_EXHAUSTED: synthetic quota"}, want: "failed"},
 		{name: "tool after answer", run: agyRun{fresh: true, steps: append(answer, `{"step_index":105,"state":"DONE","step_type":"tool"}`), err: eof}, want: "failed"},
 		{name: "answer differs from result", run: agyRun{fresh: true, steps: answer, err: eof, response: agyString("Other answer.\n")}, want: "failed"},
-		{name: "answer after recovered error", run: agyRun{fresh: true, steps: []string{`{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}, err: eof}, want: "completed"},
+		{name: "answer after recovered error", run: agyRun{response: agyString("Working.\n" + agyFixtureAnswer), fresh: true, steps: []string{`{"step_index":101,"state":"DONE","step_type":"agent_response","text_delta":"Working.\n"}`, `{"step_index":103,"state":"DONE","step_type":"error_message"}`, agyFixtureAnswerActive, agyFixtureAnswerDone}, err: eof}, want: "completed"},
 		{name: "signal", run: agyRun{fresh: true, steps: answer, err: eof, kill: true}, want: "failed"},
 		{name: "resumed", run: agyRun{steps: answer, err: eof, exit: 1}, want: "failed"},
 	} {
@@ -667,7 +674,7 @@ func TestDecideAntigravityOutcome(t *testing.T) {
 	exit1, exit2, exit3 := agyExitError(t, "exit 1"), agyExitError(t, "exit 2"), agyExitError(t, "exit 3")
 	killed := agyExitError(t, "kill -KILL $$")
 	const stale = "synthetic stale error"
-	recoverable := antigravityRunFacts{status: "ERROR", resultError: stale, response: "answer", answer: antigravityTurnAnswer, waitErr: exit1}
+	recoverable := antigravityRunFacts{status: "ERROR", resultError: stale, response: "answer", answer: antigravityTurnAnswer}
 	with := func(change func(*antigravityRunFacts)) antigravityRunFacts {
 		facts := recoverable
 		change(&facts)
@@ -681,26 +688,26 @@ func TestDecideAntigravityOutcome(t *testing.T) {
 	}{
 		{1, "local deadline", with(func(f *antigravityRunFacts) { f.ctxErr, f.timeout = context.DeadlineExceeded, time.Minute }), antigravityOutcome{status: "timeout", err: "agy timed out after 1m0s"}},
 		{2, "local cancellation", with(func(f *antigravityRunFacts) { f.ctxErr = context.Canceled }), antigravityOutcome{status: "aborted", err: "execution cancelled"}},
-		{3, "turn answer after exit 1", recoverable, antigravityOutcome{status: "completed", recovered: "current turn"}},
-		{3, "turn answer after exit 0", with(func(f *antigravityRunFacts) { f.waitErr = nil }), antigravityOutcome{status: "completed", recovered: "current turn"}},
-		{3, "turn answer after exit 3", with(func(f *antigravityRunFacts) { f.waitErr = exit3 }), antigravityOutcome{status: "completed", recovered: "current turn"}},
-		{3, "status case and padding", with(func(f *antigravityRunFacts) { f.status = " error " }), antigravityOutcome{status: "completed", recovered: "current turn"}},
-		{4, "legacy transport error", with(func(f *antigravityRunFacts) {
+		{6, "turn answer after exit 1", with(func(f *antigravityRunFacts) { f.waitErr = exit1 }), antigravityOutcome{status: "failed", err: stale}},
+		{4, "turn answer after exit 0", with(func(f *antigravityRunFacts) { f.waitErr = nil }), antigravityOutcome{status: "completed", recovered: "current turn"}},
+		{6, "turn answer after exit 3", with(func(f *antigravityRunFacts) { f.waitErr = exit3 }), antigravityOutcome{status: "failed", err: stale}},
+		{4, "status case and padding", with(func(f *antigravityRunFacts) { f.status = " error " }), antigravityOutcome{status: "completed", recovered: "current turn"}},
+		{5, "legacy transport error", with(func(f *antigravityRunFacts) {
 			f.answer, f.resultError = antigravityLegacyAnswer, antigravityNetworkIssueError
 		}), antigravityOutcome{status: "completed", recovered: "legacy transport error"}},
-		{5, "legacy answer with another error", with(func(f *antigravityRunFacts) { f.answer = antigravityLegacyAnswer }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "transport error without legacy answer", with(func(f *antigravityRunFacts) {
+		{6, "legacy answer with another error", with(func(f *antigravityRunFacts) { f.answer = antigravityLegacyAnswer }), antigravityOutcome{status: "failed", err: stale}},
+		{6, "transport error without legacy answer", with(func(f *antigravityRunFacts) {
 			f.answer, f.resultError = antigravityNoAnswer, antigravityNetworkIssueError
 		}), antigravityOutcome{status: "failed", err: antigravityNetworkIssueError}},
-		{5, "no answer", with(func(f *antigravityRunFacts) { f.answer = antigravityNoAnswer }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "other exit code", with(func(f *antigravityRunFacts) { f.waitErr = exit2 }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "signal", with(func(f *antigravityRunFacts) { f.waitErr = killed }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "print timeout", with(func(f *antigravityRunFacts) { f.printTimedOut = true }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "provider error in log", with(func(f *antigravityRunFacts) { f.providerError = "synthetic" }), antigravityOutcome{status: "failed", err: stale}},
-		{5, "only ERROR is replaceable", with(func(f *antigravityRunFacts) { f.status = "CANCELLED" }), antigravityOutcome{status: "cancelled", err: stale}},
-		{5, "status without error text", with(func(f *antigravityRunFacts) { f.answer, f.resultError = antigravityNoAnswer, "" }), antigravityOutcome{status: "failed", err: "agy returned status ERROR"}},
-		{6, "exit error after success", antigravityRunFacts{status: "SUCCESS", waitErr: exit2}, antigravityOutcome{status: "failed", err: "agy exited with error: exit status 2"}},
-		{7, "print timeout", antigravityRunFacts{printTimedOut: true, timeout: time.Minute}, antigravityOutcome{status: "timeout", err: "agy --print-timeout elapsed after 1m0s waiting for the agent response; a long-running command likely outlived the print timeout"}},
+		{6, "no answer", with(func(f *antigravityRunFacts) { f.answer = antigravityNoAnswer }), antigravityOutcome{status: "failed", err: stale}},
+		{6, "other exit code", with(func(f *antigravityRunFacts) { f.waitErr = exit2 }), antigravityOutcome{status: "failed", err: stale}},
+		{6, "signal", with(func(f *antigravityRunFacts) { f.waitErr = killed }), antigravityOutcome{status: "failed", err: stale}},
+		{3, "print timeout overrides ERROR and exit 3", with(func(f *antigravityRunFacts) { f.printTimedOut, f.waitErr, f.timeout = true, exit3, time.Minute }), antigravityOutcome{status: "timeout", err: "agy --print-timeout elapsed after 1m0s waiting for the agent response; a long-running command likely outlived the print timeout"}},
+		{4, "provider error before recovery", with(func(f *antigravityRunFacts) { f.providerError = "synthetic" }), antigravityOutcome{status: "completed", recovered: "current turn"}},
+		{6, "only ERROR is replaceable", with(func(f *antigravityRunFacts) { f.status = "CANCELLED" }), antigravityOutcome{status: "cancelled", err: stale}},
+		{6, "status without error text", with(func(f *antigravityRunFacts) { f.answer, f.resultError = antigravityNoAnswer, "" }), antigravityOutcome{status: "failed", err: "agy returned status ERROR"}},
+		{7, "exit error after success", antigravityRunFacts{status: "SUCCESS", waitErr: exit2}, antigravityOutcome{status: "failed", err: "agy exited with error: exit status 2"}},
+		{3, "print timeout", antigravityRunFacts{printTimedOut: true, timeout: time.Minute}, antigravityOutcome{status: "timeout", err: "agy --print-timeout elapsed after 1m0s waiting for the agent response; a long-running command likely outlived the print timeout"}},
 		{8, "provider error in log", antigravityRunFacts{providerError: "synthetic"}, antigravityOutcome{status: "failed", err: "agy provider error: synthetic"}},
 		{9, "success", antigravityRunFacts{status: "SUCCESS"}, antigravityOutcome{status: "completed"}},
 		{9, "clean exit without a result", antigravityRunFacts{}, antigravityOutcome{status: "completed"}},

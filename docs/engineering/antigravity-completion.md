@@ -22,29 +22,35 @@ The rules are in `server/pkg/agent/antigravity_completion.go`.
 | --- | --- | --- | --- |
 | 1 | The daemon's deadline elapsed | `timeout` | `agy timed out after …` |
 | 2 | The run was cancelled | `aborted` | `execution cancelled` |
-| 3 | `ERROR` result, recovery gate open, turn evidence proves the answer | `completed` | none; a warning keeps the original error |
-| 4 | Legacy: `ERROR` result, recovery gate open, fresh stream without a boundary, settled answer, transport-error wording | `completed` | none; a warning keeps the original error |
-| 5 | Any other non-success result | the mapped result status | `result.error`, or `agy returned status …` |
-| 6 | Non-zero exit | `failed` | `agy exited with error: …` |
-| 7 | agy's print timeout in its log | `timeout` | `agy --print-timeout elapsed …` |
+| 3 | agy's structured stderr reason `print_timeout`, or the legacy log marker | `timeout` | `agy --print-timeout elapsed …` |
+| 4 | `ERROR` result, exit 0, turn evidence proves the answer | `completed` | none; a warning keeps the original error |
+| 5 | Legacy: `ERROR` result, legacy exit gate, fresh stream without a boundary, settled answer, transport-error wording | `completed` | none; a warning keeps the original error |
+| 6 | Any other non-success result | the mapped result status | `result.error`, or `agy returned status …` |
+| 7 | Non-zero exit | `failed` | `agy exited with error: …` |
 | 8 | Provider error in its log | `failed` | `agy provider error: …` |
 | 9 | Otherwise, including a clean exit without a result | `completed` | none |
 
 Only the `ERROR` status (ignoring case and surrounding whitespace) is
-replaceable. Cancelled, timed-out, interrupted and unknown statuses stay in
-row 5. The recovery gate requires exit 0, or one of the codes 1 and 3 that agy
-uses for provider errors, and neither a print timeout nor a provider error in
-the log. A signal or another exit code therefore keeps agy's structured error.
-That error still precedes the exit, print-timeout and provider-log diagnostics.
-Rows 1, 2 and 5–9 keep their earlier semantics, including completion after a
-zero exit without a result event. After the table, an empty completed output is
+replaceable. Cancelled, interrupted and unknown statuses stay in row 6.
+Current-turn recovery requires `waitErr == nil`: exit 1 and exit 3 cannot
+prove recovery. Only the legacy transport path retains its exit 0/1/3 gate.
+A provider error in the log does not veto an otherwise proven recovery:
+`agent executor error:` can describe a failed attempt before a successful retry.
+It remains the row 8 fallback for silent failures.
+
+Print timeout precedes result recovery and process errors. agy 1.5.3 emits
+`AGY_ERROR: {…,"reason":"print_timeout"}` on **stderr** and exits 3 with an
+`ERROR` result. Ordinary exit 3, provider `DEADLINE_EXCEEDED`, and prose mentioning
+timeout are insufficient. Older releases retain the `Print mode: timed out
+after N polls` log marker and may exit 0. Context cancellation/deadline still
+wins over either CLI signal. After the table, an empty completed output is
 still recovered from agy's transcript.
 
 The recovery warning is
 `agy reported an error after this turn's answer completed`, with the original
 `err` and the `evidence` row (`current turn` or `legacy transport error`).
 
-## Turn evidence (row 3)
+## Turn evidence (row 4)
 
 A completed `user_input` step marks where the invocation's turn begins. The
 error's wording plays no part. Completion has three anchors:
@@ -52,7 +58,8 @@ error's wording plays no part. Completion has three anchors:
 1. **Start:** the boundary at `start` exists and is `DONE`. A resumed run
    without a boundary has no evidence.
 2. **Answer:** the highest-index `agent_response` with `index > start`
-   (`latest`) is `DONE`, and its accumulated deltas equal the nonempty
+   (`latest`) is nonempty and `DONE`. The concatenated deltas of **all**
+   response steps after `start`, in index order, equal the nonempty
    `result.response`. One terminal LF on either side is ignored; no other
    difference is. An earlier matching answer cannot substitute for a later
    unfinished, empty or mismatched response.
@@ -84,7 +91,7 @@ also accepted; unknown events are logged at debug level. A stream may omit
 anchors: for example, an unknown unfinished suffix step still prevents
 completion without being protocol corruption.
 
-## Legacy streams (row 4)
+## Legacy streams (row 5)
 
 Streams from agy releases without `user_input` steps cannot show where a turn
 began. For a fresh conversation, which has no history to replay, the adapter
@@ -146,8 +153,8 @@ holds a resumed run's steps until the boundary arrives. Even so, the tool events
 of a 53-minute resumed agy 1.4.5 run in OL-1074 arrived live throughout, so the
 boundary preceded that turn's steps.
 
-The rules also assume that the final answer ends `DONE` and equals
-`result.response`. A release that stops emitting the boundary, or changes how
+The rules require the final answer to end `DONE` and the combined turn
+responses to equal `result.response`. A release that stops emitting the boundary, or changes how
 the answer relates to the result, makes runs keep agy's failure rather than
 complete. An error that a release reports without any step is not visible to
 these rules. OL-1075 (deferred) tracks verifying the assumptions against new
@@ -155,9 +162,26 @@ agy releases.
 
 ## Tests
 
+A one-off agy 1.5.3 probe on 2026-11-10 verified the response contract:
+`agent_response[1]` emitted `BEFORE_READ` then `\n` at DONE; a `read_file`
+tool ran at index 2; `agent_response[3]` emitted `AFTER_READ_47` then `\n`
+at DONE. The SUCCESS result was `BEFORE_READ\nAFTER_READ_47\n`, exit 0.
+The model was `claude-sonnet-5-5-low`. The same probe with
+`gemini-4-argon-high` instead received a location refusal, exit 3, with a
+DONE `error_message`, empty response and `agent executor error:` log entry.
+A separate `--print-timeout 1s` probe produced the structured stderr reason
+above and the new log form `Print mode: print timeout after 1s with turn in
+progress after 40 polls (printed=1)`.
+
+`antigravity_recovery_test.go` preserves projected event fields from these
+captures; IDs, paths, tool payloads and usage are omitted. The malformed-call
+retry is a **synthetic mutation** of the captured multi-response sequence,
+using the incident's error text and an injected executor log. The live probe
+did not reproduce that model fault. All temporary capture files were removed;
+no capture machinery is part of the adapter or repository.
+
 `antigravity_completion_test.go` drives the backend with synthetic streams from
-a fake agy executable. None is a captured stream, and no test runs a real agy or
-reads production data. It covers:
+a fake agy executable. No default test runs a real agy or reads production data. It covers:
 
 - each table row (`TestDecideAntigravityOutcome`);
 - completion despite five stale wordings
@@ -177,5 +201,6 @@ and backend cases in `antigravity_test.go` remain.
 
 ```sh
 cd server
-../scripts/go-test-with-agent-cli-guard.sh -- go test ./pkg/agent -run 'Antigravity' -count=1
+../scripts/go-test-with-agent-cli-guard.sh -- go test -race ./pkg/agent -run 'Antigravity' -count=1
+go vet ./pkg/agent
 ```

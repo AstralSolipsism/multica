@@ -135,7 +135,7 @@ func TestAntigravityPrintTimedOut(t *testing.T) {
 	}, "\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !antigravityPrintTimedOut(timedOut) {
+	if !antigravityPrintTimedOut(timedOut, "") {
 		t.Error("expected the print-mode timeout marker to be detected")
 	}
 
@@ -145,14 +145,14 @@ func TestAntigravityPrintTimedOut(t *testing.T) {
 	), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if antigravityPrintTimedOut(clean) {
+	if antigravityPrintTimedOut(clean, "") {
 		t.Error("a clean log must not be flagged as timed out")
 	}
 
-	if antigravityPrintTimedOut("/nonexistent/path") {
+	if antigravityPrintTimedOut("/nonexistent/path", "") {
 		t.Error("missing log file must be treated as not-timed-out")
 	}
-	if antigravityPrintTimedOut("") {
+	if antigravityPrintTimedOut("", "") {
 		t.Error("empty log path must be treated as not-timed-out")
 	}
 }

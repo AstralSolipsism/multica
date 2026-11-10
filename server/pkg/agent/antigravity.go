@@ -495,7 +495,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 			response:      streamResponse,
 			answer:        turn.answer(streamResponse),
 			waitErr:       waitErr,
-			printTimedOut: antigravityPrintTimedOut(logPath),
+			printTimedOut: antigravityPrintTimedOut(logPath, stderrBuf.Tail()),
 			providerError: antigravityProviderError(logPath),
 		})
 		if outcome.recovered != "" {
@@ -508,8 +508,8 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 
 		finalOutput := output.String()
 		if streamResponse != "" {
-			// result.response is agy's canonical complete reply. Deltas normally
-			// reconstruct it exactly; if none arrived, emit the response now so
+			// result.response concatenates this turn's response steps, including
+			// narration before tools. If no deltas arrived, emit the response so
 			// the task transcript and final result both receive the answer.
 			if finalOutput == "" {
 				trySend(msgCh, Message{Type: MessageText, Content: streamResponse})
@@ -587,11 +587,20 @@ var antigravityPrintTimeoutRe = regexp.MustCompile(`Print mode: timed out after 
 
 var antigravityProviderErrorRe = regexp.MustCompile(`agent executor error:\s*(.+)`)
 
-// antigravityPrintTimedOut reports whether the per-run log shows agy hit its own
-// print-mode timeout. Best-effort: returns false if the log is missing or the
-// marker format changes upstream, in which case the run is classified by its
-// exit status as before.
-func antigravityPrintTimedOut(logPath string) bool {
+// antigravityPrintTimedOut reads agy's structured print_timeout reason (1.5+),
+// falling back to the log marker older releases emitted while exiting 0.
+// Neither exit 3 nor a provider's DEADLINE_EXCEEDED alone denotes this timeout.
+func antigravityPrintTimedOut(logPath, stderr string) bool {
+	for _, line := range strings.Split(stderr, "\n") {
+		if payload, ok := strings.CutPrefix(line, "AGY_ERROR: "); ok {
+			var diagnostic struct {
+				Reason string `json:"reason"`
+			}
+			if json.Unmarshal([]byte(payload), &diagnostic) == nil && diagnostic.Reason == "print_timeout" {
+				return true
+			}
+		}
+	}
 	if logPath == "" {
 		return false
 	}
@@ -602,8 +611,8 @@ func antigravityPrintTimedOut(logPath string) bool {
 	return antigravityPrintTimeoutRe.Match(data)
 }
 
-// antigravityProviderError extracts terminal upstream/model errors that agy logs
-// but does not necessarily print to stdout or reflect in its exit code.
+// antigravityProviderError extracts the last executor error, which may belong
+// to a recovered attempt. It diagnoses silent failures, not proven recovery.
 func antigravityProviderError(logPath string) string {
 	if logPath == "" {
 		return ""
