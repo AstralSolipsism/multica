@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
 
 // agy's terminal result describes the conversation, not this invocation: after
 // a resumed turn has answered, it can still repeat an error an earlier turn
-// recorded. An ERROR result is therefore judged by the invocation's own steps.
+// recorded, or a failed attempt earlier in the same turn. An ERROR result is
+// therefore judged by the invocation's own steps.
 // docs/engineering/antigravity-completion.md records the wire assumptions.
 
 // antigravityTurn collects the step evidence of one print invocation. The
@@ -150,8 +152,8 @@ type antigravityAnswer int
 
 const (
 	antigravityNoAnswer antigravityAnswer = iota
-	// A completed user_input boundary, followed by a settled answer that
-	// matches the response.
+	// A completed user_input boundary, followed by a settled answer whose
+	// turn's combined text matches the response.
 	antigravityTurnAnswer
 	// The same settled answer in a fresh stream that has no boundary at all,
 	// as emitted by agy releases without user_input steps.
@@ -179,18 +181,32 @@ func (t *antigravityTurn) answer(response string) antigravityAnswer {
 	return evidence
 }
 
-// settled requires the latest response after start to be DONE and to match the
-// canonical response, followed only by DONE metadata. A later error or action
-// belongs to this turn and was never answered. Earlier errors, narration and
+// settled requires the latest response after start to be nonempty and DONE,
+// followed only by DONE metadata. The turn's combined response must match the
+// canonical response. A later error or action belongs to this turn and was
+// never answered. Earlier errors, narration and
 // unfinished steps are allowed: retries can recover, and agy can leave a
 // background command ACTIVE when a separate step cancels it.
 func (t *antigravityTurn) settled(start int, response string) bool {
 	latest := t.latest("agent_response", start)
-	if latest < 0 || t.steps[latest].state != "DONE" {
+	if latest < 0 || t.steps[latest].state != "DONE" || strings.TrimSpace(t.steps[latest].text.String()) == "" {
 		return false
 	}
+	// agy 1.5.3 concatenates all response steps in this turn, including
+	// narration before tools or a recovered error, in step-index order.
+	var indices []int
+	for index, step := range t.steps {
+		if index > start && step.kind == "agent_response" {
+			indices = append(indices, index)
+		}
+	}
+	sort.Ints(indices)
+	var combined strings.Builder
+	for _, index := range indices {
+		combined.WriteString(t.steps[index].text.String())
+	}
 	// agy may append one terminal LF to the result; every other byte must match.
-	if strings.TrimSuffix(t.steps[latest].text.String(), "\n") != strings.TrimSuffix(response, "\n") {
+	if strings.TrimSuffix(combined.String(), "\n") != strings.TrimSuffix(response, "\n") {
 		return false
 	}
 	for index, step := range t.steps {
@@ -283,7 +299,7 @@ type antigravityRunFacts struct {
 	answer        antigravityAnswer
 	waitErr       error
 	printTimedOut bool
-	providerError string // terminal provider error from the per-run log
+	providerError string // last executor error from the per-run log; may precede recovery
 }
 
 type antigravityOutcome struct {
@@ -296,21 +312,25 @@ type antigravityOutcome struct {
 // in order and the first match wins. Only an ERROR result is replaceable, and
 // only when nothing about the process contradicts the answer.
 func decideAntigravityOutcome(f antigravityRunFacts) antigravityOutcome {
-	replaceable := strings.EqualFold(strings.TrimSpace(f.status), "ERROR") &&
-		antigravityProviderExit(f.waitErr) && !f.printTimedOut && f.providerError == ""
+	replaceable := strings.EqualFold(strings.TrimSpace(f.status), "ERROR")
 	status := antigravityResultStatus(f.status)
 	switch {
 	case f.ctxErr == context.DeadlineExceeded: // 1
 		return antigravityOutcome{status: "timeout", err: fmt.Sprintf("agy timed out after %s", f.timeout)}
 	case f.ctxErr == context.Canceled: // 2
 		return antigravityOutcome{status: "aborted", err: "execution cancelled"}
-	case replaceable && f.answer == antigravityTurnAnswer: // 3
+	case f.printTimedOut: // 3
+		return antigravityOutcome{status: "timeout", err: fmt.Sprintf(
+			"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
+			antigravityPrintTimeout(f.timeout),
+		)}
+	case replaceable && f.waitErr == nil && f.answer == antigravityTurnAnswer: // 4
 		return antigravityOutcome{status: "completed", recovered: "current turn"}
-	case replaceable && antigravityCompletedDespiteTrailingNetworkError(f.resultError, f.response, f.answer == antigravityLegacyAnswer): // 4
+	case replaceable && antigravityProviderExit(f.waitErr) && antigravityCompletedDespiteTrailingNetworkError(f.resultError, f.response, f.answer == antigravityLegacyAnswer): // 5
 		// Legacy compatibility, the only wording-based row; see
 		// antigravityTransportErrorRe.
 		return antigravityOutcome{status: "completed", recovered: "legacy transport error"}
-	case status != "completed": // 5
+	case status != "completed": // 6
 		// The structured error carries the actionable cause, even when agy also
 		// exits non-zero.
 		err := f.resultError
@@ -318,14 +338,8 @@ func decideAntigravityOutcome(f antigravityRunFacts) antigravityOutcome {
 			err = fmt.Sprintf("agy returned status %s", f.status)
 		}
 		return antigravityOutcome{status: status, err: err}
-	case f.waitErr != nil: // 6
+	case f.waitErr != nil: // 7
 		return antigravityOutcome{status: "failed", err: fmt.Sprintf("agy exited with error: %v", f.waitErr)}
-	case f.printTimedOut: // 7
-		// agy exits 0 when its own --print-timeout elapses (MUL-3570).
-		return antigravityOutcome{status: "timeout", err: fmt.Sprintf(
-			"agy --print-timeout elapsed after %s waiting for the agent response; a long-running command likely outlived the print timeout",
-			antigravityPrintTimeout(f.timeout),
-		)}
 	case f.providerError != "": // 8
 		// agy can log a terminal provider failure and still exit 0 with empty
 		// stdout.
@@ -335,9 +349,8 @@ func decideAntigravityOutcome(f antigravityRunFacts) antigravityOutcome {
 	}
 }
 
-// antigravityProviderExit reports a normal exit or one of the codes agy has
-// used for provider errors. Signals and other codes are process failures an
-// earlier result event must not hide.
+// antigravityProviderExit preserves the legacy transport-error exit gate.
+// Current-turn recovery always requires exit 0.
 func antigravityProviderExit(waitErr error) bool {
 	if waitErr == nil {
 		return true
