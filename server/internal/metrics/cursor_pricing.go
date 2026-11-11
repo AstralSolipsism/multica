@@ -161,10 +161,15 @@ func priceForCursorModel(model string) (ModelPrice, bool) {
 
 // PriceForRuntimeModel prices usage by the runtime provider that reported it.
 // Cursor bills its catalog at its own rates, so Cursor rows resolve through
-// cursorModelPrices; every other provider uses the vendor table.
+// cursorModelPrices; Antigravity labels models with effort suffixes the
+// vendor table must not strip globally, so its rows go through
+// priceForAntigravityModel; every other provider uses the vendor table.
 func PriceForRuntimeModel(provider, model string) (ModelPrice, bool) {
 	if strings.EqualFold(strings.TrimSpace(provider), "cursor") {
 		return priceForCursorModel(model)
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "antigravity") {
+		return priceForAntigravityModel(model)
 	}
 	return PriceForModelAlias(model)
 }

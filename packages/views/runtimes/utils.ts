@@ -299,7 +299,7 @@ const MODEL_PRICING: Record<
 
   // -- Google: https://ai.google.dev/gemini-api/docs/pricing (2026-10-19).
   //    Standard API-equivalent token estimates, not subscription charges.
-  //    Argon's intro rate ends 2026-11-30; Flash 3.6/3.8, Robotics and
+  //    Argon and Carbon's intro rates end 2026-11-30; Flash 3.6/3.8, Robotics and
   //    3.8 TTS promotions end 2026-12-31. Update the static rows at expiry.
   //    Google's deprecations page documents 3.5 Flash -> 3.6 and 3.7 -> 3.8
   //    routing; those aliases use their destination's current rate.
@@ -311,6 +311,7 @@ const MODEL_PRICING: Record<
   //    Image, Omni and Embedding SKUs stay unmapped because aggregate tokens
   //    cannot distinguish their rates. Mirror server/internal/metrics/pricing.go. --
   "gemini-4-argon": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2 },
+  "gemini-4-carbon": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2 },
   "gemini-3.8-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
   "gemini-3.7-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
   "gemini-3.6-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 },
@@ -378,10 +379,30 @@ const MODEL_PRICING: Record<
   // Kimi Code CLI reports the same model as `kimi-code/k3`; provider-qualified
   // because `k3` is a generic id (see the provider-qualified keys note above).
   "kimi/k3":            { input: 3.0,  output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.0 },
+  // Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat, 2026-11-11; the sheet
+  // is JS-rendered, rates via models.dev providers/moonshotai, the source the
+  // K3 row cites). Same cache-write convention as K3. The bare `k3.1-pro` id
+  // is generic, so it prices only under provider-qualified keys: `kimi/k3.1-pro`
+  // also covers Kimi Code's `kimi-code/k3.1-pro` (routing prefix stripped),
+  // `omp/k3.1-pro` the omp harness; a `k3.1-pro` from an unknown provider
+  // stays unmapped. The distinct $4 / $20 highspeed SKU and CodeBuddy's
+  // `kimi-k3-1` never borrow this tier.
+  "kimi-k3.1-pro":      { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
+  "kimi/k3.1-pro":      { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
+  "omp/k3.1-pro":       { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
+  // `kimi-for-coding` is Kimi Code's subscription coding-route alias, not an
+  // API SKU: Moonshot's API price sheet and models.dev providers/moonshotai
+  // list no per-token rate for it, so it stays unmapped.
 
   // -- Zhipu z.ai (docs.z.ai/guides/overview/pricing). Free flash tiers
   //    are priced at 0 so they resolve cleanly instead of falling through
   //    to the "unmapped" diagnostic. --
+  // GLM-5.3 and GLM-5.3-Flash (2026-11-11). The 5.3 Flash is the PAID tier
+  // ($0.15 / $0.50), unlike the free 4.x flash tiers below. Z.ai bills no
+  // separate cache write ("Cached Input Storage: Limited-time Free"), so
+  // cacheWrite mirrors input, as in glm-5.1.
+  "glm-5.3":            { input: 1.4,  output: 4.4,  cacheRead: 0.26,   cacheWrite: 1.4 },
+  "glm-5.3-flash":      { input: 0.15, output: 0.5,  cacheRead: 0.03,   cacheWrite: 0.15 },
   "glm-5.1":            { input: 1.4,  output: 4.4,  cacheRead: 0.26,   cacheWrite: 1.4 },
   "glm-5":              { input: 1.0,  output: 3.2,  cacheRead: 0.2,    cacheWrite: 1.0 },
   "glm-5-turbo":        { input: 1.2,  output: 4.0,  cacheRead: 0.24,   cacheWrite: 1.2 },
@@ -630,6 +651,7 @@ function pricingCandidates(model: string, provider?: string): string[] {
   const p = normalizeProvider(provider);
   if (!p) return base;
   if (p === "cursor") return cursorPricingCandidates(model, base);
+  if (p === "antigravity") return antigravityPricingCandidates(model, base, p);
   return [...base.map((c) => qualify(p, c)), ...base];
 }
 
@@ -665,6 +687,108 @@ function cursorPricingCandidates(model: string, canonical: string[]): string[] {
   const qualified = canonical.map((c) => qualify("cursor", c));
   if (!base) return [...qualified, ...canonical];
   return [...new Set([...qualified, `cursor/${base}`, base, ...canonical])];
+}
+
+// Routing prefixes come in two flavours: `vendor/model` (opencode-style) and
+// `provider:model` (Hermes custom providers), and can nest
+// (`custom:anthropic/claude-opus-4.7` is a provider-prefixed id whose model
+// segment is itself provider-prefixed). Iteratively strip the earliest `/` or
+// `:` separator while the preceding segment looks like a routing layer
+// (`^[a-z][a-z0-9_-]*$`), until nothing valid remains to strip. The raw
+// string is always the first candidate canonicalCandidates pushes, so
+// provider-qualified table keys like `cursor/composer-2.5` still resolve
+// before any stripping happens — iterative peeling only ever adds
+// previously-missed nested forms.
+const stripProvider = (s: string) => {
+  let out = s;
+  for (;;) {
+    const i = out.indexOf("/");
+    const j = out.indexOf(":");
+    const sep = i === -1 ? j : j === -1 ? i : Math.min(i, j);
+    if (sep <= 0 || !/^[a-z][a-z0-9_-]*$/i.test(out.slice(0, sep))) break;
+    out = out.slice(sep + 1);
+  }
+  return out;
+};
+
+// Only Anthropic IDs are dot↔dash equivalent. OpenAI separators are
+// semantic, so we leave `gpt-5.4` etc. alone.
+const canonAnthropic = (s: string) =>
+  s.startsWith("claude-") ? s.replace(/\./g, "-") : s;
+
+// Amazon Bedrock prefixes Anthropic ids with a region family (`us.`, `eu.`,
+// `apac.`, `global.`) and the vendor (`anthropic.`), and appends the
+// inference-profile version to snapshot ids (`...-20250929-v1:0`). A Bedrock
+// turn reports `us.anthropic.claude-sonnet-5`, which matched no table key at
+// all, so every such turn rendered as $0 plus an "unmapped" warning. Only the
+// vendor-prefixed forms are rewritten: `us.amazon.nova-*` and friends stay
+// unmapped rather than borrowing a Claude rate. Mirrors `normalizeBedrockID`
+// in server/internal/metrics/pricing.go.
+const stripBedrock = (s: string) => {
+  const prefix = /^(?:(?:us|eu|apac|global)\.)?anthropic\.(claude-)/;
+  if (!prefix.test(s)) return s;
+  return s
+    .replace(prefix, "$1")
+    .replace(/-v\d+:\d+(\[[^\]]+\])?$/, "$1");
+};
+
+// Trailing context-window tag (`claude-opus-4-7[1m]`). Same family, same
+// price tier — see the resolver comment above `canonicalCandidates` for the
+// 1M-context pricing trade-off.
+const stripContextTag = (s: string) => s.replace(/\[[^\]]+\]$/, "");
+
+// Antigravity labels Claude models with the reasoning effort, either as a
+// slug suffix (`claude-opus-5-5-high`) or a display label (`Claude Opus 5.5
+// (High)`) — see readAntigravitySelectedModel in
+// server/pkg/agent/antigravity.go. Effort selects reasoning, not a different
+// SKU, so both forms price at the base Claude id, exactly like canonGemini
+// strips Gemini effort suffixes. The version is a major or major.minor
+// number with `.` or `-` between the parts (both spellings normalize to the
+// dashed table key), and only the four effort levels Antigravity supports
+// are stripped; unknown suffixes (`-max`, `-thinking`), extra version
+// segments (`claude-opus-4-5-99-high`) and dated ids
+// (`claude-opus-5-5-high-latest`) match nothing and stay unmapped, matching
+// the backend's antigravityClaudeDisplayRe / antigravityClaudeEffortRe.
+const ANTIGRAVITY_CLAUDE_DISPLAY =
+  /^claude (opus|sonnet|haiku|fable) (\d+(?:[.-]\d+)?)(?: \((?:minimal|low|medium|high)\))?$/i;
+const ANTIGRAVITY_CLAUDE_EFFORT =
+  /^(claude-(?:opus|sonnet|haiku|fable)-\d+(?:[.-]\d+)?)-(?:minimal|low|medium|high)$/i;
+
+function antigravityClaudeBase(candidate: string): string | undefined {
+  const display = ANTIGRAVITY_CLAUDE_DISPLAY.exec(candidate);
+  if (display) {
+    return `claude-${display[1]}-${display[2]!.replace(/\./g, "-")}`.toLowerCase();
+  }
+  const effort = ANTIGRAVITY_CLAUDE_EFFORT.exec(candidate);
+  if (effort) return effort[1]!.replace(/\./g, "-").toLowerCase();
+  return undefined;
+}
+
+// antigravityPricingCandidates extends the qualified-first lookup with the
+// Claude base ids, scoped to the antigravity branch of pricingCandidates on
+// purpose: a bare `claude-opus-5-5-high` from any other runtime must stay
+// unmapped (see "keeps Cursor variant stripping scoped to Cursor rows"),
+// exactly as the backend scopes its rewrite to PriceForRuntimeModel's
+// antigravity arm (priceForAntigravityModel). The extras are derived from the
+// raw id — stripProvider → stripBedrock → at most one non-empty context tag —
+// and deliberately NOT from canonicalCandidates' date-stripped variants:
+// `claude-opus-5-5-high-latest` is not a shape either resolver recognizes,
+// and stripping `-latest` first would price it here while the backend leaves
+// it unmapped.
+function antigravityPricingCandidates(model: string, base: string[], provider: string): string[] {
+  const extras = new Set<string>();
+  const id = stripBedrock(stripProvider(model.trim().toLowerCase()));
+  const forms = [id];
+  const stripped = stripContextTag(id);
+  if (stripped !== id && stripContextTag(stripped) === stripped) {
+    forms.push(stripped);
+  }
+  for (const form of forms) {
+    const claude = antigravityClaudeBase(form);
+    if (claude) extras.add(claude);
+  }
+  const candidates = extras.size > 0 ? [...base, ...extras] : base;
+  return [...candidates.map((c) => qualify(provider, c)), ...candidates];
 }
 
 // The canonical storage/diagnostic key for a (model, provider) pair: the
@@ -724,57 +848,13 @@ function canonicalCandidates(model: string): string[] {
   };
   const stripDate = (s: string) =>
     s.replace(/-(20\d{2}-\d{2}-\d{2}|20\d{6}|latest)$/, "");
-  const stripProvider = (s: string) => {
-    // Routing prefixes come in two flavours: `vendor/model` (opencode-style)
-    // and `provider:model` (Hermes custom providers), and can nest
-    // (`custom:anthropic/claude-opus-4.7` is a provider-prefixed id whose
-    // model segment is itself provider-prefixed). Iteratively strip the
-    // earliest `/` or `:` separator while the preceding segment looks like a
-    // routing layer (`^[a-z][a-z0-9_-]*$`), until nothing valid remains to
-    // strip. The raw string is always the first candidate (see `push(raw)`
-    // below), so provider-qualified table keys like `cursor/composer-2.5`
-    // still resolve before any stripping happens — iterative peeling only
-    // ever adds previously-missed nested forms.
-    let out = s;
-    for (;;) {
-      const i = out.indexOf("/");
-      const j = out.indexOf(":");
-      const sep = i === -1 ? j : j === -1 ? i : Math.min(i, j);
-      if (sep <= 0 || !/^[a-z][a-z0-9_-]*$/i.test(out.slice(0, sep))) break;
-      out = out.slice(sep + 1);
-    }
-    return out;
-  };
-  // Only Anthropic IDs are dot↔dash equivalent. OpenAI separators are
-  // semantic, so we leave `gpt-5.4` etc. alone.
-  const canonAnthropic = (s: string) =>
-    s.startsWith("claude-") ? s.replace(/\./g, "-") : s;
-  // Amazon Bedrock prefixes Anthropic ids with a region family (`us.`, `eu.`,
-  // `apac.`, `global.`) and the vendor (`anthropic.`), and appends the
-  // inference-profile version to snapshot ids (`...-20250929-v1:0`). A Bedrock
-  // turn reports `us.anthropic.claude-sonnet-5`, which matched no table key at
-  // all, so every such turn rendered as $0 plus an "unmapped" warning. Only the
-  // vendor-prefixed forms are rewritten: `us.amazon.nova-*` and friends stay
-  // unmapped rather than borrowing a Claude rate. Mirrors `normalizeBedrockID`
-  // in server/internal/metrics/pricing.go.
-  const stripBedrock = (s: string) => {
-    const prefix = /^(?:(?:us|eu|apac|global)\.)?anthropic\.(claude-)/;
-    if (!prefix.test(s)) return s;
-    return s
-      .replace(prefix, "$1")
-      .replace(/-v\d+:\d+(\[[^\]]+\])?$/, "$1");
-  };
-  // Trailing context-window tag (`claude-opus-4-7[1m]`). Same family,
-  // same price tier — see resolver comment above for the 1M-context
-  // pricing trade-off.
-  const stripContextTag = (s: string) => s.replace(/\[[^\]]+\]$/, "");
 
   // Antigravity's display labels and effort-suffixed IDs refer to the same
   // Gemini SKU. Match only recognized shapes; never strip arbitrary variants.
   const canonGemini = (s: string) => {
-    const display = /^gemini (\d+(?:\.\d+)?) (flash(?:-lite)?|pro|argon)(?: \((?:minimal|low|medium|high)\))?$/i.exec(s);
+    const display = /^gemini (\d+(?:\.\d+)?) (flash(?:-lite)?|pro|argon|carbon)(?: \((?:minimal|low|medium|high)\))?$/i.exec(s);
     if (display) return `gemini-${display[1]}-${display[2]}`.toLowerCase();
-    const slug = /^(gemini-\d+(?:\.\d+)?-(?:flash(?:-lite)?|pro|argon))(?:-(?:minimal|low|medium|high))?$/i.exec(s);
+    const slug = /^(gemini-\d+(?:\.\d+)?-(?:flash(?:-lite)?|pro|argon|carbon))(?:-(?:minimal|low|medium|high))?$/i.exec(s);
     return slug ? slug[1]!.toLowerCase() : s;
   };
 
