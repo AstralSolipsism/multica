@@ -505,9 +505,9 @@ describe("estimateCost", () => {
       ["claude-sonnet-5-5-low", 2 + 10 + 0.1 + 2.5],
       ["claude-haiku-5-5-minimal", 0.1 + 0.5 + 0.01 + 0.125],
       ["claude-opus-5-5-high[1m]", opus55],
-      ["antigravity:claude-opus-5-5-high", opus55],
       ["claude-opus-5.5-high", opus55],
       ["Claude-Opus-5.5-High", opus55],
+      ["antigravity:claude-opus-5-5-high", opus55],
       ["Claude Opus 5.5 (High)", opus55],
       ["Claude Opus 5.5", opus55],
     ] as const) {
@@ -518,13 +518,14 @@ describe("estimateCost", () => {
       { ...zeroUsage, provider: "antigravity", model: "claude-opus-5-5-high", input_tokens: 1 },
       { ...zeroUsage, provider: "antigravity", model: "Claude Sonnet 5.5 (Medium)", input_tokens: 1 },
     ])).toEqual([]);
-    // Only the four effort levels Antigravity supports are stripped; unknown
-    // suffixes, empty and doubled context tags stay unmapped.
+    // Only the four effort levels Antigravity supports are stripped, the
+    // version is a major or major.minor number, and one context tag at most;
+    // everything else stays unmapped.
     for (const model of [
       "claude-opus-5-5-fast", "claude-opus-5-5-max", "claude-opus-5-5-xhigh",
       "claude-opus-5-5-thinking", "claude-opus-5-5-preview",
-      "claude-opus-4-5-99-high", "claude-opus-5-5-high-latest",
-      "claude-opus-5-5-high[]", "/claude-opus-5-5-high",
+      "claude-opus-5-5-99-high", "claude-opus-5-5-20261001-high",
+      "claude-opus-5-5-high-latest", "/claude-opus-5-5-high",
       "claude-opus-5-5[]", "claude-opus-5-5-high[1m][2m]",
     ]) {
       expect(isModelPriced(model, "antigravity"), model).toBe(false);
@@ -559,9 +560,9 @@ describe("estimateCost", () => {
       "gemini-omni-flash-preview",
       "gemini-embedding-2",
       "gemini-4-argon-fast",
-      "gemini-4-argon[1m][2m]",
       "gemini-4-carbon-fast",
       "gemini-4-carbon[1m][2m]",
+      "gemini-4-argon[1m][2m]",
     ]) {
       expect(isModelPriced(model, "antigravity"), model).toBe(false);
       expect(estimateCost({ ...zeroUsage, provider: "antigravity", model, input_tokens: 1_000_000 }), model).toBe(0);
@@ -1068,9 +1069,7 @@ describe("estimateCost", () => {
   it("prices GLM-5.3 and its paid Flash tier at the official z.ai rates", () => {
     // docs.z.ai/guides/overview/pricing (2026-11-11): GLM-5.3 $1.4 / $4.4
     // with $0.26 cached input; GLM-5.3-Flash is the PAID $0.15 / $0.50 tier,
-    // unlike the free 4.x flash tiers above. Z.ai bills no separate cache
-    // write ("Cached Input Storage: Limited-time Free"), so cacheWrite
-    // mirrors input.
+    // unlike the free 4.x flash tiers above.
     for (const c of [
       { model: "glm-5.3", input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 1.4 },
       { model: "glm-5.3-flash", input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0.15 },
@@ -1087,9 +1086,9 @@ describe("estimateCost", () => {
         expect(breakdown.cacheWrite, model).toBeCloseTo(c.cacheWrite, 5);
       }
     }
-    // The observed usage rows: omp reports the bare id, Hermes carries the
-    // `custom:` provider prefix, claude-code routes glm-5.3-flash.
+    // A Hermes custom provider carries a `custom:` routing prefix; omp reports the bare id.
     expect(collectUnmappedModels([
+      { ...zeroUsage, model: "glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "omp", model: "glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "hermes", model: "custom:glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "claude", model: "glm-5.3-flash", input_tokens: 1 },
@@ -1097,17 +1096,16 @@ describe("estimateCost", () => {
     // Unknown suffixed variants stay unmapped, matching the anchored
     // backend rules in server/internal/metrics/pricing.go.
     for (const model of ["glm-5.3-flashx", "glm-5.3-fast", "glm-5.3-extra"]) {
-      expect(isModelPriced(model, "omp"), model).toBe(false);
+      expect(isModelPriced(model), model).toBe(false);
     }
   });
 
-  it("prices Kimi K3.1 Pro under provider-qualified keys and keeps lookalikes unmapped", () => {
-    // platform.kimi.ai/docs/pricing/chat (2026-11-11; the sheet is
-    // JS-rendered, rates via models.dev providers/moonshotai, the source the
-    // K3 row cites): $2 / $10 / $0.20 cached input, no separate cache write.
-    // `k3.1-pro` is a generic id, so it prices only under the kimi/omp
-    // provider-qualified keys — a bare `k3.1-pro` from an unknown provider
-    // stays unmapped like `cursor/auto`.
+  it("prices Kimi K3.1 Pro under its vendor and provider-qualified keys", () => {
+    // platform.kimi.ai/docs/pricing/chat (2026-11-11): $2 / $10 / $0.20
+    // cached input, no separate cache write. `k3.1-pro` is a generic id, so
+    // it prices only under the provider-qualified `kimi/k3.1-pro` key — a
+    // bare `k3.1-pro` from an unknown provider stays unmapped like
+    // `cursor/auto`.
     const k311 = 2 + 10 + 0.2 + 2;
     for (const [model, provider] of [
       ["k3.1-pro", "omp"],
@@ -1125,10 +1123,6 @@ describe("estimateCost", () => {
         `${provider}/${model}`,
       ).toBeCloseTo(k311, 5);
     }
-    expect(collectUnmappedModels([
-      { ...zeroUsage, provider: "omp", model: "k3.1-pro", input_tokens: 1 },
-      { ...zeroUsage, provider: "kimi", model: "kimi-code/k3.1-pro", input_tokens: 1 },
-    ])).toEqual([]);
     // The subscription coding-route alias, the CodeBuddy SKU, the
     // double-price highspeed variant, and the bare id under an unknown or
     // absent provider all stay unmapped.
@@ -1137,6 +1131,8 @@ describe("estimateCost", () => {
       ["kimi-code/kimi-for-coding", "kimi"],
       ["kimi-k3-1", undefined],
       ["kimi-k3.1-pro-highspeed", undefined],
+      ["kimi-code/k3.1-pro-highspeed", "kimi"],
+      ["k3.1-pro-highspeed", "kimi"],
       ["k3.1-pro", "acme"],
       ["k3.1-pro", undefined],
     ] as const) {

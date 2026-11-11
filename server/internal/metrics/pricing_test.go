@@ -378,10 +378,10 @@ func TestPriceForModelAliasAlibabaMoonshotVolcengine(t *testing.T) {
 }
 
 // TestPriceForModelAliasGLM53AndKimiK31Pro pins the newly priced SKUs and the
-// transports that report them: omp's bare `k3.1-pro`, Kimi Code's
-// `kimi-code/k3.1-pro`, Hermes' `custom:glm-5.3` (routing prefixes reach the
-// rows through the `(^|/|:)` anchors). The distinct CodeBuddy SKU
-// `kimi-k3-1`, the double-price `kimi-k3.1-pro-highspeed` variant and Kimi
+// transports that report them: Hermes' `custom:glm-5.3` and opencode's
+// `zhipuai/glm-5.3` (routing prefixes reach the rows through the `(^|/|:)`
+// anchors), Kimi Code's `kimi-code/k3.1-pro`. The distinct CodeBuddy SKU
+// `kimi-k3-1`, the double-price `kimi-k3.1-pro-highspeed` variants and Kimi
 // Code's subscription coding-route alias `kimi-for-coding` (absent from
 // Moonshot's API price sheet, like `ark-code-latest`) stay unmapped rather
 // than borrowing a guessed rate.
@@ -418,6 +418,8 @@ func TestPriceForModelAliasGLM53AndKimiK31Pro(t *testing.T) {
 		"kimi-code/kimi-for-coding",
 		"kimi-k3-1",
 		"kimi-k3.1-pro-highspeed",
+		"kimi-code/k3.1-pro-highspeed",
+		"k3.1-pro-highspeed",
 		"glm-5.3-flashx",
 		"glm-5.3-fast",
 		"glm-5.3-extra",
