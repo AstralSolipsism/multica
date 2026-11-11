@@ -83,7 +83,7 @@ var modelPrices = map[string]ModelPrice{
 	"minimax:m2.7-highspeed": {Provider: "minimax", Model: "m2.7-highspeed", InputPerM: 0.60, CacheReadPerM: 0.06, CacheWritePerM: 0.375, OutputPerM: 2.40},
 	// Google standard token prices: ai.google.dev/gemini-api/docs/pricing
 	// (2026-10-19). Mirror packages/views/runtimes/utils.ts.
-	// Argon's intro rate expires 2026-11-30; Flash 3.6/3.8, Robotics and
+	// Argon and Carbon's intro rates expire 2026-11-30; Flash 3.6/3.8, Robotics and
 	// 3.8 TTS promotions expire 2026-12-31. Update these static rows at expiry.
 	// As documented at ai.google.dev/gemini-api/docs/deprecations, 3.5 Flash
 	// routes to 3.6 and 3.7 routes to 3.8; use the destination's current rate.
@@ -94,6 +94,7 @@ var modelPrices = map[string]ModelPrice{
 	// Mixed-modality Live/Image/Omni/Embedding, grounding and hourly cache
 	// storage cannot be inferred from these token totals.
 	"google:gemini-4-argon":                         {Provider: "google", Model: "gemini-4-argon", InputPerM: 2, CacheReadPerM: 0.1, CacheWritePerM: 2, OutputPerM: 10},
+	"google:gemini-4-carbon":                        {Provider: "google", Model: "gemini-4-carbon", InputPerM: 2, CacheReadPerM: 0.1, CacheWritePerM: 2, OutputPerM: 10},
 	"google:gemini-3.8-flash":                       {Provider: "google", Model: "gemini-3.8-flash", InputPerM: 0.75, CacheReadPerM: 0.075, CacheWritePerM: 0.75, OutputPerM: 3.75},
 	"google:gemini-3.7-flash":                       {Provider: "google", Model: "gemini-3.7-flash", InputPerM: 0.75, CacheReadPerM: 0.075, CacheWritePerM: 0.75, OutputPerM: 3.75},
 	"google:gemini-3.6-flash":                       {Provider: "google", Model: "gemini-3.6-flash", InputPerM: 0.75, CacheReadPerM: 0.075, CacheWritePerM: 0.75, OutputPerM: 3.75},
@@ -155,6 +156,17 @@ var modelPrices = map[string]ModelPrice{
 	// providers/moonshotai/models/kimi-k3.toml). Moonshot bills no separate
 	// cache write, so CacheWritePerM mirrors Input.
 	"moonshotai:kimi-k3": {Provider: "moonshotai", Model: "kimi-k3", InputPerM: 3.0, CacheReadPerM: 0.30, CacheWritePerM: 3.0, OutputPerM: 15.0},
+	// Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat, 2026-11-11; the
+	// sheet is JS-rendered, rates via models.dev providers/moonshotai, the
+	// source the K3 row cites). Same cache-write convention as K3; the
+	// distinct $4 / $20 highspeed SKU stays unmapped by the anchored rules.
+	"moonshotai:kimi-k3.1-pro": {Provider: "moonshotai", Model: "kimi-k3.1-pro", InputPerM: 2.0, CacheReadPerM: 0.20, CacheWritePerM: 2.0, OutputPerM: 10.0},
+	// Zhipu GLM-5.3 and the PAID GLM-5.3-Flash tier
+	// (docs.z.ai/guides/overview/pricing, 2026-11-11). Z.ai bills no separate
+	// cache write, so CacheWritePerM mirrors InputPerM. Mirror
+	// packages/views/runtimes/utils.ts.
+	"zai:glm-5.3":       {Provider: "zai", Model: "glm-5.3", InputPerM: 1.4, CacheReadPerM: 0.26, CacheWritePerM: 1.4, OutputPerM: 4.4},
+	"zai:glm-5.3-flash": {Provider: "zai", Model: "glm-5.3-flash", InputPerM: 0.15, CacheReadPerM: 0.03, CacheWritePerM: 0.15, OutputPerM: 0.5},
 	// Volcengine Ark (ark.cn-beijing.volces.com). `ark-code-latest` is a
 	// rolling alias whose target can be switched in the Volcengine console
 	// (across model families), so it is not a stable model identity; the
@@ -230,13 +242,17 @@ var modelAliasRules = []struct {
 	// Opus 5 rule cannot swallow 5.5 ids and bill them at Opus 5 rates.
 	{regexp.MustCompile(`claude-opus-5[-.]5` + claudeVersionEnd), "anthropic:claude-opus-5-5"},
 	{regexp.MustCompile(`claude-opus-5` + claudeVersionEnd), "anthropic:claude-opus-5"},
-	{regexp.MustCompile(`claude-opus-4[-.]8`), "anthropic:claude-opus-4.8"},
-	{regexp.MustCompile(`claude-opus-4[-.]7`), "anthropic:claude-opus-4.7"},
-	{regexp.MustCompile(`claude-opus-4[-.]6`), "anthropic:claude-opus-4.6"},
-	{regexp.MustCompile(`claude-opus-4[-.]5`), "anthropic:claude-opus-4.5"},
-	{regexp.MustCompile(`claude-sonnet-4[-.]6|claude-4[-.]6-sonnet`), "anthropic:claude-sonnet-4.6"},
-	{regexp.MustCompile(`claude-sonnet-4[-.]5|claude-4[-.]5-sonnet`), "anthropic:claude-sonnet-4.5"},
-	{regexp.MustCompile(`claude-haiku-4[-.]5`), "anthropic:claude-haiku-4.5"},
+	// The 4.x rows gain the same claudeVersionEnd terminator as the 5.x rows:
+	// unanchored, `claude-opus-4-5-99-high` priced at the 4.5 tier while the
+	// frontend's exact-key lookup (correctly) left it unmapped — a
+	// cross-layer divergence a multi-segment version can no longer trigger.
+	{regexp.MustCompile(`claude-opus-4[-.]8` + claudeVersionEnd), "anthropic:claude-opus-4.8"},
+	{regexp.MustCompile(`claude-opus-4[-.]7` + claudeVersionEnd), "anthropic:claude-opus-4.7"},
+	{regexp.MustCompile(`claude-opus-4[-.]6` + claudeVersionEnd), "anthropic:claude-opus-4.6"},
+	{regexp.MustCompile(`claude-opus-4[-.]5` + claudeVersionEnd), "anthropic:claude-opus-4.5"},
+	{regexp.MustCompile(`(?:claude-sonnet-4[-.]6|claude-4[-.]6-sonnet)` + claudeVersionEnd), "anthropic:claude-sonnet-4.6"},
+	{regexp.MustCompile(`(?:claude-sonnet-4[-.]5|claude-4[-.]5-sonnet)` + claudeVersionEnd), "anthropic:claude-sonnet-4.5"},
+	{regexp.MustCompile(`claude-haiku-4[-.]5` + claudeVersionEnd), "anthropic:claude-haiku-4.5"},
 	// The official Flash name and retired v4 aliases serve V4.1-Flash-1017.
 	// Preserve chat/reasoner's existing Flash routing. Only known spellings
 	// and the 1017 snapshot resolve, matching the frontend's exact keys.
@@ -248,6 +264,7 @@ var modelAliasRules = []struct {
 	// Each Gemini SKU is exact: an image/audio/preview variant must never
 	// inherit the nearest text model rate. Known efforts normalize below.
 	{regexp.MustCompile(`(^|/|:)gemini-4-argon$`), "google:gemini-4-argon"},
+	{regexp.MustCompile(`(^|/|:)gemini-4-carbon$`), "google:gemini-4-carbon"},
 	{regexp.MustCompile(`(^|/|:)gemini-3\.8-flash$`), "google:gemini-3.8-flash"},
 	{regexp.MustCompile(`(^|/|:)gemini-3\.7-flash$`), "google:gemini-3.7-flash"},
 	{regexp.MustCompile(`(^|/|:)gemini-3\.6-flash$`), "google:gemini-3.6-flash"},
@@ -299,6 +316,19 @@ var modelAliasRules = []struct {
 	// unmapped; `kimi-code/k3` (Kimi Code CLI) resolves via the `/k3$` form.
 	{regexp.MustCompile(`(^|/|:)kimi-k3$`), "moonshotai:kimi-k3"},
 	{regexp.MustCompile(`(^|/|:)k3$`), "moonshotai:kimi-k3"},
+	// Kimi K3.1 Pro. Anchored like K3 so CodeBuddy's `kimi-k3-1` and the
+	// double-price `kimi-k3.1-pro-highspeed` stay unmapped; the Kimi Code CLI
+	// (`kimi-code/k3.1-pro`) and omp (`k3.1-pro`) resolve through the
+	// `k3.1-pro$` form. The frontend keys the bare id provider-qualified
+	// (`kimi/k3.1-pro`, `omp/k3.1-pro`) because omp is a multi-provider
+	// harness.
+	{regexp.MustCompile(`(^|/|:)kimi-k3\.1-pro$`), "moonshotai:kimi-k3.1-pro"},
+	{regexp.MustCompile(`(^|/|:)k3\.1-pro$`), "moonshotai:kimi-k3.1-pro"},
+	// Zhipu GLM-5.3 (docs.z.ai/guides/overview/pricing). Anchored so unknown
+	// suffixed variants (`glm-5.3-fast`, `glm-5.3-extra`) stay unmapped,
+	// matching the frontend's exact keys.
+	{regexp.MustCompile(`(^|/|:)glm-5\.3$`), "zai:glm-5.3"},
+	{regexp.MustCompile(`(^|/|:)glm-5\.3-flash$`), "zai:glm-5.3-flash"},
 	// Volcengine Ark `ark-code-latest` is deliberately absent: it is a
 	// console-switchable rolling alias across model families, not a stable
 	// model identity, so it stays unmapped.
@@ -315,8 +345,25 @@ var contextTagRe = regexp.MustCompile(`\[[^\]]+\]$`)
 // Antigravity reports a display label or an effort-suffixed model ID. Effort
 // selects reasoning, not a different SKU. Only strip known effort spellings;
 // unknown variants must remain unpriced instead of borrowing a family's rate.
-var geminiDisplayNameRe = regexp.MustCompile(`(^|/|:)gemini ([0-9]+(?:\.[0-9]+)?) (flash(?:-lite)?|pro|argon)(?: \((?:minimal|low|medium|high)\))?$`)
-var geminiEffortSuffixRe = regexp.MustCompile(`((?:^|/|:)gemini-[0-9]+(?:\.[0-9]+)?-(?:flash(?:-lite)?|pro|argon))-(?:minimal|low|medium|high)$`)
+var geminiDisplayNameRe = regexp.MustCompile(`(^|/|:)gemini ([0-9]+(?:\.[0-9]+)?) (flash(?:-lite)?|pro|argon|carbon)(?: \((?:minimal|low|medium|high)\))?$`)
+var geminiEffortSuffixRe = regexp.MustCompile(`((?:^|/|:)gemini-[0-9]+(?:\.[0-9]+)?-(?:flash(?:-lite)?|pro|argon|carbon))-(?:minimal|low|medium|high)$`)
+
+// Antigravity likewise labels Claude models with the reasoning effort — as a
+// slug suffix (`claude-opus-5-5-high`) or a display label (`Claude Opus 5.5
+// (High)`). The same reasoning as the Gemini rules applies, but this rewrite
+// must stay scoped to the Antigravity runtime: Cursor catalog ids carry the
+// same suffixes with Cursor-specific rates, and a bare `claude-opus-5-5-high`
+// from any other provider is an unknown variant that stays unmapped, so it
+// cannot live in matchModelAlias. The version is a major or major.minor
+// number with `.` or `-` between the parts (`5`, `5-5`, `4.5` — extra
+// segments like `claude-opus-4-5-99` stay unmapped), dotted spellings are
+// normalized to the dashed row keys before lookup, and routing prefixes must
+// be whole segments (`^(?:[a-z][a-z0-9_-]*[/:])*`, like bedrockAnthropicIDRe)
+// so the frontend stripProvider's rejects — `/claude-…`, `bad prefix/claude-…`
+// — reject here too. See priceForAntigravityModel and the antigravity branch
+// of pricingCandidates in packages/views/runtimes/utils.ts.
+var antigravityClaudeDisplayRe = regexp.MustCompile(`(?i)^(?:[a-z][a-z0-9_-]*[/:])*claude (opus|sonnet|haiku|fable) ([0-9]+(?:[.-][0-9]+)?)(?: \((?:minimal|low|medium|high)\))?$`)
+var antigravityClaudeEffortRe = regexp.MustCompile(`(?i)^(?:[a-z][a-z0-9_-]*[/:])*(claude-(?:opus|sonnet|haiku|fable)-[0-9]+(?:[.-][0-9]+)?)-(?:minimal|low|medium|high)$`)
 
 func matchModelAlias(model string) (ModelPrice, bool) {
 	model = geminiDisplayNameRe.ReplaceAllString(model, "${1}gemini-${2}-${3}")
@@ -378,6 +425,38 @@ func PriceForModelAlias(model string) (ModelPrice, bool) {
 			return ModelPrice{}, false
 		}
 		return matchModelAlias(stripped)
+	}
+	return ModelPrice{}, false
+}
+
+// priceForAntigravityModel prices usage reported by the Antigravity runtime.
+// Gemini display labels and effort suffixes already normalize inside
+// PriceForModelAlias; Antigravity also labels Claude models with the effort
+// level (see antigravityClaudeDisplayRe), which PriceForModelAlias must keep
+// ignoring for every other provider — so the Claude forms are retried here
+// only after the general resolver misses. A single trailing context tag is
+// tolerated with the same one-tag guard as PriceForModelAlias's own retry;
+// unknown effort spellings (`-max`, `-thinking`) borrow nothing.
+func priceForAntigravityModel(model string) (ModelPrice, bool) {
+	if price, ok := PriceForModelAlias(model); ok {
+		return price, true
+	}
+	id := normalizeBedrockID(strings.ToLower(strings.TrimSpace(model)))
+	forms := []string{id}
+	if stripped := contextTagRe.ReplaceAllString(id, ""); stripped != id && !contextTagRe.MatchString(stripped) {
+		forms = append(forms, stripped)
+	}
+	for _, form := range forms {
+		if m := antigravityClaudeDisplayRe.FindStringSubmatch(form); m != nil {
+			if price, ok := PriceForModelAlias("claude-" + m[1] + "-" + strings.ReplaceAll(m[2], ".", "-")); ok {
+				return price, true
+			}
+		}
+		if m := antigravityClaudeEffortRe.FindStringSubmatch(form); m != nil {
+			if price, ok := PriceForModelAlias(strings.ReplaceAll(m[1], ".", "-")); ok {
+				return price, true
+			}
+		}
 	}
 	return ModelPrice{}, false
 }
