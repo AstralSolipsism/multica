@@ -99,8 +99,9 @@ func TestPriceForRuntimeModelKeepsCursorParsingScopedToCursor(t *testing.T) {
 // suffix or a display label (see readAntigravitySelectedModel in
 // server/pkg/agent/antigravity.go); effort selects reasoning, not a SKU, so
 // the id prices at the base Claude tier. Only the four levels Antigravity
-// supports are stripped, and only for the antigravity provider — the
-// non-Antigravity rows stay pinned unmapped by
+// supports are stripped, the version is a major or major.minor number, and
+// only the antigravity provider gets the rewrite — the non-Antigravity rows
+// stay pinned unmapped by
 // TestPriceForRuntimeModelKeepsCursorParsingScopedToCursor. Mirrors the
 // antigravity branch of pricingCandidates in
 // packages/views/runtimes/utils.ts.
@@ -112,10 +113,10 @@ func TestPriceForRuntimeModelAntigravityClaudeEffort(t *testing.T) {
 		{"claude-opus-5-5-high", "anthropic:claude-opus-5-5"},
 		{"claude-opus-5-5-medium", "anthropic:claude-opus-5-5"},
 		{"claude-sonnet-5-5-low", "anthropic:claude-sonnet-5-5"},
-		{"claude-opus-5.5-high", "anthropic:claude-opus-5-5"},
-		{"Claude-Opus-5.5-High", "anthropic:claude-opus-5-5"},
 		{"claude-haiku-5-5-minimal", "anthropic:claude-haiku-5-5"},
 		{"claude-opus-5-5-high[1m]", "anthropic:claude-opus-5-5"},
+		{"claude-opus-5.5-high", "anthropic:claude-opus-5-5"},
+		{"Claude-Opus-5.5-High", "anthropic:claude-opus-5-5"},
 		{"antigravity:claude-opus-5-5-high", "anthropic:claude-opus-5-5"},
 		{"Claude Opus 5.5 (High)", "anthropic:claude-opus-5-5"},
 		{"Claude Opus 5.5", "anthropic:claude-opus-5-5"},
@@ -133,9 +134,9 @@ func TestPriceForRuntimeModelAntigravityClaudeEffort(t *testing.T) {
 		"claude-opus-5-5-xhigh",
 		"claude-opus-5-5-thinking",
 		"claude-opus-5-5-preview",
-		"claude-opus-4-5-99-high",
+		"claude-opus-5-5-99-high",
+		"claude-opus-5-5-20261001-high",
 		"claude-opus-5-5-high-latest",
-		"claude-opus-5-5-high[]",
 		"/claude-opus-5-5-high",
 		"claude-opus-5-5[]",
 		"claude-opus-5-5-high[1m][2m]",
