@@ -233,6 +233,23 @@ describe("mod pairing threshold (#3)", () => {
     expect(del.block.source).toBe("苹果 香蕉 樱桃");
     expect(add.block.source).toBe("红色 绿色 蓝色");
   });
+
+  it("N3: hit-rate denominator is max(before, after) tokens, not min", () => {
+    // Shared 2 tokens; over the smaller side that is a 1.0 hit rate and would
+    // wrongly pair into a mod — over the larger side it is 0.4 < 0.5, so the
+    // blocks stay a separate delete + add.
+    const diff = diffWikiMarkdown("a b", "a b c d e");
+    expect(diff.map((entry) => entry.op)).toEqual(["del", "add"]);
+  });
+
+  it("N2: table pairing threshold sits at 0.34 of the larger side", () => {
+    // Shared skeleton stays 29 tokens while the after cell grows: 29/85 ≈
+    // 0.341 pairs (mod), 29/87 ≈ 0.333 falls below 0.34 and stays del + add.
+    const before = "| aa | bb |\n| --- | --- |\n| 1 | 2 |";
+    const at = (n: number) => `| cc | dd |\n| --- | --- |\n| ${Array.from({ length: n }, (_, i) => `w${i}`).join(" ")} | z |`;
+    expect(diffWikiMarkdown(before, at(27)).map((entry) => entry.op)).toEqual(["mod"]);
+    expect(diffWikiMarkdown(before, at(28)).map((entry) => entry.op)).toEqual(["del", "add"]);
+  });
 });
 
 describe("GFM attribute changes (#4)", () => {

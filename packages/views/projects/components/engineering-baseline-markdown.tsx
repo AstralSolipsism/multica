@@ -14,7 +14,7 @@
 // It deliberately does NOT autolink natural words or annotate source lines —
 // those were retired with the chapter baseline.
 
-import { Children, cloneElement, isValidElement, useMemo, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useMemo, useRef, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@multica/ui/lib/utils";
@@ -69,6 +69,7 @@ function WikiLinkChip({ link, raw, meta, onNavigate, onCreateMissing }: {
     return (
       <button
         type="button"
+        data-wiki-link={link.targetSlug ?? link.target}
         className="rounded-sm border border-dashed border-destructive/60 px-1.5 py-0.5 text-[0.9em] text-destructive hover:bg-destructive/10"
         title={t(($) => $.wiki.linkCreate)}
         onClick={() => onCreateMissing?.(link.target || link.display)}
@@ -78,19 +79,19 @@ function WikiLinkChip({ link, raw, meta, onNavigate, onCreateMissing }: {
     );
   }
   if (link.state !== "resolved") {
-    return <span className="rounded-sm border border-dashed border-muted-foreground/50 px-1.5 py-0.5 text-[0.9em] text-muted-foreground">{label}</span>;
+    return <span data-wiki-link={link.targetSlug ?? link.target} className="rounded-sm border border-dashed border-muted-foreground/50 px-1.5 py-0.5 text-[0.9em] text-muted-foreground">{label}</span>;
   }
   const info = link.targetSlug ? meta?.get(link.targetSlug) : undefined;
   const chipClass = "wiki-link-chip rounded-sm bg-brand/10 px-1.5 py-0.5 text-[0.9em] text-brand hover:bg-brand/20";
   const navigate = () => onNavigate?.({ slug: link.targetSlug ?? link.target, ...(link.sectionAnchor ? { anchor: link.sectionAnchor } : {}) });
   if (!info) {
-    return <button type="button" className={chipClass} onClick={navigate}>{label}</button>;
+    return <button type="button" data-wiki-link={link.targetSlug ?? link.target} className={chipClass} onClick={navigate}>{label}</button>;
   }
   // Preview card: ~220ms appear delay via transition-delay, stays while the
   // pointer is on the group (chip or card), and opens on keyboard focus too.
   return (
     <span className="group/wiki-link relative inline-block">
-      <button type="button" className={chipClass} onClick={navigate}>{label}</button>
+      <button type="button" data-wiki-link={link.targetSlug ?? link.target} className={chipClass} onClick={navigate}>{label}</button>
       <span
         className="pointer-events-none absolute bottom-full left-0 z-30 w-72 -translate-y-1 rounded-md border bg-canvas p-2 text-body opacity-0 shadow-md transition-opacity delay-200 group-hover/wiki-link:pointer-events-auto group-hover/wiki-link:opacity-100 group-focus-within/wiki-link:pointer-events-auto group-focus-within/wiki-link:opacity-100"
         data-wiki-link-preview
@@ -106,7 +107,19 @@ function WikiLinkChip({ link, raw, meta, onNavigate, onCreateMissing }: {
   );
 }
 
-/** True when the props bag of a react-markdown element carries children. */
+/** Inline/fenced code renderer; hoisted so wikilink resolution can skip it. */
+function WikiMarkdownCode({ className, children }: { className?: string; children?: ReactNode }) {
+  const language = typeof className === "string" ? /language-([\w-]+)/.exec(className)?.[1] : undefined;
+  const body = Children.toArray(children).filter((part): part is string => typeof part === "string").join("");
+  if (language && isRichFenceLanguage(language)) {
+    return <RichFenceBlock language={language} body={body} />;
+  }
+  if (language) {
+    return <CodeBlockShell language={language} code={body}><StaticCodeBody language={language} body={body} /></CodeBlockShell>;
+  }
+  return <code className={className}>{children}</code>;
+}
+
 function isPropsWithChildren(value: unknown): value is { children?: unknown } {
   return typeof value === "object" && value !== null && "children" in value;
 }
@@ -127,9 +140,14 @@ function withWikiLinks(
   };
   return Children.map(children, (child) => {
     if (typeof child === "string") return replaceText(child);
-    if (isValidElement(child) && isPropsWithChildren(child.props)) {
-      const inner = child.props.children;
-      if (typeof inner === "string") return cloneElement(child, {}, replaceText(inner));
+    if (isValidElement(child)) {
+      // Inline code: `[[x]]` inside backticks stays literal code, even when a
+      // same-name link resolves elsewhere on the page.
+      if (child.type === "code" || child.type === WikiMarkdownCode) return child;
+      if (isPropsWithChildren(child.props)) {
+        const inner = child.props.children;
+        if (typeof inner === "string") return cloneElement(child, {}, replaceText(inner));
+      }
     }
     return child;
   });
@@ -150,12 +168,19 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
     return local.map((anchor, index) => list[index]?.anchor ?? anchor);
   }, [markdown, sections]);
 
+  // Heading anchors consume the h1–h3 list in document order. The cursor is a
+  // ref RESET ON EVERY RENDER: heading components may re-run without the
+  // components map being rebuilt (unchanged props), and a closure counter
+  // would over-advance there and drop every later id. h4–h6 mirror the
+  // server's scanHeadings (H1–H3 only): no id, and they never consume an
+  // anchor — otherwise `#### Detail` between two H2s steals the next H2's
+  // anchor and creates s-… collisions.
+  const headingCursor = useRef(0);
+  headingCursor.current = 0;
   const components = useMemo<Components>(() => {
-    let headingIndex = -1;
-    const wrap = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+    const wrap = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6", indexed: boolean) =>
       function WikiMarkdownHeading({ children }: { children?: ReactNode }) {
-        headingIndex += 1;
-        const anchor = headingAnchors[headingIndex];
+        const anchor = indexed ? headingAnchors[headingCursor.current++] : undefined;
         return <Tag id={anchor ? `s-${anchor}` : undefined} className="scroll-mt-16">{withWikiLinks(children, linkMap, { pageMeta, onNavigate, onCreateMissing })}</Tag>;
       };
     const inline = (Tag: "p" | "li" | "blockquote" | "td" | "th") =>
@@ -163,19 +188,10 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
         return <Tag>{withWikiLinks(children, linkMap, { pageMeta, onNavigate, onCreateMissing })}</Tag>;
       };
     return {
-      h1: wrap("h1"), h2: wrap("h2"), h3: wrap("h3"), h4: wrap("h4"), h5: wrap("h5"), h6: wrap("h6"),
+      h1: wrap("h1", true), h2: wrap("h2", true), h3: wrap("h3", true),
+      h4: wrap("h4", false), h5: wrap("h5", false), h6: wrap("h6", false),
       p: inline("p"), li: inline("li"), blockquote: inline("blockquote"), td: inline("td"), th: inline("th"),
-      code({ className, children }) {
-        const language = typeof className === "string" ? /language-([\w-]+)/.exec(className)?.[1] : undefined;
-        const body = Children.toArray(children).filter((part): part is string => typeof part === "string").join("");
-        if (language && isRichFenceLanguage(language)) {
-          return <RichFenceBlock language={language} body={body} />;
-        }
-        if (language) {
-          return <CodeBlockShell language={language} code={body}><StaticCodeBody language={language} body={body} /></CodeBlockShell>;
-        }
-        return <code className={className}>{children}</code>;
-      },
+      code: WikiMarkdownCode,
     };
   }, [headingAnchors, linkMap, pageMeta, onNavigate, onCreateMissing]);
 

@@ -178,6 +178,37 @@ describe("EngineeringBaselineWiki", () => {
     );
   });
 
+  it("仍然覆盖 retries the write with the conflicted current revision as base", async () => {
+    writeProjectWikiPage.mockRejectedValueOnce(new ApiError("conflict", 409, "Conflict", {
+      code: "baseline_conflict",
+      current: {
+        revision_number: 7, kind: "content", created_at: "2026-11-02T00:00:00Z",
+        created_by_type: "agent", created_by_id: "66666666-6666-4666-8666-666666666666", change_summary: "Agent edit", source_issue_id: null,
+      },
+    }));
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    const draft = "# 项目概览\n\n## Rules\n\nOverwrite draft.";
+    fireEvent.change(source, { target: { value: draft } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await screen.findByTestId("wiki-editor-conflict", {}, { timeout: 4000 });
+    // First attempt carried the editor's original base (6, from the read).
+    expect(writeProjectWikiPage).toHaveBeenLastCalledWith(
+      WS, PROJECT, "overview",
+      expect.objectContaining({ baseRevisionNumber: 6, contentMarkdown: draft }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "仍然覆盖" }));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledTimes(2));
+    // The retry must rebase onto the conflicted current revision (7), never
+    // the stale base (6) or the tree snapshot's number.
+    expect(writeProjectWikiPage).toHaveBeenLastCalledWith(
+      WS, PROJECT, "overview",
+      expect.objectContaining({ baseRevisionNumber: 7, contentMarkdown: draft }),
+    );
+  });
+
   it("creates a child page from the tree hover action and selects it for rename", async () => {
     renderWiki();
     await screen.findByRole("button", { name: "历史版本（6）" });

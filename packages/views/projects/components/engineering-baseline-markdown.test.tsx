@@ -96,6 +96,37 @@ describe("WikiMarkdown", () => {
     expect(document.querySelector("h4")?.getAttribute("id")).toBeNull();
   });
 
+  it("h4-h6 never consume a heading anchor — ## / #### / ## keeps both H2 ids exact", () => {
+    renderWithI18n(<WikiMarkdown markdown={"## Alpha\n\n#### Detail\n\n## Beta"} />);
+    expect(document.getElementById("s-Alpha")).not.toBeNull();
+    expect(document.getElementById("s-Beta")).not.toBeNull();
+    const detail = document.querySelector("h4");
+    expect(detail).not.toBeNull();
+    expect(detail!.getAttribute("id")).toBeNull(); // no wrong s-… collision
+  });
+
+  it("keeps heading ids stable across rerenders with unchanged props", () => {
+    const markdown = "## Alpha\n\n### Nested\n\n## Beta";
+    const first = renderWithI18n(<WikiMarkdown markdown={markdown} />);
+    const idsBefore = Array.from(document.querySelectorAll("h2, h3")).map((el) => el.getAttribute("id"));
+    first.rerender(<WikiMarkdown markdown={markdown} />);
+    const idsAfter = Array.from(document.querySelectorAll("h2, h3")).map((el) => el.getAttribute("id"));
+    expect(idsAfter).toEqual(["s-Alpha", "s-Alpha / Nested", "s-Beta"]);
+    expect(idsBefore).toEqual(idsAfter);
+  });
+
+  it("skips code entirely in wikilink resolution: same-name chip counted once", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown="See [[架构]] and `[[架构]]`."
+        links={[link({ raw: "架构", display: "架构", target: "架构", targetSlug: "architecture" })]}
+      />,
+    );
+    expect(document.querySelectorAll(".wiki-link-chip")).toHaveLength(1);
+    const code = screen.getByText("[[架构]]", { selector: "code" });
+    expect(code.closest(".wiki-link-chip")).toBeNull();
+  });
+
   it("highlights code fences through StaticCodeBody", () => {
     renderWithI18n(<WikiMarkdown markdown={"```go\nfmt.Println(1)\n```"} />);
     expect(screen.getByTestId("code-shell").querySelector("code")).toHaveTextContent("fmt.Println(1)");

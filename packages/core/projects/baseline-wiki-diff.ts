@@ -275,17 +275,22 @@ export function tokenizeWikiBlock(source: string): WikiWordToken[] {
   for (const match of source.matchAll(inlinePattern)) {
     const groups = match.groups ?? {};
     const index = match.index ?? 0;
-    if (index > cursor) tokens.push(...segmentPlain(source.slice(cursor, index)));
+    if (index > cursor) tokens.push(...segmentWikiText(source.slice(cursor, index)));
     const groupName = Object.keys(groups).find((key) => groups[key] !== undefined) ?? "";
     const text = match[0];
     tokens.push({ text, signature: signatureFor(groupName, text) });
     cursor = index + text.length;
   }
-  if (cursor < source.length) tokens.push(...segmentPlain(source.slice(cursor)));
+  if (cursor < source.length) tokens.push(...segmentWikiText(source.slice(cursor)));
   return tokens;
 }
 
-function segmentPlain(text: string): WikiWordToken[] {
+/**
+ * Word segments of plain text, whitespace preserved and zero-width format
+ * characters dropped. Exported so the rendered-DOM diff in views reuses the
+ * exact same tokenizer semantics instead of growing a second one.
+ */
+export function segmentWikiText(text: string): WikiWordToken[] {
   const out: WikiWordToken[] = [];
   for (const part of wordSegmenter().segment(text)) {
     // Keep EVERY segment — whitespace included — so unchanged runs render
@@ -296,6 +301,7 @@ function segmentPlain(text: string): WikiWordToken[] {
   }
   return out;
 }
+
 
 export type WikiWordDiffEntry = { op: "same" | "del" | "add"; text: string; signature: string };
 

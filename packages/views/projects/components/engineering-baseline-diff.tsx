@@ -9,13 +9,15 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import {
+  diffSequence,
   diffWikiMarkdown,
   diffWikiSourceLines,
+  segmentWikiText,
   wikiDiffHasChanges,
   type WikiBlockDiffEntry,
   type WikiStructureChange,
-  type WikiWordDiffEntry,
 } from "@multica/core/projects/baseline-wiki-diff";
+import type { WikiLink } from "@multica/core/api";
 import { useT } from "../../i18n";
 import { WikiMarkdown } from "./engineering-baseline-markdown";
 
@@ -44,71 +46,198 @@ export function wikiDiffStats(entries: readonly WikiBlockDiffEntry[]): WikiDiffS
 
 type ModDiffEntry = Extract<WikiBlockDiffEntry, { op: "mod" }>;
 
-type DomSegment =
-  | { kind: "ins"; start: number; end: number }
-  | { kind: "del"; at: number; text: string };
+/** Block containers terminate the inline formatting chain used for del clones. */
+const BLOCK_STOP: Record<string, true> = {
+  P: true, H1: true, H2: true, H3: true, H4: true, H5: true, H6: true, LI: true, UL: true, OL: true,
+  BLOCKQUOTE: true, TD: true, TH: true, TR: true, THEAD: true, TBODY: true, TABLE: true, PRE: true,
+  DIV: true, SECTION: true, ARTICLE: true,
+};
 
-/** Text nodes of a rendered block with their cumulative offsets. */
-function textNodesOf(root: HTMLElement): { nodes: Text[]; starts: number[]; total: number } {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
-  const starts: number[] = [];
-  let total = 0;
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    nodes.push(node as Text);
-    starts.push(total);
-    total += (node as Text).data.length;
+/** Inline ancestors of a node, up to (excluding) its block container. */
+function inlineChainOf(node: Node, root: HTMLElement): Element[] {
+  const chain: Element[] = [];
+  for (let cur = node.parentElement; cur && cur !== root && !BLOCK_STOP[cur.tagName]; cur = cur.parentElement) {
+    chain.unshift(cur);
   }
-  return { nodes, starts, total };
+  return chain;
+}
+
+/** Signature of an inline chain: `a[href=/old]`, `strong`, `code`, `button[data-wiki-link=slug]`… */
+function signatureOfChain(chain: readonly Element[]): string {
+  return chain.map((element) => {
+    const tag = element.tagName.toLowerCase();
+    if (tag === "a") return `a[href=${element.getAttribute("href") ?? ""}]`;
+    if (tag === "img") return `img[${element.getAttribute("src") ?? ""},${element.getAttribute("alt") ?? ""}]`;
+    const target = element.getAttribute("data-wiki-link");
+    return target === null ? tag : `${tag}[data-wiki-link=${target}]`;
+  }).join(">");
+}
+
+/** One flattened token of a rendered block: a word segment, or an image as an atomic token. */
+type DomToken = {
+  text: string;
+  signature: string;
+  /** Absolute offset in the container's flattened text; images sit between characters. */
+  offset: number;
+  node: Text | HTMLImageElement;
+  /** Character range inside the text node; 0/0 for images. */
+  start: number;
+  end: number;
+};
+
+/**
+ * Flatten a rendered container into word tokens with inline signatures. Marks
+ * (<ins>/<del> left over from an earlier pass) are skipped so re-runs see the
+ * same underlying content.
+ */
+function tokenizeRendered(root: HTMLElement): { tokens: DomToken[]; total: number } {
+  const tokens: DomToken[] = [];
+  let offset = 0;
+  const visit = (parent: Node) => {
+    for (const child of Array.from(parent.childNodes)) {
+      if (child instanceof Text) {
+        const signature = signatureOfChain(inlineChainOf(child, root));
+        let local = 0;
+        for (const segment of segmentWikiText(child.data)) {
+          tokens.push({ text: segment.text, signature, offset: offset + local, node: child, start: local, end: local + segment.text.length });
+          local += segment.text.length;
+        }
+        offset += local;
+      } else if (child instanceof Element) {
+        if (child.tagName === "INS" || child.tagName === "DEL") continue;
+        if (child.tagName === "IMG") {
+          tokens.push({
+            text: "",
+            signature: `img[${child.getAttribute("src") ?? ""},${child.getAttribute("alt") ?? ""}]`,
+            offset,
+            node: child as HTMLImageElement,
+            start: 0,
+            end: 0,
+          });
+        } else {
+          visit(child);
+        }
+      }
+    }
+  };
+  visit(root);
+  return { tokens, total: offset };
+}
+
+type DomRun = { op: "same" | "del" | "add"; tokens: DomToken[] };
+
+/** Build the <del> for a deleted run by cloning the before-DOM inline chains with sliced text. */
+function buildDelElement(tokens: readonly DomToken[], beforeRoot: HTMLElement): HTMLElement {
+  const del = document.createElement("del");
+  del.className = `${DEL_BG} rounded-xs px-0.5`;
+  let index = 0;
+  while (index < tokens.length) {
+    const node = tokens[index]!.node;
+    let last = index;
+    while (last + 1 < tokens.length && tokens[last + 1]!.node === node) last += 1;
+    const text = tokens.slice(index, last + 1).map((token) => token.text).join("");
+    if (node instanceof HTMLImageElement) {
+      del.appendChild(node.cloneNode(false));
+    } else if (text) {
+      let host: HTMLElement = del;
+      for (const ancestor of inlineChainOf(node, beforeRoot)) {
+        const clone = ancestor.cloneNode(false) as HTMLElement;
+        host.appendChild(clone);
+        host = clone;
+      }
+      host.appendChild(document.createTextNode(text));
+    }
+    index = last + 1;
+  }
+  return del;
 }
 
 /**
- * Map the word-diff runs onto the already-rendered AFTER block. Same/add runs
- * consume after-side text; the rendered DOM may carry extra characters or drop
- * markup syntax, so each expected character is matched with a bounded forward
- * scan and skipped when absent. Returns false when the mapping cannot be
- * trusted — the caller falls back to stacked renders.
+ * Overlay the word diff of two RENDERED containers onto the after DOM: added
+ * runs are wrapped in <ins> (text-node splitting), deleted runs become <del>
+ * elements holding clones of the before-DOM inline nodes. Returns false when
+ * the two rendered sides share no token at all — the caller falls back to
+ * stacked rendered views (never source text).
  */
-function mapWordDiffToDom(root: HTMLElement, wordDiff: readonly WikiWordDiffEntry[]): boolean {
-  const initial = textNodesOf(root);
-  const { nodes } = initial;
-  const total = initial.total;
-  const text = nodes.reduce((acc, node) => acc + node.data, "");
-  const LOOKAHEAD = 64;
-  const segments: DomSegment[] = [];
-  let dom = 0;
-  for (const run of wordDiff) {
-    if (run.op === "del") {
-      segments.push({ kind: "del", at: dom, text: run.text });
-      continue;
-    }
-    let start = -1;
-    let end = dom;
-    for (const ch of run.text) {
-      if (dom >= total) return false; // DOM exhausted while content is still unmapped
-      const limit = Math.min(total, dom + LOOKAHEAD);
-      let scan = dom;
-      while (scan < limit && text[scan] !== ch) scan += 1;
-      if (scan >= limit) continue; // renderer dropped or rewrote this character
-      if (start === -1) start = scan;
-      dom = scan + 1;
-      end = dom;
-    }
-    if (run.op === "add" && start !== -1) segments.push({ kind: "ins", start, end });
+function applyRenderedDiff(beforeRoot: HTMLElement, afterRoot: HTMLElement): boolean {
+  const before = tokenizeRendered(beforeRoot);
+  const after = tokenizeRendered(afterRoot);
+  const ops = diffSequence(before.tokens, after.tokens, (a, b) => a.text === b.text && a.signature === b.signature);
+  const runs: DomRun[] = [];
+  for (const op of ops) {
+    const side = op.op === "add" ? after.tokens : before.tokens;
+    const token = side[op.op === "add" ? (op.bIndex as number) : (op.aIndex as number)];
+    if (!token) continue;
+    const lastRun = runs[runs.length - 1];
+    if (lastRun && lastRun.op === op.op) lastRun.tokens.push(token);
+    else runs.push({ op: op.op, tokens: [token] });
   }
-  // Apply back-to-front so earlier offsets survive the splitText surgery.
-  // Every step re-walks the text nodes because splitText rewires them.
-  const order = (segment: DomSegment) => (segment.kind === "del" ? segment.at : segment.start);
-  segments.sort((a, b) => order(b) - order(a) || (a.kind === "ins" ? -1 : 1));
-  for (const segment of segments) {
-    const live = textNodesOf(root);
-    if (segment.kind === "del") insertDelAt(live.nodes, live.starts, live.total, root, segment.at, segment.text);
-    else wrapRangeIns(live.nodes, live.starts, segment.start, segment.end);
+  if (runs.length && !runs.some((run) => run.op === "same") && before.tokens.length && after.tokens.length) {
+    return false; // no overlap: stacked renders read better than del+ins of everything
   }
+  // Offset of the first after token of the next run that consumes after-side
+  // content; del marks are inserted there, or at the very end.
+  const anchorAfter = (index: number): number => {
+    for (let scan = index; scan < runs.length; scan++) {
+      const run = runs[scan]!;
+      if (run.op === "del") continue;
+      const first = run.tokens[0];
+      if (first) return first.offset;
+    }
+    return after.total;
+  };
+  const insertions: Array<{ anchor: number; element: HTMLElement }> = [];
+  const wraps: Array<{ start: number; end: number }> = [];
+  const imageAdds: DomToken[] = [];
+  runs.forEach((run, index) => {
+    if (run.op === "add") {
+      const textTokens = run.tokens.filter((token) => !(token.node instanceof HTMLImageElement) && token.text);
+      const first = textTokens[0];
+      const last = textTokens[textTokens.length - 1];
+      if (first && last) wraps.push({ start: first.offset, end: last.offset + last.text.length });
+      imageAdds.push(...run.tokens.filter((token) => token.node instanceof HTMLImageElement));
+    } else if (run.op === "del") {
+      insertions.push({ anchor: anchorAfter(index + 1), element: buildDelElement(run.tokens, beforeRoot) });
+    }
+  });
+  // Del insertions first: marks are skipped by the walker below, so flattened
+  // offsets never shift. Applying in reverse keeps document order stable when
+  // several del marks share an anchor.
+  for (let index = insertions.length - 1; index >= 0; index--) {
+    const live = textNodesOf(afterRoot);
+    insertDelElementAt(live, afterRoot, insertions[index]!.element, insertions[index]!.anchor);
+  }
+  // Then ins wraps back-to-front so earlier offsets survive splitText surgery.
+  for (let index = wraps.length - 1; index >= 0; index--) {
+    const live = textNodesOf(afterRoot);
+    wrapRangeIns(live, wraps[index]!.start, wraps[index]!.end);
+  }
+  for (const token of imageAdds) wrapImageIns(token.node as Element);
   return true;
 }
 
-function wrapRangeIns(nodes: Text[], starts: number[], start: number, end: number): void {
+/** Text nodes of a container with cumulative offsets; ins/del marks are skipped. */
+function textNodesOf(root: HTMLElement): { nodes: Text[]; starts: number[]; total: number } {
+  const nodes: Text[] = [];
+  const starts: number[] = [];
+  let total = 0;
+  const visit = (parent: Node) => {
+    for (const child of Array.from(parent.childNodes)) {
+      if (child instanceof Text) {
+        nodes.push(child);
+        starts.push(total);
+        total += child.data.length;
+      } else if (child instanceof Element && child.tagName !== "INS" && child.tagName !== "DEL") {
+        visit(child);
+      }
+    }
+  };
+  visit(root);
+  return { nodes, starts, total };
+}
+
+function wrapRangeIns(live: { nodes: Text[]; starts: number[] }, start: number, end: number): void {
+  const { nodes, starts } = live;
   let index = 0;
   while (index + 1 < starts.length && starts[index + 1]! <= start) index += 1;
   for (; index < nodes.length; index += 1) {
@@ -128,12 +257,10 @@ function wrapRangeIns(nodes: Text[], starts: number[], start: number, end: numbe
   }
 }
 
-function insertDelAt(nodes: Text[], starts: number[], total: number, root: HTMLElement, at: number, text: string): void {
-  const del = document.createElement("del");
-  del.className = `${DEL_BG} rounded-xs px-0.5`;
-  del.textContent = text;
+function insertDelElementAt(live: { nodes: Text[]; starts: number[]; total: number }, root: HTMLElement, element: HTMLElement, at: number): void {
+  const { nodes, starts, total } = live;
   if (!nodes.length || at >= total) {
-    root.appendChild(del);
+    root.appendChild(element);
     return;
   }
   let index = 0;
@@ -141,76 +268,73 @@ function insertDelAt(nodes: Text[], starts: number[], total: number, root: HTMLE
   const node = nodes[index]!;
   const local = at - starts[index]!;
   if (local >= node.data.length) {
-    node.parentNode?.insertBefore(del, node.nextSibling);
+    node.parentNode?.insertBefore(element, node.nextSibling);
     return;
   }
   const rest = local > 0 ? node.splitText(local) : node;
-  rest.parentNode?.insertBefore(del, rest);
+  rest.parentNode?.insertBefore(element, rest);
 }
 
-/** Text of del runs that are not part of a replace (no adjacent add run). */
-function pureDeletionText(wordDiff: readonly WikiWordDiffEntry[]): string | null {
-  const parts: string[] = [];
-  wordDiff.forEach((run, index) => {
-    if (run.op !== "del") return;
-    const prev = wordDiff[index - 1];
-    const next = wordDiff[index + 1];
-    if (prev?.op === "add" || next?.op === "add") return;
-    parts.push(run.text);
-  });
-  return parts.length ? parts.join("") : null;
+function wrapImageIns(image: Element): void {
+  if (image.parentElement?.tagName === "INS") return;
+  const ins = document.createElement("ins");
+  ins.className = `${ADD_BG} rounded-xs px-0.5 no-underline`;
+  image.parentNode?.insertBefore(ins, image);
+  ins.appendChild(image);
 }
 
-function ModBlock({ entry }: { entry: ModDiffEntry }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly WikiLink[] }) {
+  const beforeRef = useRef<HTMLDivElement>(null);
+  const afterRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
+  const beforeSource = entry.before.source;
   const afterSource = entry.after.source;
   useLayoutEffect(() => {
     if (failed) return;
-    const host = hostRef.current;
-    if (!host) return;
+    const beforeRoot = beforeRef.current;
+    const afterRoot = afterRef.current;
+    if (!beforeRoot || !afterRoot) return;
     try {
-      if (!mapWordDiffToDom(host, entry.wordDiff)) setFailed(true);
+      if (!applyRenderedDiff(beforeRoot, afterRoot)) setFailed(true);
     } catch {
       setFailed(true);
     }
-  }, [afterSource, entry.wordDiff, failed]);
-  const deleted = pureDeletionText(entry.wordDiff);
+  }, [beforeSource, afterSource, failed]);
   return (
-    <>
-      {deleted && !failed ? (
-        <div className={cn("my-1 rounded-xs px-2 text-caption", DEL_BG, DEL_TEXT)} data-wiki-diff-mod-deleted>
-          {deleted}
+    <div className={cn("my-1 rounded-xs px-2", MOD_BAR)} data-wiki-diff-mod>
+      {entry.attrChanges.length ? (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {entry.attrChanges.map((label) => (
+            <span key={label} className="rounded-full bg-warning/15 px-1.5 py-0.5 text-micro text-warning-foreground">{label}</span>
+          ))}
         </div>
       ) : null}
-      <div className={cn("my-1 rounded-xs px-2", MOD_BAR)} data-wiki-diff-mod>
-        {entry.attrChanges.length ? (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {entry.attrChanges.map((label) => (
-              <span key={label} className="rounded-full bg-warning/15 px-1.5 py-0.5 text-micro text-warning-foreground">{label}</span>
-            ))}
+      {failed ? (
+        <div className="mt-1 space-y-1" data-wiki-diff-mod-fallback>
+          <div className={cn("rounded-xs px-2", DEL_BG, DEL_BAR, DEL_TEXT)}>
+            <WikiMarkdown markdown={beforeSource} links={links} />
           </div>
-        ) : null}
-        {failed ? (
-          <div className="mt-1 space-y-1" data-wiki-diff-mod-fallback>
-            <div className={cn("rounded-xs px-2", DEL_BG, DEL_BAR, DEL_TEXT)}>
-              <WikiMarkdown markdown={entry.before.source} />
-            </div>
-            <div className={cn("rounded-xs px-2", ADD_BG, ADD_BAR)}>
-              <WikiMarkdown markdown={entry.after.source} />
-            </div>
+          <div className={cn("rounded-xs px-2", ADD_BG, ADD_BAR)}>
+            <WikiMarkdown markdown={afterSource} links={links} />
           </div>
-        ) : (
-          <div ref={hostRef}>
-            <WikiMarkdown markdown={afterSource} />
+        </div>
+      ) : (
+        <>
+          {/* Both sides render through the same markdown pipeline; the before
+              copy stays hidden and is only read for del clones. */}
+          <div ref={beforeRef} hidden aria-hidden="true" data-wiki-diff-mod-before>
+            <WikiMarkdown markdown={beforeSource} links={links} />
           </div>
-        )}
-      </div>
-    </>
+          <div ref={afterRef}>
+            <WikiMarkdown markdown={afterSource} links={links} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
-function BlockDiff({ entry, onExpandFold }: { entry: FoldedDiffEntry; onExpandFold: () => void }) {
+function BlockDiff({ entry, links, onExpandFold }: { entry: FoldedDiffEntry; links?: readonly WikiLink[]; onExpandFold: () => void }) {
   const { t } = useT("engineering");
   if (entry.op === "fold") {
     return (
@@ -225,23 +349,23 @@ function BlockDiff({ entry, onExpandFold }: { entry: FoldedDiffEntry; onExpandFo
     );
   }
   if (entry.op === "same") {
-    return <WikiMarkdown markdown={entry.block.source} />;
+    return <WikiMarkdown markdown={entry.block.source} links={links} />;
   }
   if (entry.op === "add") {
     return (
       <div className={cn("my-1 rounded-xs px-2", ADD_BG, ADD_BAR)} data-wiki-diff-add>
-        <WikiMarkdown markdown={entry.block.source} />
+        <WikiMarkdown markdown={entry.block.source} links={links} />
       </div>
     );
   }
   if (entry.op === "del") {
     return (
       <div className={cn("my-1 rounded-xs px-2 opacity-80", DEL_BG, DEL_BAR, DEL_TEXT)} data-wiki-diff-del>
-        <WikiMarkdown markdown={entry.block.source} />
+        <WikiMarkdown markdown={entry.block.source} links={links} />
       </div>
     );
   }
-  return <ModBlock entry={entry} />;
+  return <ModBlock entry={entry} links={links} />;
 }
 
 export interface WikiDiffViewProps {
@@ -249,6 +373,8 @@ export interface WikiDiffViewProps {
   after: string;
   /** Fold unchanged runs (仅看变更); defaults to true per the UX spec. */
   changesOnly?: boolean;
+  /** Wiki link resolution data so both diff sides render chips, not `[[…]]` source. */
+  links?: readonly WikiLink[];
   className?: string;
 }
 
@@ -279,14 +405,14 @@ function foldEntries(entries: readonly WikiBlockDiffEntry[], context = 1): Folde
   return out;
 }
 
-export function WikiDiffView({ before, after, changesOnly = true, className }: WikiDiffViewProps) {
+export function WikiDiffView({ before, after, changesOnly = true, links, className }: WikiDiffViewProps) {
   const [expanded, setExpanded] = useState(false);
   const entries = diffWikiMarkdown(before, after);
   const folded = changesOnly && !expanded ? foldEntries(entries) : entries;
   return (
     <div className={className} data-wiki-diff-view>
       {folded.map((entry, index) => (
-        <BlockDiff key={index} entry={entry} onExpandFold={() => setExpanded(true)} />
+        <BlockDiff key={index} entry={entry} links={links} onExpandFold={() => setExpanded(true)} />
       ))}
     </div>
   );
