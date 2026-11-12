@@ -369,6 +369,32 @@ function tokenHitRate(a: WikiBlock, b: WikiBlock): number {
   return sameCount / total;
 }
 
+/** Opaque rendered block used when inter-block source bytes are the only change. */
+function wholeBodyBlock(source: string): WikiBlock {
+  return { kind: "other", source, signature: "whole-body", attrs: {}, position: { start: 0, end: source.length } };
+}
+
+export function diffWikiMarkdown(before: string, after: string): WikiBlockDiffEntry[] {
+  if (before === after) return [];
+  const beforeBlocks = splitWikiBlocks(before);
+  const afterBlocks = splitWikiBlocks(after);
+  const entries = diffWikiBlockLists(beforeBlocks, afterBlocks);
+  // Block splitting drops bytes BETWEEN blocks (blank-line counts and trailing
+  // whitespace). If all aligned blocks compare equal, differing sources still
+  // require a visible whole-body comparison (§7.4 item 6).
+  if (entries.some((entry) => entry.op !== "same")) return entries;
+  return [{
+    op: "mod",
+    before: wholeBodyBlock(before),
+    after: wholeBodyBlock(after),
+    attrChanges: [],
+    wordDiff: [
+      { op: "del", text: before, signature: "block" },
+      { op: "add", text: after, signature: "block" },
+    ],
+  }];
+}
+
 /**
  * Align two markdown bodies. Structure-only revisions (rename/move/archive)
  * produce no entries here — the caller shows the metadata bar instead. The
@@ -377,10 +403,7 @@ function tokenHitRate(a: WikiBlock, b: WikiBlock): number {
  * (0.5, or 0.34 for tables); below that the blocks stay a separate delete +
  * add, mirroring the rendered-diff contract.
  */
-export function diffWikiMarkdown(before: string, after: string): WikiBlockDiffEntry[] {
-  if (before === after) return [];
-  const beforeBlocks = splitWikiBlocks(before);
-  const afterBlocks = splitWikiBlocks(after);
+function diffWikiBlockLists(beforeBlocks: WikiBlock[], afterBlocks: WikiBlock[]): WikiBlockDiffEntry[] {
   const ops = diffSequence(beforeBlocks, afterBlocks, blockEquals);
   const out: WikiBlockDiffEntry[] = [];
   for (let k = 0; k < ops.length; k++) {

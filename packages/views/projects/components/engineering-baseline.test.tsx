@@ -130,6 +130,99 @@ describe("EngineeringBaselineWiki", () => {
     expect(screen.getByLabelText("On this page")).toBeInTheDocument();
   });
 
+  it.each([
+    { name: "history wikilink rendering", before: "See [[architecture|认证]] now.", after: "See [[rules|认证]] now.", links: true },
+    { name: "history blank-line source change", before: "First paragraph\n\nSecond paragraph", after: "First paragraph\n\n\nSecond paragraph", links: false },
+  ])("independent production entry: $name", async ({ before, after, links }) => {
+    const getProjectWikiPageRevision = vi.fn(async (_ws: string, _project: string, _page: string, revision: number) => ({
+      page: pageRead().page,
+      revision: { ...pageRead().revision, id: `revision-${revision}`, revisionNumber: revision, contentMarkdown: revision === 6 ? after : before },
+    }));
+    setApiInstance({
+      getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage,
+      getProjectWikiPageRevision,
+      getProjectWikiPageHistory: vi.fn(async () => ({ revisions: [pageRead().revision], hasMore: false, nextBefore: null })),
+    } as unknown as ApiClient);
+    renderWiki();
+    fireEvent.click(await screen.findByRole("button", { name: "历史版本（6）" }));
+    await waitFor(() => expect(getProjectWikiPageRevision).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(document.querySelector('[data-wiki-history] [data-wiki-diff-view]')).not.toBeNull());
+    const rich = document.querySelector('[data-wiki-history] [data-wiki-diff-view]')!;
+    if (links) {
+      await waitFor(() => expect(rich.querySelector("[data-wiki-diff-mod]")).not.toBeNull());
+      expect(rich.textContent).not.toContain("[[");
+      const visible = rich.querySelector('[data-wiki-diff-mod] > div:not([hidden])')!;
+      expect(visible.querySelector('[data-wiki-link="architecture"]')).not.toBeNull();
+      expect(visible.querySelector('[data-wiki-link="rules"]')).not.toBeNull();
+
+      fireEvent.click(screen.getByRole("tab", { name: "此版本预览" }));
+      const preview = document.querySelector('[data-wiki-history] [data-wiki-markdown]')!;
+      expect(preview.textContent).not.toContain("[[");
+      expect(preview.querySelector('[data-wiki-link="architecture"]')).toBeNull();
+      fireEvent.click(preview.querySelector('[data-wiki-link="rules"]')!);
+      expect(replace).toHaveBeenCalledWith(expect.stringContaining("page=rules"));
+    } else {
+      expect(rich.querySelector("[data-wiki-diff-mod], [data-wiki-diff-add], [data-wiki-diff-del], [data-wiki-diff-mod-fallback]")).not.toBeNull();
+      expect(document.querySelector("[data-wiki-diff-summary]")?.textContent).toMatch(/[1-9]\d*/);
+    }
+  });
+
+  it("resolves draft wikilinks from the page tree in the editor preview", async () => {
+    renderWiki();
+    await screen.findByRole("button", { name: "历史版本（6）" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    fireEvent.change(source, { target: { value: "See [[architecture|认证]] and [[rules|规范]]." } });
+    const editor = screen.getByTestId("wiki-editor-source").closest("[data-wiki-editor]")!;
+    fireEvent.click(within(editor as HTMLElement).getByRole("tab", { name: "预览" }));
+    const preview = editor.querySelector("[data-wiki-markdown]")!;
+    expect(preview.textContent).not.toContain("[[");
+    expect(preview.querySelector('[data-wiki-link="architecture"]')?.textContent).toBe("认证");
+    expect(preview.querySelector('[data-wiki-link="rules"]')?.textContent).toBe("规范");
+  });
+
+  it("resolves historical and latest wikilinks in both 409 conflict views", async () => {
+    const initial = pageRead();
+    initial.contentMarkdown = "See [[architecture|认证]] now.";
+    initial.revision.contentMarkdown = initial.contentMarkdown;
+    initial.links = [];
+    getProjectWikiPage.mockResolvedValue(initial);
+    writeProjectWikiPage.mockRejectedValueOnce(new ApiError("conflict", 409, "Conflict", {
+      code: "baseline_conflict",
+      current: {
+        revision_number: 7, kind: "content", created_at: "2026-11-02T00:00:00Z",
+        created_by_type: "agent", created_by_id: "66666666-6666-4666-8666-666666666666", change_summary: "Agent edit", source_issue_id: null,
+      },
+    }));
+    renderWiki();
+    await screen.findByRole("button", { name: "历史版本（6）" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    const draft = "Draft [[architecture|草稿]].";
+    fireEvent.change(source, { target: { value: draft } });
+    const latest = pageRead();
+    latest.contentMarkdown = "See [[rules|认证]] now.";
+    latest.revision.revisionNumber = 7;
+    latest.revision.contentMarkdown = latest.contentMarkdown;
+    latest.links = [];
+    getProjectWikiPage.mockResolvedValue(latest);
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    const panel = await screen.findByTestId("wiki-editor-conflict", {}, { timeout: 4000 });
+    fireEvent.click(screen.getByRole("button", { name: "查看对方改了什么" }));
+    await waitFor(() => expect(panel.querySelector("[data-wiki-diff-mod]")).not.toBeNull());
+    const conflictDiff = panel.querySelector("[data-wiki-diff-view]")!;
+    expect(conflictDiff.textContent).not.toContain("[[");
+    const visible = conflictDiff.querySelector('[data-wiki-diff-mod] > div:not([hidden])')!;
+    expect(visible.querySelector('[data-wiki-link="architecture"]')).not.toBeNull();
+    expect(visible.querySelector('[data-wiki-link="rules"]')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "载入最新并保留草稿" }));
+    const compare = await screen.findByTestId("wiki-editor-compare");
+    expect(compare.textContent).not.toContain("[[");
+    expect(compare.querySelector('[data-wiki-link="architecture"]')?.textContent).toBe("草稿");
+    expect(screen.getByTestId("wiki-editor-latest").querySelector('[data-wiki-link="rules"]')?.textContent).toBe("认证");
+  });
+
   it("edits the page and saves with the current tree base revision number", async () => {
     renderWiki();
     await screen.findByRole("heading", { name: "Rules" });

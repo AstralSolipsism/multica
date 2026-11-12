@@ -19,7 +19,7 @@ import {
 } from "@multica/core/projects/baseline-wiki-diff";
 import type { WikiLink } from "@multica/core/api";
 import { useT } from "../../i18n";
-import { WikiMarkdown } from "./engineering-baseline-markdown";
+import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdown";
 
 const ADD_BG = "bg-[oklch(0.94_0.07_150)] dark:bg-[oklch(0.34_0.07_150/0.55)]";
 const DEL_BG = "bg-[oklch(0.945_0.05_22)] dark:bg-[oklch(0.36_0.09_22/0.5)]";
@@ -340,20 +340,20 @@ function wrapImageIns(image: Element): void {
 }
 
 /** Whole-block stacked compare: old (red, struck) above / new (green) below. */
-function StackedCompare({ beforeSource, afterSource, links }: { beforeSource: string; afterSource: string; links?: readonly WikiLink[] }) {
+function StackedCompare({ beforeSource, afterSource, links, onNavigate }: { beforeSource: string; afterSource: string; links?: readonly WikiLink[]; onNavigate?: (target: WikiLinkTarget) => void }) {
   return (
     <div className="mt-1 space-y-1" data-wiki-diff-mod-fallback>
       <div className={cn("rounded-xs px-2", DEL_BG, DEL_BAR, DEL_TEXT)}>
-        <WikiMarkdown markdown={beforeSource} links={links} />
+        <WikiMarkdown markdown={beforeSource} links={links} onNavigate={onNavigate} />
       </div>
       <div className={cn("rounded-xs px-2", ADD_BG, ADD_BAR)}>
-        <WikiMarkdown markdown={afterSource} links={links} />
+        <WikiMarkdown markdown={afterSource} links={links} onNavigate={onNavigate} />
       </div>
     </div>
   );
 }
 
-function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly WikiLink[] }) {
+function ModBlock({ entry, links, onNavigate }: { entry: ModDiffEntry; links?: readonly WikiLink[]; onNavigate?: (target: WikiLinkTarget) => void }) {
   const beforeRef = useRef<HTMLDivElement>(null);
   const afterRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
@@ -384,16 +384,16 @@ function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly Wiki
         </div>
       ) : null}
       {failed || fenceCompare ? (
-        <StackedCompare beforeSource={beforeSource} afterSource={afterSource} links={links} />
+        <StackedCompare beforeSource={beforeSource} afterSource={afterSource} links={links} onNavigate={onNavigate} />
       ) : (
         <>
           {/* Both sides render through the same markdown pipeline; the before
               copy stays hidden and is only read for del clones. */}
           <div ref={beforeRef} hidden aria-hidden="true" data-wiki-diff-mod-before>
-            <WikiMarkdown markdown={beforeSource} links={links} />
+            <WikiMarkdown markdown={beforeSource} links={links} onNavigate={onNavigate} />
           </div>
           <div ref={afterRef}>
-            <WikiMarkdown markdown={afterSource} links={links} />
+            <WikiMarkdown markdown={afterSource} links={links} onNavigate={onNavigate} />
           </div>
         </>
       )}
@@ -401,7 +401,7 @@ function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly Wiki
   );
 }
 
-function BlockDiff({ entry, links, onExpandFold }: { entry: FoldedDiffEntry; links?: readonly WikiLink[]; onExpandFold: () => void }) {
+function BlockDiff({ entry, links, onNavigate, onExpandFold }: { entry: FoldedDiffEntry; links?: readonly WikiLink[]; onNavigate?: (target: WikiLinkTarget) => void; onExpandFold: () => void }) {
   const { t } = useT("engineering");
   if (entry.op === "fold") {
     return (
@@ -416,23 +416,23 @@ function BlockDiff({ entry, links, onExpandFold }: { entry: FoldedDiffEntry; lin
     );
   }
   if (entry.op === "same") {
-    return <WikiMarkdown markdown={entry.block.source} links={links} />;
+    return <WikiMarkdown markdown={entry.block.source} links={links} onNavigate={onNavigate} />;
   }
   if (entry.op === "add") {
     return (
       <div className={cn("my-1 rounded-xs px-2", ADD_BG, ADD_BAR)} data-wiki-diff-add>
-        <WikiMarkdown markdown={entry.block.source} links={links} />
+        <WikiMarkdown markdown={entry.block.source} links={links} onNavigate={onNavigate} />
       </div>
     );
   }
   if (entry.op === "del") {
     return (
       <div className={cn("my-1 rounded-xs px-2 opacity-80", DEL_BG, DEL_BAR, DEL_TEXT)} data-wiki-diff-del>
-        <WikiMarkdown markdown={entry.block.source} links={links} />
+        <WikiMarkdown markdown={entry.block.source} links={links} onNavigate={onNavigate} />
       </div>
     );
   }
-  return <ModBlock entry={entry} links={links} />;
+  return <ModBlock entry={entry} links={links} onNavigate={onNavigate} />;
 }
 
 export interface WikiDiffViewProps {
@@ -442,6 +442,7 @@ export interface WikiDiffViewProps {
   changesOnly?: boolean;
   /** Wiki link resolution data so both diff sides render chips, not `[[…]]` source. */
   links?: readonly WikiLink[];
+  onNavigate?: (target: WikiLinkTarget) => void;
   className?: string;
 }
 
@@ -472,14 +473,14 @@ function foldEntries(entries: readonly WikiBlockDiffEntry[], context = 1): Folde
   return out;
 }
 
-export function WikiDiffView({ before, after, changesOnly = true, links, className }: WikiDiffViewProps) {
+export function WikiDiffView({ before, after, changesOnly = true, links, onNavigate, className }: WikiDiffViewProps) {
   const [expanded, setExpanded] = useState(false);
   const entries = diffWikiMarkdown(before, after);
   const folded = changesOnly && !expanded ? foldEntries(entries) : entries;
   return (
     <div className={className} data-wiki-diff-view>
       {folded.map((entry, index) => (
-        <BlockDiff key={index} entry={entry} links={links} onExpandFold={() => setExpanded(true)} />
+        <BlockDiff key={index} entry={entry} links={links} onNavigate={onNavigate} onExpandFold={() => setExpanded(true)} />
       ))}
     </div>
   );

@@ -13,8 +13,9 @@ import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Bold, Code, Heading2, Heading3, Link, List, ListOrdered, Table2 } from "@multica/ui/icons";
 import { useT } from "../../i18n";
+import { resolveWikiLinks, type WikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import { WikiDiffView } from "./engineering-baseline-diff";
-import { WikiMarkdown } from "./engineering-baseline-markdown";
+import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdown";
 
 export interface WikiEditorConflictInfo {
   revisionNumber: number;
@@ -44,6 +45,10 @@ export interface WikiEditorProps {
   onRebase?: (baseRevisionNumber: number) => void;
   /** Current published content of the same scope, for the conflict diff and compare view. */
   fetchCurrentContent: () => Promise<string | null>;
+  /** Tree-backed resolver for draft, historical, and conflict Markdown. */
+  linkIndex: WikiLinkIndex;
+  pageSlug: string;
+  onNavigate: (target: WikiLinkTarget) => void;
   onCancel: () => void;
   /** Page completion source for the `[[` autocomplete (tree pages). */
   suggestPages?: readonly { slug: string; title: string }[];
@@ -107,6 +112,18 @@ export function WikiEditor(props: WikiEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const baseSnapshot = useRef(props.initialMarkdown);
   const dirty = value !== props.initialMarkdown;
+  const draftLinks = useMemo(
+    () => resolveWikiLinks(props.linkIndex, props.pageSlug, value),
+    [props.linkIndex, props.pageSlug, value],
+  );
+  const conflictLinks = useMemo(
+    () => resolveWikiLinks(props.linkIndex, props.pageSlug, conflictDiff ? [conflictDiff.before, conflictDiff.after] : []),
+    [props.linkIndex, props.pageSlug, conflictDiff],
+  );
+  const latestLinks = useMemo(
+    () => resolveWikiLinks(props.linkIndex, props.pageSlug, latestSnapshot?.markdown ?? ""),
+    [props.linkIndex, props.pageSlug, latestSnapshot],
+  );
 
   useEffect(() => {
     props.onDirtyChange?.(dirty);
@@ -325,7 +342,7 @@ export function WikiEditor(props: WikiEditorProps) {
         </div>
       ) : (
         <div className="max-h-[560px] overflow-y-auto px-4 py-3">
-          {value.trim() ? <WikiMarkdown markdown={value} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
+          {value.trim() ? <WikiMarkdown markdown={value} links={draftLinks} onNavigate={props.onNavigate} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
         </div>
       )}
       {latestSnapshot ? (
@@ -333,13 +350,13 @@ export function WikiEditor(props: WikiEditorProps) {
           <section className="min-w-0">
             <h3 className="mb-1 text-caption font-medium">{t(($) => $.wiki.editorCompareDraft)}</h3>
             <div className="max-h-72 overflow-y-auto rounded-md border p-2">
-              {value.trim() ? <WikiMarkdown markdown={value} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
+              {value.trim() ? <WikiMarkdown markdown={value} links={draftLinks} onNavigate={props.onNavigate} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
             </div>
           </section>
           <section className="min-w-0">
             <h3 className="mb-1 text-caption font-medium">{t(($) => $.wiki.editorCompareLatest, { number: latestSnapshot.base })}</h3>
             <div className="max-h-72 overflow-y-auto rounded-md border p-2" data-testid="wiki-editor-latest">
-              <WikiMarkdown markdown={latestSnapshot.markdown} />
+              <WikiMarkdown markdown={latestSnapshot.markdown} links={latestLinks} onNavigate={props.onNavigate} />
             </div>
           </section>
         </div>
@@ -363,7 +380,7 @@ export function WikiEditor(props: WikiEditorProps) {
             <Button type="button" variant="outline" size="sm" disabled={props.saving} onClick={() => void save(conflict.revisionNumber)}>{t(($) => $.wiki.conflictOverwrite)}</Button>
           </div>
           {diffLoading ? <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.wiki.conflictDiffLoading)}</p> : null}
-          {conflictDiff ? <WikiDiffView className="mt-3 rounded-md bg-canvas p-2" before={conflictDiff.before} after={conflictDiff.after} /> : null}
+          {conflictDiff ? <WikiDiffView className="mt-3 rounded-md bg-canvas p-2" before={conflictDiff.before} after={conflictDiff.after} links={conflictLinks} onNavigate={props.onNavigate} /> : null}
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2">

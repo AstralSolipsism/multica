@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { ApiError, api, errorCode, WikiConflictSchema, type WikiTreePage } from "@multica/core/api";
 import { issueIdentifierOptions, issueKeys } from "@multica/core/issues/queries";
 import { projectWikiPageOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
+import { buildWikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import {
   useArchiveWikiPage, useCreateWikiPage, useMoveWikiPage, useRenameWikiPage, useRestoreWikiPage,
   useRollbackWikiPage, useWriteWikiPage,
@@ -35,7 +36,7 @@ import { useFormatRelativeDate } from "./labels";
 import type { WikiEditorConflictInfo, WikiSaveOutcome } from "./engineering-baseline-editor";
 import { WikiEditor } from "./engineering-baseline-editor";
 import { WikiHistoryView } from "./engineering-baseline-history";
-import { WikiMarkdown } from "./engineering-baseline-markdown";
+import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdown";
 import { WikiSearchPalette } from "./engineering-baseline-search";
 import { useNavigation } from "../../navigation";
 import { type WikiMoveIntent, WikiTreePanel } from "./engineering-baseline-tree";
@@ -192,6 +193,12 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const treeQuery = useQuery(projectWikiTreeOptions(wsId, props.projectId, true));
   const pages = useMemo(() => (treeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [treeQuery.data]);
   const archived = useMemo(() => (treeQuery.data?.pages ?? []).filter((page) => page.archivedAt !== null), [treeQuery.data]);
+  const wikiLinkIndex = useMemo(() => buildWikiLinkIndex((treeQuery.data?.pages ?? []).map((page) => ({
+    slug: page.slug,
+    title: page.title,
+    sections: page.sections,
+    archived: page.archivedAt !== null,
+  }))), [treeQuery.data?.pages]);
 
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
@@ -281,6 +288,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     }
     doNavigate(slug, anchor);
   }, [editor, editorDirty, doNavigate]);
+  const onWikiLinkNavigate = useCallback((target: WikiLinkTarget) => {
+    navigateToPage(target.slug, target.anchor);
+  }, [navigateToPage]);
 
   const leaveAndDiscard = useCallback(() => {
     const target = pendingLeave;
@@ -558,7 +568,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     const shared = {
       links: read.links,
       pageMeta: pageMetaMap,
-      onNavigate: (target: { slug: string; anchor?: string }) => navigateToPage(target.slug, target.anchor),
+      onNavigate: onWikiLinkNavigate,
       onCreateMissing: (title: string) => void handleCreateMissing(title),
     };
     return (
@@ -580,7 +590,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         })}
       </>
     );
-  }, [read, selected, pageMetaMap, navigateToPage, t, handleCreateMissing, sectionQuery]);
+  }, [read, selected, pageMetaMap, onWikiLinkNavigate, t, handleCreateMissing, sectionQuery]);
 
   const suggestPages = useMemo(() => pages.map((page) => ({ slug: page.slug, title: page.title })), [pages]);
 
@@ -663,6 +673,8 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
               wsId={wsId}
               projectId={props.projectId}
               page={selectedTreePage!}
+              linkIndex={wikiLinkIndex}
+              onNavigate={onWikiLinkNavigate}
               saving={rollbackPage.isPending}
               onRollback={async ({ revisionNumber, baseRevisionNumber, contentOnly }) => {
                 try {
@@ -731,6 +743,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       onSave={handleSave}
                       onDirtyChange={setEditorDirty}
                       fetchCurrentContent={fetchCurrentContent}
+                      linkIndex={wikiLinkIndex}
+                      pageSlug={selected.slug}
+                      onNavigate={onWikiLinkNavigate}
                       onCancel={() => setEditor(null)}
                     />
                   )
@@ -749,6 +764,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       onSave={handleSave}
                       onDirtyChange={setEditorDirty}
                       fetchCurrentContent={fetchCurrentContent}
+                      linkIndex={wikiLinkIndex}
+                      pageSlug={selected.slug}
+                      onNavigate={onWikiLinkNavigate}
                       onCancel={() => setEditor(null)}
                     />
                   )

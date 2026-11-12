@@ -2,15 +2,18 @@
 //
 // This module is the vitest-side mirror of the server's WikiIndex semantics
 // and is locked against the same golden fixture as the Go tests
-// (server/internal/engineering/testdata/wikilinks.json). The shipped views
-// keep using the server-provided `links` data; this module exists so the
-// resolution rules (slug > title > section, ambiguity, stage links, backlink
-// invariant) are pinned by an executable implementation instead of prose.
+// (server/internal/engineering/testdata/wikilinks.json). The reader keeps
+// using server-provided `links`; history and editor snapshots reuse this
+// module with tree sections, without revision-API changes or extra requests.
+
+import type { WikiLink } from "../api/labrastro-engineering-schemas";
 
 export interface WikiLinkPageInput {
   slug: string;
   title: string;
-  content: string;
+  /** Full content is optional when the tree already supplied parsed sections. */
+  content?: string;
+  sections?: readonly WikiLinkSection[];
   archived?: boolean;
 }
 
@@ -127,7 +130,7 @@ function buildLookup(pages: readonly WikiLinkPageInput[]): WikiLinkLookup {
     titles.push(i);
     byTitle.set(page.title.toLowerCase(), titles);
     const seen = new Set<string>();
-    for (const sec of scanSections(page.content)) {
+    for (const sec of page.sections ?? scanSections(page.content ?? "")) {
       for (const key of [sec.anchor.toLowerCase(), sec.title.toLowerCase()]) {
         if (!key || seen.has(key)) continue;
         seen.add(key);
@@ -142,22 +145,27 @@ function buildLookup(pages: readonly WikiLinkPageInput[]): WikiLinkLookup {
   return lookup;
 }
 
-/** Resolve `[[raw]]` written on the page identified by `fromSlug`. */
-export function resolveWikiLink(index: WikiLinkIndex, fromSlug: string, raw: string): WikiLinkResolution {
-  const pages = index.pages;
-  const fromPage = pages.findIndex((page) => page.slug === fromSlug);
+function parseWikiLinkRaw(raw: string): { target: string; section: string; display: string } {
   const [targetWithSection, rawDisplay] = raw.split("|") as [string, string | undefined];
   const display = rawDisplay !== undefined && rawDisplay.trim() !== "" ? rawDisplay : targetWithSection;
   const hash = targetWithSection.indexOf("#");
   const target = (hash === -1 ? targetWithSection : targetWithSection.slice(0, hash)).trim();
   const section = hash === -1 ? "" : targetWithSection.slice(hash + 1).trim();
+  return { target, section, display };
+}
+
+/** Resolve `[[raw]]` written on the page identified by `fromSlug`. */
+export function resolveWikiLink(index: WikiLinkIndex, fromSlug: string, raw: string): WikiLinkResolution {
+  const pages = index.pages;
+  const fromPage = pages.findIndex((page) => page.slug === fromSlug);
+  const { target, section, display } = parseWikiLinkRaw(raw);
   const result: WikiLinkResolution = { kind: "page", state: "missing", targetSlug: "", sectionAnchor: "", display };
   if (/^stage:[1-9][0-9]*$/.test(raw)) return { ...result, kind: "stage", state: "resolved" };
   const { bySlug, byTitle, byAnchor } = buildLookup(pages);
   const resolveSection = (pageIndex: number): WikiLinkResolution => {
     const page = pages[pageIndex];
     if (!page) return result;
-    for (const sec of scanSections(page.content)) {
+    for (const sec of page.sections ?? scanSections(page.content ?? "")) {
       if (sec.anchor.toLowerCase() === section.toLowerCase() || sec.title.toLowerCase() === section.toLowerCase()) {
         return { ...result, state: "resolved", targetSlug: page.slug, sectionAnchor: sec.anchor };
       }
@@ -195,6 +203,40 @@ export function resolveWikiLink(index: WikiLinkIndex, fromSlug: string, raw: str
   return result;
 }
 
+/**
+ * Extract and resolve every distinct link in one or more Markdown snapshots.
+ * Passing both diff sides keeps links that only exist in the historical side.
+ */
+export function resolveWikiLinks(
+  index: WikiLinkIndex,
+  fromSlug: string,
+  markdown: string | readonly string[],
+): WikiLink[] {
+  const sources = typeof markdown === "string" ? [markdown] : markdown;
+  const seen = new Set<string>();
+  const out: WikiLink[] = [];
+  for (const source of sources) {
+    for (const raw of extractLinks(source)) {
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      const resolved = resolveWikiLink(index, fromSlug, raw);
+      const { target, section } = parseWikiLinkRaw(raw);
+      out.push({
+        raw,
+        display: resolved.display,
+        target,
+        section,
+        kind: resolved.kind,
+        state: resolved.state,
+        targetSlug: resolved.targetSlug || null,
+        sectionAnchor: resolved.sectionAnchor || null,
+        candidates: [],
+      });
+    }
+  }
+  return out;
+}
+
 /** Build the resolution index over the unarchived pages of a wiki. */
 export function buildWikiLinkIndex(allPages: readonly WikiLinkPageInput[]): WikiLinkIndex {
   const pages = allPages.filter((page) => !page.archived);
@@ -204,12 +246,12 @@ export function buildWikiLinkIndex(allPages: readonly WikiLinkPageInput[]): Wiki
     linksFor(slug: string): WikiForwardLink[] {
       const page = pages.find((item) => item.slug === slug);
       if (!page) return [];
-      return extractLinks(page.content).map((raw) => ({ raw, ...index.resolve(slug, raw) }));
+      return extractLinks(page.content ?? "").map((raw) => ({ raw, ...index.resolve(slug, raw) }));
     },
     backlinksFor(slug: string): WikiBacklink[] {
       const out: WikiBacklink[] = [];
       pages.forEach((page) => {
-        if (page.slug === slug || !page.content.includes("[[")) return;
+        if (page.slug === slug || !(page.content ?? "").includes("[[")) return;
         for (const link of index.linksFor(page.slug)) {
           if (link.kind === "page" && link.state === "resolved" && link.targetSlug === slug) {
             out.push({ slug: page.slug, sectionAnchor: link.sectionAnchor });

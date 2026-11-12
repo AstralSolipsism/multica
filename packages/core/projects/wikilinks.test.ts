@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWikiLinkIndex,
   extractLinks,
+  resolveWikiLinks,
   scanSections,
   type WikiLinkPageInput,
 } from "./wikilink-resolution";
@@ -51,7 +52,7 @@ describe("wiki links golden fixture", () => {
     for (const [slug, expected] of Object.entries(fixture.extract)) {
       const pageIndex = bySlug.get(slug);
       expect(pageIndex, `fixture page ${slug}`).toBeDefined();
-      expect(extractLinks((pages[pageIndex as number] as WikiLinkPageInput).content)).toEqual(expected);
+      expect(extractLinks((pages[pageIndex as number] as WikiLinkPageInput).content ?? "")).toEqual(expected);
     }
   });
 
@@ -103,5 +104,25 @@ describe("wiki links golden fixture", () => {
       });
       expect(index.backlinksFor(page.slug).length, `backlinks(${page.slug})`).toBe(forward);
     }
+  });
+
+  it("resolves and dedupes both Markdown sides using pre-parsed tree sections", () => {
+    const treePages: WikiLinkPageInput[] = [
+      { slug: "overview", title: "项目概览", sections: [{ anchor: "rules", title: "Rules" }] },
+      { slug: "architecture", title: "架构", sections: [] },
+      { slug: "rules", title: "规则", sections: [] },
+    ];
+    const treeIndex = buildWikiLinkIndex(treePages);
+    const links = resolveWikiLinks(treeIndex, "overview", [
+      "See [[architecture|认证]] and [[overview#Rules|规则小节]].",
+      "See [[rules|认证]] and [[architecture|认证]].",
+    ]);
+    expect(links.map((link) => link.raw)).toEqual(["architecture|认证", "overview#Rules|规则小节", "rules|认证"]);
+    expect(links.map((link) => [link.target, link.targetSlug, link.sectionAnchor])).toEqual([
+      ["architecture", "architecture", null],
+      ["overview", "overview", "rules"],
+      ["rules", "rules", null],
+    ]);
+    expect(links.every((link) => link.state === "resolved")).toBe(true);
   });
 });

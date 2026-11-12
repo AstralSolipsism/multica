@@ -354,3 +354,32 @@ describe("source line mode", () => {
     expect(ops.filter((op) => op.op === "add").map((op) => op.text)).toEqual(["c"]);
   });
 });
+
+describe("inter-block whitespace changes (contract §7.4 item 6)", () => {
+  it("marks a blank-line count change between identical paragraphs", () => {
+    const before = "第一段。\n\n第二段。";
+    const after = "第一段。\n\n\n第二段。";
+    const diff = diffWikiMarkdown(before, after);
+    expect(diff.some((entry) => entry.op !== "same")).toBe(true);
+    expect(wikiDiffHasChanges(before, after, [])).toBe(true);
+    // The fallback is a single whole-body mod with both sources.
+    const mod = diff.find((entry) => entry.op === "mod");
+    expect(mod).toBeDefined();
+    if (mod?.op === "mod") {
+      expect(mod.before.source).toBe(before);
+      expect(mod.after.source).toBe(after);
+    }
+  });
+
+  it("marks trailing whitespace changes lost by block splitting", () => {
+    const before = "段落一。\n\n";
+    const after = "段落一。\n";
+    expect(diffWikiMarkdown(before, after).some((entry) => entry.op !== "same")).toBe(true);
+  });
+
+  it("marks a reference definition change with unchanged visible prose", () => {
+    const before = "[ref]: /old\n\nRead [the rules][ref].";
+    const after = "[ref]: /new\n\nRead [the rules][ref].";
+    expect(diffWikiMarkdown(before, after).some((entry) => entry.op !== "same")).toBe(true);
+  });
+});

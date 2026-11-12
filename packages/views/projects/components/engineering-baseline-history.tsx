@@ -21,12 +21,13 @@ import { toast } from "sonner";
 import { api, type WikiTreePage } from "@multica/core/api";
 import { projectWikiRevisionOptions, projectKeys } from "@multica/core/projects/queries";
 import { diffWikiStructure } from "@multica/core/projects/baseline-wiki-diff";
+import { resolveWikiLinks, type WikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { wikiActivityKindKey } from "./engineering-utils";
 import { useFormatRelativeDate } from "./labels";
 import { WikiDiffLegend, WikiDiffSummary, WikiDiffView, WikiSourceDiff, WikiStructureBar } from "./engineering-baseline-diff";
-import { WikiMarkdown } from "./engineering-baseline-markdown";
+import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdown";
 
 type CompareBase = "previous" | "current" | `since:${number}`;
 
@@ -34,6 +35,9 @@ export interface WikiHistoryViewProps {
   wsId: string;
   projectId: string;
   page: WikiTreePage;
+  /** Tree-backed resolver covering both selected revisions, not just the current read. */
+  linkIndex: WikiLinkIndex;
+  onNavigate: (target: WikiLinkTarget) => void;
   saving: boolean;
   onRollback: (input: { revisionNumber: number; baseRevisionNumber: number; contentOnly: boolean }) => Promise<boolean>;
   onBack: () => void;
@@ -77,6 +81,14 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
   const baseRevision = baseQuery.data?.revision;
   const before = baseRevision?.contentMarkdown ?? "";
   const after = selectedRevision?.contentMarkdown ?? "";
+  const diffLinks = useMemo(
+    () => resolveWikiLinks(props.linkIndex, props.page.slug, [before, after]),
+    [props.linkIndex, props.page.slug, before, after],
+  );
+  const previewLinks = useMemo(
+    () => resolveWikiLinks(props.linkIndex, props.page.slug, after),
+    [props.linkIndex, props.page.slug, after],
+  );
   const structureChanges = useMemo(() => (selectedRevision && baseRevision && selectedRevision.id !== baseRevision.id ? diffWikiStructure(
     {
       title: baseRevision.title, slug: baseRevision.slug, parent: baseRevision.parentId,
@@ -183,11 +195,11 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
           {selectedQuery.isLoading || baseQuery.isLoading ? <Skeleton className="h-40 w-full" /> : tab === "rendered" ? (
             <>
               <WikiStructureBar changes={structureChanges} />
-              <WikiDiffView before={before} after={after} changesOnly={changesOnly} />
+              <WikiDiffView before={before} after={after} changesOnly={changesOnly} links={diffLinks} onNavigate={props.onNavigate} />
               <WikiSourceDiff before={before} after={after} />
             </>
           ) : (
-            <WikiMarkdown markdown={after} sections={props.page.sections} />
+            <WikiMarkdown markdown={after} sections={props.page.sections} links={previewLinks} onNavigate={props.onNavigate} />
           )}
         </div>
       </div>
