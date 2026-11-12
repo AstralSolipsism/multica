@@ -53,6 +53,13 @@ const BLOCK_STOP: Record<string, true> = {
   DIV: true, SECTION: true, ARTICLE: true,
 };
 
+/** Attribute tagging diff-injected marks so native GFM <del> (~~…~~) stays content. */
+const DIFF_MARK = "data-wiki-diff-mark";
+
+function isDiffMark(element: Element): boolean {
+  return (element.tagName === "INS" || element.tagName === "DEL") && element.hasAttribute(DIFF_MARK);
+}
+
 /** Inline ancestors of a node, up to (excluding) its block container. */
 function inlineChainOf(node: Node, root: HTMLElement): Element[] {
   const chain: Element[] = [];
@@ -104,7 +111,7 @@ function tokenizeRendered(root: HTMLElement): { tokens: DomToken[]; total: numbe
         }
         offset += local;
       } else if (child instanceof Element) {
-        if (child.tagName === "INS" || child.tagName === "DEL") continue;
+        if (isDiffMark(child)) continue;
         if (child.tagName === "IMG") {
           tokens.push({
             text: "",
@@ -129,6 +136,7 @@ type DomRun = { op: "same" | "del" | "add"; tokens: DomToken[] };
 /** Build the <del> for a deleted run by cloning the before-DOM inline chains with sliced text. */
 function buildDelElement(tokens: readonly DomToken[], beforeRoot: HTMLElement): HTMLElement {
   const del = document.createElement("del");
+  del.setAttribute(DIFF_MARK, "");
   del.className = `${DEL_BG} rounded-xs px-0.5`;
   let index = 0;
   while (index < tokens.length) {
@@ -159,9 +167,9 @@ function buildDelElement(tokens: readonly DomToken[], beforeRoot: HTMLElement): 
  * the two rendered sides share no token at all — the caller falls back to
  * stacked rendered views (never source text).
  */
-/** Unwrap prior <ins> and drop prior <del> marks so a re-run starts clean. */
+/** Unwrap prior diff marks so a re-run starts clean; native <del> content stays. */
 function clearDiffMarks(root: HTMLElement): void {
-  for (const mark of Array.from(root.querySelectorAll("ins, del"))) {
+  for (const mark of Array.from(root.querySelectorAll(`ins[${DIFF_MARK}], del[${DIFF_MARK}]`))) {
     if (mark.tagName === "INS") mark.replaceWith(...Array.from(mark.childNodes));
     else mark.remove();
   }
@@ -188,6 +196,11 @@ function applyRenderedDiff(beforeRoot: HTMLElement, afterRoot: HTMLElement): boo
   }
   if (runs.length && !runs.some((run) => run.op === "same") && before.tokens.length && after.tokens.length) {
     return false; // no overlap: stacked renders read better than del+ins of everything
+  }
+  if (runs.every((run) => run.op === "same")) {
+    // Rendered output is identical (escape-only source changes and the like):
+    // per §7.4 item 6 the whole-block compare must still show something.
+    return false;
   }
   // Offset of the first after token of the next run that consumes after-side
   // content; del marks are inserted there, or at the very end.
@@ -241,7 +254,7 @@ function textNodesOf(root: HTMLElement): { nodes: Text[]; starts: number[]; tota
         nodes.push(child);
         starts.push(total);
         total += child.data.length;
-      } else if (child instanceof Element && child.tagName !== "INS" && child.tagName !== "DEL") {
+      } else if (child instanceof Element && !isDiffMark(child)) {
         visit(child);
       }
     }
@@ -265,6 +278,7 @@ function wrapRangeIns(live: { nodes: Text[]; starts: number[] }, start: number, 
     if (to < length) node.splitText(to);
     const target = from > 0 ? node.splitText(from) : node;
     const ins = document.createElement("ins");
+    ins.setAttribute(DIFF_MARK, "");
     ins.className = `${ADD_BG} rounded-xs px-0.5 no-underline`;
     target.parentNode?.insertBefore(ins, target);
     ins.appendChild(target);
@@ -288,17 +302,28 @@ function insertDelElementAt(live: { nodes: Text[]; starts: number[]; total: numb
   while (index + 1 < starts.length && starts[index + 1]! <= at) index += 1;
   const node = nodes[index]!;
   const local = at - starts[index]!;
+  // Insert relative to the OUTERMOST inline ancestor: dropping the mark
+  // inside a neighbouring <strong>/<a> would restyle deleted plain text.
+  const hoist = (target: Node, before: boolean): void => {
+    const chain = inlineChainOf(target, root).filter((el) => !isDiffMark(el));
+    const outermost = chain[0];
+    const anchor = outermost ?? target;
+    const parent = anchor.parentElement;
+    if (!parent) return;
+    parent.insertBefore(element, before ? anchor : anchor.nextSibling);
+  };
   if (local >= node.data.length) {
-    node.parentNode?.insertBefore(element, node.nextSibling);
+    hoist(node, false);
     return;
   }
   const rest = local > 0 ? node.splitText(local) : node;
-  rest.parentNode?.insertBefore(element, rest);
+  hoist(rest, true);
 }
 
 function wrapImageIns(image: Element): void {
   if (image.parentElement?.tagName === "INS") return;
   const ins = document.createElement("ins");
+  ins.setAttribute(DIFF_MARK, "");
   ins.className = `${ADD_BG} rounded-xs px-0.5 no-underline`;
   image.parentNode?.insertBefore(ins, image);
   ins.appendChild(image);

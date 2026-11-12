@@ -247,3 +247,63 @@ describe("WikiDiffView fenced blocks", () => {
     expect(finalMod.innerHTML).not.toContain("loose");
   });
 });
+
+describe("WikiDiffView native strikethrough", () => {
+  it("keeps GFM strikethrough content in a modified paragraph", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"旧接口 ~~v1~~ 已废弃，请用 v2。"} after={"旧接口 ~~v1~~ 已废弃，请改用 v2。"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    // The native <del>v1</del> survives as content, distinct from diff marks.
+    const native = after.querySelector(`p > del:not([data-wiki-diff-mark])`);
+    expect(native?.textContent).toBe("v1");
+    expect(after.textContent).toContain("旧接口");
+    // The word change still marks: 请用 del'd, 请改用 ins'd.
+    expect(after.querySelector(`del[data-wiki-diff-mark]`)?.textContent).toContain("请用");
+    expect(after.querySelector(`ins[data-wiki-diff-mark]`)?.textContent).toContain("请改用");
+  });
+
+  it("marks adding strikethrough as a deletion of the struck word and vice versa", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"接口 v1 已废弃。"} after={"接口 ~~v1~~ 已废弃。"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    // Signature change: plain "v1" del-marked, struck "v1" ins-marked.
+    expect(after.querySelector(`del[data-wiki-diff-mark]`)?.textContent).toContain("v1");
+    expect(after.querySelector(`ins[data-wiki-diff-mark]`)?.textContent).toContain("v1");
+
+    const removed = renderWithI18n(
+      <WikiDiffView before={"接口 ~~v1~~ 已废弃。"} after={"接口 v1 已废弃。"} />,
+    );
+    const mod2 = removed.container.querySelector("[data-wiki-diff-mod]")!;
+    const after2 = mod2.querySelector(":scope > div:not([hidden])")!;
+    expect(after2.querySelector(`del[data-wiki-diff-mark]`)?.textContent).toContain("v1");
+    expect(after2.querySelector(`ins[data-wiki-diff-mark]`)?.textContent).toContain("v1");
+  });
+
+  it("falls back to stacked renders when only an escape differs in the source", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"价格 10\\*2 元"} after={"价格 10*2 元"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    expect(mod.querySelector("[data-wiki-diff-mod-fallback]")).not.toBeNull();
+  });
+
+  it("keeps a deletion next to bold text out of the strong element", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"Use plain **bold** end"} after={"Use **bold** end"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    const strong = after.querySelector("strong")!;
+    expect(strong.textContent).toBe("bold");
+    const delMark = after.querySelector(`del[data-wiki-diff-mark]`)!;
+    expect(delMark.textContent).toContain("plain");
+    // The mark is a sibling before the strong, not inside it.
+    expect(delMark.parentElement?.tagName).toBe("P");
+    expect(strong.parentElement?.tagName).toBe("P");
+    expect(after.innerHTML.indexOf("<del")).toBeLessThan(after.innerHTML.indexOf("<strong"));
+  });
+});
