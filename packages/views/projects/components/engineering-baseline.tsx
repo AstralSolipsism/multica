@@ -11,11 +11,14 @@
 // (the editor additionally shows the three-path panel).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
@@ -39,11 +42,20 @@ import { type WikiMoveIntent, WikiTreePanel } from "./engineering-baseline-tree"
 
 const FLASH_MS = 1600;
 
+const GUIDE_SLUGS = ["overview", "domain_rules", "architecture", "exclusions_and_risks"] as const;
+
 export interface EngineeringBaselineWikiProps {
   workspaceSlug: string;
   workspaceId: string;
   projectId: string;
   projectTitle: string;
+}
+
+function isFenceLine(line: string): boolean | null {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("```") && !trimmed.startsWith("~~~")) return null;
+  // An opener line carries a language; a bare fence line toggles state.
+  return !trimmed.match(/^(```|~~~)\s*$/);
 }
 
 /** Split page markdown into the pre-first-H2 intro and each H2 section. */
@@ -52,8 +64,16 @@ function splitByH2(markdown: string): { intro: string; sections: { title: string
   const intro: string[] = [];
   const sections: { title: string; body: string[] }[] = [];
   let current: { title: string; body: string[] } | null = null;
+  let inFence = false;
   for (const line of lines) {
-    if (/^##\s+/.test(line)) {
+    const fence = isFenceLine(line);
+    if (fence !== null) {
+      inFence = fence ? true : !inFence;
+      if (current) current.body.push(line);
+      else intro.push(line);
+      continue;
+    }
+    if (!inFence && /^##\s+/.test(line)) {
       current = { title: line.replace(/^##\s+/, ""), body: [line] };
       sections.push(current);
     } else if (current) {
@@ -63,6 +83,26 @@ function splitByH2(markdown: string): { intro: string; sections: { title: string
     }
   }
   return { intro: intro.join("\n"), sections: sections.map((section) => ({ title: section.title, body: section.body.join("\n") })) };
+}
+
+/** First prose paragraph of a page body, for link hover preview cards. */
+function firstParagraph(markdown: string): string {
+  let inFence = false;
+  const lines: string[] = [];
+  for (const line of markdown.split(/\r?\n/)) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !trimmed || trimmed.startsWith("#")) {
+      if (lines.length) break;
+      continue;
+    }
+    lines.push(trimmed);
+  }
+  const text = lines.join(" ");
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }
 
 function conflictFromError(cause: unknown): WikiEditorConflictInfo | null {
@@ -90,25 +130,35 @@ function SourceIssueChip({ workspaceId, issueId }: { workspaceId: string; issueI
   return <span className="whitespace-nowrap">· {t(($) => $.wiki.metaSourceIssue, { issue: query.data.identifier })}</span>;
 }
 
-function OutlineRail({ sections, className }: { sections: readonly { anchor: string; title: string; level: number }[]; className?: string }) {
+function OutlineRail({ sections, contentKey, className }: { sections: readonly { anchor: string; title: string; level: number }[]; contentKey: string; className?: string }) {
   const { t } = useT("engineering");
   const [active, setActive] = useState<string | null>(null);
   useEffect(() => {
     if (!sections.length) return;
-    const targets = sections
-      .map((section) => document.getElementById(`s-${section.anchor}`))
-      .filter((element): element is HTMLElement => element !== null);
-    if (!targets.length) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]?.target.id) setActive(visible[0].target.id.slice(2));
-      },
-      { rootMargin: "-64px 0px -70% 0px" },
-    );
-    for (const target of targets) observer.observe(target);
-    return () => observer.disconnect();
-  }, [sections]);
+    // Observe AFTER the content renders: contentKey (the loaded revision)
+    // changes with every reader repaint, so targets are re-queried when the
+    // body element is replaced, not only when the section list changes.
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver === "undefined") return;
+    const frame = window.requestAnimationFrame(() => {
+      const targets = sections
+        .map((section) => document.getElementById(`s-${section.anchor}`))
+        .filter((element): element is HTMLElement => element !== null);
+      if (!targets.length) return;
+      observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+          if (visible[0]?.target.id) setActive(visible[0].target.id.slice(2));
+        },
+        { rootMargin: "-64px 0px -70% 0px" },
+      );
+      for (const target of targets) observer.observe(target);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [sections, contentKey]);
 
   return (
     <nav className={cn("overflow-y-auto p-3", className)} aria-label={t(($) => $.wiki.outlineTitle)} data-wiki-outline>
@@ -150,6 +200,8 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [guidePending, setGuidePending] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ scope: "page" | "section"; anchor?: string; title?: string } | null>(null);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<{ slug: string; anchor?: string } | null>(null);
   const readerRef = useRef<HTMLDivElement | null>(null);
 
   const navigation = useNavigation();
@@ -208,7 +260,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     const timer = window.setTimeout(() => flashSection(urlSection), 300);
     return () => window.clearTimeout(timer);
   }, [urlSection, pageQuery.isLoading, flashSection]);
-  const navigateToPage = useCallback((slug: string, anchor?: string) => {
+  const doNavigate = useCallback((slug: string, anchor?: string) => {
     const params = new URLSearchParams(navigation.searchParams);
     params.set("page", slug);
     if (anchor) params.set("section", anchor);
@@ -219,6 +271,24 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     setLeftOpen(false);
     setRightOpen(false);
   }, [flashSection, navigation]);
+
+  // Switching pages while a draft is dirty gets the same guard as cancel:
+  // confirm, then discard (close the editor) and navigate.
+  const navigateToPage = useCallback((slug: string, anchor?: string) => {
+    if (editor && editorDirty) {
+      setPendingLeave({ slug, anchor });
+      return;
+    }
+    doNavigate(slug, anchor);
+  }, [editor, editorDirty, doNavigate]);
+
+  const leaveAndDiscard = useCallback(() => {
+    const target = pendingLeave;
+    setPendingLeave(null);
+    setEditor(null);
+    setEditorDirty(false);
+    if (target) doNavigate(target.slug, target.anchor);
+  }, [pendingLeave, doNavigate]);
 
   const createPage = useCreateWikiPage();
   const writePage = useWriteWikiPage();
@@ -253,6 +323,21 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     }
   };
 
+  const handleCreateRootPage = async () => {
+    try {
+      const result = await createPage.mutateAsync({
+        projectId: props.projectId,
+        title: t(($) => $.wiki.untitled),
+        parent: "root",
+      });
+      if (!result) throw new Error("Unconfirmed create response");
+      setRenameTargetId(result.page.id);
+      navigateToPage(result.page.slug);
+    } catch (cause) {
+      handleTreeError(cause, "treeWriteError");
+    }
+  };
+
   const handleCreateMissing = useCallback(async (title: string) => {
     try {
       const result = await createPage.mutateAsync({ projectId: props.projectId, title });
@@ -264,20 +349,28 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     }
   }, [createPage, navigateToPage, t, handleTreeError, props.projectId]);
 
-  const handleCreateGuide = async (slug: string, title: string) => {
-    setGuidePending(slug);
+  const handleCreateGuide = async () => {
+    // One button creates all four guide pages sequentially; 409 slug-taken
+    // just means the page already exists, so the flow is re-runnable.
+    setGuidePending("guide");
     try {
-      await createPage.mutateAsync({
-        projectId: props.projectId,
-        title,
-        slug,
-        parent: "root",
-        contentMarkdown: t(($) => $.wiki.guideTemplate, { title }),
-      });
-      toast.success(t(($) => $.wiki.guideCreated, { title }));
+      for (const slug of GUIDE_SLUGS) {
+        const title = t(($) => $.chapters[slug]);
+        try {
+          await createPage.mutateAsync({
+            projectId: props.projectId,
+            title,
+            slug,
+            parent: "root",
+            contentMarkdown: t(($) => $.wiki.guideTemplate, { title }),
+          });
+        } catch (cause) {
+          if (errorCode(cause) !== "baseline_slug_taken") throw cause;
+        }
+      }
+      toast.success(t(($) => $.wiki.guideBootstrapDone));
     } catch (cause) {
-      // Someone created it concurrently: 409 slug-taken just means done.
-      if (errorCode(cause) !== "baseline_slug_taken") toast.error(t(($) => $.wiki.guideError, { title }));
+      toast.error(t(($) => $.wiki.guideError, { title: t(($) => $.wiki.guideBootstrap) }));
     } finally {
       setGuidePending(null);
     }
@@ -288,6 +381,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
       await renamePage.mutateAsync({ projectId: props.projectId, page: page.slug, baseRevisionNumber: page.currentRevisionNumber, title });
     } catch (cause) {
       handleTreeError(cause, "renameError");
+    } finally {
+      // Clear the auto-rename target so the effect cannot reopen the input.
+      setRenameTargetId(null);
     }
   };
 
@@ -316,7 +412,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         action: {
           label: t(($) => $.wiki.deleteUndo),
           onClick: () => {
-            void restorePage.mutateAsync({ projectId: props.projectId, page: page.slug, baseRevisionNumber: archivedRevision })
+            void restorePage.mutateAsync({ projectId: props.projectId, page: page.slug, baseRevisionNumber: archivedRevision, recursive })
               .catch((cause) => handleTreeError(cause, "restoreError"));
           },
         },
@@ -405,12 +501,45 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const read = pageQuery.data;
   const editing = !!editor;
 
-  const pageMetaMap = useMemo(() => new Map(pages.map((page) => [page.slug, {
-    title: page.title,
-    path: breadcrumb.length ? breadcrumb.map((item) => item.title).join(" / ") : page.title,
-    version: page.current?.number ?? page.currentRevisionNumber,
-    updatedAt: page.updatedAt,
-  }])), [pages, breadcrumb]);
+  // Preview-card metadata: the TARGET page's breadcrumb path built from tree
+  // parents, plus a first-paragraph snippet from a prefetched page read.
+  const linkedSlugs = useMemo(() => {
+    const slugs = new Set<string>();
+    for (const link of read?.links ?? []) {
+      if (link.state === "resolved" && link.targetSlug && link.targetSlug !== selected?.slug) slugs.add(link.targetSlug);
+    }
+    return [...slugs];
+  }, [read, selected?.slug]);
+
+  const previewQueries = useQueries({
+    queries: linkedSlugs.map((slug) => ({ ...projectWikiPageOptions(wsId, props.projectId, slug, {}), staleTime: 60_000 })),
+  });
+
+  const pageMetaMap = useMemo(() => {
+    const byId = new Map(pages.map((page) => [page.id, page]));
+    const snippets = new Map<string, string>();
+    linkedSlugs.forEach((slug, index) => {
+      const content = previewQueries[index]?.data?.contentMarkdown;
+      if (content) snippets.set(slug, firstParagraph(content));
+    });
+    const entries = pages.map((page) => {
+      const chain: string[] = [];
+      let cursor: WikiTreePage | undefined = page;
+      while (cursor) {
+        chain.unshift(cursor.title);
+        cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+      }
+      const snippet = snippets.get(page.slug);
+      return [page.slug, {
+        title: page.title,
+        path: chain.join(" / "),
+        version: page.current?.number ?? page.currentRevisionNumber,
+        updatedAt: page.updatedAt,
+        ...(snippet ? { snippet } : {}),
+      }] as const;
+    });
+    return new Map(entries);
+  }, [pages, linkedSlugs, previewQueries]);
 
   // Reader body split at H2 boundaries so each section carries its own hover
   // 编辑本节 affordance; anchors come from the tree section list in order.
@@ -442,7 +571,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
               <button
                 type="button"
                 className="absolute -right-1 top-1.5 rounded-sm border bg-canvas px-1.5 py-0.5 text-micro text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100"
-                onClick={() => setEditor({ scope: "section", anchor, title: segment.title })}
+                onClick={() => { void sectionQuery.refetch().then(() => setEditor({ scope: "section", anchor, title: segment.title })); }}
                 data-wiki-edit-section={anchor ?? segment.title}
               >{t(($) => $.wiki.editSection)}</button>
               <WikiMarkdown markdown={segment.body} sections={groupFor(index)} {...shared} />
@@ -451,7 +580,17 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         })}
       </>
     );
-  }, [read, selected, pageMetaMap, navigateToPage, t, handleCreateMissing]);
+  }, [read, selected, pageMetaMap, navigateToPage, t, handleCreateMissing, sectionQuery]);
+
+  const suggestPages = useMemo(() => pages.map((page) => ({ slug: page.slug, title: page.title })), [pages]);
+
+  // Refetch before editing so the editor's body and base revision both come
+  // from the SAME fresh read — a realtime invalidation can never leave a v6
+  // body next to a "基于 v7" footer.
+  const openPageEditor = useCallback(async () => {
+    await pageQuery.refetch();
+    setEditor({ scope: "page" });
+  }, [pageQuery]);
 
   const maskOpen = leftOpen || rightOpen;
 
@@ -475,14 +614,16 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
           loading={treeQuery.isLoading}
           error={treeQuery.isError}
           renameTargetId={renameTargetId}
+          onRenameEnd={() => setRenameTargetId(null)}
           onRetry={() => void treeQuery.refetch()}
           onSelect={(page) => navigateToPage(page.slug)}
           onCreateChild={(page) => void handleCreateChild(page)}
+          onCreateRootPage={() => void handleCreateRootPage()}
           onRename={(page, title) => void handleRename(page, title)}
           onMove={(intent) => void handleMove(intent)}
           onArchive={(page, recursive) => void handleArchive(page, recursive)}
           onRestore={(page) => void handleRestore(page)}
-          onCreateGuide={(slug, title) => void handleCreateGuide(slug, title)}
+          onCreateGuide={() => void handleCreateGuide()}
           guidePending={guidePending}
         />
       </aside>
@@ -552,7 +693,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                     <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.wiki.historyOpen)} onClick={() => setHistoryOpen(true)} data-wiki-open-history>
                       <History className="size-4" aria-hidden="true" />
                     </Button>
-                    <Button type="button" size="sm" onClick={() => setEditor({ scope: "page" })} data-testid="wiki-edit-page">
+                    <Button type="button" size="sm" onClick={() => void openPageEditor()} data-testid="wiki-edit-page">
                       <Pencil className="size-3.5" aria-hidden="true" />
                       <span className="hidden @[520px]:inline">{t(($) => $.wiki.editPage)}</span>
                     </Button>
@@ -581,28 +722,36 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                     <WikiEditor
                       scope="section"
                       sectionTitle={editor.title ?? sectionQuery.data.sections[0]!.title}
-                      baseRevisionNumber={selected.currentRevisionNumber}
-                      latestRevisionNumber={selected.currentRevisionNumber}
+                      baseRevisionNumber={sectionQuery.data.revision.revisionNumber}
+                      latestRevisionNumber={sectionQuery.data.revision.revisionNumber}
                       initialMarkdown={sectionQuery.data.sections[0]!.contentMarkdown}
+                      suggestPages={suggestPages}
                       saving={writingPending}
                       actorName={getActorName}
                       onSave={handleSave}
+                      onDirtyChange={setEditorDirty}
                       fetchCurrentContent={fetchCurrentContent}
                       onCancel={() => setEditor(null)}
                     />
                   )
                 ) : (
-                  <WikiEditor
-                    scope="page"
-                    baseRevisionNumber={selected.currentRevisionNumber}
-                    latestRevisionNumber={selected.currentRevisionNumber}
-                    initialMarkdown={read?.contentMarkdown ?? ""}
-                    saving={writingPending}
-                    actorName={getActorName}
-                    onSave={handleSave}
-                    fetchCurrentContent={fetchCurrentContent}
-                    onCancel={() => setEditor(null)}
-                  />
+                  // Base and body come from the SAME page read; the editor
+                  // mounts only once that read has resolved (never from "").
+                  !read ? <div className="space-y-2"><Skeleton className="h-40 w-full" /></div> : (
+                    <WikiEditor
+                      scope="page"
+                      baseRevisionNumber={read.revision.revisionNumber}
+                      latestRevisionNumber={read.revision.revisionNumber}
+                      initialMarkdown={read.contentMarkdown ?? ""}
+                      suggestPages={suggestPages}
+                      saving={writingPending}
+                      actorName={getActorName}
+                      onSave={handleSave}
+                      onDirtyChange={setEditorDirty}
+                      fetchCurrentContent={fetchCurrentContent}
+                      onCancel={() => setEditor(null)}
+                    />
+                  )
                 )
               ) : pageQuery.isLoading ? <div className="space-y-2"><Skeleton className="h-6 w-1/2" /><Skeleton className="h-40 w-full" /></div>
                 : pageQuery.isError ? <p className="text-caption text-destructive">{t(($) => $.wiki.pageLoadError)}</p>
@@ -610,7 +759,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                 : (
                   <div className="rounded-md border border-dashed p-8 text-center">
                     <p className="text-body text-muted-foreground">{t(($) => $.wiki.pageEmpty)}</p>
-                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setEditor({ scope: "page" })}>{t(($) => $.wiki.pageStartWriting)}</Button>
+                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void openPageEditor()}>{t(($) => $.wiki.pageStartWriting)}</Button>
                   </div>
                 )}
 
@@ -654,7 +803,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         )}
         data-wiki-outline-column
       >
-        <OutlineRail sections={selected?.sections ?? []} />
+        <OutlineRail sections={selected?.sections ?? []} contentKey={read?.revision.id ?? selected?.id ?? ""} />
       </aside>
 
       <WikiSearchPalette
@@ -665,6 +814,19 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         onOpenChange={setSearchOpen}
         onJump={(target) => navigateToPage(target.slug, target.anchor)}
       />
+
+      <Dialog open={!!pendingLeave} onOpenChange={(open) => { if (!open) setPendingLeave(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.wiki.leaveDialogTitle)}</DialogTitle>
+            <DialogDescription>{t(($) => $.wiki.leaveDialogDescription)}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPendingLeave(null)}>{t(($) => $.wiki.leaveDialogCancel)}</Button>
+            <Button type="button" variant="destructive" size="sm" onClick={leaveAndDiscard} data-testid="wiki-leave-discard">{t(($) => $.wiki.leaveDialogConfirm)}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <style>{`
         .wiki-flash { animation: wiki-flash-soft 1.6s ease-out; }

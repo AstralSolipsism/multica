@@ -7,7 +7,7 @@ import type { WikiLink, WikiTreeSection } from "@multica/core/api";
 vi.mock("../../rich-content/rich-code-block", () => ({
   isRichFenceLanguage: (language: string) => language === "mermaid" || language === "html",
   RichFenceBlock: ({ body }: { body: string }) => <div data-testid="rich-fence">{body}</div>,
-  CodeBlockShell: ({ code }: { code: string }) => <pre data-testid="code-shell">{code}</pre>,
+  CodeBlockShell: ({ code, children }: { code: string; children?: React.ReactNode }) => <pre data-testid="code-shell">{code}{children}</pre>,
   StaticCodeBody: ({ body }: { body: string }) => <code>{body}</code>,
 }));
 
@@ -72,5 +72,47 @@ describe("WikiMarkdown", () => {
     );
     expect(screen.getByTestId("rich-fence")).toHaveTextContent("A --> B");
     expect(screen.getByTestId("code-shell")).toHaveTextContent("fmt.Println(1)");
+  });
+
+  it("keeps inline code as code — [[…]] inside backticks never becomes a chip", () => {
+    renderWithI18n(<WikiMarkdown markdown="Run `[[not-a-link]]` now." links={[]} />);
+    const code = screen.getByText(/\[\[not-a-link\]\]/).closest("code");
+    expect(code).not.toBeNull();
+    expect(document.querySelector(".wiki-link-chip")).toBeNull();
+  });
+
+  it("derives heading anchors like the server: H1-H3, [KEY], H3 nesting, dedupe", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown={"# Top\n\n## Alpha\n\n### Beta\n\n## Alpha\n\n## [key] Shown\n\n#### Ignored"}
+      />,
+    );
+    expect(document.getElementById("s-Top")).not.toBeNull();
+    expect(document.getElementById("s-Alpha")).not.toBeNull();
+    expect(document.getElementById("s-Alpha / Beta")).not.toBeNull();
+    expect(document.getElementById("s-Alpha (2)")).not.toBeNull();
+    expect(document.getElementById("s-key")).not.toBeNull();
+    // H4 is below the server's scanHeadings cutoff: no anchor.
+    expect(document.querySelector("h4")?.getAttribute("id")).toBeNull();
+  });
+
+  it("highlights code fences through StaticCodeBody", () => {
+    renderWithI18n(<WikiMarkdown markdown={"```go\nfmt.Println(1)\n```"} />);
+    expect(screen.getByTestId("code-shell").querySelector("code")).toHaveTextContent("fmt.Println(1)");
+  });
+
+  it("shows the hover preview card with path, snippet and version", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown="See [[架构]]."
+        links={[link({ raw: "架构", display: "架构", target: "架构", targetSlug: "architecture" })]}
+        pageMeta={new Map([["architecture", { title: "架构", path: "项目概览 / 架构", version: 3, updatedAt: "2026-11-01", snippet: "架构首段摘要" }]])}
+      />,
+    );
+    const card = document.querySelector("[data-wiki-link-preview]") as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card).toHaveTextContent("项目概览 / 架构");
+    expect(card).toHaveTextContent("架构首段摘要");
+    expect(card).toHaveTextContent("v3");
   });
 });

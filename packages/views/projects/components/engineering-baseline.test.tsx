@@ -24,6 +24,7 @@ const WS = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
 const PAGE_ID = "44444444-4444-4444-8444-444444444444";
 const CHILD_ID = "55555555-5555-4555-8555-555555555555";
+const RULES_ID = "66666666-6666-4666-8666-666666666666";
 
 let replace = vi.fn();
 let searchParams = new URLSearchParams();
@@ -48,6 +49,11 @@ function tree(): WikiTree {
         id: CHILD_ID, slug: "architecture", title: "架构", parentId: PAGE_ID, position: 0,
         archivedAt: null, currentRevisionNumber: 2, createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-11-02T00:00:00Z",
         depth: 2, revisionCount: 2, sections: [], current: null,
+      },
+      {
+        id: RULES_ID, slug: "rules", title: "规则", parentId: PAGE_ID, position: 1,
+        archivedAt: null, currentRevisionNumber: 1, createdAt: "2026-10-03T00:00:00Z", updatedAt: "2026-11-03T00:00:00Z",
+        depth: 2, revisionCount: 1, sections: [], current: null,
       },
     ],
     limits: { maxDepth: 6, maxPages: 500 },
@@ -92,6 +98,9 @@ function renderWiki() {
   );
 }
 
+let moveProjectWikiPage: Mock;
+let renameProjectWikiPage: Mock;
+
 beforeEach(() => {
   replace = vi.fn();
   searchParams = new URLSearchParams();
@@ -99,8 +108,10 @@ beforeEach(() => {
   getProjectWikiPage = vi.fn(async () => pageRead());
   writeProjectWikiPage = vi.fn(async () => ({ page: pageRead().page, revision: pageRead().revision, rebased: false }));
   createProjectWikiPage = vi.fn(async () => ({ page: tree().pages[1]!, revision: pageRead().revision, rebased: false }));
+  moveProjectWikiPage = vi.fn(async () => ({ page: pageRead().page, revision: pageRead().revision, rebased: false }));
+  renameProjectWikiPage = vi.fn(async () => ({ page: pageRead().page, revision: pageRead().revision, rebased: false }));
   setApiInstance({
-    getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage,
+    getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage,
   } as unknown as ApiClient);
 });
 
@@ -153,7 +164,12 @@ describe("EngineeringBaselineWiki", () => {
     expect(source).toHaveValue(draft);
 
     fireEvent.click(screen.getByRole("button", { name: /载入最新并保留草稿|Load latest/i }));
-    expect(screen.queryByTestId("wiki-editor-conflict")).not.toBeInTheDocument();
+    // Loading the latest is async (page read); the side-by-side compare view
+    // replaces the conflict panel and the footer base becomes v7.
+    await waitFor(() => expect(screen.queryByTestId("wiki-editor-conflict")).not.toBeInTheDocument());
+    expect(screen.getByTestId("wiki-editor-compare")).toBeInTheDocument();
+    expect(screen.getByTestId("wiki-editor-compare")).toHaveTextContent("最新版本 v7");
+    expect(screen.getByText("基于 v7 · 保存即发布 v8", { exact: false })).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("wiki-editor-save"));
     await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledTimes(2));
     expect(writeProjectWikiPage).toHaveBeenLastCalledWith(
@@ -172,5 +188,103 @@ describe("EngineeringBaselineWiki", () => {
       WS, PROJECT, expect.objectContaining({ title: expect.any(String), parent: "overview" }),
     ));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringContaining("page=architecture")));
+  });
+  it("derives the editor base from the loaded page read, not the tree snapshot", async () => {
+    // Tree says v8 (someone else published), the fresh read returns v7 with
+    // the body the editor actually loads: base must follow the READ.
+    const read = pageRead();
+    read.revision.revisionNumber = 7;
+    read.contentMarkdown = "# 项目概览\n\n## Rules\n\nBody v7.";
+    getProjectWikiPage.mockResolvedValue(read);
+    const treeData = tree();
+    treeData.pages[0]!.currentRevisionNumber = 8;
+    getProjectWikiTree.mockResolvedValue(treeData);
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    expect(source).toHaveValue("# 项目概览\n\n## Rules\n\nBody v7.");
+    expect(screen.getByText("基于 v7 · 保存即发布 v8", { exact: false })).toBeInTheDocument();
+    fireEvent.change(source, { target: { value: "# 项目概览\n\n## Rules\n\nNew body." } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
+      WS, PROJECT, "overview",
+      expect.objectContaining({ baseRevisionNumber: 7, contentMarkdown: "# 项目概览\n\n## Rules\n\nNew body." }),
+    ));
+  });
+
+  it("blocks page switching while the editor is dirty until the user discards", async () => {
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    fireEvent.change(source, { target: { value: "# 项目概览\n\n## Rules\n\nUnsaved draft." } });
+    // Tree click while dirty: guard dialog, no navigation yet.
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    const archRow = await screen.findByText("架构", { selector: '[data-wiki-tree-page="architecture"] button' });
+    fireEvent.click(archRow);
+    expect(await screen.findByText("有未保存的修改")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
+    // Keep editing: still here.
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.queryByTestId("wiki-leave-discard")).not.toBeInTheDocument();
+    // Discard and switch: editor closes and the page navigates.
+    fireEvent.click(document.querySelector('[data-wiki-tree-page="architecture"] button[title="架构"]')!);
+    fireEvent.click(await screen.findByTestId("wiki-leave-discard"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(expect.stringContaining("page=architecture")));
+    expect(screen.queryByTestId("wiki-editor-source")).not.toBeInTheDocument();
+  });
+
+  it("suggests pages for [[ autocomplete and inserts [[slug|标题]]", async () => {
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
+    const typed = "见 [[arc";
+    source.focus();
+    source.setSelectionRange(source.value.length, source.value.length);
+    fireEvent.change(source, { target: { value: typed } });
+    const item = await screen.findByText("架构", { selector: '[data-wiki-suggest-item="architecture"]' });
+    expect(item).toHaveTextContent("architecture");
+    fireEvent.mouseDown(item.querySelector("button") ?? item);
+    expect(source).toHaveValue("见 [[architecture|架构]]");
+  });
+
+  it("wires the tree ⋯ menu via onClick and demotes to the PREVIOUS sibling", async () => {
+    renderWiki();
+    await screen.findByRole("button", { name: "历史版本（6）" });
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    const rulesRow = document.querySelector('[data-wiki-tree-page="rules"]') as HTMLElement;
+    fireEvent.click(within(rulesRow).getByRole("button", { name: "「规则」更多操作" }));
+    // Base UI DropdownMenuItem only forwards onClick — the action must fire.
+    fireEvent.click(await screen.findByRole("menuitem", { name: /降为上一页的子页/ }));
+    await waitFor(() => expect(moveProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
+      WS, PROJECT, "rules",
+      expect.objectContaining({ parent: "architecture", after: "first", baseRevisionNumber: 1 }),
+    ));
+  });
+
+  it("bootstraps all four guide pages from one button and is re-runnable past 409s", async () => {
+    const empty = tree();
+    empty.pages = [];
+    getProjectWikiTree.mockResolvedValue(empty);
+    renderWiki();
+    fireEvent.click(await screen.findByRole("button", { name: /一键创建基线向导/ }));
+    await waitFor(() => expect(createProjectWikiPage).toHaveBeenCalledTimes(4));
+    expect(createProjectWikiPage.mock.calls.map((call) => call[2]?.slug)).toEqual(
+      ["overview", "domain_rules", "architecture", "exclusions_and_risks"],
+    );
+    // Re-runnable: a 409 slug-taken on an existing page is skipped, the rest
+    // still get created.
+    createProjectWikiPage.mockClear();
+    createProjectWikiPage.mockImplementation(async (_ws: string, _project: string, input: { slug?: string }) => {
+      if (input.slug === "overview") throw new ApiError("taken", 409, "Conflict", { code: "baseline_slug_taken" });
+      return { page: pageRead().page, revision: pageRead().revision, rebased: false };
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /一键创建基线向导/ }));
+    await waitFor(() => expect(createProjectWikiPage).toHaveBeenCalledTimes(4));
+    expect(createProjectWikiPage.mock.calls.map((call) => call[2]?.slug)).toEqual(
+      ["overview", "domain_rules", "architecture", "exclusions_and_risks"],
+    );
   });
 });

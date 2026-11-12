@@ -42,20 +42,23 @@ export interface WikiTreePanelProps {
   loading: boolean;
   error: boolean;
   renameTargetId: string | null;
+  /** Cleared by the parent when the rename flow ends (commit or escape). */
+  onRenameEnd?: () => void;
   onRetry: () => void;
   onSelect: (page: WikiTreePage) => void;
   onCreateChild: (parent: WikiTreePage) => void;
+  /** Inline "new page" affordance at the bottom of a non-empty tree. */
+  onCreateRootPage?: () => void;
   onRename: (page: WikiTreePage, title: string) => void;
   onMove: (intent: WikiMoveIntent) => void;
   onArchive: (page: WikiTreePage, recursive: boolean) => void;
   onRestore: (page: WikiTreePage) => void;
-  onCreateGuide: (slug: string, title: string) => void;
+  /** Creates ALL guide pages sequentially (idempotent, 409-tolerant). */
+  onCreateGuide: () => void;
   guidePending: string | null;
 }
 
 type DropZone = "before" | "after" | "child";
-
-const GUIDE_SLUGS = ["overview", "domain_rules", "architecture", "exclusions_and_risks"] as const;
 
 export function buildPageIndex(pages: readonly WikiTreePage[]) {
   const byId = new Map<string, WikiTreePage>();
@@ -139,6 +142,7 @@ export function WikiTreePanel(props: WikiTreePanelProps) {
   const submitRename = (page: WikiTreePage) => {
     const title = renameValue.trim();
     setRenamingId(null);
+    props.onRenameEnd?.();
     if (title && title !== page.title) props.onRename(page, title);
   };
 
@@ -154,7 +158,9 @@ export function WikiTreePanel(props: WikiTreePanelProps) {
       const parent = byId.get(page.parentId);
       if (parent) props.onMove({ page, parent: parent.parentId ? parentSlug(parent) : null, after: parent.slug });
     } else if (intent === "demote" && index > 0) {
-      props.onMove({ page, parent: page.slug, after: "first" });
+      // Demote = become the first child of the PREVIOUS sibling, never self.
+      const previous = siblings[index - 1]!;
+      props.onMove({ page, parent: previous.slug, after: "first" });
     }
   };
 
@@ -278,7 +284,7 @@ export function WikiTreePanel(props: WikiTreePanelProps) {
             aria-label={t(($) => $.wiki.treeRenameLabel)}
             onKeyDown={(event) => {
               if (event.key === "Enter") submitRename(page);
-              if (event.key === "Escape") setRenamingId(null);
+              if (event.key === "Escape") { setRenamingId(null); props.onRenameEnd?.(); }
             }}
             onBlur={() => submitRename(page)}
             data-wiki-tree-rename
@@ -310,16 +316,16 @@ export function WikiTreePanel(props: WikiTreePanelProps) {
               <Ellipsis className="size-3.5" aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={() => { setRenamingId(page.id); setRenameValue(page.title); }}>{t(($) => $.wiki.treeRename)} <span className="ml-auto text-micro text-muted-foreground">{t(($) => $.wiki.treeRenameShortcut)}</span></DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => props.onCreateChild(page)}>{t(($) => $.wiki.treeNewChild)}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setRenamingId(page.id); setRenameValue(page.title); }}>{t(($) => $.wiki.treeRename)} <span className="ml-auto text-micro text-muted-foreground">{t(($) => $.wiki.treeRenameShortcut)}</span></DropdownMenuItem>
+              <DropdownMenuItem onClick={() => props.onCreateChild(page)}>{t(($) => $.wiki.treeNewChild)}</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={isFirstChild} onSelect={() => moveRelative(page, "up")}>{t(($) => $.wiki.treeMoveUp)}</DropdownMenuItem>
-              <DropdownMenuItem disabled={isLastChild} onSelect={() => moveRelative(page, "down")}>{t(($) => $.wiki.treeMoveDown)}</DropdownMenuItem>
-              <DropdownMenuItem disabled={isTopLevel} onSelect={() => moveRelative(page, "promote")}>{t(($) => $.wiki.treePromote)}</DropdownMenuItem>
-              <DropdownMenuItem disabled={isFirstChild} onSelect={() => moveRelative(page, "demote")}>{t(($) => $.wiki.treeDemote)}</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setMoveTarget(page)}>{t(($) => $.wiki.treeMoveTo)}</DropdownMenuItem>
+              <DropdownMenuItem disabled={isFirstChild} onClick={() => moveRelative(page, "up")}>{t(($) => $.wiki.treeMoveUp)}</DropdownMenuItem>
+              <DropdownMenuItem disabled={isLastChild} onClick={() => moveRelative(page, "down")}>{t(($) => $.wiki.treeMoveDown)}</DropdownMenuItem>
+              <DropdownMenuItem disabled={isTopLevel} onClick={() => moveRelative(page, "promote")}>{t(($) => $.wiki.treePromote)}</DropdownMenuItem>
+              <DropdownMenuItem disabled={isFirstChild} onClick={() => moveRelative(page, "demote")}>{t(($) => $.wiki.treeDemote)}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMoveTarget(page)}>{t(($) => $.wiki.treeMoveTo)}</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => { setDeleteTarget(page); setDeleteRecursive(false); }}>
+              <DropdownMenuItem variant="destructive" onClick={() => { setDeleteTarget(page); setDeleteRecursive(false); }}>
                 <Trash2 aria-hidden="true" />{t(($) => $.wiki.treeDelete)}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -356,24 +362,35 @@ export function WikiTreePanel(props: WikiTreePanelProps) {
           <div className="px-3 py-6 text-center" data-wiki-tree-empty>
             <p className="text-body text-muted-foreground">{t(($) => $.wiki.treeEmptyTitle)}</p>
             <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.treeEmptyHint)}</p>
-            <div className="mt-3 grid gap-1.5 text-left">
-              {GUIDE_SLUGS.map((slug) => (
-                <Button
-                  key={slug}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!!props.guidePending}
-                  onClick={() => props.onCreateGuide(slug, t(($) => $.chapters[slug]))}
-                  data-wiki-guide-create={slug}
-                >
-                  {props.guidePending === slug ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
-                  {t(($) => $.chapters[slug])}
-                </Button>
-              ))}
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={!!props.guidePending}
+                onClick={() => props.onCreateGuide()}
+                data-wiki-guide-create
+              >
+                {props.guidePending ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+                {t(($) => $.wiki.guideBootstrap)}
+              </Button>
             </div>
           </div>
         )}
+        {roots.length && props.onCreateRootPage ? (
+          <div className="px-3 pt-1 pb-2">
+            <button
+              type="button"
+              className="flex w-full items-center gap-1 rounded-sm px-1 py-1 text-caption text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={props.onCreateRootPage}
+              data-wiki-tree-new-root
+            >
+              <Plus className="size-3.5" aria-hidden="true" />
+              {t(($) => $.wiki.treeNewRoot)}
+            </button>
+          </div>
+        ) : null}
       </div>
       {props.archived.length ? (
         <div className="border-t" data-wiki-tree-archived>

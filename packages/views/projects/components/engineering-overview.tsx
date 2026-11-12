@@ -50,11 +50,12 @@ type ConfigUpdate = {
   deciderMemberIds?: string[];
   stages?: EngineeringStageConfig[];
 };
-
-function WikiActivityFeed({ items, workspaceSlug, projectId }: {
+function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
   items: readonly WikiActivityItem[];
   workspaceSlug: string;
   projectId: string;
+  /** Switches the tab to the wiki AND navigates (?page=). */
+  onOpenWiki: () => void;
 }) {
   const { t } = useT("engineering");
   const { getActorName } = useActorName();
@@ -70,7 +71,11 @@ function WikiActivityFeed({ items, workspaceSlug, projectId }: {
           key={`${item.pageId}-${item.number}`}
           type="button"
           className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 text-left last:border-b-0 hover:bg-muted/40"
-          onClick={() => navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }))}
+          onClick={() => {
+            // State AND URL: switch to the wiki tab and deep-link the page.
+            onOpenWiki();
+            navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
+          }}
           data-testid={item.slug}
         >
           <span className={cn("grid size-6 shrink-0 place-items-center rounded-xs text-micro", item.createdByType === "agent" ? "bg-brand/15 text-brand" : "bg-muted text-muted-foreground")}>
@@ -300,7 +305,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
                 {wikiActivityQuery.isLoading ? <Skeleton className="mt-2 h-24 w-full" /> : wikiActivityQuery.isError ? (
                   <p className="mt-2 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p>
                 ) : (
-                  <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} />
+                  <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => setActiveView("wiki")} />
                 )}
               </section>
             </div>

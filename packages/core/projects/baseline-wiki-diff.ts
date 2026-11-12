@@ -7,6 +7,22 @@
 // pin: whenever the two markdown sources differ, the diff contains at least
 // one non-same entry; when only structure fields differ, callers render the
 // metadata bar instead.
+//
+// Review-driven rules:
+// - Block equality is EXACT source equality (plus signature): whitespace-only
+//   edits (indent, hard breaks) always surface as del/add or mod, never empty.
+// - An adjacent del+add of the same kind pairs into a "mod" only when the
+//   token-level LCS hit rate is ≥ 0.5 (tables: ≥ 0.34); unrelated text of the
+//   same kind stays a separate delete + add.
+// - GFM without a GFM plugin: fromMarkdown parses tables as paragraphs and
+//   task-list markers as plain item text, so splitWikiBlocks detects GFM
+//   delimiter rows (align attrs) and task markers (checked attr) from the raw
+//   source. mdast stays authoritative for every other kind/position.
+// - Word tokens preserve whitespace so unchanged runs reconstruct readable
+//   text ("The quick ", not "Thequick"). Zero-width format characters
+//   (U+200B–200F, U+2060–2064, U+FEFF) are invisible in rendering and are
+//   ignored by tokens; differences confined to them fall through to the
+//   whole-block compare fallback.
 
 import type { Content, Heading, List, Code, Table } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -100,8 +116,6 @@ export type WikiBlockKind = "heading" | "paragraph" | "list" | "code" | "table" 
 export interface WikiBlock {
   kind: WikiBlockKind;
   source: string;
-  /** Normalized source (whitespace-collapsed) used for equality. */
-  normalized: string;
   /** Block attribute signature: type + heading depth + list start/ordered + checked + code lang + table align. */
   signature: string;
   attrs: Record<string, string>;
@@ -151,9 +165,35 @@ function blockSignature(kind: WikiBlockKind, node: Content): { signature: string
   return { signature, attrs };
 }
 
-function normalizeSource(source: string): string {
-  return source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n");
+/** GFM table delimiter cell: `---`, `:---`, `:---:`, `---:`. */
+const delimiterCell = /^:?-{1,}:?$/;
+
+/**
+ * GFM tables parse as paragraphs without the GFM extension, so detect a
+ * delimiter row (needs a leading header row, hence lines from index 1) and
+ * derive the alignment attribute string from its cells.
+ */
+function tableAlignFromSource(source: string): string | undefined {
+  const lines = source.split(/\r?\n/);
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || !line.includes("|")) continue;
+    const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+    if (cells.length === 0 || !cells.every((cell) => delimiterCell.test(cell))) continue;
+    return cells
+      .map((cell) => {
+        if (cell.startsWith(":") && cell.endsWith(":")) return "center";
+        if (cell.endsWith(":")) return "right";
+        if (cell.startsWith(":")) return "left";
+        return "none";
+      })
+      .join(",");
+  }
+  return undefined;
 }
+
+/** Task-list marker in raw source: `- [ ]` / `* [x]` / `1. [X]` (GFM extension absent, so mdast misses it). */
+const taskMarker = /(?:^|\n)[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[( |x|X)\][ \t]/;
 
 /** Split markdown into top-level blocks with source ranges from mdast positions. */
 export function splitWikiBlocks(markdown: string): WikiBlock[] {
@@ -163,9 +203,20 @@ export function splitWikiBlocks(markdown: string): WikiBlock[] {
     const start = node.position?.start?.offset ?? 0;
     const end = node.position?.end?.offset ?? markdown.length;
     const source = markdown.slice(start, end);
-    const kind = kindOf(node);
-    const { signature, attrs } = blockSignature(kind, node);
-    blocks.push({ kind, source, normalized: normalizeSource(source), signature, attrs, position: { start, end } });
+    let kind = kindOf(node);
+    const { attrs } = blockSignature(kind, node);
+    if (kind === "paragraph") {
+      const align = tableAlignFromSource(source);
+      if (align !== undefined) {
+        kind = "table";
+        attrs.align = align;
+      }
+    } else if (kind === "list" && attrs.checked === undefined) {
+      const marker = source.match(taskMarker);
+      if (marker && marker[1] !== undefined) attrs.checked = marker[1] === " " ? "false" : "true";
+    }
+    const signature = [kind, ...Object.entries(attrs).map(([k, v]) => `${k}=${v}`)].join("|");
+    blocks.push({ kind, source, signature, attrs, position: { start, end } });
   }
   return blocks;
 }
@@ -237,7 +288,11 @@ export function tokenizeWikiBlock(source: string): WikiWordToken[] {
 function segmentPlain(text: string): WikiWordToken[] {
   const out: WikiWordToken[] = [];
   for (const part of wordSegmenter().segment(text)) {
-    if (part.isWordLike || /\S/.test(part.segment)) out.push({ text: part.segment, signature: "" });
+    // Keep EVERY segment — whitespace included — so unchanged runs render
+    // readable text. Zero-width format characters are invisible in the
+    // rendered output, so they do not distinguish tokens.
+    const segment = part.segment.replace(/[\u200B-\u200F\u2060-\u2064\uFEFF]/g, "");
+    if (segment !== "") out.push({ text: segment, signature: "" });
   }
   return out;
 }
@@ -290,14 +345,31 @@ export type WikiBlockDiffEntry =
   | { op: "mod"; before: WikiBlock; after: WikiBlock; attrChanges: string[]; wordDiff: WikiWordDiffEntry[] };
 
 function blockEquals(a: WikiBlock, b: WikiBlock): boolean {
-  return a.signature === b.signature && a.normalized === b.normalized;
+  return a.signature === b.signature && a.source === b.source;
+}
+
+/**
+ * Token-level LCS hit rate between two blocks: shared tokens over the larger
+ * token count. Guards the mod pairing below so an adjacent del+add only
+ * becomes a "mod" when the blocks are genuinely mostly the same text.
+ */
+function tokenHitRate(a: WikiBlock, b: WikiBlock): number {
+  const before = tokenizeWikiBlock(a.source);
+  const after = tokenizeWikiBlock(b.source);
+  const total = Math.max(before.length, after.length);
+  if (total === 0) return 1;
+  const sameCount = diffSequence(before, after, (x, y) => x.text === y.text && x.signature === y.signature)
+    .filter((op) => op.op === "same").length;
+  return sameCount / total;
 }
 
 /**
  * Align two markdown bodies. Structure-only revisions (rename/move/archive)
  * produce no entries here — the caller shows the metadata bar instead. The
- * pairing rule keeps an add+del pair of the same kind as a modification when
- * the LCS hit rate is at least half, mirroring the rendered-diff contract.
+ * pairing rule keeps an adjacent del+add pair of the same kind as a
+ * modification only when the token-level LCS hit rate reaches the threshold
+ * (0.5, or 0.34 for tables); below that the blocks stay a separate delete +
+ * add, mirroring the rendered-diff contract.
  */
 export function diffWikiMarkdown(before: string, after: string): WikiBlockDiffEntry[] {
   if (before === after) return [];
@@ -317,9 +389,9 @@ export function diffWikiMarkdown(before: string, after: string): WikiBlockDiffEn
       const next = ops[k + 1];
       const a = beforeBlocks[op.aIndex as number];
       const b = next?.op === "add" ? afterBlocks[next.bIndex as number] : undefined;
-      if (a && b) {
-        const headingPair = a.kind === "heading" && b.kind === "heading";
-        if (a.kind === b.kind || headingPair) {
+      if (a && b && (a.kind === b.kind || (a.kind === "heading" && b.kind === "heading"))) {
+        const threshold = a.kind === "table" ? 0.34 : 0.5;
+        if (tokenHitRate(a, b) >= threshold) {
           const attrChanges = attrChangeLabels(a, b);
           const wordDiff = diffWikiTokens(tokenizeWikiBlock(a.source), tokenizeWikiBlock(b.source));
           if (wordDiffChanged(wordDiff) || attrChanges.length > 0 || a.signature !== b.signature) {
@@ -328,9 +400,10 @@ export function diffWikiMarkdown(before: string, after: string): WikiBlockDiffEn
             continue;
           }
           if (a.source !== b.source) {
-            // Signature and tokens could not see the difference (footnotes,
-            // raw HTML, escapes): fall back to a whole-block compare so the
-            // diff is never empty when the source differs.
+            // Signature and tokens could not see the difference (e.g. only
+            // invisible zero-width characters differ): fall back to a
+            // whole-block compare so the diff is never empty when the source
+            // differs.
             out.push({ op: "mod", before: a, after: b, attrChanges: [], wordDiff: [
               { op: "del", text: a.source, signature: "block" },
               { op: "add", text: b.source, signature: "block" },
@@ -406,9 +479,13 @@ export function diffWikiSourceLines(before: string, after: string): WikiSourceLi
 
 /** The "never empty" property the fixtures assert: different sources must produce a visible marker. */
 export function wikiDiffHasChanges(before: string, after: string, structure: WikiStructureChange[]): boolean {
-  if (before !== after && diffWikiMarkdown(before, after).length === 0) {
-    // Same normalized blocks with different raw source still count.
+  const diff = diffWikiMarkdown(before, after);
+  const hasBodyChange = diff.some((entry) => entry.op !== "same");
+  if (before !== after && !hasBodyChange) {
+    // Any raw-source difference is a change, even when block alignment sees
+    // none (whitespace-only edits collapsed by the matcher would otherwise
+    // hide a real revision).
     return true;
   }
-  return diffWikiMarkdown(before, after).some((entry) => entry.op !== "same") || structure.length > 0;
+  return hasBodyChange || structure.length > 0;
 }

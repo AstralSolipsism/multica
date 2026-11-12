@@ -105,7 +105,6 @@ describe("EngineeringOverview", () => {
     expect(screen.getByTestId("wiki-enter")).toBeInTheDocument();
     expect(screen.getByTestId("wiki-enter")).toHaveTextContent("进入基线 Wiki");
   });
-
   it("renders recent wiki activity with kind labels and deep-links rows into the wiki page", async () => {
     renderOverview();
     await screen.findByTestId("wiki-activity", {}, { timeout: 3000 });
@@ -117,6 +116,9 @@ describe("EngineeringOverview", () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith(
       expect.stringContaining("page=architecture"),
     ));
+    // The click also switches the tab to the wiki (state, not just URL).
+    expect(screen.getByRole("tab", { name: /基线 Wiki/ })).toHaveAttribute("aria-selected", "true");
+    expect(document.querySelector("[data-wiki-shell]")).not.toBeNull();
   });
 
   it("no longer surfaces approval-candidate concepts anywhere on the overview", async () => {

@@ -5,7 +5,7 @@
 // saves carry an explicit base revision number; a 409 optimistic-lock rejection
 // renders the three-path conflict panel and never discards the draft.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
@@ -42,9 +42,13 @@ export interface WikiEditorProps {
   onSave: (input: { markdown: string; changeSummary: string; sourceIssue: string; baseRevisionNumber: number }) => Promise<WikiSaveOutcome>;
   /** The user rebased the draft onto the conflicted current revision. */
   onRebase?: (baseRevisionNumber: number) => void;
-  /** Current published content of the same scope, for the conflict diff. */
+  /** Current published content of the same scope, for the conflict diff and compare view. */
   fetchCurrentContent: () => Promise<string | null>;
   onCancel: () => void;
+  /** Page completion source for the `[[` autocomplete (tree pages). */
+  suggestPages?: readonly { slug: string; title: string }[];
+  /** Reports draft dirtiness so the host can guard navigation. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type ToolAction = "bold" | "code" | "h2" | "h3" | "ul" | "ol" | "codeblock" | "table" | "wikilink";
@@ -97,9 +101,54 @@ export function WikiEditor(props: WikiEditorProps) {
   const [base, setBase] = useState(props.baseRevisionNumber);
   const [conflictDiff, setConflictDiff] = useState<{ before: string; after: string } | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  const [latestSnapshot, setLatestSnapshot] = useState<{ base: number; markdown: string } | null>(null);
+  const [wikiSuggest, setWikiSuggest] = useState<{ anchor: number; caret: number; query: string } | null>(null);
+  const [suggestIndex, setSuggestIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const baseSnapshot = useRef(props.initialMarkdown);
   const dirty = value !== props.initialMarkdown;
+
+  useEffect(() => {
+    props.onDirtyChange?.(dirty);
+  }, [dirty, props.onDirtyChange]);
+
+  const suggestMatches = useMemo(() => {
+    if (!wikiSuggest || !props.suggestPages?.length) return [];
+    const query = wikiSuggest.query.trim().toLowerCase();
+    return props.suggestPages
+      .filter((page) => !query || page.slug.toLowerCase().includes(query) || page.title.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [wikiSuggest, props.suggestPages]);
+
+  const closeSuggest = () => {
+    setWikiSuggest(null);
+    setSuggestIndex(0);
+  };
+
+  const insertWikiLink = (slug: string, title: string) => {
+    if (!wikiSuggest || !textareaRef.current) return;
+    const insert = `[[${slug}|${title}]]`;
+    const next = `${value.slice(0, wikiSuggest.anchor)}${insert}${value.slice(wikiSuggest.caret)}`;
+    setValue(next);
+    closeSuggest();
+    const caret = wikiSuggest.anchor + insert.length;
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  };
+
+  const handleSourceChange = (nextValue: string, caret: number) => {
+    setValue(nextValue);
+    const before = nextValue.slice(0, caret);
+    const open = /\[\[([^\][\n|]*)$/.exec(before);
+    if (open && props.suggestPages?.length) {
+      setWikiSuggest({ anchor: caret - open[0].length, caret, query: open[1] ?? "" });
+      setSuggestIndex(0);
+    } else {
+      closeSuggest();
+    }
+  };
 
   useEffect(() => {
     if (!dirty) return;
@@ -145,13 +194,22 @@ export function WikiEditor(props: WikiEditorProps) {
     setConflictDiff({ before: baseSnapshot.current, after: current });
   };
 
-  const rebaseOntoCurrent = () => {
+  const rebaseOntoCurrent = async () => {
     if (!conflict) return;
-    const nextBase = conflict.revisionNumber;
-    setBase(nextBase);
+    setDiffLoading(true);
+    const current = await props.fetchCurrentContent();
+    setDiffLoading(false);
+    if (current === null) {
+      toast.error(t(($) => $.wiki.conflictDiffUnavailable));
+      return;
+    }
+    // Load the latest body next to the draft; the editor's base becomes the
+    // loaded revision so the next save rebases instead of conflicting again.
+    setLatestSnapshot({ base: conflict.revisionNumber, markdown: current });
+    setBase(conflict.revisionNumber);
     setConflict(null);
     setConflictDiff(null);
-    props.onRebase?.(nextBase);
+    props.onRebase?.(conflict.revisionNumber);
   };
 
   return (
@@ -192,32 +250,100 @@ export function WikiEditor(props: WikiEditorProps) {
         ) : null}
       </div>
       {tab === "edit" ? (
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void save(base);
-            }
-            if (event.key === "Tab") {
-              event.preventDefault();
-              const target = event.currentTarget;
-              const next = `${target.value.slice(0, target.selectionStart)}  ${target.value.slice(target.selectionEnd)}`;
-              setValue(next);
-              requestAnimationFrame(() => target.setSelectionRange(target.selectionStart + 2, target.selectionStart + 2));
-            }
-          }}
-          className="min-h-[200px] max-h-[560px] resize-y font-mono text-body"
-          aria-label={t(($) => $.wiki.editorMarkdownLabel)}
-          data-testid="wiki-editor-source"
-        />
+        <div className="relative">
+          <Textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(event) => handleSourceChange(event.target.value, event.target.selectionStart)}
+            onKeyDown={(event) => {
+              if (wikiSuggest && suggestMatches.length) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSuggestIndex((index) => (index + 1) % suggestMatches.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSuggestIndex((index) => (index - 1 + suggestMatches.length) % suggestMatches.length);
+                  return;
+                }
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  const match = suggestMatches[suggestIndex];
+                  if (match) insertWikiLink(match.slug, match.title);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  closeSuggest();
+                  return;
+                }
+              }
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void save(base);
+              }
+              if (event.key === "Tab") {
+                event.preventDefault();
+                const target = event.currentTarget;
+                const next = `${target.value.slice(0, target.selectionStart)}  ${target.value.slice(target.selectionEnd)}`;
+                handleSourceChange(next, target.selectionStart + 2);
+                requestAnimationFrame(() => target.setSelectionRange(target.selectionStart + 2, target.selectionStart + 2));
+              }
+            }}
+            className="min-h-[200px] max-h-[560px] resize-y font-mono text-body"
+            aria-label={t(($) => $.wiki.editorMarkdownLabel)}
+            data-testid="wiki-editor-source"
+          />
+          {wikiSuggest && suggestMatches.length ? (
+            <ul
+              className="absolute bottom-full left-2 z-20 mb-1 max-h-48 w-72 overflow-y-auto rounded-md border bg-canvas p-1 shadow-md"
+              role="listbox"
+              aria-label={t(($) => $.wiki.editorAutocompleteLabel)}
+              data-wiki-suggest
+            >
+              {suggestMatches.map((match, index) => (
+                <li key={match.slug} role="option" aria-selected={index === suggestIndex}>
+                  <button
+                    type="button"
+                    className={cn(
+                      "block w-full truncate rounded-sm px-2 py-1 text-left text-caption",
+                      index === suggestIndex ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertWikiLink(match.slug, match.title);
+                    }}
+                    data-wiki-suggest-item={match.slug}
+                  >
+                    {match.title || match.slug}
+                    <span className="ml-1 text-micro text-muted-foreground">{match.slug}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : (
         <div className="max-h-[560px] overflow-y-auto px-4 py-3">
           {value.trim() ? <WikiMarkdown markdown={value} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
         </div>
       )}
+      {latestSnapshot ? (
+        <div className="grid gap-3 border-t px-3 py-2 md:grid-cols-2" data-testid="wiki-editor-compare">
+          <section className="min-w-0">
+            <h3 className="mb-1 text-caption font-medium">{t(($) => $.wiki.editorCompareDraft)}</h3>
+            <div className="max-h-72 overflow-y-auto rounded-md border p-2">
+              {value.trim() ? <WikiMarkdown markdown={value} /> : <p className="text-caption text-muted-foreground">{t(($) => $.wiki.editorPreviewEmpty)}</p>}
+            </div>
+          </section>
+          <section className="min-w-0">
+            <h3 className="mb-1 text-caption font-medium">{t(($) => $.wiki.editorCompareLatest, { number: latestSnapshot.base })}</h3>
+            <div className="max-h-72 overflow-y-auto rounded-md border p-2" data-testid="wiki-editor-latest">
+              <WikiMarkdown markdown={latestSnapshot.markdown} />
+            </div>
+          </section>
+        </div>
+      ) : null}
       <div className="grid gap-2 border-t px-3 py-2 sm:grid-cols-2">
         <Input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={t(($) => $.wiki.editorSummaryPlaceholder)} aria-label={t(($) => $.wiki.editorSummaryLabel)} />
         <Input value={sourceIssue} onChange={(event) => setSourceIssue(event.target.value)} placeholder={t(($) => $.wiki.editorIssuePlaceholder)} aria-label={t(($) => $.wiki.editorIssueLabel)} />
@@ -233,7 +359,7 @@ export function WikiEditor(props: WikiEditorProps) {
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => void loadConflictDiff()}>{t(($) => $.wiki.conflictShowTheirs)}</Button>
-            <Button type="button" size="sm" onClick={rebaseOntoCurrent}>{t(($) => $.wiki.conflictLoadCurrent)}</Button>
+            <Button type="button" size="sm" onClick={() => void rebaseOntoCurrent()}>{t(($) => $.wiki.conflictLoadCurrent)}</Button>
             <Button type="button" variant="outline" size="sm" disabled={props.saving} onClick={() => void save(conflict.revisionNumber)}>{t(($) => $.wiki.conflictOverwrite)}</Button>
           </div>
           {diffLoading ? <p className="mt-2 text-caption text-muted-foreground">{t(($) => $.wiki.conflictDiffLoading)}</p> : null}

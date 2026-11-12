@@ -19,7 +19,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@multica/ui/lib/utils";
 import type { WikiLink, WikiTreeSection } from "@multica/core/api";
-import { CodeBlockShell, isRichFenceLanguage, RichFenceBlock } from "../../rich-content/rich-code-block";
+import { scanSections } from "@multica/core/projects/wikilink-resolution";
+import { CodeBlockShell, isRichFenceLanguage, RichFenceBlock, StaticCodeBody } from "../../rich-content/rich-code-block";
 import { useT } from "../../i18n";
 
 export interface WikiLinkTarget {
@@ -32,6 +33,8 @@ export interface WikiPageMeta {
   path: string;
   version: number;
   updatedAt: string;
+  /** First paragraph of the target page for the hover preview card. */
+  snippet?: string;
 }
 
 export interface WikiMarkdownProps {
@@ -94,6 +97,7 @@ function WikiLinkChip({ link, raw, meta, onNavigate, onCreateMissing }: {
       >
         <span className="block text-micro text-muted-foreground">{info.path}</span>
         <span className="mt-0.5 block font-medium">{info.title}{link.section ? ` › ${link.section}` : ""}</span>
+        {info.snippet ? <span className="mt-1 line-clamp-4 block text-caption text-muted-foreground" data-wiki-link-preview-snippet>{info.snippet}</span> : null}
         <span className="mt-1 block text-caption text-muted-foreground">
           {t(($) => $.wiki.previewVersion, { number: info.version })} · {info.updatedAt}
         </span>
@@ -136,18 +140,14 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
   const { t } = useT("engineering");
   const linkMap = useMemo(() => new Map((links ?? []).map((link) => [link.raw, link])), [links]);
 
-  // Pair document headings (h2+) in order with the tree sections; the server
-  // derives sections the same way, so index alignment is stable.
+  // Heading anchors mirror the server's scanHeadings exactly: H1–H3 only,
+  // explicit [KEY] prefixes, H3 nesting under its parent, " (2)" dedupe —
+  // computed locally with the shared reference implementation. When the tree
+  // supplies section data, its anchors win (same values, server-authoritative).
   const headingAnchors = useMemo(() => {
-    const anchors: string[] = [];
+    const local = scanSections(markdown).map((section) => section.anchor);
     const list = sections ?? [];
-    let index = 0;
-    for (const _ of markdown.matchAll(/^#{2,6}[ \t]+.*$/gm)) {
-      void _;
-      anchors.push(list[index]?.anchor ?? `s-${index + 1}`);
-      index += 1;
-    }
-    return anchors;
+    return local.map((anchor, index) => list[index]?.anchor ?? anchor);
   }, [markdown, sections]);
 
   const components = useMemo<Components>(() => {
@@ -172,7 +172,7 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
           return <RichFenceBlock language={language} body={body} />;
         }
         if (language) {
-          return <CodeBlockShell language={language} code={body}><code className={className}>{body}</code></CodeBlockShell>;
+          return <CodeBlockShell language={language} code={body}><StaticCodeBody language={language} body={body} /></CodeBlockShell>;
         }
         return <code className={className}>{children}</code>;
       },

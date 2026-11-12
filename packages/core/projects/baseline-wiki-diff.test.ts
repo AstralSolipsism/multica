@@ -10,8 +10,13 @@ import {
   splitWikiBlocks,
   tokenizeWikiBlock,
   diffWikiTokens,
+  wikiDiffHasChanges,
+  type WikiBlockDiffEntry,
   type WikiStructureSnapshot,
 } from "./baseline-wiki-diff";
+function modEntries(diff: WikiBlockDiffEntry[]) {
+  return diff.filter((entry): entry is Extract<typeof entry, { op: "mod" }> => entry.op === "mod");
+}
 
 describe("diffSequence", () => {
   it("aligns a simple edit", () => {
@@ -37,9 +42,35 @@ describe("block splitting", () => {
     expect(blocks[0]?.attrs.depth).toBe("1");
     expect(blocks[2]?.attrs.lang).toBe("ts");
   });
+
+  it("detects GFM tables from delimiter rows with alignment", () => {
+    const blocks = splitWikiBlocks("| a | b |\n| :--- | ---: |\n| 1 | 2 |");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.kind).toBe("table");
+    expect(blocks[0]?.attrs.align).toBe("left,right");
+    expect(blocks[0]?.signature).toContain("align=left,right");
+  });
+
+  it("does not mistake ordinary paragraphs for tables", () => {
+    expect(splitWikiBlocks("a | b\nstill text")[0]?.kind).toBe("paragraph");
+  });
+
+  it("detects task-list checked state from the marker", () => {
+    expect(splitWikiBlocks("- [ ] 任务")[0]?.attrs.checked).toBe("false");
+    expect(splitWikiBlocks("- [x] 任务")[0]?.attrs.checked).toBe("true");
+    expect(splitWikiBlocks("1. [X] done")[0]?.attrs.checked).toBe("true");
+    expect(splitWikiBlocks("- plain")[0]?.attrs.checked).toBeUndefined();
+  });
 });
 
 describe("word tokens carry inline signatures", () => {
+  it("keeps whitespace tokens so unchanged runs stay readable", () => {
+    expect(tokenizeWikiBlock("a b").map((token) => token.text)).toContain(" ");
+    const diff = diffWikiTokens(tokenizeWikiBlock("The quick fox"), tokenizeWikiBlock("The quick cat"));
+    const sameText = diff.filter((entry) => entry.op === "same").map((entry) => entry.text).join("");
+    expect(sameText).toBe("The quick ");
+  });
+
   it("changes in link targets are visible even with identical text", () => {
     const before = tokenizeWikiBlock("see [规范](/old)");
     const after = tokenizeWikiBlock("see [规范](/new)");
@@ -67,6 +98,34 @@ describe("word tokens carry inline signatures", () => {
     const diff = diffWikiTokens(tokenizeWikiBlock("![logo](/a.png)"), tokenizeWikiBlock("![logo](/b.png)"));
     expect(diff.some((entry) => entry.op !== "same")).toBe(true);
   });
+
+  const formattingCases: { name: string; before: string; after: string }[] = [
+    { name: "link href", before: "看 [规范](/old)。", after: "看 [规范](/new)。" },
+    { name: "wiki target", before: "见 [[overview]]。", after: "见 [[architecture]]。" },
+    { name: "img src", before: "标志 ![图](/a.png) 收", after: "标志 ![图](/b.png) 收" },
+    { name: "bold added", before: "必须 遵守 规范", after: "必须 **遵守** 规范" },
+    { name: "em removed", before: "*重点* 内容", after: "重点 内容" },
+    { name: "inline code added", before: "运行 cli 工具", after: "运行 `cli` 工具" },
+    { name: "strikethrough removed", before: "~~旧~~ 新方案", after: "旧 新方案" },
+  ];
+
+  for (const testCase of formattingCases) {
+    it(`token diff marks ${testCase.name} even with identical visible text`, () => {
+      const diff = diffWikiTokens(tokenizeWikiBlock(testCase.before), tokenizeWikiBlock(testCase.after));
+      expect(diff.some((entry) => entry.op !== "same"), JSON.stringify(diff)).toBe(true);
+    });
+
+    it(`block diff renders ${testCase.name} as a mod reflecting the change`, () => {
+      const diff = diffWikiMarkdown(testCase.before, testCase.after);
+      const mods = modEntries(diff);
+      expect(mods, JSON.stringify(diff)).toHaveLength(1);
+      const mod = mods[0];
+      if (!mod) throw new Error("expected a mod entry");
+      expect(
+        mod.wordDiff.some((word) => word.op !== "same") || mod.attrChanges.length > 0 || mod.before.signature !== mod.after.signature,
+      ).toBe(true);
+    });
+  }
 });
 
 const richDiffCases: { name: string; before: string; after: string }[] = [
@@ -106,22 +165,27 @@ describe("diffWikiMarkdown fixtures (contract §7.4 item 8)", () => {
     const diff = diffWikiMarkdown("## 标题\n正文", "### 标题\n正文").filter((entry) => entry.op !== "same");
     expect(diff).toHaveLength(1);
     const entry = diff[0];
-    if (entry?.op === "mod") expect(entry.attrChanges.join()).toContain("H2");
+    if (entry?.op !== "mod") throw new Error("expected a mod entry");
+    expect(entry.attrChanges.join()).toContain("H2");
+    expect(entry.attrChanges.join()).toContain("H3");
   });
 
   it("marks pure deletions and additions without a counterpart", () => {
     expect(diffWikiMarkdown("保留\n\n删除我", "保留")).toEqual([
       { op: "same", block: expect.objectContaining({ kind: "paragraph" }) },
-      { op: "del", block: expect.objectContaining({ normalized: "删除我" }) },
+      { op: "del", block: expect.objectContaining({ source: "删除我" }) },
     ]);
     expect(diffWikiMarkdown("保留", "保留\n\n新增我")).toEqual([
       { op: "same", block: expect.objectContaining({ kind: "paragraph" }) },
-      { op: "add", block: expect.objectContaining({ normalized: "新增我" }) },
+      { op: "add", block: expect.objectContaining({ source: "新增我" }) },
     ]);
   });
 
-  it("pairs an adjacent delete+add of the same kind as a modification", () => {
-    const diff = diffWikiMarkdown("保留\n\n删除我", "保留\n\n新增我");
+  it("pairs an adjacent delete+add of mostly-similar text as a modification", () => {
+    // "删除我" → "新增我" share zero tokens, so under the ≥ 0.5 hit-rate
+    // threshold they must stay separate; this fixture keeps enough shared
+    // tokens ("删除" "这一段") to prove the mod path still fires.
+    const diff = diffWikiMarkdown("保留\n\n删除这一段内容", "保留\n\n删除这一段文本");
     expect(diff).toEqual([
       { op: "same", block: expect.anything() },
       expect.objectContaining({ op: "mod" }),
@@ -147,6 +211,105 @@ describe("diffWikiMarkdown fixtures (contract §7.4 item 8)", () => {
         `sources differ but no marker: ${JSON.stringify({ before, after })}`,
       ).toBe(true);
     }
+  });
+});
+
+describe("mod pairing threshold (#3)", () => {
+  it("pairs a one-word paragraph change into a single mod", () => {
+    const diff = diffWikiMarkdown("The quick fox", "The quick cat");
+    expect(diff).toHaveLength(1);
+    const entry = diff[0];
+    if (entry?.op !== "mod") throw new Error("expected a mod entry");
+    expect(entry.wordDiff.some((word) => word.op !== "same")).toBe(true);
+  });
+
+  it("keeps completely different paragraphs of the same kind as separate del + add", () => {
+    const diff = diffWikiMarkdown("苹果 香蕉 樱桃", "红色 绿色 蓝色");
+    expect(modEntries(diff)).toHaveLength(0);
+    expect(diff).toHaveLength(2);
+    const del = diff[0];
+    const add = diff[1];
+    if (del?.op !== "del" || add?.op !== "add") throw new Error("expected separate del then add");
+    expect(del.block.source).toBe("苹果 香蕉 樱桃");
+    expect(add.block.source).toBe("红色 绿色 蓝色");
+  });
+});
+
+describe("GFM attribute changes (#4)", () => {
+  it("pairs table alignment changes as a mod with an align badge (threshold 0.34)", () => {
+    const before = "| a | b |\n| :--- | ---: |\n| 1 | 2 |";
+    const after = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    const diff = diffWikiMarkdown(before, after);
+    const mods = modEntries(diff);
+    expect(mods, JSON.stringify(diff)).toHaveLength(1);
+    const mod = mods[0];
+    if (!mod) throw new Error("expected a mod entry");
+    const label = mod.attrChanges.join();
+    expect(label).toContain("对齐");
+    expect(label).toContain("left");
+    expect(label).toContain("right");
+  });
+
+  it("pairs a task toggle as a mod with the checkbox badge", () => {
+    const diff = diffWikiMarkdown("- [ ] 任务", "- [x] 任务");
+    const mods = modEntries(diff);
+    expect(mods, JSON.stringify(diff)).toHaveLength(1);
+    const mod = mods[0];
+    if (!mod) throw new Error("expected a mod entry");
+    expect(mod.attrChanges.join()).toContain("☐ → ☑");
+  });
+
+  it("pairs an ordered/unordered swap as a mod with the list-type badge", () => {
+    const diff = diffWikiMarkdown("- one\n- two", "1. one\n2. two");
+    const mods = modEntries(diff);
+    expect(mods, JSON.stringify(diff)).toHaveLength(1);
+    const mod = mods[0];
+    if (!mod) throw new Error("expected a mod entry");
+    const label = mod.attrChanges.join();
+    expect(label).toContain("无序");
+    expect(label).toContain("有序");
+  });
+});
+
+describe("exact-source block equality (#12)", () => {
+  it("surfaces indentation-only changes instead of an empty diff", () => {
+    const before = "first\nsecond";
+    const after = "first\n  second";
+    const diff = diffWikiMarkdown(before, after);
+    expect(diff.some((entry) => entry.op !== "same"), JSON.stringify(diff)).toBe(true);
+    expect(wikiDiffHasChanges(before, after, [])).toBe(true);
+  });
+
+  it("surfaces hard-break deletions instead of an empty diff", () => {
+    const before = "line one  \nline two";
+    const after = "line one\nline two";
+    const diff = diffWikiMarkdown(before, after);
+    expect(diff.some((entry) => entry.op !== "same"), JSON.stringify(diff)).toBe(true);
+    expect(wikiDiffHasChanges(before, after, [])).toBe(true);
+  });
+
+  it("still reports a change when the block diff shows no non-same entry", () => {
+    // Defensive branch: any raw-source difference is a change even if the
+    // matcher produces no visible marker.
+    expect(wikiDiffHasChanges("正文 ", "正文", [])).toBe(true);
+  });
+});
+
+describe("whole-block fallback (#5)", () => {
+  it("fires for differences invisible to tokens (zero-width characters)", () => {
+    // U+FEFF is invisible in rendering and stripped from token text, so both
+    // paragraphs tokenize identically while their sources differ — the
+    // fallback must emit the full sources as del+add.
+    const before = "alpha\uFEFFbeta";
+    const after = "alphabeta";
+    const diff = diffWikiMarkdown(before, after);
+    expect(modEntries(diff)).toHaveLength(1);
+    const mod = diff[0];
+    if (mod?.op !== "mod") throw new Error("expected a mod entry");
+    expect(mod.wordDiff).toEqual([
+      { op: "del", text: before, signature: "block" },
+      { op: "add", text: after, signature: "block" },
+    ]);
   });
 });
 

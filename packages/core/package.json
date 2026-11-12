@@ -106,6 +106,7 @@
     "./projects/queries": "./projects/queries.ts",
     "./projects/mutations": "./projects/mutations.ts",
     "./projects/baseline-wiki-diff": "./projects/baseline-wiki-diff.ts",
+    "./projects/wikilink-resolution": "./projects/wikilink-resolution.ts",
     "./projects/config": "./projects/config.ts",
     "./plugins": "./plugins/index.ts",
     "./plugins/queries": "./plugins/queries.ts",
