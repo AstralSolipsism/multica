@@ -4,13 +4,16 @@ OL-1329 evolves the Strixnova engineering module into a tree-shaped baseline
 wiki: free-form page hierarchy, human/agent parity writes with optimistic
 concurrency (`base_revision_number`), orthogonal auto-rebase, soft-delete
 archive, per-page immutable full-snapshot revisions, link resolution and
-full-text search. The candidate/annotation pipeline is retired. The module
-stores its data in PostgreSQL and has no runtime, claim, skill-binding or model
-dependency.
+full-text search. The candidate/annotation pipeline is retired. Wiki reads and writes are stored
+in PostgreSQL; explicit agent/squad mentions in a discussion optionally use
+the existing Issue/comment dispatch path. See
+[labrastro-baseline-comments.md](labrastro-baseline-comments.md) for OL-1333's
+comment API, anchoring and lazy carrier contract.
 
 All endpoints require workspace membership and a project in the selected
 workspace. Every workspace member (owner/admin/member) and every task-token
-agent of the workspace has identical permissions on the wiki. Forged or
+agent of the workspace can write pages and discussions. Comment edits require
+authorship; deletion requires authorship or human owner/admin membership. Forged or
 mismatched credentials return 403 `baseline_credential_denied`. Routes use
 `/api/projects/{id}`:
 
@@ -80,7 +83,7 @@ Indexes: `idx_project_baseline_doc_id` (kept name), `idx_project_baseline_revisi
 
 ## Write model
 
-Every write except `create` carries `base_revision_number` (the version the
+Every page write except `create` carries `base_revision_number` (the version the
 author read). Writes run inside the project row `FOR UPDATE` lock:
 
 - **Full-page content**: rebases when every revision in `(base, current]` is

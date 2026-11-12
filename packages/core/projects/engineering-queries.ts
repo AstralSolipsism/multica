@@ -12,6 +12,10 @@ import { api } from "../api";
 import { issueKeys } from "../issues/queries";
 
 export const engineeringProjectKeys = {
+  wikiThreads: (wsId: string, projectId: string, pageId: string) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "threads", pageId] as const,
+  wikiThread: (wsId: string, projectId: string, threadId: string) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "thread", threadId] as const,
   wikiRoot: (wsId: string, projectId: string) =>
     ["project-engineering", wsId, projectId, "wiki"] as const,
   wikiTree: (wsId: string, projectId: string, sections: boolean) =>
@@ -133,3 +137,6 @@ export function projectWikiSearchOptions(wsId: string, projectId: string, q: str
     queryFn: () => api.searchProjectWiki(wsId, projectId, q, { limit }),
   });
 }
+
+export * from "./baseline-comment-queries";
+export * from "./baseline-comment-anchors";

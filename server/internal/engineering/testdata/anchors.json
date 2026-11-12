@@ -1,0 +1,544 @@
+[
+  {
+    "name": "gfm table cell boundaries",
+    "markdown": "## A\n\n| Key | Value |\n| --- | --- |\n| needle | **value** |",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A Key Value needle value"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 12
+    }
+  },
+  {
+    "name": "lists quote inline code",
+    "markdown": "## A\n\n> intro\n\n- ~~old~~\n- `needle` and **new**",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A intro old needle and new"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 12
+    }
+  },
+  {
+    "name": "fenced controls do not enter text",
+    "markdown": "## A\n\n```ts\nconst needle = 1;\n```",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A const needle = 1;"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 8
+    }
+  },
+  {
+    "name": "wiki labels preview excluded",
+    "markdown": "## A\n\nSee [[target|Target]] and [[target#Part|T]] needle.",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A See Target and T › Part needle."
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 26
+    }
+  },
+  {
+    "name": "literal wikilink inside code",
+    "markdown": "## A\n\n`[[needle]]`",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A [[needle]]"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "[[needle]]",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 2
+    }
+  },
+  {
+    "name": "unicode UTF16 and whitespace",
+    "markdown": "## A\n\n😀 中\tneedle\nnext",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A 😀 中 needle next"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 7
+    }
+  },
+  {
+    "name": "preamble without heading",
+    "markdown": "intro needle",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "intro needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 6
+    }
+  },
+  {
+    "name": "child has own text",
+    "markdown": "## A\nkeep\n### Child\nneedle\n## B\nother",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A keep"
+      },
+      {
+        "anchor": "A / Child",
+        "title": "Child",
+        "text": "Child needle"
+      },
+      {
+        "anchor": "B",
+        "title": "B",
+        "text": "B other"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A / Child",
+      "section_title": "Child",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A / Child",
+      "start": 6
+    }
+  },
+  {
+    "name": "rename unique quote follows",
+    "markdown": "## Renamed\nneedle",
+    "texts": [
+      {
+        "anchor": "Renamed",
+        "title": "Renamed",
+        "text": "Renamed needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "moved",
+      "section_anchor": "Renamed",
+      "start": 8
+    }
+  },
+  {
+    "name": "move into another section",
+    "markdown": "## A\nchanged\n## B\nneedle",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A changed"
+      },
+      {
+        "anchor": "B",
+        "title": "B",
+        "text": "B needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "moved",
+      "section_anchor": "B",
+      "start": 2
+    }
+  },
+  {
+    "name": "deleted original with section intact",
+    "markdown": "## A\nchanged",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A changed"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "section_only",
+      "section_anchor": "A"
+    }
+  },
+  {
+    "name": "deleted section and quote",
+    "markdown": "## B\nchanged",
+    "texts": [
+      {
+        "anchor": "B",
+        "title": "B",
+        "text": "B changed"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "orphaned"
+    }
+  },
+  {
+    "name": "context outranks nearest",
+    "markdown": "## A\nL needle R X needle Y",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A L needle R X needle Y"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "L ",
+      "suffix": " R",
+      "revision_number": 1,
+      "start": 16
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 4
+    }
+  },
+  {
+    "name": "one context side outranks proximity",
+    "markdown": "## A\nL needle R X needle Y",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A L needle R X needle Y"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "X ",
+      "suffix": " Z",
+      "revision_number": 1,
+      "start": 4
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 15
+    }
+  },
+  {
+    "name": "equal contexts nearest hint",
+    "markdown": "## A\nneedle and needle",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A needle and needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1,
+      "start": 14
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 13
+    }
+  },
+  {
+    "name": "equal distance earliest match",
+    "markdown": "## A\nx x",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A x x"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "x",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1,
+      "start": 3
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 2
+    }
+  },
+  {
+    "name": "global repeats do not guess",
+    "markdown": "## B\nneedle needle",
+    "texts": [
+      {
+        "anchor": "B",
+        "title": "B",
+        "text": "B needle needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "orphaned"
+    }
+  },
+  {
+    "name": "section stable explicit key",
+    "markdown": "## [RULE-1] Renamed\nchanged",
+    "texts": [
+      {
+        "anchor": "RULE-1",
+        "title": "Renamed",
+        "text": "[RULE-1] Renamed changed"
+      }
+    ],
+    "selector": {
+      "kind": "section",
+      "section_anchor": "RULE-1",
+      "section_title": "Old",
+      "exact": "",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "RULE-1"
+    }
+  },
+  {
+    "name": "section rename key with unique title",
+    "markdown": "## [RULE-2] A\nchanged",
+    "texts": [
+      {
+        "anchor": "RULE-2",
+        "title": "A",
+        "text": "[RULE-2] A changed"
+      }
+    ],
+    "selector": {
+      "kind": "section",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "moved",
+      "section_anchor": "RULE-2"
+    }
+  },
+  {
+    "name": "nested fences and block headings",
+    "markdown": "preamble\n## A\n````md\n```\n## ignored\n```\n````\n#### Detail\nneedle",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "preamble"
+      },
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A ``` ## ignored ``` Detail needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 28
+    }
+  },
+  {
+    "name": "rich diagram remains GFM code text",
+    "markdown": "## A\n```mermaid\ngraph TD\nA-->B\n```\nneedle",
+    "texts": [
+      {
+        "anchor": "A",
+        "title": "A",
+        "text": "A graph TD A-->B needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "A",
+      "section_title": "A",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "A",
+      "start": 17
+    }
+  }
+]

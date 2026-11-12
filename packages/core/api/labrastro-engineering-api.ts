@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { labrastroBaselineCommentApi } from "./labrastro-baseline-comment-api";
 import type { ApiClient } from "./client";
 import { clientFetch, installLabrastroApiMethods } from "./labrastro-api-helpers";
 import { parseWithFallback } from "./schema";
@@ -13,6 +14,7 @@ const projectPath = (projectId: string) => `/api/projects/${encodeURIComponent(p
 const baselinePath = (projectId: string) => `${projectPath(projectId)}/baseline`;
 
 const labrastroEngineeringApi = {
+ ...labrastroBaselineCommentApi,
   async getProjectEngineering(this: ApiClient, workspaceId: string, projectId: string) {
     const endpoint = `${projectPath(projectId)}/engineering`;
     const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });

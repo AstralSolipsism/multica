@@ -149,10 +149,19 @@ func (q *Queries) LabrastroBaselineOpenIssues(ctx context.Context, arg Labrastro
 }
 
 const labrastroBaselineRelatedIssues = `-- name: LabrastroBaselineRelatedIssues :many
-SELECT DISTINCT ON (i.id) i.id, i.number, i.title, i.status
-FROM project_baseline_revision r JOIN issue i ON i.id = r.source_issue_id
-WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.page_id = $3
-ORDER BY i.id, r.created_at DESC LIMIT 20
+WITH sources AS (
+    SELECT r.source_issue_id AS id, max(r.created_at) AS at FROM project_baseline_revision r
+    WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.page_id = $3 AND r.source_issue_id IS NOT NULL
+    GROUP BY r.source_issue_id ORDER BY at DESC, id LIMIT 20
+), carriers AS (
+    SELECT t.issue_id AS id, max(t.updated_at) AS at FROM project_baseline_thread t
+    WHERE t.workspace_id = $1 AND t.project_id = $2 AND t.page_id = $3 AND t.issue_id IS NOT NULL
+    GROUP BY t.issue_id ORDER BY at DESC, id LIMIT 20
+), related AS (
+    SELECT id, max(at) AS at FROM (SELECT id, at FROM sources UNION ALL SELECT id, at FROM carriers) refs GROUP BY id
+)
+SELECT i.id, i.number, i.title, i.status FROM related r JOIN issue i ON i.id = r.id
+WHERE i.workspace_id = $1 AND i.project_id = $2 ORDER BY r.at DESC, i.id
 `
 
 type LabrastroBaselineRelatedIssuesParams struct {
@@ -353,7 +362,9 @@ func (q *Queries) LabrastroCreateBaselineWikiRevision(ctx context.Context, arg L
 }
 
 const labrastroDeleteProjectEngineering = `-- name: LabrastroDeleteProjectEngineering :exec
-WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
+WITH comments AS (DELETE FROM project_baseline_comment WHERE workspace_id = $1 AND project_id = $2),
+threads AS (DELETE FROM project_baseline_thread WHERE workspace_id = $1 AND project_id = $2),
+revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
 pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1 AND project_baseline_page.project_id = $2)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND project_engineering.project_id = $2
 `
@@ -369,7 +380,9 @@ func (q *Queries) LabrastroDeleteProjectEngineering(ctx context.Context, arg Lab
 }
 
 const labrastroDeleteWorkspaceEngineering = `-- name: LabrastroDeleteWorkspaceEngineering :exec
-WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
+WITH comments AS (DELETE FROM project_baseline_comment WHERE workspace_id = $1),
+threads AS (DELETE FROM project_baseline_thread WHERE workspace_id = $1),
+revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
 pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1
 `

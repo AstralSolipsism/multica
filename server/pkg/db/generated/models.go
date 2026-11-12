@@ -1652,6 +1652,19 @@ type Project struct {
 	CreatorID   pgtype.UUID        `json:"creator_id"`
 }
 
+type ProjectBaselineComment struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ThreadID     pgtype.UUID        `json:"thread_id"`
+	BodyMarkdown string             `json:"body_markdown"`
+	AuthorType   string             `json:"author_type"`
+	AuthorID     pgtype.UUID        `json:"author_id"`
+	AuthorTaskID pgtype.UUID        `json:"author_task_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	EditedAt     pgtype.Timestamptz `json:"edited_at"`
+}
+
 type ProjectBaselinePage struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
@@ -1688,6 +1701,29 @@ type ProjectBaselineRevision struct {
 	Position               int32              `json:"position"`
 	ArchivedAt             pgtype.Timestamptz `json:"archived_at"`
 	RestoredFromRevisionID pgtype.UUID        `json:"restored_from_revision_id"`
+}
+
+type ProjectBaselineThread struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	PageID               pgtype.UUID        `json:"page_id"`
+	AnchorKind           string             `json:"anchor_kind"`
+	SectionAnchor        string             `json:"section_anchor"`
+	SectionTitle         string             `json:"section_title"`
+	QuoteExact           string             `json:"quote_exact"`
+	QuotePrefix          string             `json:"quote_prefix"`
+	QuoteSuffix          string             `json:"quote_suffix"`
+	QuoteStart           pgtype.Int4        `json:"quote_start"`
+	AnchorRevisionNumber pgtype.Int4        `json:"anchor_revision_number"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	ResolvedAt           pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByType       pgtype.Text        `json:"resolved_by_type"`
+	ResolvedByID         pgtype.UUID        `json:"resolved_by_id"`
+	CreatedByType        string             `json:"created_by_type"`
+	CreatedByID          pgtype.UUID        `json:"created_by_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ProjectEngineering struct {

@@ -1,7 +1,7 @@
 # `multica project baseline` — baseline wiki CLI
 
 OL-1329 turns the baseline CLI into the write surface for the tree wiki.
-Humans and agents share identical permissions; every write except `create`
+Humans and agents share identical permissions; every page write except `create`
 requires the revision number the author read (`--base`), and the server
 auto-rebases orthogonal changes (a rename never blocks a body edit; different
 sections merge). The command group keeps its historical name
@@ -53,7 +53,7 @@ code 2 and print a migration hint. Map old invocations:
 | `propose --section … --base-current` | `write --section … --base N` (`--base-current` is gone: stale reads must not blind-overwrite) |
 | `adopt` / `adopt --reject` | removed — `rollback` undoes an unwanted write |
 | `diff --chapter c --from --to` | `diff --page <slug> --from --to` |
-| `annotations` / `respond` | retired with the annotation batches; wiki comments arrive in a follow-up release |
+| `annotations` / `respond` | `comment list` / `comment show` / `comment reply`; the retired commands remain rejected |
 
 ## Typical loop
 
@@ -67,3 +67,29 @@ multica project baseline history <pid> --page architecture
 multica project baseline diff <pid> --page architecture --from 5
 multica project baseline rollback <pid> --page architecture --to 5 --base 7
 ```
+
+## Passage discussions
+
+All commands start with `multica project baseline comment` and take `<pid>`.
+They support `--output text|json`; comment writes do not take `--base`.
+
+| Command | Flags |
+| --- | --- |
+| `list` | `--page <slug-or-id> [--state open|resolved|all]` (default open) |
+| `show` | `--thread <uuid> [--with-section]` |
+| `create` | `--page <slug-or-id> (--quote "rendered passage" [--section "title-or-anchor"] | --section "title-or-anchor") --content-file ./comment.md [--issue OL-x]` |
+| `reply` | `--thread <uuid> --content-file ./reply.md` |
+| `edit` | `--comment <uuid> --content-file ./edit.md` |
+| `delete` | `--comment <uuid>` |
+| `resolve` / `reopen` | `--thread <uuid>` |
+
+Comment files use the same directory-confined UTF-8 reader, limited to 4000
+code points (16000 bytes). Quotes must uniquely match rendered section/page
+text; ambiguous or missing quotes return exit 2. `show --with-section`
+returns current own-section Markdown, not descendants or a stale snapshot.
+
+Only explicit agent/squad mentions outside code in a new comment/reply enter
+dispatch. Ordinary comments, human mentions, `@all`, edits and resolution do
+not create an Issue, Issue comment or task. `woke` reports accepted and blocked
+targets independently of the saved comment. A blocked result can be retried by
+posting a new explicit mention. See [the comment contract](labrastro-baseline-comments.md).

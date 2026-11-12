@@ -50,3 +50,5 @@ export type {
   WikiSearchHit,
   WikiConflict,
 } from "./labrastro-engineering-schemas";
+
+export * from "./labrastro-baseline-comment-schemas";

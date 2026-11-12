@@ -181,6 +181,13 @@ func engineeringContextText(value string, limit int) string {
 
 func (h *Handler) RegisterLabrastroEngineeringRoutes(r chi.Router) {
 	r.Get("/api/projects/{id}/engineering", h.LabrastroGetEngineering)
+	r.Get("/api/projects/{id}/baseline/pages/{page}/threads", h.LabrastroWikiThreads)
+	r.Post("/api/projects/{id}/baseline/pages/{page}/threads", h.LabrastroCreateWikiThread)
+	r.Get("/api/projects/{id}/baseline/threads/{thread}", h.LabrastroWikiThread)
+	r.Post("/api/projects/{id}/baseline/threads/{thread}/comments", h.LabrastroReplyWikiThread)
+	r.Patch("/api/projects/{id}/baseline/comments/{comment}", h.LabrastroEditWikiComment)
+	r.Delete("/api/projects/{id}/baseline/comments/{comment}", h.LabrastroDeleteWikiComment)
+	r.Post("/api/projects/{id}/baseline/threads/{thread}/resolve", h.LabrastroResolveWikiThread)
 	r.Get("/api/projects/{id}/baseline/tree", h.LabrastroWikiTree)
 	r.Post("/api/projects/{id}/baseline/pages", h.LabrastroCreateWikiPage)
 	r.Get("/api/projects/{id}/baseline/pages/{page}", h.LabrastroReadWikiPage)
