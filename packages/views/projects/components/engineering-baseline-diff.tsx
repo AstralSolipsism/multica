@@ -373,7 +373,7 @@ function ModBlock({ entry, links, onNavigate }: { entry: ModDiffEntry; links?: r
     } catch {
       setFailed(true);
     }
-  }, [beforeSource, afterSource, failed, fenceCompare]);
+  }, [beforeSource, afterSource, failed, fenceCompare, links, onNavigate]);
   return (
     <div className={cn("my-1 rounded-xs px-2", MOD_BAR)} data-wiki-diff-mod>
       {entry.attrChanges.length ? (

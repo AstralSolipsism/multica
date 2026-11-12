@@ -150,6 +150,25 @@ describe("WikiDiffView rendered diff", () => {
     expect(marked).not.toContain("[[");
   });
 
+  it("reapplies word marks when a tree refresh supplies a new links array", () => {
+    const links = [
+      link({ raw: "auth|认证", display: "认证", target: "auth", targetSlug: "auth" }),
+      link({ raw: "auth2|认证", display: "认证", target: "auth2", targetSlug: "auth2" }),
+    ];
+    const before = "See [[auth|认证]] now.";
+    const after = "See [[auth2|认证]] now.";
+    const onNavigate = vi.fn();
+    const { container, rerender } = renderWithI18n(
+      <WikiDiffView before={before} after={after} links={links} onNavigate={onNavigate} />,
+    );
+    expect(container.querySelectorAll("ins[data-wiki-diff-mark]")).toHaveLength(1);
+    expect(container.querySelectorAll("del[data-wiki-diff-mark]")).toHaveLength(1);
+
+    rerender(<WikiDiffView before={before} after={after} links={[...links]} onNavigate={onNavigate} />);
+    expect(container.querySelectorAll("ins[data-wiki-diff-mark]")).toHaveLength(1);
+    expect(container.querySelectorAll("del[data-wiki-diff-mark]")).toHaveLength(1);
+  });
+
   it("shows inline-code changes as rendered code inside ins/del, no backticks", () => {
     const { container } = renderWithI18n(
       <WikiDiffView before={"Run `make test` first."} after={"Run `make check` first."} />,
