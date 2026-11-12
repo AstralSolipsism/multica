@@ -1,224 +1,69 @@
-# Project baseline CLI
+# `multica project baseline` — baseline wiki CLI
 
-`multica project baseline` implements Strixnova contract v3.3 section 7 using
-the engineering API. The four built-in chapter keys are `overview`, `domain_rules`,
-`architecture`, and `exclusions_and_risks`. Dynamic chapters use `module:<slug>`
-(lowercase letters/digits, then letters/digits/underscore/hyphen; 1–63 characters).
+OL-1329 turns the baseline CLI into the write surface for the tree wiki.
+Humans and agents share identical permissions; every write except `create`
+requires the revision number the author read (`--base`), and the server
+auto-rebases orthogonal changes (a rename never blocks a body edit; different
+sections merge). The command group keeps its historical name
+`multica project baseline`.
 
-```sh
-multica project baseline get <project-id>
-multica project baseline get <project-id> --chapter domain_rules
-multica project baseline get <project-id> --chapter domain_rules --candidate --output json
-multica project baseline get <project-id> --revision domain_rules:3 --output markdown
+## Exit codes
 
-multica project baseline propose <project-id> --chapter domain_rules \
-  --content-file ./rules.md --summary "Clarify settlement rules" --base 3
-multica project baseline diff <project-id> --chapter domain_rules
-multica project baseline diff <project-id> --chapter domain_rules --from 3 --to 4
-multica project baseline adopt <project-id> --revision domain_rules:4
-multica project baseline adopt <project-id> --revision domain_rules:4 --reject
-multica project baseline export <project-id> --dir ./docs/baseline --output json
+| Code | Meaning |
+| --- | --- |
+| 0 | success |
+| 1 | failure or indeterminate result (inspect state before retrying) |
+| 2 | usage error, or HTTP 400 / 404 / 422 |
+| 3 | 409 `baseline_conflict`: re-read with `tree` / `get`, merge, retry with the new `--base` |
 
-multica project baseline annotations <project-id> --batch <batch-id|OL-1240> --with-sections
-multica project baseline respond <project-id> --batch <batch-id> --responses-file ./responses.json
+## Commands
+
+| Command | Purpose | Key flags |
+| --- | --- | --- |
+| `tree <pid>` | page tree with slugs, titles, `vN`, depths and H2/H3 outlines | `--no-sections`, `--output text\|json` |
+| `get <pid>` | read one page / section / historical revision | `--page <slug>`, `--section "<小节>"` (without `--page` searches across pages), `--revision N`, `--output markdown\|text\|json` (json adds `links`, `backlinks`, `related_issues`) |
+| `create <pid>` | create a page (publishes `create` v1) | `--title`, `--slug`, `--parent`, `--after`, `--content-file`, `--summary`, `--source-issue` |
+| `write <pid>` | whole-page or section write | `--page`, `--base N` (required), `--content-file` (alone or with `--section`), `--delete-section`, `--summary`, `--source-issue` |
+| `rename <pid>` | change title or slug | `--page`, `--base N`, `--title`, `--slug`, `--summary`, `--source-issue` |
+| `move <pid>` | change parent or order | `--page`, `--base N`, `--parent <slug>\|--root`, `--after <slug>\|--first`, `--summary`, `--source-issue` |
+| `archive <pid>` / `restore <pid>` | soft delete / undo (slug stays reserved) | `--page`, `--base N`, `--recursive`, `--parent` (restore only), `--summary`, `--source-issue` |
+| `history <pid>` | revisions with kinds (create/content/rename/move/archive/restore/rollback) | `--page`, `--limit`, `--before` |
+| `diff <pid>` | structure metadata diff (title/slug/parent/position/archived) plus section-level body diff | `--page`, `--from N`, `--to M` (defaults to current) |
+| `rollback <pid>` | restore vN as a new revision | `--page`, `--to N`, `--base M`, `--content-only`, `--summary`, `--source-issue` |
+| `activity <pid>` | project-wide recent changes, archived pages included | `--limit`, `--before` |
+| `search <pid> "<q>"` | title/body full-text search with section snippets | `--limit` |
+| `export <pid>` | export `<slug>.md` files with YAML headers into `--dir`, or one `--single-file` | `--dir ./docs/baseline`, `--single-file <path>` |
+
+`--content-file` reads a regular file inside the current directory only
+(`filepath.IsLocal` + `os.OpenRoot`, in-directory symlinks allowed), capped at
+64 KiB of NUL-free UTF-8. `--source-issue` accepts an `OL-xxx` identifier or a
+UUID; the server validates it belongs to the project. Writes never auto-retry.
+
+## Migration from the retired commands
+
+Retired subcommands (`propose`, `adopt`, `annotations`, `respond`) exit with
+code 2 and print a migration hint. Map old invocations:
+
+| Old | New |
+| --- | --- |
+| `get --index` | `tree` |
+| `get --chapter overview [--section s]` | `get --page overview [--section s]` (built-in chapter keys are slugs) |
+| `get --chapter module:<name>` | `get --page <name>`; if the module collided with a built-in slug it gained a 6-char hash suffix, or it may have been renamed — run `tree` to see the live slug |
+| `get --candidate` | removed — writes publish immediately; use `history` and `diff` |
+| `propose --section … --base-current` | `write --section … --base N` (`--base-current` is gone: stale reads must not blind-overwrite) |
+| `adopt` / `adopt --reject` | removed — `rollback` undoes an unwanted write |
+| `diff --chapter c --from --to` | `diff --page <slug> --from --to` |
+| `annotations` / `respond` | retired with the annotation batches; wiki comments arrive in a follow-up release |
+
+## Typical loop
+
+```bash
+multica project baseline tree <pid>                       # outline + current vN per page
+multica project baseline get <pid> --page architecture --section "分层"
+multica project baseline write <pid> --page architecture --section "分层" \
+  --content-file ./edit.md --base 5 --summary "补充分层规则" --source-issue OL-1304
+# exit code 3 → someone else published; merge and retry with the new --base
+multica project baseline history <pid> --page architecture
+multica project baseline diff <pid> --page architecture --from 5
+multica project baseline rollback <pid> --page architecture --to 5 --base 7
 ```
-
-`get` defaults to chapter summaries. A selected chapter, a historical revision,
-or `--output markdown` includes the Markdown body. `--candidate` selects current
-candidates. Historical lookup is bounded and requires an exact chapter/version
-match; a missing version reports `404 not_found` with exit code 2. JSON reads
-return `engineering` and `chapters: [{chapter, revision}]`; `revision` is null
-for a chapter without the selected version. Revision JSON retains server audit
-fields. Historical reads return `engineering: null`.
-
-`propose` requires a UTF-8 file under the current working directory, at most
-64 KiB. Traversal and symlinks escaping that directory are rejected. A summary
-is required and limited to 500 Unicode characters. With an existing adopted
-version, specify `--base <number>` or explicitly choose `--base-current`.
-Without either, only a first revision can be proposed. An existing candidate
-requires `--replaces <number>`; inspect it before replacing. Optional
-`--source-issue` accepts an issue identifier or UUID. These references are
-resolved to IDs for the API; writes are never retried automatically.
-
-`propose` and `diff` display server-computed anchor changes. Text output prints
-each changed anchor's before/after body with line prefixes. It does not compute
-another Diff or infer semantic warnings from words such as MUST/SHOULD. New diffs have no warnings. Historical warning codes print
-`[BASELINE WARNING]` on stderr without special rule-downgrade labeling. JSON retains structured changes and warnings.
-Candidate Diff JSON is `{diffs: [...]}`; historical Diff and proposal JSON are
-the corresponding server objects.
-
-`adopt` requires one to 100 explicit `--revision chapter:number` values, with
-each chapter selected once. The CLI resolves those exact historical versions
-and sends their stored `base_revision_id` as `expected_adopted_revision_id` in
-one decision request. It never replaces the selected version with the current
-candidate or refreshes the expected base. A concurrently replaced candidate or
-changed base is rejected by the server. `--reject` uses the same selection and
-atomic decision endpoint with `action=reject`.
-
-Authorization remains with the server. Only human deciders using a session or
-member PAT can adopt or reject. A task receives 403 `baseline_human_required`:
-the CLI prints “基线只能由决定人采用或驳回”, adds the candidate's engineering
-approval link and exits 1. If the app address or workspace slug is unavailable,
-it directs the decider to the engineering overview. It never reads or switches
-to another credential. `baseline_not_decider` and `baseline_credential_denied`
-exit 1 without looking up an approval link.
-
-After successful `propose` text output, stderr prints the new candidate's
-engineering URL for review. The URL uses `MULTICA_APP_URL`,
-`FRONTEND_ORIGIN`, or the selected profile's app URL, then `daemon_app_url` from
-`GET /api/config`. Known cloud deployments can fall back to their public app
-address (`https://api.multica.ai` maps to `https://multica.ai`; the fork's cloud
-uses its configured cloud default). An arbitrary API address is never used as
-an app address. The workspace slug comes from `GET /api/workspaces/<workspace-id>`.
-If either the app address or slug is unavailable, the CLI instead asks the
-decider to open the project's engineering overview on the dashboard.
-
-The approval deep link is
-`<app-url>/<workspace-slug>/projects/<project-id>/engineering?candidate=<revision-id>`.
-The OL-92 Web/Desktop engineering view must preserve this workspace path and
-candidate through login, then display that revision's Diff without adopting it
-on navigation. A replaced or closed candidate must not silently select a newer
-revision. This route is a frontend handoff contract; it is not implemented by
-the CLI change.
-
-Successful decision text prints Diff summaries followed by `open_issues` in
-the server's `in_flight`/`queued` groups, including custom statuses and a
-truncation notice. Decision JSON preserves the full server response. There is
-no approval-comment proof or candidate UUID flag: the decision API uses explicit
-chapter versions and authenticated human checks. Text output for `propose`,
-`diff` and `adopt` retains the `+a ~m -r; unchanged u` summary and lists every
-removed section's key and title. Historical warnings are repeated on stderr
-after successful adoption, including JSON output, without changing exit code 0.
-
-`export` writes only adopted versions to `01-overview.md`, `02-domain-rules.md`,
-`03-architecture.md`, and `04-exclusions-and-risks.md`. Empty chapters have an
-explicit unadopted marker. `--single-file ./PROJECT_BASELINE.md` combines all four
-chapters and is mutually exclusive with `--dir`. Headers contain revision
-numbers and adoption times, never audit UUIDs. Files are read-only snapshots;
-edits must be proposed through the API to affect the baseline. Each file is
-replaced atomically; a filesystem failure can leave earlier files updated.
-Existing non-regular targets, including symlinks, are rejected. JSON output
-lists exported paths, while completion notices go to stderr.
-
-All commands above support `--output json`; text (or table) is the default.
-Failures write only to stderr, without echoing baseline bodies even under
-`--debug`. Exit codes are 0 for success, 1 for business/transport failures
-(including 403/409/422), and 2 for invalid parameters or missing resources.
-HTTP 400/404 also exit 2. Invalid, missing, or ambiguous project prefixes retain
-the resolver's explanation (including matching IDs) and exit 2; failures while
-fetching project candidates still use the transport/HTTP error handling.
-Other CLI commands retain their existing exit conventions.
-
-
-## Read annotation batches and respond (carrier issue runs)
-
-```sh
-multica project baseline annotations <project-id> --batch 7f3c… --with-sections
-multica project baseline annotations <project-id> --batch OL-1240 --output json
-multica project baseline respond <project-id> --batch 7f3c… --responses-file ./responses.json
-```
-
-`annotations` is read-only and always requires `--batch`: either the batch UUID
-or the carrier issue identifier (`OL-1240`), which resolves through the chapter's
-single active batch. There is no command that lists all batches. `--state`
-defaults to `open` (resolved and archived annotations stay out of context);
-`--state all` includes them. The interaction model and isolation boundaries
-live in [labrastro-baseline-annotations.md](labrastro-baseline-annotations.md).
-
-Text output leads with one batch header line (short batch ID, carrier
-identifier, chapter, working version, open/total counts) and every non-empty
-review summary in order (append reviews carry their own summaries), then one
-block per top-level annotation starting `[A<ordinal>]`: section anchor and
-title, side/version/lines or selected-text/whole-section targeting (side comes
-from the server's `side` field; line numbers are the target version's own,
-with `moved` relocations shown in a parenthetical), location status
-(`exact`/`moved`/`section_only`/`outdated`), a resolved/archived marker under
-`--state all`, quoted source, note, human replies (`↳ 回复（…）：…`) and the
-previous agent response (`↳ 智能体回应（上轮）：…`). `--with-sections` appends
-the deduped annotated section subtrees from the working version behind
-`<!-- <chapter> [<anchor>] -->` markers. JSON output is the server's
-`{batch, reviews, annotations, sections}` object unchanged.
-
-`respond` is callable only by runs of the batch's carrier issue (the server
-rejects every other credential with 403). `--responses-file` must be a UTF-8
-JSON file inside the current working directory, bounded by the request limit,
-with the same traversal and symlink rejection as `--content-file`. The file is
-an array of 1–50 `{"annotation": "A1"|"<uuid>", "response": "…"}` objects;
-`A<ordinal>` references are resolved to UUIDs by first reading the batch with
-`--state all`, and duplicates are rejected before any write. Each response is
-1–1000 characters. Responses wake nobody; on success text output prints the
-updated count, JSON passes the server result through. Failures never echo
-annotation or response bodies. Both commands use the same 0/1/2 exit codes as
-the rest of the baseline family; `propose` gains no new flags.
-
-```json
-[{"annotation": "A1", "response": "已按批注补充跨月规则，见 v5 第 14 行"}]
-```
-
-
-## Engineering configuration
-
-```sh
-multica project engineering get <project-id> --output json
-multica project engineering set <project-id> --current-stage 9 --mode-summary "Verify release"
-multica project engineering set <project-id> --stages-file ./stages.json
-multica project engineering set <project-id> --clear-stages
-```
-
-`get` text output includes the enabled flag, current stage, approach summary and
-a stage/title/goal table. JSON output is the original `engineering` object.
-`set` requires at least one change; it does not expose enabled or decider-list
-changes. `--stages-file` and `--clear-stages` are mutually exclusive (exit 2).
-An empty `--mode-summary` clears the summary. Files must be UTF-8 JSON arrays
-under the current directory; traversal and escaping symlinks are rejected, as
-with baseline `--content-file`. Files are bounded by the API's 1 MiB request
-limit; stage count and element validation are performed by the server.
-
-```json
-[{"stage": 1, "title": "Contract", "goal": "Accepted"},
- {"stage": 9, "title": "Release", "goal": ""}]
-```
-
-A task's `set` receives 403 and prints
-“工程配置只能由人类决定人修改，请在工程总览设置中修改”, then exits 1.
-The same 0/1/2 exit convention as baseline commands applies. Requests are not
-retried and credentials are never changed.
-
-## Read and revise a section
-
-```sh
-multica project baseline get <project-id> --index --output json
-multica project baseline get <project-id> --section "Pay" --chapter module:billing
-multica project baseline propose <project-id> --chapter module:billing \
-  --chapter-title "Billing" --section "Pay" --content-file ./pay.md \
-  --summary "Clarify payment rules" --base-current
-multica project baseline propose <project-id> --chapter module:billing \
-  --delete-section "Pay" --summary "Retire old payment rule" --base-current
-multica project baseline adopt <project-id> --revision module:billing:2
-```
-
-`--index` returns metadata and an ordered H1–H3 outline; `--section` returns full
-matching subtrees plus a one-hop `referenced_sections` list of definitions and
-rationale. Text output places references under `### 关联概念摘要`. These modes
-make a compact server request and do not download all chapter bodies. For reads,
-exact titles/anchors win over case-insensitive substring matches. `--chapter` limits
-matches but references may come from other chapters. `--candidate` reads current
-candidates. `--index`, `--section`, and `--revision` are mutually exclusive.
-
-Local proposals and deletions require an exact, case-sensitive title or anchor;
-they never fall back to substring matching. For a local proposal, a missing heading
-is restored automatically; a section without an exact match is appended, even if
-another title or anchor contains the query. Replacements include descendants and
-must preserve the existing heading depth. Ambiguous matches fail; use the unique
-anchor from the index. Deletion requires no content file and fails if the section
-does not exist.
-The server merges into the specified adopted version, or—when `--replaces` is
-given—into the replaced candidate's content so its other section edits are kept;
-the Diff is always computed against the adopted version. It checks the resulting
-64 KiB chapter limit, and produces the same reviewable candidate and Diff as a
-whole-chapter proposal. `--replaces` remains required for an existing candidate.
-
-`--chapter-title` updates the document display title when the proposal succeeds.
-JSON full-state reads and export include dynamic chapters. Directory exports keep
-the four built-in filenames and add numbered `module-<slug>.md` files; historical
-references and decisions parse `module:<slug>:<number>` at the last colon.

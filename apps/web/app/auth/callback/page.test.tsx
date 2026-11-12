@@ -347,8 +347,8 @@ describe("CallbackPage", () => {
     });
   });
 
-  it("preserves an engineering candidate query through the Google callback", async () => {
-    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+  it("preserves an engineering wiki query through the Google callback", async () => {
+    const next = "/acme/projects/p1/engineering?page=rev-1";
     mockLoginWithGoogle.mockResolvedValue(
       makeUser({ onboarded_at: "2026-01-01T00:00:00Z" }),
     );

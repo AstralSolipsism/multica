@@ -77,8 +77,8 @@ was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
 ## Engineering module upstream insertion ledger
 
-The engineering module (project engineering overview / baseline wiki / baseline
-annotations, [labrastro-engineering-api.md](labrastro-engineering-api.md))
+The engineering module (project engineering overview / baseline wiki,
+[labrastro-engineering-api.md](labrastro-engineering-api.md))
 lives in fork-owned files. Upstream files may only carry thin registration or
 call plugs. Before and after every upstream sync, walk this table and confirm
 each plug survived the merge: the import/registration line exists, the called
@@ -97,10 +97,9 @@ an upstream insertion requires updating this ledger in the same PR.
 | `packages/core/projects/mutations.ts` | delete-project cleanup + hook re-exports | `engineeringProjectKeys`, `export * from "./engineering-mutations"` | 2 |
 | `packages/core/api/index.ts` | schema/type re-exports | `export * from "./labrastro-engineering-exports"` | 1 |
 | `apps/desktop/src/renderer/src/App.tsx` | re-auth destination restore, logout clear, expiry preserve | `engineeringReauthDestination` etc. (`platform/engineering-deep-links.ts`) | 5 |
-| `apps/desktop/src/renderer/src/stores/tab-store.ts` | `?candidate=` landing on a matched tab | `applyEngineeringCandidateLanding` (`platform/engineering-deep-links.ts`) | 4 |
+| `apps/desktop/src/renderer/src/stores/tab-store.ts` | `?page=&section=&thread=` landing on a matched tab | `applyEngineeringWikiLanding` (`platform/engineering-deep-links.ts`) | 4 |
 | `apps/desktop/src/renderer/src/routes.tsx` | desktop route entry | `ProjectEngineeringPage` | 4 |
-| `packages/core/paths/paths.ts` | `projectEngineering(id, candidateId?)` path builder | — | 2 |
-| `packages/views/projects/components/labels.ts` | chapter label helper | `useT("engineering")` | 5 |
+| `packages/core/paths/paths.ts` | `projectEngineering(id, target?: {page?, section?, thread?})` path builder | — | 9 |
 | `packages/views/projects/components/index.ts` | barrel export | `EngineeringOverview` | 1 |
 | `packages/views/i18n/resources-types.ts` | locale resource typing | `engineering.json` | 2 |
 | `packages/core/diagnostics/diagnostic-context.ts` | redacted path pattern | — | 1 |
@@ -110,21 +109,19 @@ an upstream insertion requires updating this ledger in the same PR.
 | `server/internal/handler/project_resource.go` | claim-time engineering context injection | `appendEngineeringProjectDescription` | 1 |
 | `server/internal/handler/project.go` | delete-project cascade | `deleteProjectEngineering` (`labrastro_engineering.go`) | 2 |
 | `server/internal/handler/workspace.go` | delete-workspace cascade | `deleteWorkspaceEngineeringAndProjects` | 1 |
-| `server/internal/middleware/task_token_workspace.go` | task-token baseline credential denial | `writeLabrastroBaselineCredentialDenied` | 1 |
-| `server/internal/service/issue.go` | carrier-issue create hooks | `prepareLabrastroEngineeringIssue`, `bindLabrastroEngineeringCarrier`, `finalizeLabrastroEngineeringEnqueue` (`labrastro_engineering_issue.go`) + `IssueCreateOpts.BaselineAnnotationBatchID` | 5 |
-| `packages/core/package.json` | engineering subpath exports | `./projects/engineering-candidate.ts`, `./projects/baseline-annotation-draft-store.ts`, `./projects/baseline-source-diff.ts` | 3 |
+| `packages/core/package.json` | engineering subpath export | `./projects/baseline-wiki-diff.ts` | 1 |
 
 "Expected lines" uses one mechanical metric: added lines vs the recorded
 upstream base that mention an engineering/baseline identifier
-(`git diff -U0 <base> HEAD -- <file>`). Table total: 64 lines. When a file's
+(`git diff -U0 <base> HEAD -- <file>`). Table total: 58 lines. When a file's
 residual exceeds its expected value after a sync, restore the thin plug before
 merging.
 
-Key-generation guard: `engineeringProjectKeys.baselineAnnotationsAll`
-re-creates the `projects/{wsId}/detail/{id}` key prefix by value (no import
-cycle with `queries.ts`); `packages/core/projects/queries.test.ts` pins it to
-`projectKeys.detail` so an upstream key reshape fails tests instead of
-silently missing cache invalidation.
+Key-generation guard: `engineeringProjectKeys.wikiRoot` keeps wiki reads under
+`project-engineering/{wsId}/{projectId}/wiki`, outside the `projects/{wsId}`
+prefix that issue and project events invalidate;
+`packages/core/projects/queries.test.ts` pins the key shapes so an upstream
+key reshape fails tests instead of silently missing cache invalidation.
 
 ## Plugin-route re-evaluation triggers
 

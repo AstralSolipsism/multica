@@ -1,13 +1,10 @@
-// Fork-owned engineering mutation hooks (engineering config, baseline
-// propose/adopt/reject, baseline annotation reviews and batches). Re-exported
-// from `./mutations` so existing views keep their import paths
-// (see docs/engineering/upstream-sync-checklist.md).
+// Fork-owned engineering mutation hooks (engineering config and the baseline
+// wiki write surface). Re-exported from `./mutations` so existing views keep
+// their import paths (see docs/engineering/upstream-sync-checklist.md).
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { ApiClient } from "../api/client";
-import { issueKeys } from "../issues/queries";
-import { invalidateIssueQueries } from "../issues/invalidation";
 import { useWorkspaceId } from "../hooks";
 import { engineeringProjectKeys } from "./engineering-queries";
 
@@ -28,101 +25,108 @@ export function useUpdateProjectEngineering() {
   });
 }
 
-type ProposeProjectBaselineInput = { projectId: string } &
-  Parameters<ApiClient["proposeProjectBaseline"]>[2];
-
-export function useProposeProjectBaseline() {
+function useInvalidateWiki() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  return (projectId: string) => {
+    qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiRoot(wsId, projectId) });
+    qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineering(wsId, projectId) });
+  };
+}
+
+type CreateWikiPageInput = { projectId: string } & Parameters<ApiClient["createProjectWikiPage"]>[2];
+
+export function useCreateWikiPage() {
+  const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
   return useMutation({
-    mutationFn: ({ projectId, ...data }: ProposeProjectBaselineInput) =>
-      api.proposeProjectBaseline(wsId, projectId, data),
+    mutationFn: ({ projectId, ...data }: CreateWikiPageInput) =>
+      api.createProjectWikiPage(wsId, projectId, data),
     retry: false,
-    onSettled: (_data, _error, { projectId }) => {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineeringAll(wsId, projectId) });
-    },
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
   });
 }
 
-export type DecideProjectBaselineInput = {
-  projectId: string;
-  revisions: Parameters<ApiClient["decideProjectBaseline"]>[3];
-  annotationBatchAction?: "close" | "keep";
-};
+type WriteWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["writeProjectWikiPage"]>[3];
 
-function useDecideProjectBaseline(action: "adopt" | "reject") {
-  const qc = useQueryClient();
+export function useWriteWikiPage() {
   const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
   return useMutation({
-    mutationFn: ({ projectId, revisions, annotationBatchAction }: DecideProjectBaselineInput) =>
-      annotationBatchAction
-        ? api.decideProjectBaseline(wsId, projectId, action, revisions, { annotationBatchAction })
-        : api.decideProjectBaseline(wsId, projectId, action, revisions),
+    mutationFn: ({ projectId, page, ...data }: WriteWikiPageInput) =>
+      api.writeProjectWikiPage(wsId, projectId, page, data),
     retry: false,
-    onSettled: (_data, _error, { projectId }) => {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineeringAll(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId) });
-      void invalidateIssueQueries(qc, wsId);
-      qc.invalidateQueries({ queryKey: issueKeys.timelineAll() });
-    },
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
   });
 }
 
-export function useAdoptProjectBaseline() {
-  return useDecideProjectBaseline("adopt");
-}
+type RenameWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["renameProjectWikiPage"]>[3];
 
-export function useRejectProjectBaseline() {
-  return useDecideProjectBaseline("reject");
-}
-
-export type SubmitProjectBaselineReviewMutationInput = { projectId: string } &
-  Parameters<ApiClient["submitProjectBaselineReview"]>[2];
-
-export function useSubmitProjectBaselineReview() {
-  const qc = useQueryClient();
+export function useRenameWikiPage() {
   const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
   return useMutation({
-    mutationFn: ({ projectId, ...data }: SubmitProjectBaselineReviewMutationInput) =>
-      api.submitProjectBaselineReview(wsId, projectId, data),
+    mutationFn: ({ projectId, page, ...data }: RenameWikiPageInput) =>
+      api.renameProjectWikiPage(wsId, projectId, page, data),
     retry: false,
-    onSettled: (_data, _error, { projectId }) => {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineeringAll(wsId, projectId) });
-    },
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
   });
 }
 
-export type ResolveProjectBaselineAnnotationsMutationInput = { projectId: string } &
-  Parameters<ApiClient["resolveProjectBaselineAnnotations"]>[2];
+type MoveWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["moveProjectWikiPage"]>[3];
 
-export function useResolveProjectBaselineAnnotations() {
-  const qc = useQueryClient();
+export function useMoveWikiPage() {
   const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
   return useMutation({
-    mutationFn: ({ projectId, ...data }: ResolveProjectBaselineAnnotationsMutationInput) =>
-      api.resolveProjectBaselineAnnotations(wsId, projectId, data),
+    mutationFn: ({ projectId, page, ...data }: MoveWikiPageInput) =>
+      api.moveProjectWikiPage(wsId, projectId, page, data),
     retry: false,
-    onSettled: (_data, _error, { projectId }) => {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId) });
-    },
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
   });
 }
 
-export interface CloseProjectBaselineAnnotationBatchMutationInput {
-  projectId: string;
-  batchId: string;
+type ArchiveWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["archiveProjectWikiPage"]>[3];
+
+export function useArchiveWikiPage() {
+  const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
+  return useMutation({
+    mutationFn: ({ projectId, page, ...data }: ArchiveWikiPageInput) =>
+      api.archiveProjectWikiPage(wsId, projectId, page, data),
+    retry: false,
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
+  });
 }
 
-export function useCloseProjectBaselineAnnotationBatch() {
-  const qc = useQueryClient();
+type RestoreWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["restoreProjectWikiPage"]>[3];
+
+export function useRestoreWikiPage() {
   const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
   return useMutation({
-    mutationFn: ({ projectId, batchId }: CloseProjectBaselineAnnotationBatchMutationInput) =>
-      api.closeProjectBaselineAnnotationBatch(wsId, projectId, batchId),
+    mutationFn: ({ projectId, page, ...data }: RestoreWikiPageInput) =>
+      api.restoreProjectWikiPage(wsId, projectId, page, data),
     retry: false,
-    onSettled: (_data, _error, { projectId }) => {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId) });
-    },
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
+  });
+}
+
+type RollbackWikiPageInput = { projectId: string; page: string } &
+  Parameters<ApiClient["rollbackProjectWikiPage"]>[3];
+
+export function useRollbackWikiPage() {
+  const wsId = useWorkspaceId();
+  const invalidate = useInvalidateWiki();
+  return useMutation({
+    mutationFn: ({ projectId, page, ...data }: RollbackWikiPageInput) =>
+      api.rollbackProjectWikiPage(wsId, projectId, page, data),
+    retry: false,
+    onSettled: (_data, _error, { projectId }) => invalidate(projectId),
   });
 }

@@ -8,7 +8,7 @@ import {
 } from "./tab-store-storage";
 import { createSafeId } from "@multica/core/utils";
 import { workspaceSlugForPath } from "@multica/core/paths";
-import { applyEngineeringCandidateLanding } from "@/platform/engineering-deep-links";
+import { applyEngineeringWikiLanding } from "@/platform/engineering-deep-links";
 
 // Tab sessions hold serializable URLs, identity, virtual history, and view
 // mementos. The coordinator projects the active session onto the single router;
@@ -794,7 +794,7 @@ export const useTabStore = create<TabStore>()(
             const key = resourceKeyForUrl(clean);
             const match = existing.tabs.find((t) => t.resourceKey === key);
             if (match) {
-              const landed = applyEngineeringCandidateLanding(existing.tabs, match, clean, resourceKeyForUrl);
+              const landed = applyEngineeringWikiLanding(existing.tabs, match, clean, resourceKeyForUrl);
               const nextGroup = withBrowsingVisit(
                 reconcileGroup(existing, landed.tabs, match.id),
                 slug,
@@ -852,7 +852,7 @@ export const useTabStore = create<TabStore>()(
         const key = resourceKeyForUrl(clean);
         const existing = group.tabs.find((t) => t.resourceKey === key);
         if (existing) {
-          const landed = applyEngineeringCandidateLanding(group.tabs, existing, clean, resourceKeyForUrl);
+          const landed = applyEngineeringWikiLanding(group.tabs, existing, clean, resourceKeyForUrl);
           const historyBase = withActiveSessionVisit(
             group,
             activeWorkspaceSlug,

@@ -16,25 +16,25 @@ type AnnotationSection struct {
 	OwnMarkdown string
 }
 
-func FindAnnotationSection(chapter, content, anchor string) (AnnotationSection, bool) {
-	if _, err := Parse(chapter, content); err != nil {
+func FindAnnotationSection(page, content, anchor string) (AnnotationSection, bool) {
+	if _, err := Parse(content); err != nil {
 		return AnnotationSection{}, false
 	}
 	for _, h := range scanHeadings(content) {
 		if h.Anchor == anchor {
-			return AnnotationSection{SectionSlice{chapter, h.Heading, content[h.start:h.end]}, content[h.start:h.ownEnd]}, true
+			return AnnotationSection{SectionSlice{page, h.Heading, content[h.start:h.end]}, content[h.start:h.ownEnd]}, true
 		}
 	}
 	return AnnotationSection{}, false
 }
 
 // A selected ancestor already carries the full descendant subtree.
-func AnnotationSubtrees(chapter, content string, anchors map[string]bool) []SectionSlice {
+func AnnotationSubtrees(page, content string, anchors map[string]bool) []SectionSlice {
 	out := []SectionSlice{}
 	end := -1
 	for _, h := range scanHeadings(content) {
 		if anchors[h.Anchor] && h.start >= end {
-			out = append(out, SectionSlice{chapter, h.Heading, content[h.start:h.end]})
+			out = append(out, SectionSlice{page, h.Heading, content[h.start:h.end]})
 			end = h.end
 		}
 	}
@@ -104,8 +104,8 @@ func renderedAnnotationText(source string) string {
 	}
 }
 
-func LocateAnnotation(chapter, working string, revision int32, sameRevision bool, a AnnotationAnchor) (string, *AnnotationLocation) {
-	s, ok := FindAnnotationSection(chapter, working, a.Section)
+func LocateAnnotation(page, working string, revision int32, sameRevision bool, a AnnotationAnchor) (string, *AnnotationLocation) {
+	s, ok := FindAnnotationSection(page, working, a.Section)
 	if !ok {
 		return "outdated", nil
 	}

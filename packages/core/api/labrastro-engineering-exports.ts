@@ -3,55 +3,50 @@
 // so consumers keep importing from "@multica/core/api"
 // (see docs/engineering/upstream-sync-checklist.md).
 
-import type {
-  BaselineDecision,
-  BaselineDiff,
-  EngineeringOverview,
-} from "./labrastro-engineering-schemas";
-
 export {
-  BaselineChapterSchema,
-  BaselineDecisionSchema,
-  BaselineDiffSchema,
-  BaselineHistorySchema,
-  BaselineRevisionSchema,
   EngineeringConfigSchema,
   EngineeringStageSchema,
   EngineeringOverviewSchema,
   EngineeringUpdatedSchema,
+  WikiPageSchema,
+  WikiTreeSchema,
+  WikiTreePageSchema,
+  WikiTreeCurrentSchema,
+  WikiTreeSectionSchema,
+  WikiRevisionSchema,
+  WikiLinkSchema,
+  WikiBacklinkSchema,
+  WikiRelatedIssueSchema,
+  WikiPageReadSchema,
+  WikiWriteResultSchema,
+  WikiArchiveResultSchema,
+  WikiHistorySchema,
+  WikiDiffSchema,
+  WikiActivityItemSchema,
+  WikiSearchHitSchema,
+  WikiConflictSchema,
 } from "./labrastro-engineering-schemas";
 export type {
-  BaselineChapter,
-  BaselineDecision,
-  BaselineDiff,
-  BaselineHistory,
-  BaselineRevision,
   EngineeringConfig,
   EngineeringStage,
   EngineeringOverview,
+  WikiPage,
+  WikiTree,
+  WikiTreePage,
+  WikiTreeCurrent,
+  WikiTreeSection,
+  WikiRevision,
+  WikiLink,
+  WikiBacklink,
+  WikiRelatedIssue,
+  WikiPageRead,
+  WikiSectionSlice,
+  WikiReferencedSection,
+  WikiWriteResult,
+  WikiArchiveResult,
+  WikiHistory,
+  WikiDiff,
+  WikiActivityItem,
+  WikiSearchHit,
+  WikiConflict,
 } from "./labrastro-engineering-schemas";
-export type {
-  BaselineAnnotationBatchRow,
-  BaselineAnnotationBatch,
-  BaselineAnnotationBatches,
-  BaselineReview,
-  BaselineAnnotation,
-  BaselineAnnotationDetail,
-  BaselineAnnotationSection,
-  BaselineReviewSubmitted,
-  BaselineAnnotationsUpdated,
-  BaselineAnnotationBatchClosed,
-} from "./labrastro-baseline-annotation-schemas";
-export type { BaselineHistoryOptions } from "./labrastro-engineering-api";
-export type {
-  BaselineAnnotationBatchListState,
-  BaselineAnnotationDetailState,
-  GetProjectBaselineAnnotationBatchesOptions,
-  GetProjectBaselineAnnotationBatchOptions,
-  BaselineReviewAnnotationInput,
-  SubmitProjectBaselineReviewInput,
-  ResolveProjectBaselineAnnotationsInput,
-} from "./labrastro-baseline-annotation-api";
-export type BaselineChange = BaselineDiff["added"][number];
-export type ChapterState = EngineeringOverview["chapters"][number];
-export type OpenIssue = BaselineDecision["openIssues"]["inFlight"][number];

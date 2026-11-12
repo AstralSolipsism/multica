@@ -38,11 +38,18 @@ describe("paths.workspace(slug)", () => {
     expect(ws.attachmentPreview("att_42")).toBe("/acme/attachments/att_42/preview");
   });
 
-  it("builds engineering deep links with an optional encoded candidate", () => {
+  it("builds engineering deep links with optional wiki targets", () => {
     expect(ws.projectEngineering("project/id")).toBe("/acme/projects/project%2Fid/engineering");
-    expect(ws.projectEngineering("project/id", "candidate / one")).toBe(
-      "/acme/projects/project%2Fid/engineering?candidate=candidate+%2F+one",
+    expect(ws.projectEngineering("project/id", { page: "arch" })).toBe(
+      "/acme/projects/project%2Fid/engineering?page=arch",
     );
+    expect(ws.projectEngineering("project/id", { page: "arch", section: "分层/规则" })).toBe(
+      "/acme/projects/project%2Fid/engineering?page=arch&section=" + encodeURIComponent("分层/规则"),
+    );
+    expect(ws.projectEngineering("project/id", { thread: "t/1" })).toBe(
+      "/acme/projects/project%2Fid/engineering?thread=t%2F1",
+    );
+    expect(ws.projectEngineering("project/id", {})).toBe("/acme/projects/project%2Fid/engineering");
   });
 
   it("URL-encodes special characters in ids", () => {

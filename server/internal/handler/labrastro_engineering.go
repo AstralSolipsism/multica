@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -9,9 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -20,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/engineering"
-	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -33,14 +29,25 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	if err != nil || !config.Enabled {
 		return baseDescription
 	}
-	docs, err := h.Queries.LabrastroListBaselineDocs(ctx, db.LabrastroListBaselineDocsParams{WorkspaceID: workspaceID, ProjectID: projectID})
-	if err != nil {
-		return baseDescription
-	}
 	var stages []engineeringStage
 	if err := json.Unmarshal(config.Stages, &stages); err != nil {
 		return baseDescription
 	}
+	pages, err := h.Queries.LabrastroListBaselinePages(ctx, db.LabrastroListBaselinePagesParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	if err != nil {
+		return baseDescription
+	}
+	bodies, err := h.Queries.LabrastroListBaselinePageBodies(ctx, db.LabrastroListBaselinePageBodiesParams{WorkspaceID: workspaceID, ProjectID: projectID})
+	if err != nil {
+		return baseDescription
+	}
+	pid := uuidToString(projectID)
+	numbers, contents := map[string]int32{}, map[string]string{}
+	for _, b := range bodies {
+		numbers[b.Slug] = b.RevisionNumber
+		contents[b.Slug] = b.ContentMarkdown
+	}
+
 	stageLine := fmt.Sprintf("当前主攻：Stage %d", config.CurrentStage)
 	for _, stage := range stages {
 		if stage.Stage == int64(config.CurrentStage) {
@@ -55,85 +62,93 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	if mode := engineeringContextText(config.ModeSummary, 280); mode != "" {
 		lines = append(lines, "推进方针："+mode)
 	}
-	ids := make([]pgtype.UUID, 0, len(docs))
-	for _, doc := range docs {
-		ids = append(ids, doc.AdoptedRevisionID)
+
+	visible := 0
+	for _, p := range pages {
+		if !p.ArchivedAt.Valid {
+			visible++
+		}
 	}
-	revisions, err := baselineRevisionsByID(ctx, h.Queries, workspaceID, projectID, ids)
-	if err != nil {
-		return baseDescription
+	directory := append([]string{}, fmt.Sprintf("基线 Wiki 目录（共 %d 页；slug 标题 vN）：", visible))
+	type treeLine struct {
+		text  string
+		depth int
 	}
-	var builtin, modules, candidates []string
-	for _, doc := range orderedBaselineDocs(docs) {
-		chapter := doc.Chapter
-		if doc.CandidateRevisionID.Valid {
-			candidates = append(candidates, chapter)
+	var walk func(page db.ProjectBaselinePage, depth int)
+	var flat []treeLine
+	walk = func(page db.ProjectBaselinePage, depth int) {
+		if depth > engineering.MaxWikiDepth {
+			return
 		}
-		if !doc.AdoptedRevisionID.Valid {
-			continue
-		}
-		revision := revisions[doc.AdoptedRevisionID]
-		headings, err := engineering.Index(chapter, revision.ContentMarkdown)
-		if err != nil {
-			return baseDescription
-		}
-		var titles []string
-		for _, heading := range headings {
-			if heading.Title != "" {
-				titles = append(titles, heading.Title)
+		line := fmt.Sprintf("%s %s v%d", page.Slug, engineeringContextText(page.Title, 60), numbers[page.Slug])
+		if depth == 1 {
+			headings, err := engineering.Index(contents[page.Slug])
+			if err == nil {
+				var titles []string
+				for _, heading := range headings {
+					if heading.Title != "" && heading.Level <= 2 {
+						titles = append(titles, heading.Title)
+					}
+				}
+				if outline := engineeringContextText(strings.Join(titles, "；"), 120); outline != "" {
+					line += "：" + outline
+				}
 			}
 		}
-		outline := engineeringContextText(strings.Join(titles, "；"), 180)
-		if outline == "" {
-			outline = "无小节标题"
+		flat = append(flat, treeLine{line, depth})
+		var children []db.ProjectBaselinePage
+		for _, other := range pages {
+			if !other.ArchivedAt.Valid && other.ParentID == page.ID {
+				children = append(children, other)
+			}
 		}
-		label := chapter
-		if doc.Title != "" {
-			label += "（" + engineeringContextText(doc.Title, 60) + "）"
-		}
-		line := fmt.Sprintf("- %s v%d：%s", label, revision.RevisionNumber, outline)
-		if strings.HasPrefix(chapter, "module:") {
-			modules = append(modules, line)
-		} else {
-			builtin = append(builtin, line)
+		slices.SortFunc(children, func(a, b db.ProjectBaselinePage) int { return cmp.Compare(a.Position, b.Position) })
+		for _, child := range children {
+			walk(child, depth+1)
 		}
 	}
-	if len(builtin)+len(modules) == 0 {
-		lines = append(lines, "当前尚未建立生效基线")
-	} else {
-		lines = append(lines, "已生效基线（adopted）：")
-		lines = append(lines, builtin...)
+	roots := []db.ProjectBaselinePage{}
+	for _, p := range pages {
+		if !p.ArchivedAt.Valid && !p.ParentID.Valid {
+			roots = append(roots, p)
+		}
 	}
-	var tail []string
-	if len(candidates) > 0 {
-		tail = append(tail, "待审候选（candidate，尚未生效）："+engineeringContextList(candidates, 200))
+	slices.SortFunc(roots, func(a, b db.ProjectBaselinePage) int { return cmp.Compare(a.Position, b.Position) })
+	for _, root := range roots {
+		walk(root, 1)
 	}
-	tail = append(tail,
-		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。完整基线与契约：`multica project baseline get %s`。", uuidToString(projectID), uuidToString(projectID)),
-		fmt.Sprintf("规划、拆单、编码或审阅前，先用 `multica project baseline get %s --index` 浏览目录，再用 `multica project baseline get %s --section \"<小节名>\"` 按需查阅小节与关联概念。", uuidToString(projectID), uuidToString(projectID)),
-		"如已绑定 strixnova-* 系列工程 skill，请按对应 skill 规程调用相关能力。")
-	// Module chapters fill what the budget leaves after everything else, in
-	// position order; the rest collapse into one pointer to the index.
+
 	overflow := func(rest int) string {
-		return fmt.Sprintf("- 另有 %d 个模块，用 `multica project baseline get %s --index` 查看", rest, uuidToString(projectID))
+		return fmt.Sprintf("- 另有 %d 页，用 `multica project baseline tree %s` 查看", rest, pid)
 	}
-	remaining := engineeringContextBudget - engineeringContextRunes(lines) - engineeringContextRunes(tail)
-	listed := 0
-	for i, line := range modules {
-		// Reserve room for the pointer only when the rest cannot all fit.
-		if engineeringContextRunes(modules[i:]) <= remaining {
-			listed = len(modules)
-			break
-		}
-		if engineeringContextRunes([]string{line, overflow(len(modules) - i - 1)}) > remaining {
-			break
-		}
-		remaining -= engineeringContextRunes([]string{line})
-		listed++
+	tail := []string{
+		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。读：先 `multica project baseline tree %s` 看目录，再 `multica project baseline get %s --page <slug> [--section \"<小节>\"]` 按需读取。", pid, pid, pid),
+		fmt.Sprintf("写（人机同权直写，带读取时的修订号）：`multica project baseline write %s --page <slug> [--section \"<小节>\"] --content-file <文件> --base <N> [--summary \"…\"] [--source-issue <Issue>]`；退出码 3 表示冲突，先重读再合并。", pid),
+		"如已绑定 strixnova-* 系列工程 skill，请按对应 skill 规程调用相关能力。",
 	}
-	lines = append(lines, modules[:listed]...)
-	if listed < len(modules) {
-		lines = append(lines, overflow(len(modules)-listed))
+	if len(flat) == 0 {
+		lines = append(lines, "当前 Wiki 尚无页面，可先 `multica project baseline create` 建页")
+	} else {
+		remaining := engineeringContextBudget - engineeringContextRunes(lines) - engineeringContextRunes(directory) - engineeringContextRunes(tail)
+		listed := 0
+		for i, item := range flat {
+			// Depth beyond 3 never lists but must not stop the walk: later
+			// roots still list, and deep pages only count toward the overflow.
+			if item.depth > 3 {
+				continue
+			}
+			line := "- " + strings.Repeat("  ", item.depth-1) + item.text
+			if engineeringContextRunes([]string{line, overflow(len(flat) - i - 1)}) > remaining {
+				break
+			}
+			remaining -= engineeringContextRunes([]string{line})
+			directory = append(directory, line)
+			listed++
+		}
+		if listed < len(flat) {
+			directory = append(directory, overflow(len(flat)-listed))
+		}
+		lines = append(lines, directory...)
 	}
 	lines = append(lines, tail...)
 	summary := strings.Join(lines, "\n")
@@ -143,8 +158,7 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	return baseDescription + "\n\n" + summary
 }
 
-// engineeringContextBudget bounds the claim summary in runes. Built-in chapters
-// always fit within it; module chapters share what is left.
+// engineeringContextBudget bounds the claim summary in runes.
 const engineeringContextBudget = 2000
 
 // engineeringContextRunes counts lines as joined with newlines.
@@ -154,22 +168,6 @@ func engineeringContextRunes(lines []string) int {
 		n += utf8.RuneCountInString(line) + 1
 	}
 	return n
-}
-
-// engineeringContextList joins chapter names up to limit runes and counts the rest.
-func engineeringContextList(items []string, limit int) string {
-	out := ""
-	for i, item := range items {
-		next := item
-		if i > 0 {
-			next = out + "、" + item
-		}
-		if i > 0 && utf8.RuneCountInString(next) > limit {
-			return fmt.Sprintf("%s 等共 %d 个", out, len(items))
-		}
-		out = next
-	}
-	return out
 }
 
 // Keep free-form configuration and headings on one bounded line per summary item.
@@ -183,17 +181,48 @@ func engineeringContextText(value string, limit int) string {
 
 func (h *Handler) RegisterLabrastroEngineeringRoutes(r chi.Router) {
 	r.Get("/api/projects/{id}/engineering", h.LabrastroGetEngineering)
-	r.Get("/api/projects/{id}/baseline", h.LabrastroReadBaseline)
+	r.Get("/api/projects/{id}/baseline/tree", h.LabrastroWikiTree)
+	r.Post("/api/projects/{id}/baseline/pages", h.LabrastroCreateWikiPage)
+	r.Get("/api/projects/{id}/baseline/pages/{page}", h.LabrastroReadWikiPage)
+	r.Put("/api/projects/{id}/baseline/pages/{page}/content", h.LabrastroWriteWikiPageContent)
+	r.Patch("/api/projects/{id}/baseline/pages/{page}", h.LabrastroPatchWikiPage)
+	r.Post("/api/projects/{id}/baseline/pages/{page}/archive", h.LabrastroArchiveWikiPage)
+	r.Post("/api/projects/{id}/baseline/pages/{page}/restore", h.LabrastroRestoreWikiPage)
+	r.Get("/api/projects/{id}/baseline/pages/{page}/revisions", h.LabrastroWikiPageHistory)
+	r.Get("/api/projects/{id}/baseline/pages/{page}/revisions/{n}", h.LabrastroWikiPageRevision)
+	r.Get("/api/projects/{id}/baseline/pages/{page}/diff", h.LabrastroWikiPageDiff)
+	r.Post("/api/projects/{id}/baseline/pages/{page}/rollback", h.LabrastroRollbackWikiPage)
+	r.Get("/api/projects/{id}/baseline/pages/{page}/backlinks", h.LabrastroWikiPageBacklinks)
+	r.Get("/api/projects/{id}/baseline/activity", h.LabrastroWikiActivity)
+	r.Get("/api/projects/{id}/baseline/search", h.LabrastroWikiSearch)
 	r.With(RequireHumanActor).Patch("/api/projects/{id}/engineering", h.LabrastroPatchEngineering)
-	r.Post("/api/projects/{id}/baseline/candidates", h.LabrastroProposeBaseline)
-	r.Post("/api/projects/{id}/baseline/decisions", h.LabrastroDecideBaseline)
-	r.Get("/api/projects/{id}/baseline/revisions", h.LabrastroBaselineHistory)
-	r.Post("/api/projects/{id}/baseline/reviews", h.LabrastroSubmitBaselineReview)
-	r.Get("/api/projects/{id}/baseline/annotation-batches", h.LabrastroListAnnotationBatches)
-	r.Get("/api/projects/{id}/baseline/annotation-batches/{batch}", h.LabrastroReadAnnotationBatch)
-	r.Post("/api/projects/{id}/baseline/annotation-batches/{batch}/close", h.LabrastroCloseAnnotationBatch)
-	r.Post("/api/projects/{id}/baseline/annotations/responses", h.LabrastroRespondAnnotations)
-	r.Post("/api/projects/{id}/baseline/annotations/resolve", h.LabrastroResolveAnnotations)
+	// The candidate/annotation pipeline is retired; clients get one stable
+	// pointer instead of route-not-found noise.
+	for _, route := range []struct {
+		method, path string
+	}{
+		{"GET", "/api/projects/{id}/baseline"},
+		{"POST", "/api/projects/{id}/baseline/candidates"},
+		{"POST", "/api/projects/{id}/baseline/decisions"},
+		{"GET", "/api/projects/{id}/baseline/revisions"},
+		{"POST", "/api/projects/{id}/baseline/reviews"},
+		{"GET", "/api/projects/{id}/baseline/annotation-batches"},
+		{"GET", "/api/projects/{id}/baseline/annotation-batches/{batch}"},
+		{"POST", "/api/projects/{id}/baseline/annotation-batches/{batch}/close"},
+		{"POST", "/api/projects/{id}/baseline/annotations/responses"},
+		{"POST", "/api/projects/{id}/baseline/annotations/resolve"},
+	} {
+		switch route.method {
+		case "GET":
+			r.Get(route.path, writeBaselineAPIRetired)
+		case "POST":
+			r.Post(route.path, writeBaselineAPIRetired)
+		}
+	}
+}
+
+func writeBaselineAPIRetired(w http.ResponseWriter, _ *http.Request) {
+	writeErrorCode(w, http.StatusGone, "baseline_api_retired", "the candidate and annotation baseline API is retired; use the baseline wiki page endpoints")
 }
 
 type engineeringError struct {
@@ -228,20 +257,19 @@ func writeEngineeringError(w http.ResponseWriter, err error) {
 }
 
 func decodeEngineering(w http.ResponseWriter, r *http.Request, out any) bool {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	var raw json.RawMessage
-	if err := d.Decode(&raw); err != nil || len(raw) == 0 || raw[0] != '{' {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil || len(body) == 0 || body[0] != '{' {
 		writeErrorCode(w, 400, "invalid_request", "expected one JSON object")
 		return false
 	}
-	if d.Decode(new(any)) != io.EOF {
-		writeErrorCode(w, 400, "invalid_request", "expected one JSON object")
-		return false
-	}
-	fields := json.NewDecoder(bytes.NewReader(raw))
+	fields := json.NewDecoder(strings.NewReader(string(body)))
 	fields.DisallowUnknownFields()
 	if err := fields.Decode(out); err != nil {
 		writeErrorCode(w, 400, "invalid_request", "invalid request body")
+		return false
+	}
+	if fields.Decode(new(any)) != io.EOF {
+		writeErrorCode(w, 400, "invalid_request", "expected one JSON object")
 		return false
 	}
 	return true
@@ -351,8 +379,7 @@ func (h *Handler) engineeringState(w http.ResponseWriter, r *http.Request, write
 
 // release ends a read-only snapshot once its rows are loaded, so streaming a
 // large response to a slow client does not hold the project and member share
-// locks that proposals, decisions and project edits wait on. The deferred
-// rollback then becomes a no-op.
+// locks that wiki writes and project edits wait on.
 func (s *engineeringState) release(ctx context.Context) {
 	_ = s.tx.Rollback(ctx)
 }
@@ -366,102 +393,10 @@ func (s *engineeringState) isDecider() bool {
 	}
 	return s.project.LeadType.String == "member" && s.project.LeadID == s.member.UserID
 }
-func (s *engineeringState) revision(ctx context.Context, id pgtype.UUID) (db.ProjectBaselineRevision, error) {
-	if !id.Valid {
-		return db.ProjectBaselineRevision{}, nil
-	}
-	return s.q.LabrastroGetBaselineRevision(ctx, db.LabrastroGetBaselineRevisionParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, ID: id})
-}
-
-// baselineRevisionsByID loads the referenced revisions in one query. Invalid IDs
-// are skipped so a missing pointer reads as the zero revision; a valid pointer
-// without a row still fails like the single-row read.
-func baselineRevisionsByID(ctx context.Context, q *db.Queries, workspaceID, projectID pgtype.UUID, ids []pgtype.UUID) (map[pgtype.UUID]db.ProjectBaselineRevision, error) {
-	wanted := make([]pgtype.UUID, 0, len(ids))
-	for _, id := range ids {
-		if id.Valid {
-			wanted = append(wanted, id)
-		}
-	}
-	out := make(map[pgtype.UUID]db.ProjectBaselineRevision, len(wanted))
-	if len(wanted) == 0 {
-		return out, nil
-	}
-	rows, err := q.LabrastroListBaselineRevisionsByID(ctx, db.LabrastroListBaselineRevisionsByIDParams{WorkspaceID: workspaceID, ProjectID: projectID, Ids: wanted})
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		out[row.ID] = row
-	}
-	for _, id := range wanted {
-		if _, ok := out[id]; !ok {
-			return nil, pgx.ErrNoRows
-		}
-	}
-	return out, nil
-}
-func (s *engineeringState) revisionsByID(ctx context.Context, ids []pgtype.UUID) (map[pgtype.UUID]db.ProjectBaselineRevision, error) {
-	return baselineRevisionsByID(ctx, s.q, s.project.WorkspaceID, s.project.ID, ids)
-}
-func (s *engineeringState) docs(ctx context.Context, lock bool) ([]db.ProjectBaselineDoc, error) {
-	if lock {
-		return s.q.LabrastroLockBaselineDocs(ctx, db.LabrastroLockBaselineDocsParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID})
-	}
-	return s.q.LabrastroListBaselineDocs(ctx, db.LabrastroListBaselineDocsParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID})
-}
-func baselineDoc(docs []db.ProjectBaselineDoc, chapter string) db.ProjectBaselineDoc {
-	for _, d := range docs {
-		if d.Chapter == chapter {
-			return d
-		}
-	}
-	return db.ProjectBaselineDoc{Chapter: chapter}
-}
-
-type baselineRevisionResponse struct {
-	db.ProjectBaselineRevision
-	AnchorsDiff json.RawMessage `json:"anchors_diff"`
-}
-
-func baselineRevision(r db.ProjectBaselineRevision) *baselineRevisionResponse {
-	if !r.ID.Valid {
-		return nil
-	}
-	return &baselineRevisionResponse{r, json.RawMessage(r.AnchorsDiff)}
-}
-
-type baselineChapterResponse struct {
-	Chapter   string                    `json:"chapter"`
-	Title     string                    `json:"title"`
-	Position  int32                     `json:"position"`
-	Adopted   *baselineRevisionResponse `json:"adopted"`
-	Candidate *baselineRevisionResponse `json:"candidate"`
-}
-
-func (s *engineeringState) chapters(ctx context.Context) ([]baselineChapterResponse, error) {
-	docs, err := s.docs(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]pgtype.UUID, 0, 2*len(docs))
-	for _, d := range docs {
-		ids = append(ids, d.AdoptedRevisionID, d.CandidateRevisionID)
-	}
-	revisions, err := s.revisionsByID(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	ordered := orderedBaselineDocs(docs)
-	chapters := make([]baselineChapterResponse, 0, len(ordered))
-	for _, d := range ordered {
-		chapters = append(chapters, baselineChapterResponse{d.Chapter, d.Title, d.Position, baselineRevision(revisions[d.AdoptedRevisionID]), baselineRevision(revisions[d.CandidateRevisionID])})
-	}
-	return chapters, nil
-}
 
 // with_chapters=false returns the PATCH response shape for callers that only
-// need the configuration, skipping every chapter body.
+// need the configuration. Old desktop clients still read `chapters`, so the
+// key stays with an empty list.
 func (h *Handler) LabrastroGetEngineering(w http.ResponseWriter, r *http.Request) {
 	withChapters := r.URL.Query().Get("with_chapters")
 	if withChapters != "" && withChapters != "true" && withChapters != "false" {
@@ -473,18 +408,8 @@ func (h *Handler) LabrastroGetEngineering(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer s.tx.Rollback(r.Context())
-	if withChapters == "false" {
-		s.release(r.Context())
-		writeJSON(w, 200, map[string]any{"engineering": engineeringConfigResponse{s.config, json.RawMessage(s.config.Stages)}})
-		return
-	}
-	chapters, err := s.chapters(r.Context())
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
 	s.release(r.Context())
-	writeJSON(w, 200, map[string]any{"engineering": engineeringConfigResponse{s.config, json.RawMessage(s.config.Stages)}, "chapters": chapters})
+	writeJSON(w, 200, map[string]any{"engineering": engineeringConfigResponse{s.config, json.RawMessage(s.config.Stages)}, "chapters": []any{}})
 }
 
 type engineeringConfigResponse struct {
@@ -573,7 +498,7 @@ func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Reque
 	defer s.tx.Rollback(r.Context())
 	admin := roleAllowed(s.member.Role, "owner", "admin")
 	if !s.isDecider() || !admin && (req.Enabled != nil || req.DeciderMemberIDs != nil) {
-		writeEngineeringError(w, baselineError(403, "baseline_not_decider"))
+		writeEngineeringError(w, baselineError(403, "engineering_not_decider"))
 		return
 	}
 	config := s.config
@@ -615,475 +540,10 @@ func (h *Handler) LabrastroPatchEngineering(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, map[string]any{"engineering": engineeringConfigResponse{s.config, json.RawMessage(s.config.Stages)}})
 }
 
-func (s *engineeringState) updateDoc(ctx context.Context, chapter string, adopted, candidate pgtype.UUID) error {
-	return s.q.LabrastroUpdateBaselineDoc(ctx, db.LabrastroUpdateBaselineDocParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: chapter, AdoptedRevisionID: adopted, CandidateRevisionID: candidate})
-}
-func (s *engineeringState) createRevision(ctx context.Context, chapter, content, summary string, base, replaces, source pgtype.UUID, actor baselineActor, diff engineering.Diff) (db.ProjectBaselineRevision, error) {
-	raw, err := json.Marshal(diff)
-	if err != nil {
-		return db.ProjectBaselineRevision{}, err
-	}
-	return s.q.LabrastroCreateBaselineRevision(ctx, db.LabrastroCreateBaselineRevisionParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: chapter, ContentMarkdown: content, ChangeSummary: summary, BaseRevisionID: base, ReplacesRevisionID: replaces, SourceIssueID: source, CreatedByType: actor.kind, CreatedByID: actor.id, CreatedByTaskID: actor.task, AnchorsDiff: raw})
-}
-func (s *engineeringState) decide(ctx context.Context, id pgtype.UUID, status string, a baselineActor) (db.ProjectBaselineRevision, error) {
-	return s.q.LabrastroDecideBaselineRevision(ctx, db.LabrastroDecideBaselineRevisionParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, ID: id, Status: status, DecidedByType: pgtype.Text{String: a.kind, Valid: true}, DecidedByID: a.id, DecidedByTaskID: a.task, DecisionCredential: pgtype.Text{String: a.credential, Valid: true}})
-}
-func (s *engineeringState) retire(ctx context.Context, id pgtype.UUID, status string) error {
-	if !id.Valid {
-		return nil
-	}
-	return s.q.LabrastroRetireBaselineRevision(ctx, db.LabrastroRetireBaselineRevisionParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, ID: id, Status: status})
-}
-func (h *Handler) baselineChanged(s *engineeringState, a baselineActor, chapter string) {
-	h.publish(protocol.EventProjectBaselineChanged, uuidToString(s.project.WorkspaceID), a.kind, uuidToString(a.id), map[string]any{"project_id": uuidToString(s.project.ID), "chapter": chapter})
-}
-
-type proposeBaselineRequest struct {
-	ChapterTitle  *string `json:"chapter_title"`
-	Section       *string `json:"section"`
-	DeleteSection bool    `json:"delete_section"`
-	Chapter       string  `json:"chapter"`
-	Content       string  `json:"content_markdown"`
-	Summary       string  `json:"change_summary"`
-	Base          *string `json:"base_revision_id"`
-	Replaces      *string `json:"replaces_candidate_id"`
-	Source        *string `json:"source_issue_id"`
-}
-
-func optionalBaselineUUID(w http.ResponseWriter, s *string, field string) (pgtype.UUID, bool) {
-	if s == nil {
-		return pgtype.UUID{}, true
-	}
-	return parseUUIDOrBadRequest(w, *s, field)
-}
-func (h *Handler) LabrastroProposeBaseline(w http.ResponseWriter, r *http.Request) {
-	actor, err := engineeringActor(r)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	var req proposeBaselineRequest
-	if !decodeEngineering(w, r, &req) {
-		return
-	}
-	if _, err := engineering.Parse(req.Chapter, req.Content); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if req.DeleteSection && (req.Section == nil || req.Content != "") ||
-		req.Section != nil && (strings.TrimSpace(*req.Section) == "" || strings.ContainsAny(*req.Section, "\r\n\x00")) ||
-		req.ChapterTitle != nil && (utf8.RuneCountInString(*req.ChapterTitle) > 200 || strings.ContainsAny(*req.ChapterTitle, "\r\n\x00")) {
-		writeErrorCode(w, 400, "invalid_request", "invalid section or chapter title")
-		return
-	}
-	if utf8.RuneCountInString(req.Summary) > 500 {
-		writeErrorCode(w, 422, "invalid_request", "change summary exceeds 500 characters")
-		return
-	}
-	base, ok := optionalBaselineUUID(w, req.Base, "base_revision_id")
-	if !ok {
-		return
-	}
-	replaces, ok := optionalBaselineUUID(w, req.Replaces, "replaces_candidate_id")
-	if !ok {
-		return
-	}
-	source, ok := optionalBaselineUUID(w, req.Source, "source_issue_id")
-	if !ok {
-		return
-	}
-	s, ok := h.engineeringState(w, r, true)
-	if !ok {
-		return
-	}
-	defer s.tx.Rollback(r.Context())
-	if !s.config.Enabled {
-		writeEngineeringError(w, baselineError(409, "engineering_disabled"))
-		return
-	}
-	if source.Valid {
-		issue, err := s.q.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: source, WorkspaceID: s.project.WorkspaceID})
-		if err != nil || issue.WorkspaceID != s.project.WorkspaceID || issue.ProjectID != s.project.ID {
-			writeErrorCode(w, 422, "invalid_request", "source issue must belong to this project")
-			return
-		}
-	}
-	if err = s.q.LabrastroEnsureBaselineDoc(r.Context(), db.LabrastroEnsureBaselineDocParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: req.Chapter}); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	docs, err := s.docs(r.Context(), true)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	d := baselineDoc(docs, req.Chapter)
-	if d.AdoptedRevisionID != base {
-		writeEngineeringError(w, baselineError(409, "baseline_base_stale"))
-		return
-	}
-	if d.CandidateRevisionID != replaces {
-		writeEngineeringError(w, baselineError(409, "baseline_candidate_open"))
-		return
-	}
-	old, err := s.revision(r.Context(), base)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	// A section revision replacing an open candidate merges into that candidate's
-	// content so its edits to other sections survive; the stored diff stays against adopted.
-	mergeBase := old.ContentMarkdown
-	if req.Section != nil && replaces.Valid {
-		replaced, err := s.revision(r.Context(), replaces)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		mergeBase = replaced.ContentMarkdown
-	}
-	if req.Section != nil {
-		req.Content, err = engineering.MergeSection(req.Chapter, mergeBase, *req.Section, req.Content, req.DeleteSection)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-	}
-	diff, err := engineering.Compute(req.Chapter, old.ContentMarkdown, req.Content, old.RevisionNumber)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if err = s.retire(r.Context(), replaces, "withdrawn"); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	candidate, err := s.createRevision(r.Context(), req.Chapter, req.Content, req.Summary, base, replaces, source, actor, diff)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if err = s.updateDoc(r.Context(), req.Chapter, base, candidate.ID); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if req.ChapterTitle != nil {
-		if err = s.q.LabrastroSetBaselineTitle(r.Context(), db.LabrastroSetBaselineTitleParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: req.Chapter, Title: strings.TrimSpace(*req.ChapterTitle)}); err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-	}
-	if err = s.tx.Commit(r.Context()); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	h.baselineChanged(s, actor, req.Chapter)
-	writeJSON(w, 201, baselineRevision(candidate))
-}
-
-type decideBaselineRequest struct {
-	AnnotationBatchAction string `json:"annotation_batch_action"`
-	Action                string `json:"action"`
-	Revisions             []struct {
-		ID       string  `json:"revision_id"`
-		Expected *string `json:"expected_adopted_revision_id"`
-	} `json:"revisions"`
-}
-
-func (h *Handler) LabrastroDecideBaseline(w http.ResponseWriter, r *http.Request) {
-	actor, err := engineeringActor(r)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if actor.kind == "agent" {
-		writeEngineeringError(w, baselineError(403, "baseline_human_required"))
-		return
-	}
-	var req decideBaselineRequest
-	if !decodeEngineering(w, r, &req) {
-		return
-	}
-	if req.AnnotationBatchAction != "" && req.AnnotationBatchAction != "close" && req.AnnotationBatchAction != "keep" || req.Action != "adopt" && req.Action != "reject" || len(req.Revisions) < 1 || len(req.Revisions) > 100 {
-		writeErrorCode(w, 400, "invalid_request", "specify adopt or reject and one to 100 revisions")
-		return
-	}
-	ids, expected := make([]pgtype.UUID, len(req.Revisions)), make([]pgtype.UUID, len(req.Revisions))
-	for i, item := range req.Revisions {
-		var ok bool
-		ids[i], ok = parseUUIDOrBadRequest(w, item.ID, "revision_id")
-		if !ok {
-			return
-		}
-		expected[i], ok = optionalBaselineUUID(w, item.Expected, "expected_adopted_revision_id")
-		if !ok {
-			return
-		}
-	}
-	s, ok := h.engineeringState(w, r, true)
-	if !ok {
-		return
-	}
-	defer s.tx.Rollback(r.Context())
-	if !s.isDecider() {
-		writeEngineeringError(w, baselineError(403, "baseline_not_decider"))
-		return
-	}
-	if !s.config.Enabled {
-		writeEngineeringError(w, baselineError(409, "engineering_disabled"))
-		return
-	}
-	docs, err := s.docs(r.Context(), true)
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	revisions := make([]db.ProjectBaselineRevision, len(ids))
-	seen := map[string]bool{}
-	for i, id := range ids {
-		candidate, err := s.revision(r.Context(), id)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		if seen[candidate.Chapter] {
-			writeErrorCode(w, 400, "invalid_request", "each chapter may be decided once")
-			return
-		}
-		seen[candidate.Chapter] = true
-		d := baselineDoc(docs, candidate.Chapter)
-		if candidate.Status != "candidate" || d.CandidateRevisionID != id {
-			writeEngineeringError(w, baselineError(409, "baseline_candidate_closed"))
-			return
-		}
-		if d.AdoptedRevisionID != expected[i] || candidate.BaseRevisionID != d.AdoptedRevisionID {
-			writeEngineeringError(w, baselineError(409, "baseline_base_stale"))
-			return
-		}
-		base, err := s.revision(r.Context(), d.AdoptedRevisionID)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		diff, err := engineering.Compute(candidate.Chapter, base.ContentMarkdown, candidate.ContentMarkdown, base.RevisionNumber)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		var stored engineering.Diff
-		if err = json.Unmarshal(candidate.AnchorsDiff, &stored); err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		if !reflect.DeepEqual(stored, diff) {
-			writeEngineeringError(w, baselineError(409, "baseline_base_stale"))
-			return
-		}
-		revisions[i] = candidate
-	}
-	closedBatches := []db.ProjectBaselineAnnotationBatch{}
-	for _, candidate := range revisions {
-		d := baselineDoc(docs, candidate.Chapter)
-		status := "rejected"
-		adopted := d.AdoptedRevisionID
-		if req.Action == "adopt" {
-			status = "adopted"
-			adopted = candidate.ID
-			if err = s.retire(r.Context(), d.AdoptedRevisionID, "superseded"); err != nil {
-				writeEngineeringError(w, err)
-				return
-			}
-		}
-		if _, err = s.decide(r.Context(), candidate.ID, status, actor); err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		if req.AnnotationBatchAction != "keep" {
-			closed, err := s.q.LabrastroCloseRelatedAnnotationBatches(r.Context(), db.LabrastroCloseRelatedAnnotationBatchesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: candidate.Chapter, RevisionID: candidate.ID, SourceIssueID: candidate.SourceIssueID, Reason: pgtype.Text{String: status, Valid: true}, ActorID: actor.id})
-			if err != nil {
-				writeEngineeringError(w, err)
-				return
-			}
-			closedBatches = append(closedBatches, closed...)
-		}
-		if err = s.updateDoc(r.Context(), candidate.Chapter, adopted, pgtype.UUID{}); err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-	}
-	chapters, err := s.chapters(r.Context())
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	open, err := s.openIssues(r.Context())
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	if err = s.tx.Commit(r.Context()); err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	for _, batch := range closedBatches {
-		h.baselineAnnotationChanged(batch, actor)
-	}
-	for _, candidate := range revisions {
-		h.baselineChanged(s, actor, candidate.Chapter)
-	}
-	writeJSON(w, 200, map[string]any{"chapters": chapters, "open_issues": open})
-}
-
-type baselineOpenIssue struct {
-	ID           string  `json:"id"`
-	Identifier   string  `json:"identifier"`
-	Title        string  `json:"title"`
-	Status       string  `json:"status"`
-	Category     string  `json:"status_category"`
-	AssigneeType *string `json:"assignee_type"`
-	AssigneeID   *string `json:"assignee_id"`
-}
-type baselineOpenIssues struct {
-	InFlight  []baselineOpenIssue `json:"in_flight"`
-	Queued    []baselineOpenIssue `json:"queued"`
-	Truncated bool                `json:"truncated"`
-}
-
-func (s *engineeringState) openIssues(ctx context.Context) (baselineOpenIssues, error) {
-	out := baselineOpenIssues{InFlight: []baselineOpenIssue{}, Queued: []baselineOpenIssue{}}
-	keys, err := issuestatus.ExpandCategories(ctx, s.q, s.project.WorkspaceID, []string{issuestatus.CategoryStarted, issuestatus.CategoryUnstarted})
-	if err != nil {
-		return out, err
-	}
-	issues, err := s.q.LabrastroBaselineOpenIssues(ctx, db.LabrastroBaselineOpenIssuesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, StatusKeys: keys})
-	if err != nil {
-		return out, err
-	}
-	out.Truncated = len(issues) > 200
-	if out.Truncated {
-		issues = issues[:200]
-	}
-	resolver := issuestatus.NewResolver(s.project.WorkspaceID)
-	for _, i := range issues {
-		category := resolver.Category(ctx, s.q, i.Status)
-		if err := resolver.Err(); err != nil {
-			return out, err
-		}
-		if category != issuestatus.CategoryStarted && category != issuestatus.CategoryUnstarted {
-			continue
-		}
-		item := baselineOpenIssue{uuidToString(i.ID), s.issuePrefix + "-" + strconv.FormatInt(int64(i.Number), 10), i.Title, i.Status, category, textToPtr(i.AssigneeType), uuidToPtr(i.AssigneeID)}
-		if category == issuestatus.CategoryStarted {
-			out.InFlight = append(out.InFlight, item)
-		} else {
-			out.Queued = append(out.Queued, item)
-		}
-	}
-	return out, nil
-}
-
-// with_content=false keeps each page's metadata and anchors diff but returns an
-// empty content_markdown, for history lists that never render chapter bodies.
-func (h *Handler) LabrastroBaselineHistory(w http.ResponseWriter, r *http.Request) {
-	chapter, withContent := r.URL.Query().Get("chapter"), r.URL.Query().Get("with_content")
-	if !engineering.ValidChapter(chapter) || withContent != "" && withContent != "true" && withContent != "false" {
-		writeEngineeringError(w, baselineError(400, "invalid_request"))
-		return
-	}
-	number := func(key string, defaultValue int) (int32, bool) {
-		value := r.URL.Query().Get(key)
-		if value == "" {
-			return int32(defaultValue), true
-		}
-		n, err := strconv.ParseInt(value, 10, 32)
-		if err != nil || n < 1 {
-			writeErrorCode(w, 400, "invalid_request", "invalid pagination or revision number")
-			return 0, false
-		}
-		return int32(n), true
-	}
-	from, ok := number("diff_from", 0)
-	if !ok {
-		return
-	}
-	to, ok := number("diff_to", 0)
-	if !ok {
-		return
-	}
-	if (from == 0) != (to == 0) {
-		writeErrorCode(w, 400, "invalid_request", "diff_from and diff_to are required together")
-		return
-	}
-	limit, ok := number("limit", 50)
-	if !ok {
-		return
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	before, ok := number("before", 0)
-	if !ok {
-		return
-	}
-	s, ok := h.engineeringState(w, r, false)
-	if !ok {
-		return
-	}
-	defer s.tx.Rollback(r.Context())
-	if from > 0 {
-		read := func(n int32) (db.ProjectBaselineRevision, error) {
-			return s.q.LabrastroGetBaselineRevisionNumber(r.Context(), db.LabrastroGetBaselineRevisionNumberParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: chapter, RevisionNumber: n})
-		}
-		old, err := read(from)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		next, err := read(to)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		diff, err := engineering.Compute(chapter, old.ContentMarkdown, next.ContentMarkdown, from)
-		if err != nil {
-			writeEngineeringError(w, err)
-			return
-		}
-		s.release(r.Context())
-		writeJSON(w, 200, diff)
-		return
-	}
-	beforeNumber := pgtype.Int4{Int32: before, Valid: before > 0}
-	var rows []db.ProjectBaselineRevision
-	var err error
-	if withContent == "false" {
-		var summaries []db.LabrastroListBaselineRevisionSummariesRow
-		summaries, err = s.q.LabrastroListBaselineRevisionSummaries(r.Context(), db.LabrastroListBaselineRevisionSummariesParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: chapter, BeforeNumber: beforeNumber, PageLimit: limit + 1})
-		for _, row := range summaries {
-			rows = append(rows, db.ProjectBaselineRevision(row))
-		}
-	} else {
-		rows, err = s.q.LabrastroListBaselineRevisions(r.Context(), db.LabrastroListBaselineRevisionsParams{WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, Chapter: chapter, BeforeNumber: beforeNumber, PageLimit: limit + 1})
-	}
-	if err != nil {
-		writeEngineeringError(w, err)
-		return
-	}
-	more := len(rows) > int(limit)
-	if more {
-		rows = rows[:limit]
-	}
-	versions := make([]*baselineRevisionResponse, 0, len(rows))
-	for _, row := range rows {
-		versions = append(versions, baselineRevision(row))
-	}
-	var nextBefore *int32
-	if more {
-		n := rows[len(rows)-1].RevisionNumber
-		nextBefore = &n
-	}
-	s.release(r.Context())
-	writeJSON(w, 200, map[string]any{"revisions": versions, "has_more": more, "next_before": nextBefore})
+func (h *Handler) wikiChanged(s *engineeringState, a baselineActor, page db.ProjectBaselinePage, change string, number int32) {
+	h.publish(protocol.EventProjectBaselineChanged, uuidToString(s.project.WorkspaceID), a.kind, uuidToString(a.id), map[string]any{
+		"project_id": uuidToString(s.project.ID), "page_id": uuidToString(page.ID), "slug": page.Slug, "change": change, "revision_number": number,
+	})
 }
 
 func deleteWorkspaceEngineeringAndProjects(ctx context.Context, q *db.Queries, workspace pgtype.UUID) error {

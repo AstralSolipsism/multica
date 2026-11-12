@@ -8,12 +8,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -21,43 +18,9 @@ import (
 )
 
 const baselineTestProject = "10000000-0000-4000-8000-000000000001"
-const baselineTestBase = "20000000-0000-4000-8000-000000000001"
-const baselineTestCandidate = "30000000-0000-4000-8000-000000000001"
-const baselineTestIssue = "40000000-0000-4000-8000-000000000001"
-
-func baselineTestRevision(chapter string, n int, status string) map[string]any {
-	id := baselineTestCandidate
-	if n == 1 {
-		id = baselineTestBase
-	}
-	var base any
-	if n > 1 {
-		base = baselineTestBase
-	}
-	if chapter == "architecture" {
-		id = "30000000-0000-4000-8000-000000000002"
-		base = "20000000-0000-4000-8000-000000000002"
-	}
-	return map[string]any{
-		"id": id, "chapter": chapter, "revision_number": n, "status": status, "base_revision_id": base,
-		"content_markdown": "### [Rule-中文] 保留规则\nMUST keep body\n", "change_summary": "中文摘要", "decided_at": "2026-10-30T00:00:00Z",
-		"decision_credential": "agent_task", "future_audit_field": "preserved",
-		"anchors_diff": map[string]any{"chapter": chapter, "base_revision_number": 1, "added": []any{}, "modified": []any{},
-			"removed": []any{map[string]any{"anchor": "Rule-中文", "title": "保留规则", "before": "MUST keep body"}}, "unchanged_count": 0,
-			"warnings": []any{map[string]any{"code": "rule_removed", "anchor": "Rule-中文"}, map[string]any{"code": "rule_shrunk", "anchor": "Rule-2"}, map[string]any{"code": "rule_deferred", "anchor": "Rule-3"}, map[string]any{"code": "defer_missing_pool", "anchor": "Defer-4"}}},
-	}
-}
-func baselineTestState(adopted, candidate any) map[string]any {
-	chapters := []any{}
-	for _, chapter := range []string{"overview", "domain_rules", "architecture", "exclusions_and_risks"} {
-		a, c := any(nil), any(nil)
-		if chapter == "domain_rules" {
-			a, c = adopted, candidate
-		}
-		chapters = append(chapters, map[string]any{"chapter": chapter, "adopted": a, "candidate": c})
-	}
-	return map[string]any{"engineering": map[string]any{"enabled": true}, "chapters": chapters}
-}
+const baselineTestPageID = "20000000-0000-4000-8000-000000000001"
+const baselineTestRevisionID = "30000000-0000-4000-8000-000000000001"
+const baselineTestIssueID = "40000000-0000-4000-8000-000000000001"
 
 type baselineTestCall struct {
 	Method, Path string
@@ -74,7 +37,7 @@ func serveBaseline(t *testing.T, respond func(http.ResponseWriter, *http.Request
 			t.Error("request lost task credentials or workspace")
 		}
 		var body map[string]any
-		if r.Method == "POST" || r.Method == "PATCH" {
+		if r.Method == "POST" || r.Method == "PATCH" || r.Method == "PUT" {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
@@ -91,6 +54,7 @@ func serveBaseline(t *testing.T, respond func(http.ResponseWriter, *http.Request
 	t.Setenv("MULTICA_WORKSPACE_ID", "offline-workspace")
 	return srv, func() []baselineTestCall { mu.Lock(); defer mu.Unlock(); return append([]baselineTestCall{}, calls...) }
 }
+
 func executeBaseline(t *testing.T, args ...string) (string, string, int) {
 	t.Helper()
 	root := &cobra.Command{Use: "multica", SilenceErrors: true, SilenceUsage: true}
@@ -110,6 +74,7 @@ func executeBaseline(t *testing.T, args ...string) (string, string, int) {
 	}
 	return out.String(), stderr.String(), labrastroBaselineExitCode(cmd, err)
 }
+
 func baselineJSON(t *testing.T, s string) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -118,756 +83,590 @@ func baselineJSON(t *testing.T, s string) map[string]any {
 	}
 	return m
 }
-func writeBaselineInput(t *testing.T) string {
+
+func writeBaselineInput(t *testing.T, content string) string {
 	t.Helper()
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile("proposal.md", []byte("### [Rule-中文] 保留规则\nSHOULD keep body\n"), 0600); err != nil {
+	if err := os.WriteFile("content.md", []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return "proposal.md"
+	return "content.md"
 }
 
-func TestLabrastroBaselineRegistration(t *testing.T) {
-	for _, action := range []string{"get", "propose", "diff", "adopt", "export", "annotations", "respond"} {
-		cmd, _, err := rootCmd.Find([]string{"project", "baseline", action})
-		if err != nil || cmd.Name() != action {
-			t.Fatalf("%s is not registered", action)
-		}
+// ---------- stub payloads ----------
+
+func baselineWikiPage(slug, title string, number int32) map[string]any {
+	return map[string]any{
+		"id": baselineTestPageID, "slug": slug, "title": title, "parent_id": nil,
+		"position": 0, "archived_at": nil, "current_revision_number": number,
+		"created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
 	}
 }
-func TestLabrastroBaselineReadAndDiff(t *testing.T) {
-	a, c := baselineTestRevision("domain_rules", 1, "adopted"), baselineTestRevision("domain_rules", 2, "candidate")
-	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-		if strings.HasSuffix(r.URL.Path, "/engineering") {
-			json.NewEncoder(w).Encode(baselineTestState(a, c))
-			return
-		}
-		if r.URL.Query().Get("diff_from") != "" {
-			if r.URL.Query().Get("diff_from") != "1" || r.URL.Query().Get("diff_to") != "2" {
-				t.Error("wrong historical Diff range")
+
+func baselineWikiRevision(slug, title string, number int32, kind, content string) map[string]any {
+	return map[string]any{
+		"id": baselineTestRevisionID, "page_id": baselineTestPageID, "revision_number": number,
+		"revision_kind": kind, "title": title, "slug": slug, "parent_id": nil, "position": 0,
+		"content_markdown": content, "change_summary": "中文摘要", "base_revision_id": nil,
+		"restored_from_revision_id": nil, "source_issue_id": nil,
+		"created_by_type": "member", "created_by_id": "90000000-0000-4000-8000-000000000001",
+		"created_by_task_id": nil, "created_at": "2026-11-01T00:00:00Z",
+	}
+}
+
+func baselineWikiWriteResult(slug, title string, number int32, kind, content string, rebased bool) map[string]any {
+	return map[string]any{
+		"page":     baselineWikiPage(slug, title, number),
+		"revision": baselineWikiRevision(slug, title, number, kind, content),
+		"rebased":  rebased,
+	}
+}
+
+func baselineWikiTree(pages ...map[string]any) map[string]any {
+	return map[string]any{"pages": pages, "limits": map[string]int{"max_depth": 6, "max_pages": 500}}
+}
+
+func baselineWikiTreePage(slug, title string, number int32, sections []map[string]any, archived bool) map[string]any {
+	page := baselineWikiPage(slug, title, number)
+	page["depth"] = 1
+	page["revision_count"] = number
+	page["current"] = map[string]any{
+		"number": number, "kind": "create", "created_at": "2026-11-01T00:00:00Z",
+		"created_by_type": "member", "created_by_id": "90000000-0000-4000-8000-000000000001",
+		"change_summary": "新建页面",
+	}
+	if sections == nil {
+		sections = []map[string]any{}
+	}
+	page["sections"] = sections
+	if archived {
+		page["archived_at"] = "2026-11-02T00:00:00Z"
+	}
+	return page
+}
+
+func baselineWriteJSON(w http.ResponseWriter, status int, payload map[string]any) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(payload)
+}
+
+// ---------- flag validation (exit 2, no server traffic) ----------
+
+func TestLabrastroBaselineFlagValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		hint string
+	}{
+		{"write without page", []string{"write", baselineTestProject, "--base", "1", "--content-file", "x.md"}, "--page is required"},
+		{"write without base", []string{"write", baselineTestProject, "--page", "p", "--content-file", "x.md"}, "--base is required"},
+		{"write bad base", []string{"write", baselineTestProject, "--page", "p", "--base", "0", "--content-file", "x.md"}, "positive 32-bit integer"},
+		{"write without content", []string{"write", baselineTestProject, "--page", "p", "--base", "1"}, "--content-file is required"},
+		{"write both sections", []string{"write", baselineTestProject, "--page", "p", "--base", "1", "--section", "a", "--delete-section", "b", "--content-file", "x.md"}, "not both"},
+		{"create without title", []string{"create", baselineTestProject}, "--title is required"},
+		{"rename without change", []string{"rename", baselineTestProject, "--page", "p", "--base", "1"}, "--title and/or --slug"},
+		{"move without target", []string{"move", baselineTestProject, "--page", "p", "--base", "1"}, "--parent"},
+		{"archive without base", []string{"archive", baselineTestProject, "--page", "p"}, "--base is required"},
+		{"rollback without to", []string{"rollback", baselineTestProject, "--page", "p", "--base", "1"}, "--to is required"},
+		{"diff without from", []string{"diff", baselineTestProject, "--page", "p"}, "--from is required"},
+		{"history without page", []string{"history", baselineTestProject}, "--page is required"},
+		{"get revision without page", []string{"get", baselineTestProject, "--revision", "2"}, "--revision requires --page"},
+		{"search without query", []string{"search", baselineTestProject}, "exactly one project ID and one query string"},
+		{"two project args", []string{"tree", baselineTestProject, "extra"}, "exactly one project ID"},
+		{"bad output", []string{"tree", baselineTestProject, "--output", "yaml"}, "unsupported --output"},
+		{"get retired index flag", []string{"get", baselineTestProject, "--index"}, "--index is retired"},
+		{"get retired candidate flag", []string{"get", baselineTestProject, "--candidate"}, "--candidate is retired"},
+		{"get retired chapter module key", []string{"get", baselineTestProject, "--chapter", "module:overview"}, "use `get --page overview`"},
+		{"get retired chapter slug", []string{"get", baselineTestProject, "--chapter", "overview"}, "use `get --page overview`"},
+		{"get retired chapter revision", []string{"get", baselineTestProject, "--page", "p", "--revision", "3:2"}, "chapter:number is retired"},
+		{"diff retired chapter", []string{"diff", baselineTestProject, "--page", "p", "--chapter", "module:arch"}, "use `diff --page arch`"},
+		{"bad limit", []string{"history", baselineTestProject, "--page", "p", "--limit", "0"}, "positive 32-bit integer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+				t.Errorf("validation failure reached the server: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(500)
+			})
+			out, stderr, code := executeBaseline(t, tc.args...)
+			if code != 2 || out != "" || !strings.Contains(stderr, tc.hint) {
+				t.Fatalf("exit=%d out=%q stderr=%q want hint %q", code, out, stderr, tc.hint)
 			}
-			json.NewEncoder(w).Encode(c["anchors_diff"])
+			if len(calls()) != 0 {
+				t.Fatal("validation failure issued requests")
+			}
+		})
+	}
+}
+
+// ---------- tree / get ----------
+
+func TestLabrastroBaselineTree(t *testing.T) {
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		if !strings.HasSuffix(r.URL.Path, "/baseline/tree") {
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(404)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"revisions": []any{a}})
+		outline := []map[string]any{{"anchor": "goal", "title": "目标", "level": 2}}
+		if r.URL.Query().Get("sections") == "false" {
+			outline = nil
+		}
+		baselineWriteJSON(w, 200, baselineWikiTree(
+			baselineWikiTreePage("overview", "总览", 2, outline, false),
+			baselineWikiTreePage("legacy", "旧页", 1, nil, true),
+		))
 	})
-	out, stderr, code := executeBaseline(t, "get", baselineTestProject)
-	if code != 0 || stderr != "" || !strings.Contains(out, "domain_rules: revision 1") || strings.Contains(out, "MUST keep body") {
-		t.Fatalf("summary: %d %q %q", code, out, stderr)
+	out, stderr, code := executeBaseline(t, "tree", baselineTestProject)
+	if code != 0 || stderr != "" {
+		t.Fatalf("tree failed: %d %s %s", code, out, stderr)
 	}
-	out, _, code = executeBaseline(t, "get", baselineTestProject, "--chapter", "domain_rules", "--candidate", "--output", "json")
-	rev := baselineJSON(t, out)["chapters"].([]any)[0].(map[string]any)["revision"]
-	if code != 0 || !reflect.DeepEqual(rev, baselineJSONRoundtrip(t, c)) {
-		t.Fatalf("candidate JSON lost revision/audit fields: %s", out)
+	for _, want := range []string{"overview v2 总览", "# 目标", "(1 archived page(s)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tree output missing %q: %s", want, out)
+		}
 	}
-	out, _, code = executeBaseline(t, "get", baselineTestProject, "--revision", "domain_rules:1", "--output", "markdown")
-	if code != 0 || !strings.Contains(out, "MUST keep body") || !strings.Contains(out, "Revision: 1") {
-		t.Fatalf("historical Markdown: %d %s", code, out)
+	if strings.Contains(out, "legacy v1") {
+		t.Fatalf("archived page listed as live: %s", out)
+	}
+
+	out, _, code = executeBaseline(t, "tree", baselineTestProject, "--no-sections")
+	if code != 0 || strings.Contains(out, "# 目标") {
+		t.Fatalf("--no-sections ignored: %s", out)
 	}
 	last := calls()[len(calls())-1]
-	if last.Query.Get("before") != "2" || last.Query.Get("limit") != "1" {
-		t.Fatalf("history lookup was not bounded: %+v", last)
+	if last.Query.Get("sections") != "false" {
+		t.Fatalf("sections query=%q", last.Query.Get("sections"))
 	}
-	out, stderr, code = executeBaseline(t, "diff", baselineTestProject, "--chapter", "domain_rules", "--output", "json")
-	if code != 0 || len(baselineJSON(t, out)["diffs"].([]any)) != 1 || strings.Count(stderr, "[BASELINE WARNING]") != 4 || !strings.Contains(stderr, "[BASELINE WARNING]") {
-		t.Fatalf("warnings: %d %s %s", code, out, stderr)
+
+	out, _, code = executeBaseline(t, "tree", baselineTestProject, "--output", "json")
+	if code != 0 || len(baselineJSON(t, out)["pages"].([]any)) != 2 {
+		t.Fatalf("tree json: %d %s", code, out)
 	}
-	out, _, code = executeBaseline(t, "diff", baselineTestProject, "--chapter", "domain_rules", "--from", "1", "--to", "2")
-	if code != 0 || !strings.Contains(out, "-MUST keep body") || !strings.Contains(out, "[Rule-中文]") {
-		t.Fatalf("server Diff not rendered: %d %s", code, out)
-	}
-}
-func baselineJSONRoundtrip(t *testing.T, v any) any {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result any
-	if err := json.Unmarshal(b, &result); err != nil {
-		t.Fatal(err)
-	}
-	return result
 }
 
-func TestLabrastroBaselineProposeReviewLink(t *testing.T) {
-	for _, mode := range []string{"text", "json", "metadata unavailable"} {
-		t.Run(mode, func(t *testing.T) {
-			file := writeBaselineInput(t)
-			t.Setenv("MULTICA_APP_URL", "https://workspace.example")
-			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-				switch {
-				case strings.HasSuffix(r.URL.Path, "/engineering"):
-					json.NewEncoder(w).Encode(baselineTestState(nil, nil))
-				case strings.HasSuffix(r.URL.Path, "/candidates"):
-					w.WriteHeader(201)
-					json.NewEncoder(w).Encode(baselineTestRevision("domain_rules", 2, "candidate"))
-				case r.URL.Path == "/api/workspaces/offline-workspace":
-					if mode == "metadata unavailable" {
-						w.WriteHeader(503)
-						return
-					}
-					json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
-				default:
-					t.Errorf("unexpected request %s", r.URL.Path)
-					w.WriteHeader(404)
-				}
+func TestLabrastroBaselineTreeEmpty(t *testing.T) {
+	_, _ = serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
+		baselineWriteJSON(w, 200, baselineWikiTree())
+	})
+	out, _, code := executeBaseline(t, "tree", baselineTestProject)
+	if code != 0 || !strings.Contains(out, "(no pages") {
+		t.Fatalf("empty tree: %d %q", code, out)
+	}
+}
+
+func TestLabrastroBaselineGet(t *testing.T) {
+	const body = "## 目标\n交付正文"
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		switch {
+		case r.URL.Path == "/api/issues/"+baselineTestIssueID:
+			baselineWriteJSON(w, 200, map[string]any{"id": baselineTestIssueID, "identifier": "OL-7", "title": "源 issue"})
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/overview"):
+			if r.URL.Query().Get("revision") != "" && r.URL.Query().Get("revision") != "1" {
+				t.Error("wrong revision query")
+			}
+			baselineWriteJSON(w, 200, map[string]any{
+				"page": baselineWikiPage("overview", "总览", 1), "revision": baselineWikiRevision("overview", "总览", 1, "create", body),
+				"content_markdown": body,
 			})
-			format := "text"
-			if mode == "json" {
-				format = "json"
-			}
-			out, stderr, code := executeBaseline(t, "propose", baselineTestProject, "--chapter", "domain_rules", "--summary", "change", "--content-file", file, "--output", format)
-			if code != 0 {
-				t.Fatalf("proposal failed: %s", stderr)
-			}
-			if !strings.Contains(stderr, "[BASELINE WARNING]") {
-				t.Fatalf("missing warning: %s", stderr)
-			}
-			link := "https://workspace.example/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
-			switch mode {
-			case "text":
-				if !strings.Contains(stderr, link) || strings.Contains(out, link) {
-					t.Fatalf("wrong review link streams: %s / %s", out, stderr)
-				}
-			case "json":
-				baselineJSON(t, out)
-				if strings.Contains(stderr, "Review candidate") {
-					t.Fatalf("unexpected JSON guidance: %s", stderr)
-				}
-				for _, call := range calls() {
-					if strings.HasPrefix(call.Path, "/api/workspaces/") {
-						t.Fatal("JSON proposal looked up review link")
-					}
-				}
-			default:
-				if !strings.Contains(stderr, "engineering overview on the dashboard (approval link unavailable)") {
-					t.Fatalf("missing dashboard fallback: %s", stderr)
-				}
-			}
-		})
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/overview") == false && strings.Contains(r.URL.Path, "/section"):
+			baselineWriteJSON(w, 200, map[string]any{})
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	})
+	out, stderr, code := executeBaseline(t, "get", baselineTestProject, "--page", "overview")
+	if code != 0 || !strings.Contains(out, body) {
+		t.Fatalf("get markdown: %d %q %q", code, out, stderr)
+	}
+	// Markdown stdout stays byte-identical to the body so `get > page.md` →
+	// edit → `write --content-file page.md` round-trips cleanly; the version
+	// header moves to stderr.
+	if out != body {
+		t.Fatalf("markdown get stdout must equal the body exactly: %q", out)
+	}
+	if !strings.HasPrefix(stderr, "overview v1 · 总览\n\n") {
+		t.Fatalf("markdown get must print the version header on stderr: %q", stderr)
+	}
+	out, _, _ = executeBaseline(t, "get", baselineTestProject, "--page", "overview", "--revision", "1", "--output", "text")
+	if !strings.HasPrefix(out, "overview v1 · 总览\n\n") || !strings.Contains(out, body) {
+		t.Fatalf("text get header/body: %q", out)
+	}
+	out, _, code = executeBaseline(t, "get", baselineTestProject, "--page", "overview", "--output", "json")
+	if code != 0 || baselineJSON(t, out)["content_markdown"] != body {
+		t.Fatalf("get json: %d %s", code, out)
+	}
+	if got := calls()[len(calls())-1].Query.Get("with"); got != "links,backlinks,related_issues" {
+		t.Fatalf("json get with=%q", got)
 	}
 }
 
-func TestLabrastroBaselineProposeCAS(t *testing.T) {
-	for _, mode := range []string{"first", "explicit base", "current base", "replace", "existing candidate", "missing base", "racing base", "racing candidate"} {
-		t.Run(mode, func(t *testing.T) {
-			file := writeBaselineInput(t)
-			a, c := baselineTestRevision("domain_rules", 1, "adopted"), baselineTestRevision("domain_rules", 2, "candidate")
-			var reads atomic.Int32
-			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
-				switch {
-				case strings.HasSuffix(r.URL.Path, "/engineering"):
-					read := reads.Add(1)
-					var adopted, candidate any
-					if mode != "first" {
-						adopted = a
-					}
-					if mode == "replace" || mode == "existing candidate" || mode == "racing candidate" && read > 1 {
-						candidate = c
-					}
-					json.NewEncoder(w).Encode(baselineTestState(adopted, candidate))
-				case strings.HasSuffix(r.URL.Path, "/revisions"):
-					rev := a
-					if r.URL.Query().Get("before") == "3" {
-						rev = c
-					}
-					json.NewEncoder(w).Encode(map[string]any{"revisions": []any{rev}})
-				case r.URL.Path == "/api/issues/OL-93":
-					json.NewEncoder(w).Encode(map[string]any{"id": baselineTestIssue, "identifier": "OL-93"})
-				case strings.HasSuffix(r.URL.Path, "/candidates"):
-					if mode == "racing base" || mode == "racing candidate" {
-						w.WriteHeader(409)
-						code := "baseline_base_stale"
-						if mode == "racing candidate" {
-							code = "baseline_candidate_open"
-						}
-						json.NewEncoder(w).Encode(map[string]any{"code": code, "error": "SECRET_BASELINE_CONTENT"})
-						return
-					}
-					expected := any(baselineTestBase)
-					if mode == "first" {
-						expected = nil
-					}
-					if body["base_revision_id"] != expected || body["source_issue_id"] != baselineTestIssue || body["content_markdown"] != "### [Rule-中文] 保留规则\nSHOULD keep body\n" {
-						t.Errorf("wrong candidate payload: %+v", body)
-					}
-					if mode == "replace" && body["replaces_candidate_id"] != baselineTestCandidate {
-						t.Error("explicit replacement lost")
-					}
-					json.NewEncoder(w).Encode(c)
-				default:
-					t.Errorf("unexpected path %s", r.URL.Path)
-					w.WriteHeader(404)
-				}
-			})
-			args := []string{"propose", baselineTestProject, "--chapter", "domain_rules", "--summary", "change", "--content-file", file, "--source-issue", "OL-93", "--output", "json"}
-			switch mode {
-			case "explicit base":
-				args = append(args, "--base", "1")
-			case "replace":
-				args = append(args, "--base-current", "--replaces", "2")
-			case "first", "missing base":
-			default:
-				args = append(args, "--base-current")
+// ---------- write lifecycle ----------
+
+func TestLabrastroBaselineWriteLifecycle(t *testing.T) {
+	file := writeBaselineInput(t, "# 新建正文\n")
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/baseline/pages"):
+			if body["title"] != "新页" || body["slug"] != "new-page" || body["parent"] != "overview" || body["after"] != "first" {
+				t.Errorf("create body: %+v", body)
 			}
-			out, stderr, code := executeBaseline(t, args...)
-			if mode == "racing candidate" && !strings.Contains(stderr, baselineTestCandidate) {
-				t.Error("concurrent candidate ID missing from conflict guidance")
+			if body["content_markdown"] != "# 新建正文\n" || body["change_summary"] != "初始" {
+				t.Errorf("create content body: %+v", body)
 			}
-			want, writeCount := 0, 1
-			switch mode {
-			case "existing candidate":
-				want, writeCount = 1, 0
-				if !strings.Contains(stderr, baselineTestCandidate) {
-					t.Error("existing candidate ID missing")
-				}
-			case "missing base":
-				want, writeCount = 2, 0
-			case "racing base", "racing candidate":
-				want = 1
+			baselineWriteJSON(w, 201, baselineWikiWriteResult("new-page", "新页", 1, "create", "# 新建正文\n", false))
+		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/content"):
+			if body["delete_section"] == nil && (body["base_revision_number"] != float64(1) || body["content_markdown"] != "# 新建正文\n") {
+				t.Errorf("write body: %+v", body)
 			}
-			writes := 0
-			for _, c := range calls() {
-				if c.Method == "POST" {
-					writes++
-				}
+			if body["delete_section"] != nil && body["content_markdown"] != nil {
+				t.Errorf("delete body carries content: %+v", body)
 			}
-			if code != want || writes != writeCount || strings.Contains(stderr, "SECRET_BASELINE_CONTENT") {
-				t.Fatalf("%d writes=%d; stdout=%s stderr=%s", code, writes, out, stderr)
+			baselineWriteJSON(w, 200, baselineWikiWriteResult("new-page", "新页", 2, "content", "# 新建正文\n", false))
+		case r.Method == "PATCH" && strings.HasSuffix(r.URL.Path, "/baseline/pages/new-page"):
+			if _, ok := body["title"]; ok {
+				baselineWriteJSON(w, 200, baselineWikiWriteResult("new-page", "改名页", 3, "rename", "# 新建正文\n", false))
+				return
 			}
-			if code == 0 {
-				if !reflect.DeepEqual(baselineJSON(t, out), baselineJSONRoundtrip(t, c)) {
-					t.Error("proposal response lost fields")
-				}
-				if !strings.Contains(stderr, "[BASELINE WARNING]") {
-					t.Error("proposal red card absent")
-				}
-			} else if out != "" {
-				t.Error("failure polluted stdout")
+			if body["parent"] != "other" || body["after"] != "first" {
+				t.Errorf("move body: %+v", body)
 			}
-		})
+			baselineWriteJSON(w, 200, baselineWikiWriteResult("new-page", "改名页", 4, "move", "# 新建正文\n", true))
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/archive"):
+			if body["recursive"] != true {
+				t.Errorf("archive body: %+v", body)
+			}
+			baselineWriteJSON(w, 200, map[string]any{"pages": []any{
+				baselineWikiWriteResult("new-page", "改名页", 5, "archive", "# 新建正文\n", false),
+				baselineWikiWriteResult("child", "子页", 2, "archive", "子正文", false),
+			}})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/restore"):
+			if body["parent"] != "new-home" {
+				t.Errorf("restore body: %+v", body)
+			}
+			baselineWriteJSON(w, 200, map[string]any{"pages": []any{
+				baselineWikiWriteResult("new-page", "改名页", 6, "restore", "# 新建正文\n", false),
+			}})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/rollback"):
+			if body["revision_number"] != float64(2) || body["base_revision_number"] != float64(6) || body["content_only"] != true {
+				t.Errorf("rollback body: %+v", body)
+			}
+			baselineWriteJSON(w, 201, baselineWikiWriteResult("new-page", "改名页", 7, "rollback", "# 新建正文\n", false))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	})
+
+	out, stderr, code := executeBaseline(t, "create", baselineTestProject, "--title", "新页", "--slug", "new-page",
+		"--parent", "overview", "--after", "first", "--content-file", file, "--summary", "初始")
+	if code != 0 || stderr != "" || !strings.Contains(out, "created: new-page v1") {
+		t.Fatalf("create: %d %q %q", code, out, stderr)
+	}
+	out, _, code = executeBaseline(t, "write", baselineTestProject, "--page", "new-page", "--base", "1", "--content-file", file)
+	if code != 0 || !strings.Contains(out, "written: new-page v2") || strings.Contains(out, "[rebased]") {
+		t.Fatalf("write: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "rename", baselineTestProject, "--page", "new-page", "--base", "2", "--title", "改名页")
+	if code != 0 || !strings.Contains(out, "renamed: new-page v3") {
+		t.Fatalf("rename: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "move", baselineTestProject, "--page", "new-page", "--base", "3", "--parent", "other", "--after", "first")
+	if code != 0 || !strings.Contains(out, "moved: new-page v4 (中文摘要) [rebased]") {
+		t.Fatalf("move: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "archive", baselineTestProject, "--page", "new-page", "--base", "4", "--recursive")
+	if code != 0 || !strings.Contains(out, "archived: new-page v5") || !strings.Contains(out, "archived: child v2") {
+		t.Fatalf("archive: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "restore", baselineTestProject, "--page", "new-page", "--base", "5", "--parent", "new-home")
+	if code != 0 || !strings.Contains(out, "restored: new-page v6") {
+		t.Fatalf("restore: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "rollback", baselineTestProject, "--page", "new-page", "--to", "2", "--base", "6", "--content-only")
+	if code != 0 || !strings.Contains(out, "rolled back: new-page v7") {
+		t.Fatalf("rollback: %d %q", code, out)
+	}
+	out, _, code = executeBaseline(t, "write", baselineTestProject, "--page", "new-page", "--base", "7", "--delete-section", "旧节")
+	if code != 0 {
+		t.Fatalf("delete-section: %d %q", code, out)
+	}
+	if last := calls()[len(calls())-1]; last.Body["delete_section"] != "旧节" {
+		t.Fatalf("delete-section body: %+v", last.Body)
 	}
 }
 
-func TestLabrastroBaselineDecisionVersionAndCredentials(t *testing.T) {
-	for _, mode := range []string{"adopt", "reject", "multi", "closed", "stale", "denied", "forbidden", "human required", "invalid", "server failure", "missing"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Setenv("MULTICA_AGENT_ID", baselineTestIssue)
-			t.Setenv("MULTICA_TASK_ID", baselineTestCandidate)
-			t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
-			t.Setenv("MULTICA_APP_URL", "https://workspace.example")
-			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
-				if r.URL.Path == "/api/workspaces/offline-workspace" {
-					json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
-					return
-				}
-				if strings.HasSuffix(r.URL.Path, "/revisions") {
-					chapter := r.URL.Query().Get("chapter")
-					rev := baselineTestRevision(chapter, 2, "candidate")
-					if mode == "closed" {
-						rev["status"] = "withdrawn"
-					}
-					list := []any{rev}
-					if mode == "missing" {
-						list = []any{}
-					}
-					json.NewEncoder(w).Encode(map[string]any{"revisions": list})
-					return
-				}
-				if !strings.HasSuffix(r.URL.Path, "/decisions") {
-					t.Errorf("unexpected path %s", r.URL.Path)
-					w.WriteHeader(404)
-					return
-				}
-				revisions := body["revisions"].([]any)
-				want := 1
-				if mode == "multi" {
-					want = 2
-				}
-				if len(revisions) != want {
-					t.Errorf("expected %d revisions in one transaction", want)
-				}
-				for i, raw := range revisions {
-					item := raw.(map[string]any)
-					wantID, wantBase := baselineTestCandidate, baselineTestBase
-					if i == 1 {
-						wantID, wantBase = "30000000-0000-4000-8000-000000000002", "20000000-0000-4000-8000-000000000002"
-					}
-					if item["revision_id"] != wantID || item["expected_adopted_revision_id"] != wantBase {
-						t.Errorf("must use selected version's original base: %+v", item)
-					}
-				}
-				action := "adopt"
-				if mode == "reject" {
-					action = "reject"
-				}
-				if body["action"] != action {
-					t.Error("wrong decision action")
-				}
-				status, code := 0, ""
-				switch mode {
-				case "closed":
-					status, code = 409, "baseline_candidate_closed"
-				case "stale":
-					status, code = 409, "baseline_base_stale"
-				case "denied":
-					status, code = 403, "baseline_credential_denied"
-				case "forbidden":
-					status, code = 403, "baseline_not_decider"
-				case "human required":
-					status, code = 403, "baseline_human_required"
-				case "invalid":
-					status, code = 422, "baseline_content_invalid"
-				case "server failure":
-					status, code = 500, "engineering_failed"
-				}
-				if status > 0 {
-					w.WriteHeader(status)
-					json.NewEncoder(w).Encode(map[string]any{"code": code, "error": "SECRET_BASELINE_CONTENT"})
-					return
-				}
-				json.NewEncoder(w).Encode(map[string]any{"chapters": baselineTestState(nil, nil)["chapters"], "open_issues": map[string]any{"in_flight": []any{map[string]any{"identifier": "OL-93", "title": "active", "status": "custom_started"}}, "queued": []any{map[string]any{"identifier": "OL-94", "title": "queued", "status": "custom_backlog"}}, "truncated": true}, "future_field": "preserved"})
-			})
-			args := []string{"adopt", baselineTestProject, "--revision", "domain_rules:2"}
-			if mode == "reject" {
-				args = append(args, "--reject")
-			}
-			if mode == "multi" {
-				args = append(args, "--revision", "architecture:2", "--output", "json")
-			}
-			out, stderr, code := executeBaseline(t, args...)
-			want, writes := 1, 1
-			if mode == "adopt" || mode == "reject" || mode == "multi" {
-				want = 0
-			}
-			if mode == "missing" {
-				want, writes = 2, 0
-			}
-			actualWrites := 0
-			for _, c := range calls() {
-				if c.Method == "POST" {
-					actualWrites++
-				}
-			}
-			if code != want || actualWrites != writes || strings.Contains(stderr, "SECRET_BASELINE_CONTENT") {
-				t.Fatalf("code=%d writes=%d\n%s\n%s", code, actualWrites, out, stderr)
-			}
-			if mode == "human required" {
-				if !strings.Contains(stderr, "基线只能由决定人采用或驳回") || !strings.Contains(stderr, "https://workspace.example/chosen-workspace/projects/"+baselineTestProject+"/engineering?candidate="+baselineTestCandidate) {
-					t.Fatalf("missing human decision link: %s", stderr)
-				}
-			}
-			if mode == "multi" {
-				m := baselineJSON(t, out)
-				if m["open_issues"] == nil || m["future_field"] != "preserved" {
-					t.Error("decision response lost fields")
-				}
-			}
-			if mode == "adopt" || mode == "reject" {
-				if !strings.Contains(out, "OL-93") || !strings.Contains(out, "OL-94") || !strings.Contains(out, "@@ removed [Rule-中文] 保留规则 @@") || strings.Index(out, "base 1") > strings.Index(out, "Open issues:") || !strings.Contains(stderr, "truncated") {
-					t.Errorf("missing ordered Diff/issues/truncation: %s %s", out, stderr)
-				}
-			}
-			if mode == "denied" || mode == "forbidden" {
-				if strings.Contains(stderr, "engineering?candidate=") || strings.Contains(stderr, "human decider") || strings.Contains(stderr, "PAT") {
-					t.Errorf("incorrect refusal guidance: %s", stderr)
-				}
-				for _, call := range calls() {
-					if call.Path == "/api/config" || strings.HasPrefix(call.Path, "/api/workspaces/") {
-						t.Error("denied decision must not look up approval links")
-					}
-				}
-			}
-			if want == 0 {
-				for _, warning := range []string{"rule_removed", "rule_shrunk", "rule_deferred", "defer_missing_pool", "[BASELINE WARNING]"} {
-					if !strings.Contains(stderr, warning) {
-						t.Errorf("successful decision lost warning %s: %s", warning, stderr)
-					}
-				}
-			}
+func TestLabrastroBaselineConflictExitCode(t *testing.T) {
+	file := writeBaselineInput(t, "正文")
+	_, _ = serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		w.WriteHeader(409)
+		json.NewEncoder(w).Encode(map[string]any{
+			"code": "baseline_conflict", "error": "baseline conflict",
+			"current": map[string]any{"revision_number": 9, "kind": "content", "change_summary": "别人先写"},
 		})
+	})
+	for _, args := range [][]string{
+		{"write", baselineTestProject, "--page", "p", "--base", "1", "--content-file", file},
+		{"rename", baselineTestProject, "--page", "p", "--base", "1", "--title", "t"},
+		{"move", baselineTestProject, "--page", "p", "--base", "1", "--root"},
+		{"archive", baselineTestProject, "--page", "p", "--base", "1"},
+		{"rollback", baselineTestProject, "--page", "p", "--to", "1", "--base", "1"},
+	} {
+		out, stderr, code := executeBaseline(t, args...)
+		if code != 3 || out != "" || !strings.Contains(stderr, "conflict") || !strings.Contains(stderr, "--base") {
+			t.Fatalf("%v: exit=%d out=%q stderr=%q", args, code, out, stderr)
+		}
 	}
 }
 
-func TestLabrastroBaselineArgumentsAndContentBoundary(t *testing.T) {
-	file := writeBaselineInput(t)
+func TestLabrastroBaselineRetiredCommands(t *testing.T) {
 	_, calls := serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
-		t.Error("invalid arguments reached server")
+		t.Error("retired command reached the server")
 		w.WriteHeader(500)
 	})
-	cases := [][]string{
-		{"get"}, {"get", baselineTestProject, "--chapter", "risks"}, {"get", baselineTestProject, "--output", "csv"}, {"get", baselineTestProject, "--revision", "rules:1"},
-		{"get", baselineTestProject, "--revision", ""},
-		{"get", baselineTestProject, "--revision", "domain_rules:1", "--candidate"}, {"get", baselineTestProject, "--revision", "domain_rules:1", "--chapter", "overview"},
-		{"propose", baselineTestProject}, {"propose", baselineTestProject, "--chapter", "domain_rules", "--summary", "ok", "--content-file", file, "--base", "1", "--base-current"},
-		{"diff", baselineTestProject, "--from", "1", "--to", "2"}, {"diff", baselineTestProject, "--chapter", "overview", "--from", "0", "--to", "2"},
-		{"adopt", baselineTestProject}, {"adopt", baselineTestProject, "--revision", "overview:1", "--revision", "overview:2"}, {"adopt", baselineTestProject, "--revision", "overview:2147483648"},
-		{"export", baselineTestProject, "--dir", "a", "--single-file", "b"}, {"get", baselineTestProject, "--unknown"},
-	}
-	for _, args := range cases {
+	for _, tc := range []struct {
+		name string
+		args []string
+		hint string
+	}{
+		{"propose", nil, "candidates are retired"},
+		{"adopt", nil, "decisions are retired"},
+		{"annotations", nil, "annotation batches are retired"},
+		{"respond", nil, "annotation batches are retired"},
+		// Old invocations carry flags Cobra would reject; parsing is disabled
+		// so the migration hint always reaches the caller.
+		{"propose", []string{"--chapter", "overview", "--content-file", "x.md"}, "candidates are retired"},
+		{"adopt", []string{"--chapter", "overview", "--decision", "approve"}, "decisions are retired"},
+		{"annotations", []string{"--batch", "b"}, "annotation batches are retired"},
+		{"respond", []string{"--batch", "b", "--response", "r"}, "annotation batches are retired"},
+	} {
+		args := append([]string{tc.name, baselineTestProject}, tc.args...)
 		out, stderr, code := executeBaseline(t, args...)
-		if code != 2 || out != "" || stderr == "" {
-			t.Errorf("%v: %d %q %q", args, code, out, stderr)
+		if code != 2 || out != "" || !strings.Contains(stderr, "retired") || !strings.Contains(stderr, tc.hint) {
+			t.Fatalf("%s %v: exit=%d out=%q stderr=%q", tc.name, tc.args, code, out, stderr)
 		}
 	}
 	if len(calls()) != 0 {
-		t.Error("parameter failures made requests")
-	}
-	outside := filepath.Join(t.TempDir(), "outside.md")
-	os.WriteFile(outside, []byte("PRIVATE"), 0600)
-	if err := os.Symlink(outside, "escape.md"); err != nil {
-		t.Fatal(err)
-	}
-	for name, data := range map[string][]byte{"large.md": bytes.Repeat([]byte("x"), 65537), "invalid.md": {0xff}, "nul.md": {0}} {
-		if err := os.WriteFile(name, data, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, path := range []string{outside, "escape.md", "..", "missing.md", "large.md", "invalid.md", "nul.md"} {
-		_, err := baselineReadContent(path)
-		if err == nil || strings.Contains(err.Error(), "PRIVATE") {
-			t.Errorf("unsafe content path %q: %v", path, err)
-		}
-	}
-	if _, err := baselineReadContent(file); err != nil {
-		t.Fatal(err)
-	}
-	abs, _ := filepath.Abs(file)
-	if _, err := baselineReadContent(abs); err != nil {
-		t.Fatal(err)
+		t.Fatal("retired commands issued requests")
 	}
 }
 
-type baselineRoundTripper func(*http.Request) (*http.Response, error)
+// ---------- history / diff / activity / search ----------
 
-func (f baselineRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func TestLabrastroBaselineApprovalURL(t *testing.T) {
-	for _, tc := range []struct {
-		name, appEnv, frontendEnv, profileApp, advertised, apiURL, wantOrigin string
-		configStatus, workspaceStatus                                         int
-		missingSlug                                                           bool
-	}{
-		{name: "task defaults", advertised: "https://public.example/", wantOrigin: "https://public.example"},
-		{name: "app env wins", appEnv: "https://env.example", frontendEnv: "https://frontend.example", profileApp: "https://profile.example", advertised: "https://server.example", wantOrigin: "https://env.example"},
-		{name: "frontend env wins", frontendEnv: "https://frontend.example", profileApp: "https://profile.example", wantOrigin: "https://frontend.example"},
-		{name: "selected profile", profileApp: "https://profile.example", advertised: "https://server.example", wantOrigin: "https://profile.example"},
-		{name: "official cloud", apiURL: "https://api.multica.ai", wantOrigin: "https://multica.ai"},
-		{name: "fork cloud", apiURL: defaultCloudServerURL, wantOrigin: defaultCloudAppURL},
-		{name: "cloud config unavailable", apiURL: "https://api.multica.ai", configStatus: 503, wantOrigin: "https://multica.ai"},
-		{name: "internal API with no app", apiURL: "http://multica-backend:8080"},
-		{name: "config unavailable", configStatus: 503},
-		{name: "invalid app", advertised: "://invalid"},
-		{name: "non web app", advertised: "javascript:alert(1)"},
-		{name: "workspace unavailable", advertised: "https://public.example", workspaceStatus: 403},
-		{name: "workspace slug absent", advertised: "https://public.example", missingSlug: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("MULTICA_APP_URL", tc.appEnv)
-			t.Setenv("FRONTEND_ORIGIN", tc.frontendEnv)
-			t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
-			if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{AppURL: tc.profileApp}, "approval"); err != nil {
-				t.Fatal(err)
-			}
-			cmd := &cobra.Command{}
-			cmd.Flags().String("profile", "approval", "")
-			srv, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-				switch r.URL.Path {
-				case "/api/config":
-					if tc.appEnv != "" || tc.frontendEnv != "" || tc.profileApp != "" {
-						t.Error("explicit app setting should not query server config")
-					}
-					if tc.configStatus != 0 {
-						w.WriteHeader(tc.configStatus)
-					}
-					json.NewEncoder(w).Encode(map[string]any{"daemon_app_url": tc.advertised, "error": "SECRET_METADATA"})
-				case "/api/workspaces/offline-workspace":
-					if tc.workspaceStatus != 0 {
-						w.WriteHeader(tc.workspaceStatus)
-					}
-					slug := "chosen-workspace"
-					if tc.missingSlug {
-						slug = ""
-					}
-					json.NewEncoder(w).Encode(map[string]any{"slug": slug, "error": "SECRET_METADATA"})
-				default:
-					t.Errorf("unexpected metadata request: %s", r.URL.Path)
-					w.WriteHeader(404)
-				}
+func TestLabrastroBaselineHistoryDiffActivitySearch(t *testing.T) {
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/revisions"):
+			baselineWriteJSON(w, 200, map[string]any{"revisions": []any{
+				baselineWikiRevision("overview", "总览", 2, "content", "正文 v2"),
+				baselineWikiRevision("overview", "总览", 1, "create", "正文 v1"),
+			}, "has_more": false, "next_before": nil})
+		case strings.HasSuffix(r.URL.Path, "/diff"):
+			baselineWriteJSON(w, 200, map[string]any{
+				"structure": map[string]any{"title": map[string]any{"from": "旧标题", "to": "新标题"}},
+				"sections": map[string]any{
+					"added":    []any{map[string]any{"title": "新增节"}},
+					"modified": []any{},
+					"removed":  []any{map[string]any{"title": "删除节"}},
+				},
 			})
-			client := cli.NewAPIClient(srv.URL, "offline-workspace", "mat_baseline_test")
-			if tc.apiURL != "" {
-				client.BaseURL = tc.apiURL
-				local, _ := url.Parse(srv.URL)
-				client.HTTPClient.Transport = baselineRoundTripper(func(r *http.Request) (*http.Response, error) {
-					clone := r.Clone(r.Context())
-					clone.URL.Scheme, clone.URL.Host = local.Scheme, local.Host
-					return srv.Client().Transport.RoundTrip(clone)
-				})
+		case strings.HasSuffix(r.URL.Path, "/activity"):
+			baselineWriteJSON(w, 200, map[string]any{"items": []any{map[string]any{
+				"page_id": baselineTestPageID, "slug": "overview", "title": "总览", "kind": "content",
+				"number": 2, "created_at": "2026-11-01T00:00:00Z", "created_by_type": "agent",
+				"created_by_id": "90000000-0000-4000-8000-000000000001", "change_summary": "更新正文",
+			}}})
+		case strings.HasSuffix(r.URL.Path, "/search"):
+			if r.URL.Query().Get("q") != "目标" {
+				t.Errorf("search q=%q", r.URL.Query().Get("q"))
 			}
-			link := baselineApprovalURL(cmd, client, baselineTestProject, baselineTestCandidate)
-			if tc.wantOrigin != "" {
-				want := tc.wantOrigin + "/chosen-workspace/projects/" + baselineTestProject + "/engineering?candidate=" + baselineTestCandidate
-				if link != want {
-					t.Fatalf("approval URL: want %s; got %s", want, link)
-				}
-			} else if link != "" {
-				t.Fatalf("expected no guessed URL: %s", link)
-			}
-			for _, c := range calls() {
-				if c.Method != "GET" {
-					t.Error("approval lookup must not retry a decision")
-				}
-			}
-		})
+			baselineWriteJSON(w, 200, map[string]any{"results": []any{map[string]any{
+				"page_id": baselineTestPageID, "slug": "overview", "title": "总览",
+				"section_title": "目标", "snippet": "……目标……", "match": "section",
+			}}})
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	})
+	out, stderr, code := executeBaseline(t, "history", baselineTestProject, "--page", "overview", "--limit", "10", "--before", "3")
+	if code != 0 || stderr != "" || !strings.Contains(out, "v2    content") || !strings.Contains(out, "v1    create") {
+		t.Fatalf("history: %d %q %q", code, out, stderr)
+	}
+	last := calls()[len(calls())-1]
+	if last.Query.Get("with_content") != "false" || last.Query.Get("limit") != "10" || last.Query.Get("before") != "3" {
+		t.Fatalf("history query: %+v", last.Query)
+	}
+
+	out, _, code = executeBaseline(t, "diff", baselineTestProject, "--page", "overview", "--from", "1", "--to", "2")
+	if code != 0 || !strings.Contains(out, "title: 旧标题 → 新标题") || !strings.Contains(out, "+ 新增节") || !strings.Contains(out, "- 删除节") {
+		t.Fatalf("diff: %d %q", code, out)
+	}
+
+	out, _, code = executeBaseline(t, "activity", baselineTestProject, "--limit", "5")
+	if code != 0 || !strings.Contains(out, "overview v2 content") || !strings.Contains(out, "更新正文") {
+		t.Fatalf("activity: %d %q", code, out)
+	}
+
+	out, _, code = executeBaseline(t, "search", baselineTestProject, "目标", "--limit", "3")
+	if code != 0 || !strings.Contains(out, "[overview#目标] 总览 (section)") || !strings.Contains(out, "……目标……") {
+		t.Fatalf("search: %d %q", code, out)
 	}
 }
 
-func TestLabrastroBaselineProjectErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name, project, response, want string
-		status, exit                  int
-	}{
-		{"HTTP 400", baselineTestProject, `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 400)", 400, 2},
-		{"HTTP 404", baselineTestProject, `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 404)", 404, 2},
-		{"invalid prefix", "not-hex", "", "expected a UUID prefix containing only hex characters", 0, 2},
-		{"missing prefix", "1000", `{"projects":[]}`, `no project found matching id prefix "1000"`, 200, 2},
-		{"ambiguous prefix", "1000", `{"projects":[{"id":"10000000-0000-4000-8000-000000000001"},{"id":"10000000-0000-4000-8000-000000000002"}]}`, "ambiguous project id prefix", 200, 2},
-		{"prefix unauthorized", "1000", `{"error":"SECRET_BASELINE_CONTENT"}`, "Stop here: do not retry", 401, 1},
-		{"prefix service failure", "1000", `{"error":"SECRET_BASELINE_CONTENT"}`, "(HTTP 503)", 503, 1},
-		{"prefix malformed response", "1000", `SECRET_BASELINE_CONTENT`, "baseline read failed", 200, 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-				if tc.status == 0 {
-					t.Error("invalid prefix reached server")
-					return
-				}
-				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.response)
-			})
-			out, stderr, code := executeBaseline(t, "get", tc.project, "--output", "json")
-			if code != tc.exit || out != "" || !strings.Contains(stderr, tc.want) || strings.Contains(stderr, "SECRET_BASELINE_CONTENT") {
-				t.Fatalf("code=%d stdout=%s stderr=%s", code, out, stderr)
-			}
-			if tc.name == "ambiguous prefix" {
-				for _, id := range []string{baselineTestProject, "10000000-0000-4000-8000-000000000002"} {
-					if !strings.Contains(stderr, id) {
-						t.Error("ambiguity guidance lost matching project IDs")
-					}
-				}
-			}
-			if len(calls()) > 1 {
-				t.Error("project failure must not proceed to baseline requests or retry")
-			}
-		})
-	}
-}
+// ---------- export ----------
 
 func TestLabrastroBaselineExport(t *testing.T) {
 	t.Chdir(t.TempDir())
-	adopted := baselineTestRevision("domain_rules", 1, "adopted")
-	_, calls := serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
-		json.NewEncoder(w).Encode(baselineTestState(adopted, baselineTestRevision("domain_rules", 2, "candidate")))
+	_, _ = serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/baseline/tree"):
+			baselineWriteJSON(w, 200, baselineWikiTree(
+				baselineWikiTreePage("overview", "总览", 1, nil, false),
+				baselineWikiTreePage("rules", "规则", 2, nil, false),
+				baselineWikiTreePage("sourced", "带来源", 3, nil, false),
+				baselineWikiTreePage("gone", "已归档", 1, nil, true),
+			))
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/overview"):
+			baselineWriteJSON(w, 200, map[string]any{
+				"page": baselineWikiPage("overview", "总览", 1), "revision": baselineWikiRevision("overview", "总览", 1, "create", "# 总览正文"),
+				"content_markdown": "# 总览正文",
+			})
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/rules"):
+			baselineWriteJSON(w, 200, map[string]any{
+				"page": baselineWikiPage("rules", "规则", 2), "revision": baselineWikiRevision("rules", "规则", 2, "content", "# 规则正文"),
+				"content_markdown": "# 规则正文",
+			})
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/sourced"):
+			sourced := baselineWikiRevision("sourced", "带来源", 3, "content", "# 带来源正文")
+			sourced["source_issue_id"] = baselineTestIssueID
+			baselineWriteJSON(w, 200, map[string]any{
+				"page": baselineWikiPage("sourced", "带来源", 3), "revision": sourced,
+				"content_markdown": "# 带来源正文",
+			})
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
 	})
-	for attempt := 0; attempt < 2; attempt++ {
-		out, stderr, code := executeBaseline(t, "export", baselineTestProject, "--output", "json")
-		if code != 0 || !strings.Contains(stderr, "Exported 4") {
-			t.Fatalf("export failed: %d %s %s", code, out, stderr)
+	dir := filepath.Join(".", "snapshot")
+	out, stderr, code := executeBaseline(t, "export", baselineTestProject, "--dir", dir)
+	if code != 0 || stderr != "" {
+		t.Fatalf("export failed: %d %s %s", code, out, stderr)
+	}
+	titles := map[string]string{"overview": "总览", "rules": "规则", "sourced": "带来源"}
+	for slug, header := range map[string]string{
+		"overview": "slug: overview\ntitle: \"总览\"\nrevision: 1\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
+		"rules":    "slug: rules\ntitle: \"规则\"\nrevision: 2\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
+		"sourced":  "slug: sourced\ntitle: \"带来源\"\nrevision: 3\nsource_issue: " + baselineTestIssueID + "\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
+	} {
+		body, err := os.ReadFile(filepath.Join(dir, slug+".md"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		files := baselineJSON(t, out)["files"].([]any)
-		if len(files) != 4 {
-			t.Fatal("not four files")
+		if !strings.HasPrefix(string(body), "---\n"+header) || !strings.HasSuffix(string(body), "\n---\n\n# "+titles[slug]+"正文\n") {
+			t.Fatalf("exported %s: %s", slug, body)
 		}
-		for _, v := range files {
-			path := v.(string)
-			b, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			info, _ := os.Stat(path)
-			if info.Mode().Perm()&0222 != 0 || bytes.Contains(b, []byte(baselineTestBase)) || bytes.Contains(b, []byte(baselineTestCandidate)) {
-				t.Fatalf("invalid read-only snapshot: %s", path)
-			}
-			if strings.Contains(path, "domain-rules") && !bytes.Contains(b, []byte("Revision: 1")) {
-				t.Fatal("exported candidate instead of adopted")
-			}
+		if slug != "sourced" && strings.Contains(string(body), "source_issue") {
+			t.Fatalf("exported %s must omit source_issue when unset: %s", slug, body)
 		}
 	}
-	out, _, code := executeBaseline(t, "export", baselineTestProject, "--single-file", "./PROJECT_BASELINE.md", "--output", "json")
-	if code != 0 || len(baselineJSON(t, out)["files"].([]any)) != 1 {
-		t.Fatal("single file export failed")
+	if _, err := os.Stat(filepath.Join(dir, "gone.md")); err == nil {
+		t.Fatal("archived page exported")
 	}
-	b, _ := os.ReadFile("PROJECT_BASELINE.md")
-	if strings.Count(string(b), "# ") < 4 {
-		t.Fatal("missing chapters")
+
+	out, _, code = executeBaseline(t, "export", baselineTestProject, "--single-file", "ALL.md")
+	if code != 0 {
+		t.Fatalf("single-file export: %d %s", code, out)
 	}
-	for _, call := range calls() {
-		if call.Method != "GET" {
-			t.Fatal("export mutated server")
-		}
-	}
-	if err := os.Symlink("PROJECT_BASELINE.md", "link.md"); err != nil {
-		t.Fatal(err)
-	}
-	if err := baselineWriteSnapshot("link.md", "overwrite"); err == nil {
-		t.Fatal("snapshot followed symlink")
+	combined, _ := os.ReadFile("ALL.md")
+	if strings.Count(string(combined), "slug: overview") != 1 || !strings.Contains(string(combined), "# 规则正文") {
+		t.Fatalf("single-file export: %s", combined)
 	}
 }
 
-func TestLabrastroBaselineExportAnnotationIsolation(t *testing.T) {
-	t.Chdir(t.TempDir())
-	state := baselineTestState(baselineTestRevision("domain_rules", 1, "adopted"), nil)
-	_, calls := serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) { json.NewEncoder(w).Encode(state) })
-	export := func() map[string]string {
-		out, stderr, code := executeBaseline(t, "export", baselineTestProject, "--output", "json")
-		if code != 0 {
-			t.Fatalf("export: %d %s", code, stderr)
+// ---------- --source-issue resolution ----------
+
+func TestLabrastroBaselineSourceIssueResolution(t *testing.T) {
+	file := writeBaselineInput(t, "正文")
+	_, calls := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		switch {
+		case r.URL.Path == "/api/issues/OL-42":
+			baselineWriteJSON(w, 200, map[string]any{"id": baselineTestIssueID, "identifier": "OL-42", "title": "来源"})
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/baseline/pages"):
+			baselineWriteJSON(w, 201, baselineWikiWriteResult("src", "来源页", 1, "create", "正文", false))
+		case r.Method == "PUT":
+			baselineWriteJSON(w, 200, baselineWikiWriteResult("src", "来源页", 2, "content", "正文", false))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
 		}
-		files := map[string]string{}
-		for _, file := range baselineJSON(t, out)["files"].([]any) {
-			path := file.(string)
-			body, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			files[path] = string(body)
-		}
-		return files
+	})
+	_, stderr, code := executeBaseline(t, "create", baselineTestProject, "--title", "来源页", "--slug", "src",
+		"--content-file", file, "--source-issue", "OL-42")
+	if code != 0 || stderr != "" {
+		t.Fatalf("create with OL ref: %d %s", code, stderr)
 	}
-	before := export()
-	// Even an accidental future field on the broadcast endpoint must never
-	// enter a repository snapshot. The server separately pins a byte-identical
-	// response before/after storing annotations.
-	state["annotations"] = []map[string]string{{"note": "PRIVATE-ANNOTATION-NOTE", "quote": "PRIVATE-ANNOTATION-QUOTE"}}
-	state["annotation_batches"] = []map[string]string{{"id": "PRIVATE-BATCH"}}
-	after := export()
-	for path, body := range before {
-		if after[path] != body {
-			t.Fatalf("annotations changed exported file %s", path)
-		}
-	}
+	var createBody map[string]any
 	for _, call := range calls() {
-		if strings.Contains(call.Path, "annotation") {
-			t.Fatal("export fetched annotation data")
+		if call.Method == "POST" {
+			createBody = call.Body
 		}
+	}
+	if createBody == nil || createBody["source_issue_id"] != baselineTestIssueID {
+		t.Fatalf("source issue not resolved to UUID: %+v", createBody)
+	}
+
+	uuidFile := writeBaselineInput(t, "正文")
+	_, stderr, code = executeBaseline(t, "write", baselineTestProject, "--page", "src", "--base", "1",
+		"--content-file", uuidFile, "--source-issue", baselineTestIssueID)
+	if code != 0 || stderr != "" {
+		t.Fatalf("write with UUID ref: %d %s", code, stderr)
+	}
+	found := false
+	for _, call := range calls() {
+		if call.Method == "PUT" && call.Body["source_issue_id"] == baselineTestIssueID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("UUID source issue not passed through")
 	}
 }
+
+// ---------- malformed responses ----------
 
 func TestLabrastroBaselineMalformedResponses(t *testing.T) {
-	for _, response := range []any{map[string]any{}, map[string]any{"chapters": []any{}}, map[string]any{"chapters": []any{map[string]any{"chapter": "domain_rules", "adopted": map[string]any{"id": "bogus"}}}}} {
-		t.Run(fmt.Sprint(response), func(t *testing.T) {
-			_, _ = serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) { json.NewEncoder(w).Encode(response) })
-			out, _, code := executeBaseline(t, "export", baselineTestProject, "--dir", filepath.Join(t.TempDir(), "snapshot"))
-			if code != 1 || out != "" {
-				t.Fatal("malformed response reported successful export")
-			}
-		})
-	}
-}
-
-func TestLabrastroBaselineCLIProcess(t *testing.T) {
-	if os.Getenv("BASELINE_CLI_PROCESS") != "1" {
-		return
-	}
-	t.Setenv("MULTICA_SERVER_URL", os.Getenv("BASELINE_CLI_URL"))
-	t.Setenv("MULTICA_TOKEN", "mat_baseline_test")
-	t.Setenv("MULTICA_WORKSPACE_ID", "offline-workspace")
-	t.Setenv("MULTICA_TASK_CONFIG_ROOT", t.TempDir())
-	t.Setenv("MULTICA_AGENT_ID", baselineTestIssue)
-	t.Setenv("MULTICA_TASK_ID", baselineTestCandidate)
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "")
-	if err := os.Chdir(os.Getenv("BASELINE_CLI_DIR")); err != nil {
-		t.Fatal(err)
-	}
-	rootCmd.SetArgs(os.Args[3:])
-	main()
-	os.Exit(0)
-}
-func TestLabrastroBaselineProcessExitAndStreams(t *testing.T) {
-	srv, _ := serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
-		switch r.URL.Path {
-		case "/api/config":
-			json.NewEncoder(w).Encode(map[string]any{"daemon_app_url": "https://workspace.example"})
-			return
-		case "/api/workspaces/offline-workspace":
-			json.NewEncoder(w).Encode(map[string]any{"slug": "chosen-workspace"})
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/revisions") {
-			json.NewEncoder(w).Encode(map[string]any{"revisions": []any{baselineTestRevision("domain_rules", 2, "candidate")}})
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/decisions") {
-			w.WriteHeader(403)
-			json.NewEncoder(w).Encode(map[string]any{"code": "baseline_credential_denied", "error": "SECRET_BASELINE_CONTENT"})
-			return
-		}
-		json.NewEncoder(w).Encode(baselineTestState(baselineTestRevision("domain_rules", 1, "adopted"), nil))
-	})
 	for _, tc := range []struct {
-		args []string
-		exit int
-		hint string
+		response map[string]any
+		args     []string
 	}{
-		{[]string{"get", baselineTestProject, "--output", "json"}, 0, ""},
-		{[]string{"get", baselineTestProject, "--revision", "domain_rules:999"}, 2, "404"},
-		{[]string{"adopt", baselineTestProject, "--revision", "domain_rules:2", "--output", "json", "--debug"}, 1, "baseline_credential_denied"},
-		{[]string{"get", baselineTestProject, "--unknown"}, 2, "unknown flag"},
+		{map[string]any{"revisions": "nope"}, []string{"history", baselineTestProject, "--page", "p"}},
+		{map[string]any{"items": "nope"}, []string{"activity", baselineTestProject}},
+		{map[string]any{"results": "nope"}, []string{"search", baselineTestProject, "needle"}},
+		{map[string]any{"pages": "nope"}, []string{"tree", baselineTestProject}},
 	} {
-		args := append([]string{"-test.run=^TestLabrastroBaselineCLIProcess$", "--", "project", "baseline"}, tc.args...)
-		cmd := exec.Command(os.Args[0], args...)
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "BASELINE_CLI_PROCESS=1", "BASELINE_CLI_URL=" + srv.URL, "BASELINE_CLI_DIR=" + t.TempDir()}
-		var out, stderr bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &stderr
-		err := cmd.Run()
-		exit := 0
-		if err != nil {
-			if e, ok := err.(*exec.ExitError); ok {
-				exit = e.ExitCode()
-			} else {
-				t.Fatal(err)
-			}
-		}
-		if exit != tc.exit || !strings.Contains(stderr.String(), tc.hint) || strings.Contains(stderr.String(), "SECRET_BASELINE_CONTENT") {
-			t.Fatalf("%v: exit=%d out=%s err=%s", tc.args, exit, out.String(), stderr.String())
-		}
-		if exit == 0 {
-			baselineJSON(t, out.String())
-		} else if out.Len() != 0 {
-			t.Fatal("error leaked to stdout")
-		}
-	}
-}
-
-func TestLabrastroBaselineTaskAuthErrorRedaction(t *testing.T) {
-	t.Setenv("MULTICA_DEBUG", "1")
-	t.Setenv("LANG", "en_US.UTF-8")
-	_, _ = serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
-		w.WriteHeader(401)
-		json.NewEncoder(w).Encode(map[string]any{"error": "SECRET_BASELINE_CONTENT"})
-	})
-	out, stderr, code := executeBaseline(t, "get", baselineTestProject, "--output", "json")
-	if code != 1 || out != "" || strings.Contains(stderr, "SECRET_BASELINE_CONTENT") || !strings.Contains(stderr, "task token") {
-		t.Fatalf("task refusal must remain actionable and redacted: %d %q %q", code, out, stderr)
-	}
-}
-
-func TestLabrastroBaselineMissingRevisionPayload(t *testing.T) {
-	for _, field := range []string{"content_markdown", "anchors_diff"} {
-		t.Run(field, func(t *testing.T) {
-			revision := baselineTestRevision("domain_rules", 1, "adopted")
-			delete(revision, field)
+		t.Run(fmt.Sprint(tc.response, tc.args[0]), func(t *testing.T) {
 			_, _ = serveBaseline(t, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
-				json.NewEncoder(w).Encode(baselineTestState(revision, nil))
+				json.NewEncoder(w).Encode(tc.response)
 			})
-			out, _, code := executeBaseline(t, "get", baselineTestProject, "--chapter", "domain_rules")
+			out, _, code := executeBaseline(t, tc.args...)
 			if code != 1 || out != "" {
-				t.Fatal("incomplete revision silently rendered as empty content")
+				t.Fatalf("%v: malformed response reported success: %d %q", tc.args, code, out)
 			}
 		})
+	}
+}
+
+func TestLabrastroBaselineRegistration(t *testing.T) {
+	for _, action := range []string{"tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "search", "export", "propose", "adopt", "annotations", "respond"} {
+		root := &cobra.Command{Use: "multica"}
+		project := &cobra.Command{Use: "project"}
+		project.AddCommand(newLabrastroProjectBaselineCmd())
+		root.AddCommand(project)
+		cmd, _, err := root.Find([]string{"project", "baseline", action})
+		if err != nil || cmd.Name() != action {
+			t.Fatalf("%s is not registered", action)
+		}
 	}
 }

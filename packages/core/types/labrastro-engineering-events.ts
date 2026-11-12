@@ -1,9 +1,7 @@
 // Fork-owned WebSocket payload types for the engineering module
-// (project engineering overview / baseline wiki / baseline annotations).
-// Declared in a fork file so upstream `events.ts` only carries the event
-// names and the payload-map entries (see docs/engineering/upstream-sync-checklist.md).
-
-import type { BaselineChapter } from "../api/labrastro-engineering-schemas";
+// (project engineering overview / baseline wiki / wiki comments). Declared in
+// a fork file so upstream `events.ts` only carries the event names and the
+// payload-map entries (see docs/engineering/upstream-sync-checklist.md).
 
 export interface ProjectEngineeringUpdatedPayload {
   project_id: string;
@@ -11,11 +9,14 @@ export interface ProjectEngineeringUpdatedPayload {
 
 export interface ProjectBaselineChangedPayload {
   project_id: string;
-  chapter: BaselineChapter;
+  page_id: string;
+  slug: string;
+  change: "content" | "tree" | "archive";
+  revision_number?: number;
 }
 
-export interface ProjectBaselineAnnotationChangedPayload {
+export interface ProjectBaselineCommentChangedPayload {
   project_id: string;
-  chapter: BaselineChapter;
-  batch_id: string;
+  page_id: string;
+  thread_id: string;
 }

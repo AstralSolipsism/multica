@@ -105,9 +105,6 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
-	// BaselineAnnotationBatchID resumes a durable review and atomically attaches its carrier and assigned task.
-	BaselineAnnotationBatchID pgtype.UUID
-
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
 	// created and attachments are linked. Its return value is sent as
 	// the EventIssueCreated payload via the event bus. The HTTP handler
@@ -253,9 +250,6 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	// or property rows so relation-aware creates use the same lock order.
 	if _, err := qtx.LockWorkspaceForDependencyWrite(ctx, p.WorkspaceID); err != nil {
 		return IssueCreateResult{}, err
-	}
-	if existing, handled, err := prepareLabrastroEngineeringIssue(ctx, qtx, p, opts); handled || err != nil {
-		return existing, err
 	}
 
 	properties, err := validateIssueCreateProperties(ctx, tx, qtx, p.WorkspaceID, p.Properties)
@@ -538,10 +532,6 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
-	if assignedTask, err = bindLabrastroEngineeringCarrier(ctx, s, qtx, p, issue, opts, assignedTask); err != nil {
-		return IssueCreateResult{}, err
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}
@@ -579,9 +569,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	if taskID, ok := finalizeLabrastroEngineeringEnqueue(ctx, s, opts, assignedTask); ok {
-		assignedTaskID = taskID
-	} else if opts.AssignedAgentRunFireAt.IsZero() {
+	if opts.AssignedAgentRunFireAt.IsZero() {
 		assignedTaskID = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, opts.AssignedAgentRunFireAt)
 	}
 	// Creating an issue already assigned to an agent is the member delegating

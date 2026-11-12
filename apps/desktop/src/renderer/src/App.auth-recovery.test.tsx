@@ -221,8 +221,8 @@ beforeEach(() => {
 });
 
 describe("App main-window auth recovery", () => {
-  it("restores a pending engineering candidate once after same-account re-auth", () => {
-    const path = "/acme/projects/p1/engineering?candidate=rev-1";
+  it("restores a pending engineering wiki page once after same-account re-auth", () => {
+    const path = "/acme/projects/p1/engineering?page=rev-1";
     preserveEngineeringDestinationForReauth("user-1", path);
 
     render(<App />);
@@ -231,8 +231,8 @@ describe("App main-window auth recovery", () => {
     expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
   });
 
-  it("captures the active engineering candidate when the session expires", () => {
-    const path = "/acme/projects/p1/engineering?candidate=rev-1";
+  it("captures the active engineering wiki page when the session expires", () => {
+    const path = "/acme/projects/p1/engineering?page=rev-1";
     render(<App />);
     tabStore.activeUrl = path;
 
@@ -241,11 +241,11 @@ describe("App main-window auth recovery", () => {
     expect(consumeEngineeringDestinationForReauth("user-1")).toBe(path);
   });
 
-  it("clears a pending engineering candidate on explicit logout", () => {
+  it("clears a pending engineering wiki page on explicit logout", () => {
     render(<App />);
     preserveEngineeringDestinationForReauth(
       "user-1",
-      "/acme/projects/p1/engineering?candidate=rev-1",
+      "/acme/projects/p1/engineering?page=rev-1",
     );
 
     coreHandlers.onLogout!();

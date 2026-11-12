@@ -8,8 +8,8 @@ import type { WSClient } from "../api/ws-client";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { engineeringProjectKeys } from "../projects/engineering-queries";
 import type {
-  ProjectBaselineAnnotationChangedPayload,
   ProjectBaselineChangedPayload,
+  ProjectBaselineCommentChangedPayload,
   ProjectEngineeringUpdatedPayload,
 } from "../types/events";
 
@@ -31,25 +31,24 @@ export function subscribeLabrastroEngineeringEvents(
     const { project_id } = p as ProjectBaselineChangedPayload;
     const wsId = getCurrentWsId();
     if (wsId && project_id) {
+      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiRoot(wsId, project_id) });
       qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineering(wsId, project_id) });
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineeringHistoryAll(wsId, project_id) });
-      // A new working revision changes server-side annotation location/
-      // located projections; refresh them together with the engineering data.
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, project_id) });
     }
   });
 
-  const unsubProjectBaselineAnnotationChanged = ws.on("project_baseline_annotation:changed", (p) => {
-    const { project_id } = p as ProjectBaselineAnnotationChangedPayload;
+  const unsubProjectBaselineCommentChanged = ws.on("project_baseline_comment:changed", (p) => {
+    const { project_id } = p as ProjectBaselineCommentChangedPayload;
     const wsId = getCurrentWsId();
     if (wsId && project_id) {
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.baselineAnnotationsAll(wsId, project_id) });
+      // Comments land in a follow-up release; keep the invalidation wired so
+      // the event name rename stays a single-line change there.
+      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiRoot(wsId, project_id) });
     }
   });
 
   return () => {
     unsubProjectEngineeringUpdated();
     unsubProjectBaselineChanged();
-    unsubProjectBaselineAnnotationChanged();
+    unsubProjectBaselineCommentChanged();
   };
 }

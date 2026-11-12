@@ -1652,104 +1652,42 @@ type Project struct {
 	CreatorID   pgtype.UUID        `json:"creator_id"`
 }
 
-type ProjectBaselineAnnotation struct {
-	ID                   pgtype.UUID        `json:"id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	BatchID              pgtype.UUID        `json:"batch_id"`
-	ReviewID             pgtype.UUID        `json:"review_id"`
-	Ordinal              int32              `json:"ordinal"`
-	ParentAnnotationID   pgtype.UUID        `json:"parent_annotation_id"`
-	AnchorKind           string             `json:"anchor_kind"`
-	TargetRevisionID     pgtype.UUID        `json:"target_revision_id"`
-	TargetRevisionNumber int32              `json:"target_revision_number"`
-	SectionAnchor        string             `json:"section_anchor"`
-	SectionTitle         string             `json:"section_title"`
-	LineStart            pgtype.Int4        `json:"line_start"`
-	LineEnd              pgtype.Int4        `json:"line_end"`
-	Quote                string             `json:"quote"`
-	Prefix               string             `json:"prefix"`
-	Suffix               string             `json:"suffix"`
-	Start                int32              `json:"start"`
-	Note                 string             `json:"note"`
-	Response             pgtype.Text        `json:"response"`
-	RespondedAt          pgtype.Timestamptz `json:"responded_at"`
-	RespondedByTaskID    pgtype.UUID        `json:"responded_by_task_id"`
-	CreatedByType        string             `json:"created_by_type"`
-	CreatedByID          pgtype.UUID        `json:"created_by_id"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	ResolvedAt           pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType       pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID         pgtype.UUID        `json:"resolved_by_id"`
-}
-
-type ProjectBaselineAnnotationBatch struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	Chapter          string             `json:"chapter"`
-	CarrierKind      string             `json:"carrier_kind"`
-	IssueID          pgtype.UUID        `json:"issue_id"`
-	AgentID          pgtype.UUID        `json:"agent_id"`
-	CreatedByType    string             `json:"created_by_type"`
-	CreatedByID      pgtype.UUID        `json:"created_by_id"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	ClosedAt         pgtype.Timestamptz `json:"closed_at"`
-	CloseReason      pgtype.Text        `json:"close_reason"`
-	ClosedByType     pgtype.Text        `json:"closed_by_type"`
-	ClosedByID       pgtype.UUID        `json:"closed_by_id"`
-	ClosedRevisionID pgtype.UUID        `json:"closed_revision_id"`
-}
-
-type ProjectBaselineDoc struct {
-	ID                  pgtype.UUID        `json:"id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	Chapter             string             `json:"chapter"`
-	AdoptedRevisionID   pgtype.UUID        `json:"adopted_revision_id"`
-	CandidateRevisionID pgtype.UUID        `json:"candidate_revision_id"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	Title               string             `json:"title"`
-	Position            int32              `json:"position"`
-}
-
-type ProjectBaselineReview struct {
+type ProjectBaselinePage struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
-	BatchID            pgtype.UUID        `json:"batch_id"`
-	ClientKey          pgtype.UUID        `json:"client_key"`
-	ReviewedRevisionID pgtype.UUID        `json:"reviewed_revision_id"`
-	Summary            string             `json:"summary"`
-	WakeCommentID      pgtype.UUID        `json:"wake_comment_id"`
-	CreatedByType      string             `json:"created_by_type"`
-	CreatedByID        pgtype.UUID        `json:"created_by_id"`
+	CurrentRevisionID  pgtype.UUID        `json:"current_revision_id"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	Title              string             `json:"title"`
+	Position           int32              `json:"position"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	Slug               string             `json:"slug"`
+	LastRevisionNumber int32              `json:"last_revision_number"`
+	ArchivedAt         pgtype.Timestamptz `json:"archived_at"`
 }
 
 type ProjectBaselineRevision struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	Chapter            string             `json:"chapter"`
-	RevisionNumber     int32              `json:"revision_number"`
-	Status             string             `json:"status"`
-	ContentMarkdown    string             `json:"content_markdown"`
-	ChangeSummary      string             `json:"change_summary"`
-	BaseRevisionID     pgtype.UUID        `json:"base_revision_id"`
-	ReplacesRevisionID pgtype.UUID        `json:"replaces_revision_id"`
-	AnchorsDiff        []byte             `json:"anchors_diff"`
-	SourceIssueID      pgtype.UUID        `json:"source_issue_id"`
-	CreatedByType      string             `json:"created_by_type"`
-	CreatedByID        pgtype.UUID        `json:"created_by_id"`
-	CreatedByTaskID    pgtype.UUID        `json:"created_by_task_id"`
-	DecidedByType      pgtype.Text        `json:"decided_by_type"`
-	DecidedByID        pgtype.UUID        `json:"decided_by_id"`
-	DecidedByTaskID    pgtype.UUID        `json:"decided_by_task_id"`
-	DecidedAt          pgtype.Timestamptz `json:"decided_at"`
-	DecisionCredential pgtype.Text        `json:"decision_credential"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	RevisionNumber         int32              `json:"revision_number"`
+	ContentMarkdown        string             `json:"content_markdown"`
+	ChangeSummary          string             `json:"change_summary"`
+	BaseRevisionID         pgtype.UUID        `json:"base_revision_id"`
+	SourceIssueID          pgtype.UUID        `json:"source_issue_id"`
+	CreatedByType          string             `json:"created_by_type"`
+	CreatedByID            pgtype.UUID        `json:"created_by_id"`
+	CreatedByTaskID        pgtype.UUID        `json:"created_by_task_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	PageID                 pgtype.UUID        `json:"page_id"`
+	RevisionKind           string             `json:"revision_kind"`
+	Title                  string             `json:"title"`
+	Slug                   string             `json:"slug"`
+	ParentID               pgtype.UUID        `json:"parent_id"`
+	Position               int32              `json:"position"`
+	ArchivedAt             pgtype.Timestamptz `json:"archived_at"`
+	RestoredFromRevisionID pgtype.UUID        `json:"restored_from_revision_id"`
 }
 
 type ProjectEngineering struct {

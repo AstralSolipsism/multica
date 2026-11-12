@@ -1,89 +1,86 @@
 // @vitest-environment node
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
+
+// The wiki surface rides the shared labrastro transport; pin request shapes
+// and payload serialization for the write paths.
+function stub(body: Record<string, unknown>, status = 200) {
+  return Promise.resolve(
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }),
+  );
+}
+
+const workspaceHeaders = { "X-Workspace-ID": "ws-1", "X-Workspace-Slug": "" };
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("sends exact reviewed revision IDs and workspace, and does not retry a conflict", async () => {
-  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "candidate closed", code: "baseline_candidate_closed" }), { status: 409 }));
-  vi.stubGlobal("fetch", fetcher);
-  const api = new ApiClient("https://example.test");
-  await expect(api.decideProjectBaseline("workspace", "project/id", "adopt", [{ revisionId: "reviewed", expectedAdoptedRevisionId: "base" }])).rejects.toMatchObject({ status: 409 });
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
-  expect(url).toBe("https://example.test/api/projects/project%2Fid/baseline/decisions");
-  expect(new Headers(init.headers).get("X-Workspace-ID")).toBe("workspace");
-  expect(JSON.parse(String(init.body))).toEqual({ action: "adopt", revisions: [{ revision_id: "reviewed", expected_adopted_revision_id: "base" }] });
-});
+describe("wiki api methods", () => {
+  it("posts a page create with the wire payload", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      stub({ page: { id: "00000000-0000-4000-8000-000000000001", slug: "overview", title: "T", position: 0, current_revision_number: 1 }, revision: { id: "00000000-0000-4000-8000-000000000002", page_id: "00000000-0000-4000-8000-000000000001", revision_number: 1, revision_kind: "create", title: "T", slug: "overview", created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009", created_at: "2026-11-12T00:00:00Z" }, rebased: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
 
-it("adds an annotation batch action only when requested", async () => {
-  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
-  vi.stubGlobal("fetch", fetcher);
-  const api = new ApiClient("https://example.test");
-  const revisions = [{ revisionId: "reviewed", expectedAdoptedRevisionId: null }];
-
-  await api.decideProjectBaseline("workspace", "project", "reject", revisions, { annotationBatchAction: "keep" });
-
-  expect(JSON.parse(String(fetcher.mock.calls[0]?.[1].body))).toEqual({
-    action: "reject",
-    revisions: [{ revision_id: "reviewed", expected_adopted_revision_id: null }],
-    annotation_batch_action: "keep",
+    const result = await api.createProjectWikiPage("ws-1", "p-1", {
+      title: "T", slug: "overview", contentMarkdown: "# T", sourceIssueId: "00000000-0000-4000-8000-000000000009",
+    });
+    expect(result?.page.slug).toBe("overview");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/api/projects/p-1/baseline/pages");
+    expect(JSON.parse(init.body as string)).toEqual({
+      title: "T", slug: "overview", parent: undefined, after: undefined,
+      content_markdown: "# T", change_summary: undefined, source_issue_id: "00000000-0000-4000-8000-000000000009",
+    });
   });
-});
 
-it("returns null for malformed baseline responses through the installed client", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ engineering: null, chapters: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
-  expect(await new ApiClient("https://example.test").getProjectEngineering("workspace", "project")).toBeNull();
-});
+  it("puts a section write with the base revision", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      stub({ page: { id: "00000000-0000-4000-8000-000000000001", slug: "a", title: "A", position: 0, current_revision_number: 5 }, revision: { id: "00000000-0000-4000-8000-000000000003", page_id: "00000000-0000-4000-8000-000000000001", revision_number: 6, revision_kind: "content", title: "A", slug: "a", created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009", created_at: "2026-11-12T00:00:00Z" }, rebased: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
 
-it("sends stages as a replacement array and omits unspecified fields", async () => {
-  const id = "00000000-0000-4000-8000-000000000001";
-  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ engineering: { project_id: id, workspace_id: id, stages: [] } }))));
-  vi.stubGlobal("fetch", fetcher);
-  const api = new ApiClient("https://example.test");
-  const stages = [{ stage: 9, title: "Release" }];
-  await api.updateProjectEngineering(id, id, { stages, currentStage: 9 });
-  await api.updateProjectEngineering(id, id, { stages: [] });
-  await api.updateProjectEngineering(id, id, { modeSummary: "Iterate" });
-  expect(fetcher.mock.calls.map((call) => JSON.parse(call[1].body))).toEqual([
-    { stages, current_stage: 9 }, { stages: [] }, { mode_summary: "Iterate" },
-  ]);
-});
+    const result = await api.writeProjectWikiPage("ws-1", "p-1", "a", {
+      baseRevisionNumber: 4, section: "分层", contentMarkdown: "new body",
+    });
+    expect(result?.rebased).toBe(true);
+    const url = fetchMock.mock.calls[0]?.[0] as string;
+    expect(url).toContain("/api/projects/p-1/baseline/pages/a/content");
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      base_revision_number: 4, content_markdown: "new body", section: "分层",
+      delete_section: undefined, change_summary: undefined, source_issue_id: undefined,
+    });
+  });
 
-it("sends local section proposals", async () => {
-  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({}))));
-  vi.stubGlobal("fetch", fetcher);
-  const api = new ApiClient("https://example.test");
-  await api.proposeProjectBaseline("workspace", "project", { chapter: "module:billing", chapterTitle: "Billing", section: "Pay", contentMarkdown: "Updated", changeSummary: "Edit", baseRevisionId: null });
-  await api.proposeProjectBaseline("workspace", "project", { chapter: "module:billing", section: "Pay", deleteSection: true, contentMarkdown: "", changeSummary: "Remove", baseRevisionId: "base" });
-  const bodies = fetcher.mock.calls.slice(0,2).map((call) => JSON.parse(call[1].body));
-  expect(bodies[0]).toMatchObject({ chapter: "module:billing", chapter_title: "Billing", section: "Pay", content_markdown: "Updated", base_revision_id: null });
-  expect(bodies[1]).toMatchObject({ section: "Pay", delete_section: true, content_markdown: "", base_revision_id: "base" });
-  expect(new Headers(fetcher.mock.calls[1]?.[1].headers).get("X-Workspace-ID")).toBe("workspace");
-});
+  it("serializes a move with parent null for root", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      stub({ page: { id: "00000000-0000-4000-8000-000000000001", slug: "a", title: "A", position: 0, current_revision_number: 2 }, revision: { id: "00000000-0000-4000-8000-000000000003", page_id: "00000000-0000-4000-8000-000000000001", revision_number: 3, revision_kind: "move", title: "A", slug: "a", created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009", created_at: "2026-11-12T00:00:00Z" }, rebased: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
 
-it("reads the configuration and history summaries without chapter bodies", async () => {
-  const id = "00000000-0000-4000-8000-000000000001";
-  const fetcher = vi.fn().mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(
-    url.includes("/engineering")
-      ? { engineering: { project_id: id, workspace_id: id, enabled: true } }
-      : { revisions: [], has_more: false, next_before: null },
-  ))));
-  vi.stubGlobal("fetch", fetcher);
-  const api = new ApiClient("https://example.test");
+    await api.moveProjectWikiPage("ws-1", "p-1", "a", { baseRevisionNumber: 2, parent: null });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string).parent).toBeNull();
+  });
 
-  expect((await api.getProjectEngineeringConfig("workspace", "project"))?.engineering.enabled).toBe(true);
-  await api.getProjectBaselineHistory("workspace", "project", "module:billing", { limit: 10, withContent: false });
-  await api.getProjectBaselineHistory("workspace", "project", "overview", { before: 3 });
+  it("requests links, backlinks and related issues together", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      stub({ page: { id: "00000000-0000-4000-8000-000000000001", slug: "a", title: "A", position: 0, current_revision_number: 1 }, revision: { id: "00000000-0000-4000-8000-000000000002", page_id: "00000000-0000-4000-8000-000000000001", revision_number: 1, revision_kind: "create", title: "A", slug: "a" }, content_markdown: "" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
 
-  expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
-    "https://example.test/api/projects/project/engineering?with_chapters=false",
-    "https://example.test/api/projects/project/baseline/revisions?chapter=module%3Abilling&limit=10&with_content=false",
-    "https://example.test/api/projects/project/baseline/revisions?chapter=overview&before=3",
-  ]);
-});
+    await api.getProjectWikiPage("ws-1", "p-1", "a", { with: ["links", "backlinks", "related_issues"] });
+    const url = fetchMock.mock.calls[0]?.[0] as string;
+    expect(url).toContain("with=links%2Cbacklinks%2Crelated_issues");
+  });
 
-it("returns null for a malformed configuration-only response", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ engineering: { enabled: "yes" } }), { status: 200, headers: { "Content-Type": "application/json" } })));
-  expect(await new ApiClient("https://example.test").getProjectEngineeringConfig("workspace", "project")).toBeNull();
+  it("propagates workspace headers", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => stub({ items: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
+    await api.getProjectWikiActivity("ws-1", "p-1");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).get("X-Workspace-ID")).toBe(workspaceHeaders["X-Workspace-ID"]);
+  });
 });

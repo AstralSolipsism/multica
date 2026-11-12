@@ -1,72 +1,81 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { parseWithFallback } from "./schema";
-import { BaselineChapterSchema, BaselineDecisionSchema, BaselineDiffSchema, BaselineHistorySchema, BaselineRevisionSchema, EngineeringOverviewSchema, EngineeringUpdatedSchema } from "./labrastro-engineering-schemas";
+import {
+  WikiPageReadSchema,
+  WikiTreeSchema,
+  WikiWriteResultSchema,
+  WikiHistorySchema,
+  WikiConflictSchema,
+  WikiSearchHitSchema,
+  WikiActivityItemSchema,
+} from "../api/labrastro-engineering-schemas";
 
-const id = "00000000-0000-4000-8000-000000000001";
-const diff = { chapter: "domain_rules", base_revision_number: 0, added: [], modified: [], removed: [], unchanged_count: 0, warnings: [] };
-const revision = { id, workspace_id: id, project_id: id, chapter: "domain_rules", revision_number: 1, status: "candidate", content_markdown: "### [Rule-一] Text", change_summary: "Add", base_revision_id: null, anchors_diff: diff, created_by_type: "agent", created_by_id: id, created_at: "2026-10-30T00:00:00Z" };
+describe("wiki schemas", () => {
+  it("parses a tree page and defaults optional fields", () => {
+    const parsed = WikiTreeSchema.parse({
+      pages: [{
+        id: "00000000-0000-4000-8000-000000000001", slug: "overview", title: "概览",
+        parent_id: null, position: 0, current_revision_number: 3,
+      }],
+    });
+    expect(parsed.pages).toHaveLength(1);
+    const [first] = parsed.pages;
+    expect(first).toMatchObject({ slug: "overview", depth: 1, revisionCount: 0, sections: [] });
+    expect(parsed.limits).toEqual({ maxDepth: 6, maxPages: 500 });
+  });
 
-describe("engineering API response contracts", () => {
-  it("defaults the capability to disabled without inventing a baseline", () => {
-    const parsed = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id }, chapters: [] });
-    expect(parsed.engineering.enabled).toBe(false);
-    expect(parsed.engineering).not.toHaveProperty("agentDecisionsEnabled");
-    expect(parsed.engineering.currentStage).toBe(1);
-    expect(parsed.engineering.stages).toEqual([]);
-    expect(parsed.chapters).toEqual([]);
+  it("parses a page read with links and backlinks", () => {
+    const parsed = WikiPageReadSchema.parse({
+      page: { id: "00000000-0000-4000-8000-000000000001", slug: "a", title: "A", parent_id: null, position: 0, current_revision_number: 2 },
+      revision: {
+        id: "00000000-0000-4000-8000-000000000002", page_id: "00000000-0000-4000-8000-000000000001",
+        revision_number: 2, revision_kind: "content", title: "A", slug: "a",
+        created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009",
+        created_at: "2026-11-12T00:00:00Z",
+      },
+      content_markdown: "# A",
+      links: [{ raw: "b", state: "resolved", target_slug: "b" }, { raw: "c", state: "missing" }],
+      backlinks: [{ slug: "d", snippet: "s" }],
+    });
+    expect(parsed.contentMarkdown).toBe("# A");
+    expect(parsed.links[0]).toMatchObject({ state: "resolved", targetSlug: "b", candidates: [] });
+    expect(parsed.backlinks[0]).toMatchObject({ slug: "d" });
   });
-  it("keeps audit identity and unknown enums explicit", () => {
-    const parsed = BaselineRevisionSchema.parse({ ...revision, status: "future_status", decision_credential: "future_credential", decided_by_type: "agent", decided_by_id: id, decided_by_task_id: id });
-    expect(parsed.status).toBe("unknown");
-    expect(parsed.decisionCredential).toBe("unknown");
-    expect(parsed.decidedById).toBe(id);
-    expect(parsed.decidedByTaskId).toBe(id);
-    expect(parsed.contentMarkdown).toContain("Rule-一");
-    expect(BaselineDiffSchema.parse({ ...diff, warnings: [{ code: "future_warning", anchor: "Rule-一" }] }).warnings[0]?.code).toBe("unknown");
+
+  it("keeps a malformed response as null data via parseWithFallback callers", () => {
+    // Schemas never throw on missing optionals; a wholly malformed payload is
+    // caught by the outer catch and returned as null.
+    expect(() => WikiWriteResultSchema.parse({ page: null })).toThrow();
   });
-  it.each(["session", "pat", "agent_task", "task"])("preserves %s decision attribution", (credential) => {
-    const parsed = BaselineRevisionSchema.parse({ ...revision, decision_credential: credential, decided_by_type: "agent", decided_by_id: id, decided_by_task_id: id });
-    expect(parsed.decisionCredential).toBe(credential === "task" ? "agent_task" : credential);
-    expect(parsed.decidedById).toBe(id);
-    expect(parsed.decidedByTaskId).toBe(id);
+
+  it("parses history pagination", () => {
+    const parsed = WikiHistorySchema.parse({
+      revisions: [{ id: "00000000-0000-4000-8000-000000000003", page_id: "00000000-0000-4000-8000-000000000001", revision_number: 4, revision_kind: "rollback", title: "A", slug: "a", created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009", created_at: "2026-11-12T00:00:00Z" }],
+      has_more: true, next_before: 4,
+    });
+    expect(parsed.revisions).toHaveLength(1);
+    expect(parsed.revisions[0]?.revisionKind).toBe("rollback");
+    expect(parsed.nextBefore).toBe(4);
   });
-  it("parses decisions and historical pagination", () => {
-    const adopted = { ...revision, status: "adopted" };
-    const parsed = BaselineDecisionSchema.parse({ chapters: [{ chapter: "domain_rules", adopted, candidate: null }], open_issues: { in_flight: [], queued: [{ id, identifier: "OL-1", title: "Next", status: "backlog_2", status_category: "unstarted", assignee_type: null, assignee_id: null }], truncated: true } });
-    expect(parsed.openIssues.queued[0]?.statusCategory).toBe("unstarted");
-    expect(parsed.openIssues.truncated).toBe(true);
-    expect(BaselineHistorySchema.parse({ revisions: [revision], has_more: true, next_before: 1 }).nextBefore).toBe(1);
-    expect(EngineeringUpdatedSchema.parse({ engineering: { project_id: id, workspace_id: id, enabled: true } }).engineering.enabled).toBe(true);
+
+  it("parses the conflict body with the current revision summary", () => {
+    const parsed = WikiConflictSchema.parse({
+      code: "baseline_conflict",
+      current: {
+        revision_number: 7, kind: "rename", created_at: "2026-11-12T00:00:00Z",
+        created_by_type: "member", created_by_id: "00000000-0000-4000-8000-000000000009",
+        change_summary: "改名",
+      },
+    });
+    expect(parsed.current.revisionNumber).toBe(7);
+    expect(parsed.current.sourceIssueId).toBeNull();
   });
-  it("rejects malformed payloads instead of approving or hiding changes", () => {
-    expect(parseWithFallback({ ...revision, anchors_diff: "not a diff" }, BaselineRevisionSchema, null, { endpoint: "engineering test" })).toBeNull();
-    expect(parseWithFallback({ engineering: { project_id: id, workspace_id: id, enabled: "true" }, chapters: [] }, EngineeringOverviewSchema, null, { endpoint: "engineering test" })).toBeNull();
-    expect(parseWithFallback({ ...diff, removed: null }, BaselineDiffSchema, null, { endpoint: "engineering test" })).toBeNull();
-    expect(parseWithFallback({ chapters: [], open_issues: null }, BaselineDecisionSchema, null, { endpoint: "engineering test" })).toBeNull();
-    expect(parseWithFallback({ revisions: [revision], has_more: false, next_before: "bad" }, BaselineHistorySchema, null, { endpoint: "engineering test" })).toBeNull();
+
+  it("parses search hits and activity items", () => {
+    expect(WikiSearchHitSchema.parse({ page_id: "00000000-0000-4000-8000-000000000001", slug: "a", match: "body" })).toMatchObject({ match: "body", sectionTitle: "" });
+    expect(WikiActivityItemSchema.parse({
+      page_id: "00000000-0000-4000-8000-000000000001", slug: "a", title: "A", kind: "archive", number: 3,
+      created_at: "2026-11-12T00:00:00Z", created_by_type: "agent", created_by_id: "00000000-0000-4000-8000-000000000004",
+    })).toMatchObject({ kind: "archive" });
   });
 });
-
-it.each([undefined, null, "W10=", {}, [null], [{ stage: 0, title: "Bad" }], [{ stage: 1.5, title: "Bad" }], [{ stage: 1, title: 42 }], [{ stage: 1, title: "Bad", goal: null }]])("isolates malformed stages: %j", (stages) => {
-  const parsed = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id, stages, current_stage: 9 }, chapters: [] });
-  expect(parsed.engineering.stages).toEqual([]);
-  expect(parsed.engineering.currentStage).toBe(9);
-});
-it("parses dynamic stages and defaults an omitted goal", () => {
-  const parsed = EngineeringUpdatedSchema.parse({ engineering: { project_id: id, workspace_id: id, stages: [{ stage: 9, title: "Release" }] } });
-  expect(parsed.engineering.stages).toEqual([{ stage: 9, title: "Release", goal: "" }]);
-});
-
-it("accepts module chapters throughout revisions, with legacy metadata defaults", () => {
-  const chapter = "module:auth-engine";
-  const adopted = { ...revision, chapter, anchors_diff: { ...diff, chapter } };
-  const state = EngineeringOverviewSchema.parse({ engineering: { project_id: id, workspace_id: id }, chapters: [{ chapter, title: "Authentication", position: 9, adopted, candidate: null }, { chapter: "overview", adopted: null, candidate: null }] });
-  expect(state.chapters[0]).toMatchObject({ chapter, title: "Authentication", position: 9, adopted: { chapter } });
-  expect(state.chapters[1]).toMatchObject({ title: "", position: 0 });
-});
-
-it.each(["module:", "module:UPPER", "module:-a", "module:a/b", `module:${"a".repeat(64)}`, "module:a\n", "unknown"])("rejects malformed dynamic chapter %j", (chapter) => {
-  expect(BaselineChapterSchema.safeParse(chapter).success).toBe(false);
-});
-

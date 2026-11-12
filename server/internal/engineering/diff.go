@@ -3,12 +3,9 @@ package engineering
 
 import (
 	"regexp"
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
-
-var Chapters = []string{"overview", "domain_rules", "architecture", "exclusions_and_risks"}
 
 var headingPattern = regexp.MustCompile(`^ {0,3}(#{1,3})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$`)
 var explicitKeyPattern = regexp.MustCompile(`^\[([\pL\pN_]+-[^\]\r\n]{1,64})\][ \t]*(.*)$`)
@@ -36,19 +33,12 @@ type Warning struct {
 }
 
 type Diff struct {
-	Chapter            string    `json:"chapter"`
 	BaseRevisionNumber int32     `json:"base_revision_number"`
 	Added              []Change  `json:"added"`
 	Modified           []Change  `json:"modified"`
 	Removed            []Change  `json:"removed"`
 	UnchangedCount     int       `json:"unchanged_count"`
 	Warnings           []Warning `json:"warnings"`
-}
-
-var moduleChapterPattern = regexp.MustCompile(`^module:[a-z0-9][a-z0-9_-]{0,62}$`)
-
-func ValidChapter(chapter string) bool {
-	return slices.Contains(Chapters, chapter) || moduleChapterPattern.MatchString(chapter)
 }
 
 func normalize(s string) string {
@@ -66,10 +56,7 @@ func normalize(s string) string {
 }
 
 // validate holds Parse's input checks for callers that never use the sections.
-func validate(chapter, content string) error {
-	if !ValidChapter(chapter) {
-		return &Error{"invalid_request"}
-	}
+func validate(content string) error {
 	if len(content) > 65536 {
 		return &Error{"baseline_too_large"}
 	}
@@ -80,8 +67,8 @@ func validate(chapter, content string) error {
 }
 
 // Parse ignores fenced examples and ends each anchor at the next H1-H3 heading.
-func Parse(chapter, content string) ([]Section, error) {
-	if err := validate(chapter, content); err != nil {
+func Parse(content string) ([]Section, error) {
+	if err := validate(content); err != nil {
 		return nil, err
 	}
 	headings := scanHeadings(content)
@@ -99,13 +86,13 @@ func Parse(chapter, content string) ([]Section, error) {
 	return sections, nil
 }
 
-func Compute(chapter, before, after string, baseNumber int32) (Diff, error) {
-	d := Diff{Chapter: chapter, BaseRevisionNumber: baseNumber, Added: []Change{}, Modified: []Change{}, Removed: []Change{}, Warnings: []Warning{}}
-	old, err := Parse(chapter, before)
+func Compute(before, after string, baseNumber int32) (Diff, error) {
+	d := Diff{BaseRevisionNumber: baseNumber, Added: []Change{}, Modified: []Change{}, Removed: []Change{}, Warnings: []Warning{}}
+	old, err := Parse(before)
 	if err != nil {
 		return d, err
 	}
-	next, err := Parse(chapter, after)
+	next, err := Parse(after)
 	if err != nil {
 		return d, err
 	}
@@ -142,3 +129,7 @@ func Compute(chapter, before, after string, baseNumber int32) (Diff, error) {
 	}
 	return d, nil
 }
+
+// ValidateContent applies Parse's input checks for callers that never need
+// the sections.
+func ValidateContent(content string) error { return validate(content) }

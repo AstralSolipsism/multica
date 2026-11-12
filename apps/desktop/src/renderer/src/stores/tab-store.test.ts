@@ -280,9 +280,9 @@ describe("useTabStore actions", () => {
     expect(s.byWorkspace.acme.tabs[0].url).toBe("/acme/issues");
   });
 
-  it("openTab updates an existing engineering tab to the requested candidate", () => {
-    const first = "/acme/projects/p1/engineering?candidate=rev-1";
-    const second = "/acme/projects/p1/engineering?candidate=rev-2";
+  it("openTab updates an existing engineering tab to the requested wiki page", () => {
+    const first = "/acme/projects/p1/engineering?page=rev-1";
+    const second = "/acme/projects/p1/engineering?page=rev-2";
     const store = useTabStore.getState();
     store.switchWorkspace("acme", first);
     const tabId = getActiveTab(useTabStore.getState())!.id;
@@ -295,9 +295,9 @@ describe("useTabStore actions", () => {
     expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(1);
   });
 
-  it("switchWorkspace updates a deduped engineering tab to the requested candidate", () => {
-    const first = "/acme/projects/p1/engineering?candidate=rev-1";
-    const second = "/acme/projects/p1/engineering?candidate=rev-2";
+  it("switchWorkspace updates a deduped engineering tab to the requested wiki page", () => {
+    const first = "/acme/projects/p1/engineering?page=rev-1";
+    const second = "/acme/projects/p1/engineering?page=rev-2";
     const store = useTabStore.getState();
     store.switchWorkspace("acme", first);
     const tabId = getActiveTab(useTabStore.getState())!.id;

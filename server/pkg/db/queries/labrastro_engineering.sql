@@ -1,5 +1,5 @@
 -- name: LabrastroLockEngineeringProject :one
--- Serializes baseline decisions, configuration changes and project deletion.
+-- Serializes wiki writes, configuration changes and project deletion.
 SELECT * FROM project WHERE workspace_id = $1 AND id = $2 FOR UPDATE;
 
 -- name: LabrastroReadEngineeringProject :one
@@ -21,64 +21,113 @@ ON CONFLICT (workspace_id, project_id) DO UPDATE SET
     updated_by_type = EXCLUDED.updated_by_type, updated_by_id = EXCLUDED.updated_by_id, updated_at = now()
 RETURNING *;
 
--- name: LabrastroEnsureBaselineDoc :exec
-INSERT INTO project_baseline_doc (workspace_id, project_id, chapter) VALUES ($1,$2,$3)
-ON CONFLICT (workspace_id, project_id, chapter) DO NOTHING;
+-- name: LabrastroListBaselinePages :many
+SELECT * FROM project_baseline_page WHERE workspace_id = $1 AND project_id = $2
+    ORDER BY parent_id NULLS FIRST, position, created_at, id;
 
--- name: LabrastroLockBaselineDocs :many
-SELECT * FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter FOR UPDATE;
+-- name: LabrastroLockBaselinePage :one
+SELECT * FROM project_baseline_page WHERE workspace_id = $1 AND project_id = $2 AND id = $3 FOR UPDATE;
 
--- name: LabrastroListBaselineDocs :many
-SELECT * FROM project_baseline_doc WHERE workspace_id = $1 AND project_id = $2 ORDER BY chapter;
+-- name: LabrastroSetBaselinePage :exec
+UPDATE project_baseline_page SET parent_id = $4, position = $5, archived_at = $6, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
+
+-- name: LabrastroSetBaselinePagePosition :exec
+UPDATE project_baseline_page SET position = $4, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
+
+-- name: LabrastroRenameBaselinePage :exec
+UPDATE project_baseline_page SET title = $4, slug = $5, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
+
+-- name: LabrastroAllocateBaselineRevisionNumber :one
+-- The page-row allocator keeps numbers monotonic under the project lock and
+-- never reuses numbers from rolled-back transactions.
+UPDATE project_baseline_page SET last_revision_number = last_revision_number + 1, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3
+RETURNING last_revision_number;
+
+-- name: LabrastroCreateBaselinePage :one
+INSERT INTO project_baseline_page (workspace_id, project_id, parent_id, slug, title, position,
+    current_revision_id, last_revision_number, archived_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *;
+
+-- name: LabrastroCreateBaselineWikiRevision :one
+INSERT INTO project_baseline_revision (workspace_id, project_id, page_id, revision_number, revision_kind,
+
+    title, slug, parent_id, position, archived_at, content_markdown, change_summary,
+    base_revision_id, restored_from_revision_id, source_issue_id, created_by_type, created_by_id, created_by_task_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *;
+
+-- name: LabrastroListBaselineRevisionsByID :many
+-- Loads the current revision of every page in one round trip.
+SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = ANY(sqlc.arg('ids')::uuid[]);
+
+-- name: LabrastroSetBaselineCurrentRevision :exec
+UPDATE project_baseline_page SET current_revision_id = $4, updated_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
+
+-- name: LabrastroGetBaselineRevisionByNumber :one
+SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2
+    AND page_id = $3 AND revision_number = $4;
 
 -- name: LabrastroGetBaselineRevision :one
 SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
 
--- name: LabrastroListBaselineRevisionsByID :many
--- Loads every chapter's adopted and candidate revisions in one round trip.
-SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND id = ANY(sqlc.arg('ids')::uuid[]);
-
--- name: LabrastroGetBaselineRevisionNumber :one
-SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3 AND revision_number = $4;
-
--- name: LabrastroListBaselineRevisions :many
-SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
+-- name: LabrastroListBaselineWikiRevisions :many
+SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND page_id = $3
     AND (sqlc.narg('before_number')::int IS NULL OR revision_number < sqlc.narg('before_number'))
 ORDER BY revision_number DESC LIMIT sqlc.arg('page_limit');
 
--- name: LabrastroListBaselineRevisionSummaries :many
--- Same page as LabrastroListBaselineRevisions without detoasting chapter bodies;
--- columns stay in table order so rows convert to ProjectBaselineRevision.
-SELECT id, workspace_id, project_id, chapter, revision_number, status, ''::text AS content_markdown,
-    change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id,
-    created_by_type, created_by_id, created_by_task_id, decided_by_type, decided_by_id,
-    decided_by_task_id, decided_at, decision_credential, created_at
-FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3
+-- name: LabrastroListBaselineWikiRevisionSummaries :many
+-- Same page as LabrastroListBaselineWikiRevisions without detoasting page bodies.
+SELECT id, workspace_id, project_id, page_id, revision_number, revision_kind, title, slug, parent_id,
+    position, archived_at, ''::text AS content_markdown, change_summary, base_revision_id,
+    restored_from_revision_id, source_issue_id, created_by_type, created_by_id, created_by_task_id, created_at
+FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND page_id = $3
     AND (sqlc.narg('before_number')::int IS NULL OR revision_number < sqlc.narg('before_number'))
 ORDER BY revision_number DESC LIMIT sqlc.arg('page_limit');
 
--- name: LabrastroCreateBaselineRevision :one
-INSERT INTO project_baseline_revision (workspace_id, project_id, chapter, revision_number, status,
-    content_markdown, change_summary, base_revision_id, replaces_revision_id, anchors_diff, source_issue_id,
-    created_by_type, created_by_id, created_by_task_id)
-VALUES (sqlc.arg('workspace_id'), sqlc.arg('project_id'), sqlc.arg('chapter'),
-    (SELECT COALESCE(MAX(r.revision_number),0)::int + 1 FROM project_baseline_revision r
-     WHERE r.workspace_id = sqlc.arg('workspace_id') AND r.project_id = sqlc.arg('project_id') AND r.chapter = sqlc.arg('chapter')),
-    'candidate', sqlc.arg('content_markdown'), sqlc.arg('change_summary'), sqlc.narg('base_revision_id'),
-    sqlc.narg('replaces_revision_id'), sqlc.arg('anchors_diff'), sqlc.narg('source_issue_id'),
-    sqlc.arg('created_by_type'), sqlc.arg('created_by_id'), sqlc.narg('created_by_task_id')) RETURNING *;
+-- name: LabrastroListBaselineRevisionsBetween :many
+-- The half-open (base, current] window drives orthogonal auto-rebase checks.
+SELECT * FROM project_baseline_revision WHERE workspace_id = $1 AND project_id = $2 AND page_id = $3
+    AND revision_number > $4 AND revision_number <= $5 ORDER BY revision_number;
 
--- name: LabrastroRetireBaselineRevision :exec
-UPDATE project_baseline_revision SET status = $4 WHERE workspace_id = $1 AND project_id = $2 AND id = $3;
+-- name: LabrastroListBaselinePageBodies :many
+-- Current content of every unarchived page; feeds the WikiIndex symbol table.
+SELECT p.id AS page_id, p.slug, p.title, r.revision_number, r.content_markdown
+FROM project_baseline_page p
+JOIN project_baseline_revision r ON r.id = p.current_revision_id
+WHERE p.workspace_id = $1 AND p.project_id = $2 AND p.archived_at IS NULL
+ORDER BY p.parent_id NULLS FIRST, p.position, p.created_at, p.id;
 
--- name: LabrastroDecideBaselineRevision :one
-UPDATE project_baseline_revision SET status = $4, decided_by_type = $5, decided_by_id = $6,
-    decided_by_task_id = $7, decision_credential = $8, decided_at = now()
-WHERE workspace_id = $1 AND project_id = $2 AND id = $3 RETURNING *;
+-- name: LabrastroCountBaselinePageRevisions :many
+SELECT page_id, count(*)::int AS revision_count FROM project_baseline_revision
+WHERE workspace_id = $1 AND project_id = $2 GROUP BY page_id;
 
--- name: LabrastroUpdateBaselineDoc :exec
-UPDATE project_baseline_doc SET adopted_revision_id = $4, candidate_revision_id = $5, updated_at = now()
-WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3;
+-- name: LabrastroBaselineActivity :many
+SELECT r.page_id, p.slug, p.title, r.id AS revision_id, r.revision_number, r.revision_kind,
+    r.change_summary, r.source_issue_id, r.created_by_type, r.created_by_id, r.created_at
+FROM project_baseline_revision r
+JOIN project_baseline_page p ON p.id = r.page_id
+WHERE r.workspace_id = $1 AND r.project_id = $2
+    AND (sqlc.narg('before_time')::timestamptz IS NULL OR r.created_at < sqlc.narg('before_time'))
+ORDER BY r.created_at DESC, r.id DESC LIMIT sqlc.arg('page_limit');
+
+-- name: LabrastroSearchBaselinePages :many
+SELECT p.id AS page_id, p.slug, p.title, r.revision_number, r.content_markdown
+FROM project_baseline_page p
+JOIN project_baseline_revision r ON r.id = p.current_revision_id
+WHERE p.workspace_id = $1 AND p.project_id = $2 AND p.archived_at IS NULL
+    AND (strpos(lower(p.title), sqlc.arg('query')) > 0 OR strpos(lower(r.content_markdown), sqlc.arg('query')) > 0)
+ORDER BY p.parent_id NULLS FIRST, p.position, p.created_at, p.id
+LIMIT sqlc.arg('page_limit');
+
+-- name: LabrastroBaselineRelatedIssues :many
+SELECT DISTINCT ON (i.id) i.id, i.number, i.title, i.status
+FROM project_baseline_revision r JOIN issue i ON i.id = r.source_issue_id
+WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.page_id = $3
+ORDER BY i.id, r.created_at DESC LIMIT 20;
 
 -- name: LabrastroBaselineOpenIssues :many
 SELECT i.id, i.title, i.status, i.number, i.assignee_type, i.assignee_id
@@ -86,21 +135,11 @@ FROM issue i WHERE i.workspace_id = $1 AND i.project_id = $2 AND i.status = ANY(
 ORDER BY i.created_at, i.id LIMIT 201;
 
 -- name: LabrastroDeleteProjectEngineering :exec
-WITH annotations AS (DELETE FROM project_baseline_annotation WHERE workspace_id = $1 AND project_id = $2),
-reviews AS (DELETE FROM project_baseline_review WHERE workspace_id = $1 AND project_id = $2),
-batches AS (DELETE FROM project_baseline_annotation_batch WHERE workspace_id = $1 AND project_id = $2),
-revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
-docs AS (DELETE FROM project_baseline_doc WHERE project_baseline_doc.workspace_id = $1 AND project_baseline_doc.project_id = $2)
+WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
+pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1 AND project_baseline_page.project_id = $2)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND project_engineering.project_id = $2;
 
 -- name: LabrastroDeleteWorkspaceEngineering :exec
-WITH annotations AS (DELETE FROM project_baseline_annotation WHERE workspace_id = $1),
-reviews AS (DELETE FROM project_baseline_review WHERE workspace_id = $1),
-batches AS (DELETE FROM project_baseline_annotation_batch WHERE workspace_id = $1),
-revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
-docs AS (DELETE FROM project_baseline_doc WHERE project_baseline_doc.workspace_id = $1)
+WITH revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
+pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1;
-
--- name: LabrastroSetBaselineTitle :exec
-UPDATE project_baseline_doc SET title = $4, updated_at = now()
-WHERE workspace_id = $1 AND project_id = $2 AND chapter = $3;
