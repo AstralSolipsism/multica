@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"slices"
@@ -442,7 +443,7 @@ func (h *Handler) LabrastroWikiTree(w http.ResponseWriter, r *http.Request) {
 			if current, ok := revisions[p.CurrentRevisionID]; ok {
 				currentJSON := &wikiTreeCurrent{
 					Number: current.RevisionNumber, Kind: current.RevisionKind,
-					CreatedAt: current.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
+					CreatedAt:     current.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 					CreatedByType: current.CreatedByType, CreatedByID: uuidToString(current.CreatedByID),
 					ChangeSummary: current.ChangeSummary,
 				}
@@ -530,7 +531,27 @@ func (h *Handler) LabrastroReadWikiPage(w http.ResponseWriter, r *http.Request) 
 	}
 	response := map[string]any{"page": wikiPageJSON(page), "revision": wikiRevisionJSON(revision)}
 	if sectionParam != "" {
-		slice, err := engineering.ReadSections([]engineering.PageContent{{Slug: page.Slug, Content: revision.ContentMarkdown}}, page.Slug, sectionParam)
+		// One-hop [[ref]] definitions resolve across every unarchived page;
+		// the page itself reads from the requested revision when historical.
+		_, indexPages, err := s.wikiIndex(r.Context())
+		if err != nil {
+			writeEngineeringError(w, err)
+			return
+		}
+		contents := make([]engineering.PageContent, 0, len(indexPages))
+		for _, indexPage := range indexPages {
+			content := indexPage.Content
+			if indexPage.Slug == page.Slug {
+				content = revision.ContentMarkdown
+			}
+			contents = append(contents, engineering.PageContent{Slug: indexPage.Slug, Content: content})
+		}
+		if !slices.ContainsFunc(contents, func(c engineering.PageContent) bool { return c.Slug == page.Slug }) {
+			// Archived target page: still readable, referenced sections resolve
+			// against the live index only.
+			contents = append(contents, engineering.PageContent{Slug: page.Slug, Content: revision.ContentMarkdown})
+		}
+		slice, err := engineering.ReadSections(contents, page.Slug, sectionParam)
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
@@ -939,10 +960,32 @@ type patchWikiPageRequest struct {
 	BaseRevisionNumber *int32  `json:"base_revision_number"`
 	Title              *string `json:"title"`
 	Slug               *string `json:"slug"`
-	Parent             *string `json:"parent"`
-	After              *string `json:"after"`
-	ChangeSummary      *string `json:"change_summary"`
-	SourceIssueID      *string `json:"source_issue_id"`
+	// Parent keeps the raw JSON so absent, null (move to root) and a slug
+	// stay distinguishable; the CLI sends null for --root.
+	Parent        json.RawMessage `json:"parent"`
+	After         *string         `json:"after"`
+	ChangeSummary *string         `json:"change_summary"`
+	SourceIssueID *string         `json:"source_issue_id"`
+}
+
+// wikiParentFromRaw decodes the parent field: absent means "not moving",
+// null or "root" mean the top level, anything else is a slug or UUID.
+func wikiParentFromRaw(raw json.RawMessage) (string, bool, bool) {
+	if len(raw) == 0 {
+		return "", false, false
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "null" {
+		return "", true, true
+	}
+	var slug string
+	if err := json.Unmarshal(raw, &slug); err != nil {
+		return "", false, false
+	}
+	if slug == "" || slug == "root" {
+		return "", true, true
+	}
+	return slug, true, false
 }
 
 func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request) {
@@ -959,12 +1002,8 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 		writeErrorCode(w, 400, "invalid_request", "base_revision_number is required")
 		return
 	}
-	if req.Parent == nil && req.After != nil {
-		writeErrorCode(w, 400, "invalid_request", "after requires parent")
-		return
-	}
 	renaming := req.Title != nil || req.Slug != nil
-	moving := req.Parent != nil || req.After != nil
+	moving := len(req.Parent) > 0 || req.After != nil
 	if renaming && moving {
 		writeErrorCode(w, 400, "invalid_request", "rename and move are separate operations; send one per request")
 		return
@@ -1028,6 +1067,7 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 				}
 			}
 		}
+		oldTitle, oldSlug := page.Title, page.Slug
 		if err := s.q.LabrastroRenameBaselinePage(r.Context(), db.LabrastroRenameBaselinePageParams{
 			WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, ID: page.ID, Title: newTitle, Slug: newSlug,
 		}); err != nil {
@@ -1035,7 +1075,13 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		page.Title, page.Slug = newTitle, newSlug
-		revision, err := s.wikiInsertRevision(r.Context(), &page, "rename", target.current.ContentMarkdown, wikiSummary(firstNonNil(req.ChangeSummary), "改名「"+page.Title+"」→「"+newTitle+"」"), target.base.ID, pgtype.UUID{}, source, actor)
+		defaultSummary := "改名「" + oldTitle + "」→「" + newTitle + "」"
+		if oldTitle == newTitle {
+			defaultSummary = "改 slug「" + oldSlug + "」→「" + newSlug + "」"
+		} else if oldSlug != newSlug {
+			defaultSummary += "（slug " + oldSlug + " → " + newSlug + "）"
+		}
+		revision, err := s.wikiInsertRevision(r.Context(), &page, "rename", target.current.ContentMarkdown, wikiSummary(firstNonNil(req.ChangeSummary), defaultSummary), target.base.ID, pgtype.UUID{}, source, actor)
 		if err != nil {
 			writeEngineeringError(w, err)
 			return
@@ -1058,28 +1104,28 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 	}
 	var parent pgtype.UUID
 	parentChanged := false
-	if req.Parent != nil && *req.Parent != "" {
-		if *req.Parent == "root" {
-			parentChanged = page.ParentID.Valid
-		} else {
-			j := wikiPageRef(target.pages, *req.Parent)
-			if j < 0 {
-				writeEngineeringError(w, pgx.ErrNoRows)
-				return
-			}
-			newParent := target.pages[j]
-			if newParent.ArchivedAt.Valid {
-				writeEngineeringError(w, baselineError(409, "baseline_parent_archived"))
-				return
-			}
-			if wikiIsDescendantOrSelf(target.pages, page.ID, newParent.ID) {
-				writeEngineeringError(w, baselineError(409, "baseline_page_cycle"))
-				return
-			}
-			parent, parentChanged = newParent.ID, page.ParentID != newParent.ID
-		}
-	} else {
+	parentSlug, parentPresent, parentIsRoot := wikiParentFromRaw(req.Parent)
+	switch {
+	case !parentPresent:
 		parent = page.ParentID
+	case parentIsRoot:
+		parentChanged = page.ParentID.Valid
+	default:
+		j := wikiPageRef(target.pages, parentSlug)
+		if j < 0 {
+			writeEngineeringError(w, pgx.ErrNoRows)
+			return
+		}
+		newParent := target.pages[j]
+		if newParent.ArchivedAt.Valid {
+			writeEngineeringError(w, baselineError(409, "baseline_parent_archived"))
+			return
+		}
+		if wikiIsDescendantOrSelf(target.pages, page.ID, newParent.ID) {
+			writeEngineeringError(w, baselineError(409, "baseline_page_cycle"))
+			return
+		}
+		parent, parentChanged = newParent.ID, page.ParentID != newParent.ID
 	}
 	if parentChanged && parent.Valid && wikiDepth(target.pages, parent)+wikiSubtreeHeight(target.pages, page.ID) > engineering.MaxWikiDepth {
 		writeEngineeringError(w, baselineError(422, "baseline_tree_too_deep"))
@@ -1090,12 +1136,21 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 		writeEngineeringError(w, baselineError(422, "baseline_tree_too_large"))
 		return
 	}
-	insertAt := len(siblings)
+	// Build the destination order without the moved page first: `after`
+	// positions must be resolved on that sequence, otherwise a backward move
+	// inside the same parent overshoots by one slot.
+	order := make([]int, 0, len(siblings))
+	for _, j := range siblings {
+		if j != target.index {
+			order = append(order, j)
+		}
+	}
+	insertAt := len(order)
 	if req.After != nil {
 		if *req.After == "first" {
 			insertAt = 0
 		} else {
-			for pos, j := range siblings {
+			for pos, j := range order {
 				if target.pages[j].Slug == *req.After {
 					insertAt = pos + 1
 					break
@@ -1103,13 +1158,6 @@ func (h *Handler) LabrastroPatchWikiPage(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	order := make([]int, 0, len(siblings))
-	for _, j := range siblings {
-		if j != target.index {
-			order = append(order, j)
-		}
-	}
-	insertAt = min(insertAt, len(order))
 	order = append(order[:insertAt], append([]int{target.index}, order[insertAt:]...)...)
 	// Reflow the origin sibling set when the parent changed (I3a); the moved
 	// page leaves that set, so it is not part of the renumbered order.
@@ -1314,7 +1362,15 @@ func (h *Handler) wikiArchiveRestore(w http.ResponseWriter, r *http.Request, arc
 				writeEngineeringError(w, err)
 				return
 			}
-			page.ParentID, page.Position = newParent, int32(len(origin))
+			// The restored page joins the END of the new sibling set; both
+			// sets end dense 0..n-1 (I3a).
+			destination := append([]int{}, wikiSiblings(target.pages, newParent)...)
+			destination = append(destination, target.index)
+			if err := s.wikiWritePositions(r.Context(), target.pages, destination); err != nil {
+				writeEngineeringError(w, err)
+				return
+			}
+			page.ParentID, page.Position = newParent, int32(len(destination)-1)
 			target.pages[target.index] = page
 		}
 	} else if !archiving && page.ParentID.Valid {

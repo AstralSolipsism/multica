@@ -263,14 +263,15 @@ type Backlink struct {
 }
 
 func wikiLinkSnippet(content, raw string) string {
-	at := strings.Index(content, "[["+raw+"]]")
-	if at < 0 {
-		at = 0
+	runes := []rune(content)
+	at := strings.Index(content, "[["+raw+"]")
+	atRunes := 0
+	if at >= 0 {
+		atRunes = utf8.RuneCountInString(content[:at])
 	}
-	start, end := at, at+len(raw)+4
-	start = max(0, start-60)
-	end = min(len(content), end+60)
-	snippet := strings.Join(strings.Fields(content[start:end]), " ")
+	start := max(0, atRunes-60)
+	end := min(len(runes), atRunes+utf8.RuneCountInString("[["+raw+"]]")+60)
+	snippet := strings.Join(strings.Fields(string(runes[start:end])), " ")
 	if utf8.RuneCountInString(snippet) > 160 {
 		snippet = string([]rune(snippet)[:160])
 	}
@@ -316,9 +317,8 @@ type SearchHit struct {
 // SearchSnippet maps a lowercased-content hit offset to its section and builds
 // the ±60 rune snippet. match selects whether the title or body matched.
 func SearchSnippet(pageID, slug, title, content, query, match string) SearchHit {
-	lower := strings.ToLower(content)
 	needle := strings.ToLower(query)
-	offset := strings.Index(lower, needle)
+	offset := strings.Index(strings.ToLower(content), needle)
 	anchor, sectionTitle := "", ""
 	headings := scanHeadings(content)
 	current := Heading{}
@@ -338,24 +338,16 @@ func SearchSnippet(pageID, slug, title, content, query, match string) SearchHit 
 			}
 		}
 	}
-	if offset < 0 {
-		offset = 0
+	// ±60 rune window around the hit, not bytes: CJK bodies must keep the
+	// same snippet depth as Latin ones.
+	runes := []rune(content)
+	hitRunes := 0
+	if offset > 0 {
+		hitRunes = utf8.RuneCountInString(content[:offset])
 	}
-	start := offset - 60
-	if start < 0 {
-		start = 0
-	}
-	end := offset + len(needle) + 60
-	if end > len(content) {
-		end = len(content)
-	}
-	for start > 0 && start < len(content) && !utf8.RuneStart(content[start]) {
-		start--
-	}
-	for end < len(content) && !utf8.RuneStart(content[end]) {
-		end++
-	}
-	snippet := strings.Join(strings.Fields(content[start:end]), " ")
+	start := max(0, hitRunes-60)
+	end := min(len(runes), hitRunes+utf8.RuneCountInString(query)+60)
+	snippet := strings.Join(strings.Fields(string(runes[start:end])), " ")
 	if utf8.RuneCountInString(snippet) > 160 {
 		snippet = string([]rune(snippet)[:160])
 	}

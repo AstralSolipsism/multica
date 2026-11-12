@@ -174,7 +174,12 @@ func TestLabrastroBaselineFlagValidation(t *testing.T) {
 		{"search without query", []string{"search", baselineTestProject}, "exactly one project ID and one query string"},
 		{"two project args", []string{"tree", baselineTestProject, "extra"}, "exactly one project ID"},
 		{"bad output", []string{"tree", baselineTestProject, "--output", "yaml"}, "unsupported --output"},
-		{"export conflict", []string{"export", baselineTestProject, "--single-file", "out.md", "--dir", "d"}, "either a non-empty --single-file or --dir"},
+		{"get retired index flag", []string{"get", baselineTestProject, "--index"}, "--index is retired"},
+		{"get retired candidate flag", []string{"get", baselineTestProject, "--candidate"}, "--candidate is retired"},
+		{"get retired chapter module key", []string{"get", baselineTestProject, "--chapter", "module:overview"}, "use `get --page overview`"},
+		{"get retired chapter slug", []string{"get", baselineTestProject, "--chapter", "overview"}, "use `get --page overview`"},
+		{"get retired chapter revision", []string{"get", baselineTestProject, "--page", "p", "--revision", "3:2"}, "chapter:number is retired"},
+		{"diff retired chapter", []string{"diff", baselineTestProject, "--page", "p", "--chapter", "module:arch"}, "use `diff --page arch`"},
 		{"bad limit", []string{"history", baselineTestProject, "--page", "p", "--limit", "0"}, "positive 32-bit integer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -274,9 +279,12 @@ func TestLabrastroBaselineGet(t *testing.T) {
 	if code != 0 || stderr != "" || !strings.Contains(out, body) {
 		t.Fatalf("get markdown: %d %q %q", code, out, stderr)
 	}
+	if !strings.HasPrefix(out, "<!-- overview v1 · 总览 -->\n\n") {
+		t.Fatalf("markdown get must print the version header as a comment: %q", out)
+	}
 	out, _, _ = executeBaseline(t, "get", baselineTestProject, "--page", "overview", "--revision", "1", "--output", "text")
-	if !strings.Contains(out, body) {
-		t.Fatalf("historical read lost body: %s", out)
+	if !strings.HasPrefix(out, "overview v1 · 总览\n\n") || !strings.Contains(out, body) {
+		t.Fatalf("text get header/body: %q", out)
 	}
 	out, _, code = executeBaseline(t, "get", baselineTestProject, "--page", "overview", "--output", "json")
 	if code != 0 || baselineJSON(t, out)["content_markdown"] != body {
@@ -410,15 +418,26 @@ func TestLabrastroBaselineRetiredCommands(t *testing.T) {
 		t.Error("retired command reached the server")
 		w.WriteHeader(500)
 	})
-	for _, tc := range []struct{ name, hint string }{
-		{"propose", "candidates are retired"},
-		{"adopt", "decisions are retired"},
-		{"annotations", "annotation batches are retired"},
-		{"respond", "annotation batches are retired"},
+	for _, tc := range []struct {
+		name string
+		args []string
+		hint string
+	}{
+		{"propose", nil, "candidates are retired"},
+		{"adopt", nil, "decisions are retired"},
+		{"annotations", nil, "annotation batches are retired"},
+		{"respond", nil, "annotation batches are retired"},
+		// Old invocations carry flags Cobra would reject; parsing is disabled
+		// so the migration hint always reaches the caller.
+		{"propose", []string{"--chapter", "overview", "--content-file", "x.md"}, "candidates are retired"},
+		{"adopt", []string{"--chapter", "overview", "--decision", "approve"}, "decisions are retired"},
+		{"annotations", []string{"--batch", "b"}, "annotation batches are retired"},
+		{"respond", []string{"--batch", "b", "--response", "r"}, "annotation batches are retired"},
 	} {
-		out, stderr, code := executeBaseline(t, tc.name, baselineTestProject)
+		args := append([]string{tc.name, baselineTestProject}, tc.args...)
+		out, stderr, code := executeBaseline(t, args...)
 		if code != 2 || out != "" || !strings.Contains(stderr, "retired") || !strings.Contains(stderr, tc.hint) {
-			t.Fatalf("%s: exit=%d out=%q stderr=%q", tc.name, code, out, stderr)
+			t.Fatalf("%s %v: exit=%d out=%q stderr=%q", tc.name, tc.args, code, out, stderr)
 		}
 	}
 	if len(calls()) != 0 {
@@ -499,6 +518,7 @@ func TestLabrastroBaselineExport(t *testing.T) {
 			baselineWriteJSON(w, 200, baselineWikiTree(
 				baselineWikiTreePage("overview", "总览", 1, nil, false),
 				baselineWikiTreePage("rules", "规则", 2, nil, false),
+				baselineWikiTreePage("sourced", "带来源", 3, nil, false),
 				baselineWikiTreePage("gone", "已归档", 1, nil, true),
 			))
 		case strings.HasSuffix(r.URL.Path, "/baseline/pages/overview"):
@@ -511,6 +531,13 @@ func TestLabrastroBaselineExport(t *testing.T) {
 				"page": baselineWikiPage("rules", "规则", 2), "revision": baselineWikiRevision("rules", "规则", 2, "content", "# 规则正文"),
 				"content_markdown": "# 规则正文",
 			})
+		case strings.HasSuffix(r.URL.Path, "/baseline/pages/sourced"):
+			sourced := baselineWikiRevision("sourced", "带来源", 3, "content", "# 带来源正文")
+			sourced["source_issue_id"] = baselineTestIssueID
+			baselineWriteJSON(w, 200, map[string]any{
+				"page": baselineWikiPage("sourced", "带来源", 3), "revision": sourced,
+				"content_markdown": "# 带来源正文",
+			})
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -521,16 +548,21 @@ func TestLabrastroBaselineExport(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("export failed: %d %s %s", code, out, stderr)
 	}
+	titles := map[string]string{"overview": "总览", "rules": "规则", "sourced": "带来源"}
 	for slug, header := range map[string]string{
-		"overview": "slug: overview\ntitle: \"总览\"\nrevision: 1\nexported_at: ",
-		"rules":    "slug: rules\ntitle: \"规则\"\nrevision: 2\nexported_at: ",
+		"overview": "slug: overview\ntitle: \"总览\"\nrevision: 1\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
+		"rules":    "slug: rules\ntitle: \"规则\"\nrevision: 2\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
+		"sourced":  "slug: sourced\ntitle: \"带来源\"\nrevision: 3\nsource_issue: " + baselineTestIssueID + "\nrevision_at: 2026-11-01T00:00:00Z\nexported_at: ",
 	} {
 		body, err := os.ReadFile(filepath.Join(dir, slug+".md"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(string(body), "---\n"+header) || !strings.HasSuffix(string(body), "\n---\n\n# "+map[string]string{"overview": "总览", "rules": "规则"}[slug]+"正文\n") {
+		if !strings.HasPrefix(string(body), "---\n"+header) || !strings.HasSuffix(string(body), "\n---\n\n# "+titles[slug]+"正文\n") {
 			t.Fatalf("exported %s: %s", slug, body)
+		}
+		if slug != "sourced" && strings.Contains(string(body), "source_issue") {
+			t.Fatalf("exported %s must omit source_issue when unset: %s", slug, body)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "gone.md")); err == nil {

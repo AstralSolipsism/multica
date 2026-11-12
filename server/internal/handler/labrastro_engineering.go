@@ -70,7 +70,10 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 		}
 	}
 	directory := append([]string{}, fmt.Sprintf("基线 Wiki 目录（共 %d 页；slug 标题 vN）：", visible))
-	type treeLine struct{ text string; depth int }
+	type treeLine struct {
+		text  string
+		depth int
+	}
 	var walk func(page db.ProjectBaselinePage, depth int)
 	var flat []treeLine
 	walk = func(page db.ProjectBaselinePage, depth int) {
@@ -129,12 +132,13 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 		remaining := engineeringContextBudget - engineeringContextRunes(lines) - engineeringContextRunes(directory) - engineeringContextRunes(tail)
 		listed := 0
 		for i, item := range flat {
-			// Depth beyond 3 never lists; it still counts toward the overflow.
+			// Depth beyond 3 never lists but must not stop the walk: later
+			// roots still list, and deep pages only count toward the overflow.
 			if item.depth > 3 {
-				break
+				continue
 			}
 			line := "- " + strings.Repeat("  ", item.depth-1) + item.text
-			if engineeringContextRunes([]string{line, overflow(len(flat)-i-1)}) > remaining {
+			if engineeringContextRunes([]string{line, overflow(len(flat) - i - 1)}) > remaining {
 				break
 			}
 			remaining -= engineeringContextRunes([]string{line})

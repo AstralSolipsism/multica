@@ -919,8 +919,11 @@ func TestLabrastroBaselineWikiClaimDescription(t *testing.T) {
 	f.create("session", "架构", "claim-arch", new("claim-overview"), nil, "## 架构\n分层")
 	f.create("session", "细节", "claim-detail", new("claim-arch"), nil, "正文")
 	f.create("session", "深处", "claim-deep", new("claim-detail"), nil, "正文")
-	// One more sibling at depth 3 proves the directory lists depth<=3 only.
+	// claim-deep-2 sits at depth 3 but AFTER claim-deep in the pre-order walk:
+	// it must still list even though the walk passed a deeper page.
 	f.create("session", "深处二", "claim-deep-2", new("claim-arch"), nil, "正文")
+	// A root created after the deep chain must not be truncated either.
+	f.create("session", "后根", "claim-root-2", nil, nil, "正文")
 
 	got, err := testHandler.resolveClaimProjectContext(t.Context(), parseUUID(f.project), parseUUID(testWorkspaceID))
 	if err != nil {
@@ -928,18 +931,21 @@ func TestLabrastroBaselineWikiClaimDescription(t *testing.T) {
 	}
 	description := got.Description
 	for _, want := range []string{
-		"基线 Wiki 目录（共 5 页；slug 标题 vN）：",
+		"基线 Wiki 目录（共 6 页；slug 标题 vN）：",
 		"- claim-overview 总览 v1",
 		"-   claim-arch 架构 v1",
 		"-     claim-detail 细节 v1",
-		"- 另有 2 页，用 `multica project baseline tree " + f.project + "` 查看",
+		"-     claim-deep-2 深处二 v1",
+		"- claim-root-2 后根 v1",
+		"- 另有 1 页，用 `multica project baseline tree " + f.project + "` 查看",
 		"multica project baseline write " + f.project,
 	} {
 		if !strings.Contains(description, want) {
 			t.Errorf("description missing %q:\n%s", want, description)
 		}
 	}
-	for _, unwanted := range []string{"claim-deep-2", "待审候选", "candidate", "批注", "annotation"} {
+	// Depth>3 pages never list; only claim-deep is folded into the overflow.
+	for _, unwanted := range []string{"claim-deep 深处 v1", "待审候选", "candidate", "批注", "annotation"} {
 		if strings.Contains(description, unwanted) {
 			t.Errorf("description must not contain %q:\n%s", unwanted, description)
 		}
