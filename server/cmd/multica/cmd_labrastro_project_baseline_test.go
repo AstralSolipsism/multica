@@ -276,11 +276,17 @@ func TestLabrastroBaselineGet(t *testing.T) {
 		}
 	})
 	out, stderr, code := executeBaseline(t, "get", baselineTestProject, "--page", "overview")
-	if code != 0 || stderr != "" || !strings.Contains(out, body) {
+	if code != 0 || !strings.Contains(out, body) {
 		t.Fatalf("get markdown: %d %q %q", code, out, stderr)
 	}
-	if !strings.HasPrefix(out, "<!-- overview v1 · 总览 -->\n\n") {
-		t.Fatalf("markdown get must print the version header as a comment: %q", out)
+	// Markdown stdout stays byte-identical to the body so `get > page.md` →
+	// edit → `write --content-file page.md` round-trips cleanly; the version
+	// header moves to stderr.
+	if out != body {
+		t.Fatalf("markdown get stdout must equal the body exactly: %q", out)
+	}
+	if !strings.HasPrefix(stderr, "overview v1 · 总览\n\n") {
+		t.Fatalf("markdown get must print the version header on stderr: %q", stderr)
 	}
 	out, _, _ = executeBaseline(t, "get", baselineTestProject, "--page", "overview", "--revision", "1", "--output", "text")
 	if !strings.HasPrefix(out, "overview v1 · 总览\n\n") || !strings.Contains(out, body) {

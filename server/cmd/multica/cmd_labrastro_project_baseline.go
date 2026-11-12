@@ -727,8 +727,11 @@ func baselineGet(ctx context.Context, cmd *cobra.Command, client *cli.APIClient,
 		return baselineFailure(1, "invalid baseline page response")
 	}
 	// The version header gives agents the --base number straight from `get`.
+	// Markdown stdout must stay byte-identical to the page body so
+	// `get > page.md` → edit → `write --content-file page.md` round-trips
+	// without polluting the body; the header goes to stderr there.
 	if output == "markdown" {
-		fmt.Fprintf(cmd.OutOrStdout(), "<!-- %s v%d · %s -->\n\n", out.Page.Slug, out.Revision.Number, out.Page.Title)
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s v%d · %s\n\n", out.Page.Slug, out.Revision.Number, out.Page.Title)
 	} else {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s v%d · %s\n\n", out.Page.Slug, out.Revision.Number, out.Page.Title)
 	}
