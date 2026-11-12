@@ -112,7 +112,7 @@ function WikiMarkdownCode({ className, children }: { className?: string; childre
   const language = typeof className === "string" ? /language-([\w-]+)/.exec(className)?.[1] : undefined;
   const body = Children.toArray(children).filter((part): part is string => typeof part === "string").join("");
   if (language && isRichFenceLanguage(language)) {
-    return <RichFenceBlock language={language} body={body} />;
+    return <div data-wiki-comment-source={body}><RichFenceBlock language={language} body={body} /></div>;
   }
   if (language) {
     return <CodeBlockShell language={language} code={body}><StaticCodeBody language={language} body={body} /></CodeBlockShell>;

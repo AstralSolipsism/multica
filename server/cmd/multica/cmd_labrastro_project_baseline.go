@@ -21,6 +21,7 @@ import (
 
 func newLabrastroProjectBaselineCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "baseline", Short: "Read and write the project baseline wiki tree"}
+	cmd.AddCommand(newLabrastroBaselineCommentCmd())
 	actions := []string{"tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "search", "export"}
 	for _, action := range actions {
 		sub := &cobra.Command{Use: actionUsage(action), Args: func(_ *cobra.Command, args []string) error {

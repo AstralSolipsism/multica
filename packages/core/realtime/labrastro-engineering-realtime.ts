@@ -37,12 +37,18 @@ export function subscribeLabrastroEngineeringEvents(
   });
 
   const unsubProjectBaselineCommentChanged = ws.on("project_baseline_comment:changed", (p) => {
-    const { project_id } = p as ProjectBaselineCommentChangedPayload;
+    const { project_id, page_id, thread_id } = p as ProjectBaselineCommentChangedPayload;
     const wsId = getCurrentWsId();
     if (wsId && project_id) {
-      // Comments land in a follow-up release; keep the invalidation wired so
-      // the event name rename stays a single-line change there.
-      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiRoot(wsId, project_id) });
+      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiThreads(wsId, project_id, page_id) });
+      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiThread(wsId, project_id, thread_id) });
+      // Only page reads carrying the affected footer need refreshing. Tree and
+      // task context never acquire a dependency on comment contents or counts.
+      qc.invalidateQueries({ queryKey: engineeringProjectKeys.wikiRoot(wsId, project_id), predicate: (query) => {
+        const data = query.state.data;
+        return query.queryKey[4] === "page" && typeof data === "object" && data !== null &&
+          "page" in data && typeof data.page === "object" && data.page !== null && "id" in data.page && data.page.id === page_id;
+      } });
     }
   });
 

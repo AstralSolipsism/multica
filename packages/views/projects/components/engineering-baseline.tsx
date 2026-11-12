@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose,
+  AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose, MessageSquare,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -40,6 +40,14 @@ import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdo
 import { WikiSearchPalette } from "./engineering-baseline-search";
 import { useNavigation } from "../../navigation";
 import { type WikiMoveIntent, WikiTreePanel } from "./engineering-baseline-tree";
+import { splitCommentSections } from "@multica/core/projects/queries";
+import { wikiThreadsOptions } from "@multica/core/projects/queries";
+import type { WikiCommentAnchor, WikiThread } from "@multica/core/api";
+import { WikiCommentsPanel, type WikiDiscussion } from "./engineering-baseline-comments";
+import { WikiReadingHighlights } from "./engineering-baseline-reading-highlights";
+
+const EMPTY_THREADS: WikiThread[] = [];
+
 
 const FLASH_MS = 1600;
 
@@ -50,40 +58,6 @@ export interface EngineeringBaselineWikiProps {
   workspaceId: string;
   projectId: string;
   projectTitle: string;
-}
-
-function isFenceLine(line: string): boolean | null {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("```") && !trimmed.startsWith("~~~")) return null;
-  // An opener line carries a language; a bare fence line toggles state.
-  return !trimmed.match(/^(```|~~~)\s*$/);
-}
-
-/** Split page markdown into the pre-first-H2 intro and each H2 section. */
-function splitByH2(markdown: string): { intro: string; sections: { title: string; body: string }[] } {
-  const lines = markdown.split(/\r?\n/);
-  const intro: string[] = [];
-  const sections: { title: string; body: string[] }[] = [];
-  let current: { title: string; body: string[] } | null = null;
-  let inFence = false;
-  for (const line of lines) {
-    const fence = isFenceLine(line);
-    if (fence !== null) {
-      inFence = fence ? true : !inFence;
-      if (current) current.body.push(line);
-      else intro.push(line);
-      continue;
-    }
-    if (!inFence && /^##\s+/.test(line)) {
-      current = { title: line.replace(/^##\s+/, ""), body: [line] };
-      sections.push(current);
-    } else if (current) {
-      current.body.push(line);
-    } else {
-      intro.push(line);
-    }
-  }
-  return { intro: intro.join("\n"), sections: sections.map((section) => ({ title: section.title, body: section.body.join("\n") })) };
 }
 
 /** First prose paragraph of a page body, for link hover preview cards. */
@@ -202,6 +176,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
 
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
+  const [discussion, setDiscussion] = useState<WikiDiscussion>({ mode: "outline" });
   const [searchOpen, setSearchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
@@ -210,12 +185,42 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const [editorDirty, setEditorDirty] = useState(false);
   const [pendingLeave, setPendingLeave] = useState<{ slug: string; anchor?: string } | null>(null);
   const readerRef = useRef<HTMLDivElement | null>(null);
+  const rightPanelRef = useRef<HTMLElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const shell = rightPanelRef.current?.parentElement;
+    if (!shell || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setNarrow(shell.clientWidth < 1024));
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const panel = rightPanelRef.current;
+    if (!panel || !rightOpen || !narrow) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const siblings = [...(panel.parentElement?.children ?? [])].filter((node): node is HTMLElement => node instanceof HTMLElement && (node.tagName === "MAIN" || node.hasAttribute("data-wiki-tree-column")));
+    siblings.forEach((node) => { node.inert = true; });
+    panel.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const controls = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex="0"]')].filter((node) => node.getClientRects().length);
+      const first = controls[0], last = controls.at(-1);
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    panel.addEventListener("keydown", trap);
+    return () => { siblings.forEach((node) => { node.inert = false; }); panel.removeEventListener("keydown", trap); if (previous?.isConnected) previous.focus(); };
+  }, [rightOpen, narrow]);
 
   const navigation = useNavigation();
   const urlPage = navigation.searchParams.get("page");
   const urlSection = navigation.searchParams.get("section");
+  const urlThread = navigation.searchParams.get("thread");
   const selected = useMemo(() => pages.find((page) => page.slug === urlPage) ?? pages[0] ?? null, [pages, urlPage]);
   const selectedTreePage = selected;
+  const threadQuery = useQuery(wikiThreadsOptions(wsId, props.projectId, selected?.id ?? ""));
+  const threads = threadQuery.data?.threads ?? EMPTY_THREADS;
 
   const pageQuery = useQuery({
     ...projectWikiPageOptions(wsId, props.projectId, selected?.slug ?? "", { with: ["links", "backlinks", "related_issues"] }),
@@ -232,8 +237,11 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     setEditor(null);
     setHistoryOpen(false);
     setLeftOpen(false);
-    setRightOpen(false);
-  }, [selected?.id]);
+    setRightOpen(!!urlThread);
+    setDiscussion(urlThread ? { mode: "thread", id: urlThread } : { mode: "outline" });
+  }, [selected?.id, urlThread]);
+
+  useEffect(() => { if (editor || historyOpen) { setDiscussion({ mode: "outline" }); setRightOpen(false); } }, [editor, historyOpen]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -241,14 +249,15 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         event.preventDefault();
         setSearchOpen(!searchOpen);
       }
-      if (event.key === "Escape" && (leftOpen || rightOpen)) {
+      if (event.key === "Escape" && (leftOpen || rightOpen || discussion.mode !== "outline")) {
+        setDiscussion({ mode: "outline" });
         setLeftOpen(false);
         setRightOpen(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [searchOpen, leftOpen, rightOpen]);
+  }, [searchOpen, leftOpen, rightOpen, discussion.mode]);
 
   const flashSection = useCallback((anchor: string | undefined) => {
     if (!anchor) return;
@@ -258,6 +267,21 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     element.classList.add("wiki-flash");
     window.setTimeout(() => element.classList.remove("wiki-flash"), FLASH_MS);
   }, []);
+
+  const openDiscussion = useCallback((next: WikiDiscussion) => {
+    setDiscussion(next);
+    setRightOpen(next.mode !== "outline");
+    const anchor = next.mode === "compose" ? next.anchor.sectionAnchor : next.mode === "thread" ? threads.find((thread) => thread.id === next.id)?.location.sectionAnchor : undefined;
+    if (anchor) flashSection(anchor);
+  }, [threads, flashSection]);
+  const openThread = useCallback((id: string, siblings: string[]) => openDiscussion({ mode: "thread", id, siblings }), [openDiscussion]);
+  const composeComment = useCallback((anchor: WikiCommentAnchor) => openDiscussion({ mode: "compose", anchor }), [openDiscussion]);
+  useEffect(() => {
+    if (urlThread && pageQuery.data) {
+      const thread = threads.find((thread) => thread.id === urlThread);
+      if (thread) flashSection(thread.location.sectionAnchor);
+    }
+  }, [urlThread, threads, pageQuery.data, flashSection]);
 
   // Deep-linked section (?section=) flashes once the page body is rendered.
   const flashedRef = useRef(false);
@@ -270,6 +294,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const doNavigate = useCallback((slug: string, anchor?: string) => {
     const params = new URLSearchParams(navigation.searchParams);
     params.set("page", slug);
+    params.delete("thread");
     if (anchor) params.set("section", anchor);
     else params.delete("section");
     const query = params.toString();
@@ -551,46 +576,26 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     return new Map(entries);
   }, [pages, linkedSlugs, previewQueries]);
 
-  // Reader body split at H2 boundaries so each section carries its own hover
-  // 编辑本节 affordance; anchors come from the tree section list in order.
   const sectionReader = useMemo(() => {
-    if (!read || !read.contentMarkdown?.trim() || !selected) return null;
-    const split = splitByH2(read.contentMarkdown);
-    const sections = selected.sections;
-    const h2List = sections.filter((section) => section.level === 2);
-    const groupFor = (index: number) => {
-      const start = sections.indexOf(h2List[index]!);
-      if (start === -1) return [];
-      const end = index + 1 < h2List.length ? sections.indexOf(h2List[index + 1]!) : sections.length;
-      return sections.slice(start, end);
-    };
-    const introSections = h2List.length ? sections.slice(0, sections.indexOf(h2List[0]!)) : sections;
-    const shared = {
-      links: read.links,
-      pageMeta: pageMetaMap,
-      onNavigate: onWikiLinkNavigate,
-      onCreateMissing: (title: string) => void handleCreateMissing(title),
-    };
-    return (
-      <>
-        {split.intro.trim() ? <WikiMarkdown markdown={split.intro} sections={introSections} {...shared} /> : null}
-        {split.sections.map((segment, index) => {
-          const anchor = h2List[index]?.anchor;
-          return (
-            <div key={anchor ?? index} className="group/sec relative -mx-2 rounded-sm px-2 hover:bg-muted/20">
-              <button
-                type="button"
-                className="absolute -right-1 top-1.5 rounded-sm border bg-canvas px-1.5 py-0.5 text-micro text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100"
-                onClick={() => { void sectionQuery.refetch().then(() => setEditor({ scope: "section", anchor, title: segment.title })); }}
-                data-wiki-edit-section={anchor ?? segment.title}
-              >{t(($) => $.wiki.editSection)}</button>
-              <WikiMarkdown markdown={segment.body} sections={groupFor(index)} {...shared} />
-            </div>
-          );
-        })}
-      </>
-    );
-  }, [read, selected, pageMetaMap, onWikiLinkNavigate, t, handleCreateMissing, sectionQuery]);
+    if (!read?.contentMarkdown?.trim() || !selected) return null;
+    const unmatched = [...selected.sections];
+    const segments = splitCommentSections(read.contentMarkdown).map((segment) => {
+      const index = unmatched.findIndex((section) => section.title === segment.title && section.level === segment.level);
+      const serverSection = index >= 0 ? unmatched.splice(index, 1)[0] : undefined;
+      return serverSection ? { ...segment, anchor: serverSection.anchor } : segment;
+    });
+    const shared = { links: read.links, pageMeta: pageMetaMap, onNavigate: onWikiLinkNavigate, onCreateMissing: (title: string) => void handleCreateMissing(title) };
+    return segments.map((segment) => (
+      <div key={segment.anchor} data-wiki-comment-section={segment.anchor} data-section-title={segment.title} className="group/sec relative -mx-2 mt-6 rounded-sm px-2 first:mt-0 hover:bg-muted/20">
+        {segment.level > 0 ? <button type="button" data-comment-ignore
+          className="absolute -right-1 top-1.5 rounded-sm border bg-page-canvas px-1.5 py-0.5 text-micro text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/sec:opacity-100 [@media(hover:none)]:opacity-100"
+          onClick={() => setEditor({ scope: "section", anchor: segment.anchor, title: segment.title })}
+          data-wiki-edit-section={segment.anchor}
+        >{t(($) => $.wiki.editSection)}</button> : null}
+        <WikiMarkdown markdown={segment.markdown} sections={segment.level ? [{ anchor: segment.anchor, title: segment.title, level: segment.level }] : []} {...shared} />
+      </div>
+    ));
+  }, [read, selected, pageMetaMap, onWikiLinkNavigate, t, handleCreateMissing]);
 
   const suggestPages = useMemo(() => pages.map((page) => ({ slug: page.slug, title: page.title })), [pages]);
 
@@ -605,11 +610,11 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const maskOpen = leftOpen || rightOpen;
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden bg-canvas @container" data-wiki-shell>
+    <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden bg-page-canvas @container" data-wiki-shell>
       {/* Left column: static ≥1024px, overlay drawer below. */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 w-[min(320px,88%)] shrink-0 -translate-x-full border-r bg-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[272px] @[1280px]:w-[272px] @[1024px]:translate-x-0 @[1024px]:transition-none",
+          "fixed inset-y-0 left-0 z-40 w-[min(320px,88%)] shrink-0 -translate-x-full border-r bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[272px] @[1280px]:w-[272px] @[1024px]:translate-x-0 @[1024px]:transition-none",
           leftOpen && "translate-x-0",
         )}
         data-wiki-tree-column
@@ -637,7 +642,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
           guidePending={guidePending}
         />
       </aside>
-      {maskOpen ? <div className="fixed inset-0 z-30 bg-foreground/30 @[1024px]:hidden" onClick={() => { setLeftOpen(false); setRightOpen(false); }} data-wiki-drawer-mask /> : null}
+      {maskOpen ? <div className="absolute inset-0 z-30 bg-foreground/30 @[1024px]:hidden" onClick={() => { setLeftOpen(false); setRightOpen(false); setDiscussion({ mode: "outline" }); }} data-wiki-drawer-mask /> : null}
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-11 shrink-0 items-center gap-1.5 border-b px-3">
@@ -664,10 +669,11 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
           <button type="button" className="hidden size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[520px]:grid" aria-label={t(($) => $.wiki.searchPlaceholder)} onClick={() => setSearchOpen(true)}>
             <span className="text-caption">{t(($) => $.wiki.searchShortcut)}</span>
           </button>
+          {selected && !editor && !historyOpen ? <Button type="button" size="sm" variant="ghost" data-wiki-open-comments onClick={() => openDiscussion(discussion.mode === "outline" ? { mode: "list" } : { mode: "outline" })}><MessageSquare className="size-3.5" />{t(($) => $.wikiComments.count, { count: threads.filter((thread) => !thread.resolvedAt).length })}</Button> : null}
           <button type="button" className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[1024px]:hidden" aria-label={t(($) => $.wiki.openOutlineDrawer)} onClick={() => setRightOpen(true)}><PanelRightClose className="size-4" aria-hidden="true" /></button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto" ref={readerRef} data-wiki-reader>
+        <div className="relative min-h-0 flex-1 overflow-y-auto" ref={readerRef} data-wiki-reader>
           {historyOpen && selected ? (
             <WikiHistoryView
               wsId={wsId}
@@ -810,18 +816,24 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
               ) : null}
             </article>
           )}
+          {!editor && !historyOpen && read ? <WikiReadingHighlights readerRef={readerRef} threads={threads} contentKey={read.revision.id} revisionNumber={read.revision.revisionNumber} activeThreadId={discussion.mode === "thread" ? discussion.id : undefined} pendingAnchor={discussion.mode === "compose" ? discussion.anchor : undefined} onThread={openThread} onCompose={composeComment} /> : null}
         </div>
       </main>
 
       {/* Right column: outline rail, drawer under 1024px. */}
       <aside
         className={cn(
-          "fixed inset-y-0 right-0 z-40 w-[min(320px,88%)] shrink-0 translate-x-full border-l bg-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[264px] @[1280px]:w-[296px] @[1024px]:translate-x-0 @[1024px]:transition-none",
+          "absolute inset-y-0 right-0 z-40 w-[min(320px,88%)] shrink-0 translate-x-full border-l bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[264px] @[1280px]:w-[296px] @[1024px]:translate-x-0 @[1024px]:transition-none",
           rightOpen && "translate-x-0",
         )}
+        ref={rightPanelRef}
+        tabIndex={-1}
+        role={narrow && rightOpen ? "dialog" : undefined}
+        aria-modal={narrow && rightOpen ? true : undefined}
+        aria-label={discussion.mode === "outline" ? t(($) => $.wikiComments.outline) : t(($) => $.wikiComments.all)}
         data-wiki-outline-column
       >
-        <OutlineRail sections={selected?.sections ?? []} contentKey={read?.revision.id ?? selected?.id ?? ""} />
+        {discussion.mode !== "outline" && !editor && !historyOpen && selected ? <WikiCommentsPanel key={selected.id} workspaceId={wsId} projectId={props.projectId} pageId={selected.id} pageSlug={selected.slug} threads={threads} discussion={discussion} onDiscussion={openDiscussion} loading={threadQuery.isLoading} loadError={threadQuery.isError || threadQuery.data === null} /> : <OutlineRail sections={selected?.sections ?? []} contentKey={read?.revision.id ?? selected?.id ?? ""} />}
       </aside>
 
       <WikiSearchPalette

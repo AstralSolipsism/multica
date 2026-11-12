@@ -76,7 +76,7 @@ it.each<{ type: WSEventType; invalidatesWiki: boolean }>([
   qc.clear();
 });
 
-it("project_baseline_comment:changed invalidates the wiki subtree for the affected project", () => {
+it("project_baseline_comment:changed refreshes only the affected page and thread", () => {
   const qc = new QueryClient();
   const ws = createMockWs();
   const stores = {
@@ -86,7 +86,13 @@ it("project_baseline_comment:changed invalidates the wiki subtree for the affect
   const pageKey = projectKeys.wikiPageAll("ws-1", "project-1", "overview");
   const otherProjectKey = projectKeys.wikiTree("ws-1", "project-2", false);
   const otherWorkspaceKey = projectKeys.wikiTree("ws-2", "project-1", false);
-  for (const key of [wikiKey, pageKey, otherProjectKey, otherWorkspaceKey]) qc.setQueryData(key, null);
+  const pageId = "00000000-0000-4000-8000-000000000001";
+  const threadsKey = projectKeys.wikiThreads("ws-1", "project-1", pageId);
+  const threadKey = projectKeys.wikiThread("ws-1", "project-1", "thread-1");
+  const otherThreadKey = projectKeys.wikiThread("ws-1", "project-1", "thread-2");
+  const otherPageKey = projectKeys.wikiThreads("ws-1", "project-1", "page-2");
+  for (const key of [wikiKey, otherProjectKey, otherWorkspaceKey, threadsKey, threadKey, otherThreadKey, otherPageKey]) qc.setQueryData(key, null);
+  qc.setQueryData(pageKey, { page: { id: pageId } });
   renderHook(() => useRealtimeSync(ws, stores), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
@@ -101,7 +107,11 @@ it("project_baseline_comment:changed invalidates the wiki subtree for the affect
     });
   });
 
-  expect(qc.getQueryState(wikiKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(wikiKey)?.isInvalidated).toBe(false);
+  expect(qc.getQueryState(threadsKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(threadKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(otherThreadKey)?.isInvalidated).toBe(false);
+  expect(qc.getQueryState(otherPageKey)?.isInvalidated).toBe(false);
   expect(qc.getQueryState(pageKey)?.isInvalidated).toBe(true);
   expect(qc.getQueryState(otherProjectKey)?.isInvalidated).toBe(false);
   expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);

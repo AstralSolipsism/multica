@@ -17,6 +17,10 @@ func init() {
 		"9068_labrastro_baseline_page_slug_index":         "idx_project_baseline_page_slug",
 		"9069_labrastro_baseline_revision_page_index":     "idx_project_baseline_revision_page",
 		"9070_labrastro_baseline_revision_activity_index": "idx_project_baseline_revision_activity",
+		"9072_labrastro_baseline_thread_identity_index":   "idx_baseline_thread_identity",
+		"9073_labrastro_baseline_thread_page_index":       "idx_baseline_thread_page",
+		"9074_labrastro_baseline_comment_identity_index":  "idx_baseline_comment_identity",
+		"9075_labrastro_baseline_comment_thread_index":    "idx_baseline_comment_thread",
 
 		"9040_labrastro_engineering_config_identity_index":   "idx_project_engineering_identity",
 		"9041_labrastro_engineering_doc_identity_index":      "idx_project_baseline_doc_id",
