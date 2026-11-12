@@ -307,3 +307,37 @@ describe("WikiDiffView native strikethrough", () => {
     expect(after.innerHTML.indexOf("<del")).toBeLessThan(after.innerHTML.indexOf("<strong"));
   });
 });
+
+describe("WikiDiffView deletions inside formatted text", () => {
+  it("places a deletion inside bold text between the surviving words", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"Use **alpha beta gamma** now please"} after={"Use **alpha gamma** now please"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    const strong = after.querySelector("strong")!;
+    // The del mark lives INSIDE the strong, between alpha and gamma.
+    expect(strong.textContent).toContain("beta");
+    const delMark = strong.querySelector(`del[data-wiki-diff-mark]`);
+    expect(delMark).not.toBeNull();
+    expect(strong.innerHTML.indexOf("alpha")).toBeLessThan(strong.innerHTML.indexOf("<del"));
+    expect(strong.innerHTML.indexOf("<del")).toBeLessThan(strong.innerHTML.indexOf("gamma"));
+    // And it did not get hoisted before the whole element.
+    expect(after.innerHTML.indexOf("<del")).toBeGreaterThan(after.innerHTML.indexOf("<strong"));
+  });
+
+  it("places a deletion inside link text between the surviving words", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"看 [规范 旧版 文档](/x)"} after={"看 [规范 文档](/x)"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    const anchor = after.querySelector("a")!;
+    expect(anchor.textContent).toContain("旧版");
+    const delMark = anchor.querySelector(`del[data-wiki-diff-mark]`);
+    expect(delMark).not.toBeNull();
+    expect(anchor.innerHTML.indexOf("规范")).toBeLessThan(anchor.innerHTML.indexOf("<del"));
+    expect(anchor.innerHTML.indexOf("<del")).toBeLessThan(anchor.innerHTML.indexOf("文档"));
+    expect(after.innerHTML.indexOf("<del")).toBeGreaterThan(after.innerHTML.indexOf("<a "));
+  });
+});

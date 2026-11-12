@@ -304,10 +304,20 @@ function insertDelElementAt(live: { nodes: Text[]; starts: number[]; total: numb
   const local = at - starts[index]!;
   // Insert relative to the OUTERMOST inline ancestor: dropping the mark
   // inside a neighbouring <strong>/<a> would restyle deleted plain text.
+  // Climb only across boundaries: when the insertion point sits at the very
+  // start (end, for trailing deletions) of an inline parent, the mark lands
+  // beside the formatting element; mid-element split points stay inside it.
+  const climbBoundary = (start: Node, leading: boolean): Node => {
+    let anchor: Node = start;
+    for (let parent = anchor.parentElement; parent && parent !== root && !BLOCK_STOP[parent.tagName] && !isDiffMark(parent); parent = anchor.parentElement) {
+      const boundary = leading ? parent.firstChild : parent.lastChild;
+      if (boundary === anchor) anchor = parent;
+      else break;
+    }
+    return anchor;
+  };
   const hoist = (target: Node, before: boolean): void => {
-    const chain = inlineChainOf(target, root).filter((el) => !isDiffMark(el));
-    const outermost = chain[0];
-    const anchor = outermost ?? target;
+    const anchor = climbBoundary(target, before);
     const parent = anchor.parentElement;
     if (!parent) return;
     parent.insertBefore(element, before ? anchor : anchor.nextSibling);
