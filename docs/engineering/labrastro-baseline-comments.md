@@ -42,8 +42,11 @@ source as an atomic text block, independent of preview labels and controls.
 
 Locate exact text in the original section first. Prefer both prefix/suffix,
 then one, then neither; break ties by distance from UTF-16 `start`, then document
-order. A page-wide move requires one exact occurrence. Otherwise keep a
-`section_only` pin if the original section exists, or show an `orphaned` snapshot.
+order. A page-wide move requires one exact occurrence. Otherwise return
+`section_only` if the original section exists, or `orphaned` if it does not.
+These changed text anchors appear only as snapshots in the discussion panel,
+without body highlights or count bubbles. Explicit section anchors still mark
+their heading.
 Section anchors fall back to a unique matching title. Reads compute these states;
 page writes never rewrite comment anchors. The Go and real WikiMarkdown DOM
 suites share `server/internal/engineering/testdata/anchors.json`.

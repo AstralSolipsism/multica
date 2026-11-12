@@ -503,7 +503,8 @@ func (h *Handler) wakeWikiComment(r *http.Request, s *engineeringState, page db.
 			return failed()
 		}
 	} else {
-		result, e := h.IssueService.Create(r.Context(), service.IssueCreateParams{WorkspaceID: thread.WorkspaceID, ProjectID: thread.ProjectID, Title: "Wiki 讨论 · " + inert(page.Title) + " · " + inert(string(excerpt)), Description: pgtype.Text{String: description, Valid: true}, Priority: "medium", CreatorType: actor.kind, CreatorID: actor.id}, service.IssueCreateOpts{BaselineThreadID: thread.ID, ActorID: uuidToString(actor.id)})
+		title := "Wiki 讨论 · " + engineering.NormalizeCommentText(page.Title) + " · " + engineering.NormalizeCommentText(string(excerpt))
+		result, e := h.IssueService.Create(r.Context(), service.IssueCreateParams{WorkspaceID: thread.WorkspaceID, ProjectID: thread.ProjectID, Title: title, Description: pgtype.Text{String: description, Valid: true}, Priority: "medium", CreatorType: actor.kind, CreatorID: actor.id}, service.IssueCreateOpts{BaselineThreadID: thread.ID, ActorID: uuidToString(actor.id)})
 		issue, err = result.Issue, e
 	}
 	if err != nil {

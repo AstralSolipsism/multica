@@ -159,8 +159,13 @@ func TestBaselineCommentsCarrierAndExplicitWake(t *testing.T) {
 	wf := createTestWorkflowSteps(t, "Wiki "+uuid.NewString(), []map[string]any{{"status_key": "backlog"}, {"status_key": "todo", "handler": map[string]any{"type": "agent", "id": handler}}})
 	setProjectWorkflow(t, f.project, map[string]any{"workflow_id": wf.ID}).Want(200)
 	// Context snapshots contain syntactically valid mentions but remain inert.
-	f.fullWrite("session", "discussion", 1, "## A\nfirst needle [@Other](mention://agent/"+handler+")")
-	created := createWikiComment(t, f, "session", "[@Target](mention://agent/"+agent+") Please inspect", nil)
+	heading := "Ask [@Other](mention://agent/" + handler + ")"
+	f.fullWrite("session", "discussion", 1, "## "+heading+"\nfirst needle")
+	selector := map[string]any{"section": heading}
+	created := createWikiComment(t, f, "session", "[@Target](mention://agent/"+agent+") Please inspect", selector)
+	if created.Thread.Anchor.SectionTitle != heading {
+		t.Fatalf("mention missing from section snapshot: %+v", created.Thread.Anchor)
+	}
 	if created.Thread.IssueID == nil || len(created.Woke) != 1 || created.Woke[0].TargetID != agent || created.Woke[0].Status == DispatchBlocked {
 		t.Fatalf("explicit wake: %+v", created)
 	}
@@ -198,9 +203,30 @@ func TestBaselineCommentsCarrierAndExplicitWake(t *testing.T) {
 		t.Fatalf("carrier missing from footer: %+v", related)
 	}
 	// Binding an existing issue does not add an issue or comment until @.
-	bound := createWikiComment(t, f, "task", "plain bound", map[string]any{"carrier_issue_id": carrier})
+	bound := createWikiComment(t, f, "task", "plain bound", map[string]any{"carrier_issue_id": carrier, "section": heading})
 	if bound.Thread.IssueID == nil || *bound.Thread.IssueID != carrier || len(bound.Woke) != 0 {
 		t.Fatal(bound)
+	}
+}
+
+func TestBaselineCommentsCarrierTitlePlainText(t *testing.T) {
+	f := commentFixture(t)
+	agent, _, _ := createRuntimeGuardAgent(t, t.Context())
+	f.fullWrite("session", "discussion", 1, "## A\nToken-TTL: 15 min.")
+	f.tryPatch("session", "discussion", map[string]any{"base_revision_number": 2, "title": "Auth   v1.2 (draft)"}).Want(200)
+	created := createWikiComment(t, f, "session", "[@Target](mention://agent/"+agent+") Please inspect", map[string]any{"quote": "Token-TTL: 15 min."})
+	if created.Thread.IssueID == nil {
+		t.Fatalf("carrier missing: %+v", created)
+	}
+	const want = "Wiki 讨论 · Auth v1.2 (draft) · Token-TTL: 15 min."
+	var title string
+	dbfx.QueryRow(t, `SELECT title FROM issue WHERE id=$1`, *created.Thread.IssueID).Scan(&title)
+	if title != want {
+		t.Errorf("carrier title = %q, want %q", title, want)
+	}
+	related := f.readPage("discussion", "?with=related_issues").RelatedIssues
+	if len(related) != 1 || related[0].Title != want {
+		t.Fatalf("footer title: %+v", related)
 	}
 }
 

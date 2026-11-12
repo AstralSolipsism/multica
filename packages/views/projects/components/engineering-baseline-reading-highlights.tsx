@@ -29,9 +29,9 @@ export function WikiReadingHighlights({ readerRef, threads, contentKey, revision
       });
       const locateRange = (anchor: WikiCommentAnchor) => {
         const location = locateComment(sections, anchor);
-        if (location.state === "orphaned") return null;
+        if (location.state === "orphaned" || (anchor.kind === "text" && location.state === "section_only")) return null;
         const section = sections.find((s) => s.anchor === location.sectionAnchor);
-        return section?.index.range(location.start ?? 0, (anchor.kind === "section" || location.state === "section_only") ? Math.max(1, section.title.length) : anchor.exact.length) ?? null;
+        return section?.index.range(location.start ?? 0, anchor.kind === "section" ? Math.max(1, section.title.length) : anchor.exact.length) ?? null;
       };
       located = threads.filter((thread) => !thread.resolvedAt).flatMap((thread) => {
         const range = locateRange(thread.anchor); return range ? [{ id: thread.id, range, count: thread.comments.length }] : [];

@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { WikiCommentAnchor } from "../api/labrastro-baseline-comment-schemas";
-import { engineeringProjectKeys as keys } from "./engineering-queries";
+import { engineeringProjectKeys as keys } from "./engineering-query-keys";
 
 export function wikiThreadsOptions(wsId: string, projectId: string, pageId: string) {
   return queryOptions({ queryKey: keys.wikiThreads(wsId, projectId, pageId), queryFn: () => api.getProjectWikiThreads(wsId, projectId, pageId), enabled: !!pageId });
