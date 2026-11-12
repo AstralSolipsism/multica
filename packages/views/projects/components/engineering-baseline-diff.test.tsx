@@ -166,3 +166,84 @@ describe("WikiDiffView rendered diff", () => {
     expect(marked).not.toContain("`");
   });
 });
+
+describe("WikiDiffView deletion placement", () => {
+  it("places a mid-paragraph deletion at its original position", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"Use **strict** mode now please."} after={"Use mode now please."} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    // Scope to the visible after container; the hidden before copy also holds
+    // the old text and would skew raw innerHTML indexes.
+    const after = mod.querySelector(":scope > div:not([hidden])")!;
+    const html = after.innerHTML;
+    // The <del> sits between "Use " and "mode", never inside "now".
+    expect(html.indexOf("<del")).toBeGreaterThan(html.indexOf("Use"));
+    expect(html.indexOf("<del")).toBeLessThan(html.indexOf("mode"));
+    expect(after.querySelector("del strong")?.textContent).toContain("strict");
+    expect(html.indexOf("now")).toBeGreaterThan(html.indexOf("</del>"));
+  });
+
+  it("places a mid-sentence CJK deletion before the surviving tail, inside the paragraph", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"第一句。第二句要删除。第三句保留。"} after={"第一句。第三句保留。"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const paragraph = mod.querySelector(":scope > div:not([hidden]) p")!;
+    expect(paragraph.innerHTML).toContain("第二句要删除。");
+    expect(paragraph.innerHTML.indexOf("<del")).toBeGreaterThan(paragraph.innerHTML.indexOf("第一句"));
+    expect(paragraph.innerHTML.indexOf("<del")).toBeLessThan(paragraph.innerHTML.indexOf("第三句"));
+  });
+
+  it("keeps a trailing deletion at the paragraph end", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"Keep this line always. Delete this tail."} after={"Keep this line always."} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    const paragraph = mod.querySelector(":scope > div:not([hidden]) p")!;
+    const html = paragraph.innerHTML;
+    expect(paragraph.querySelector("del")?.textContent).toContain("Delete this tail.");
+    // The del mark comes after the surviving text, still inside the <p>.
+    expect(html.indexOf("<del")).toBeGreaterThan(html.indexOf("Keep this."));
+  });
+});
+
+describe("WikiDiffView fenced blocks", () => {
+  it("renders whole-block stacked compare for a mermaid fence change", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"```mermaid\nflowchart LR\nA-->B\n```"} after={"```mermaid\nflowchart LR\nA-->C\n```"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    expect(mod.querySelector("[data-wiki-diff-mod-fallback]")).not.toBeNull();
+    const fences = mod.querySelectorAll("[data-testid='rich-fence']");
+    expect(fences.length).toBe(2);
+    expect(fences[0]!.textContent).toContain("A-->B");
+    expect(fences[1]!.textContent).toContain("A-->C");
+    // The hidden before copy never mounts for fence blocks.
+    expect(mod.querySelector("[data-wiki-diff-mod-before]")).toBeNull();
+  });
+
+  it("renders whole-block stacked compare for a plain code fence change", () => {
+    const { container } = renderWithI18n(
+      <WikiDiffView before={"```ts\nfoo()\n```"} after={"```ts\nbar()\n```"} />,
+    );
+    const mod = container.querySelector("[data-wiki-diff-mod]")!;
+    expect(mod.querySelector("[data-wiki-diff-mod-fallback]")).not.toBeNull();
+    expect(mod.querySelectorAll("[data-testid='code-shell']").length).toBe(2);
+  });
+
+  it("re-running the overlay keeps exactly one set of marks", () => {
+    const initial = renderWithI18n(<WikiDiffView before={"Use **strict** mode now."} after={"Use mode now."} />);
+    const mod = initial.container.querySelector("[data-wiki-diff-mod]")!;
+    expect(mod.querySelectorAll("del").length).toBe(1);
+    // Re-run the effect path by moving through another revision and back:
+    // clearDiffMarks must leave a single clean set of marks.
+    initial.rerender(<WikiDiffView before={"Use **loose** mode now."} after={"Use mode now."} />);
+    initial.rerender(<WikiDiffView before={"Use **strict** mode now."} after={"Use mode now."} />);
+    const finalMod = initial.container.querySelector("[data-wiki-diff-mod]")!;
+    expect(finalMod.querySelectorAll("del").length).toBe(1);
+    expect(finalMod.querySelectorAll("ins").length).toBe(0);
+    expect(finalMod.innerHTML).toContain("<strong>strict</strong>");
+    expect(finalMod.innerHTML).not.toContain("loose");
+  });
+});

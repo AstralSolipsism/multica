@@ -159,14 +159,28 @@ function buildDelElement(tokens: readonly DomToken[], beforeRoot: HTMLElement): 
  * the two rendered sides share no token at all — the caller falls back to
  * stacked rendered views (never source text).
  */
+/** Unwrap prior <ins> and drop prior <del> marks so a re-run starts clean. */
+function clearDiffMarks(root: HTMLElement): void {
+  for (const mark of Array.from(root.querySelectorAll("ins, del"))) {
+    if (mark.tagName === "INS") mark.replaceWith(...Array.from(mark.childNodes));
+    else mark.remove();
+  }
+}
+
 function applyRenderedDiff(beforeRoot: HTMLElement, afterRoot: HTMLElement): boolean {
+  clearDiffMarks(afterRoot);
   const before = tokenizeRendered(beforeRoot);
   const after = tokenizeRendered(afterRoot);
   const ops = diffSequence(before.tokens, after.tokens, (a, b) => a.text === b.text && a.signature === b.signature);
   const runs: DomRun[] = [];
   for (const op of ops) {
-    const side = op.op === "add" ? after.tokens : before.tokens;
-    const token = side[op.op === "add" ? (op.bIndex as number) : (op.aIndex as number)];
+    // same/add runs must carry AFTER-side tokens: anchorAfter() turns their
+    // offsets into insertion points in the after DOM, and before-side offsets
+    // drift right by everything deleted before them. Only del runs read the
+    // before side (their tokens feed the <del> clones).
+    const useAfter = op.op !== "del";
+    const side = useAfter ? after.tokens : before.tokens;
+    const token = side[(useAfter ? op.bIndex : op.aIndex) as number];
     if (!token) continue;
     const lastRun = runs[runs.length - 1];
     if (lastRun && lastRun.op === op.op) lastRun.tokens.push(token);
@@ -259,8 +273,15 @@ function wrapRangeIns(live: { nodes: Text[]; starts: number[] }, start: number, 
 
 function insertDelElementAt(live: { nodes: Text[]; starts: number[]; total: number }, root: HTMLElement, element: HTMLElement, at: number): void {
   const { nodes, starts, total } = live;
-  if (!nodes.length || at >= total) {
+  if (!nodes.length) {
     root.appendChild(element);
+    return;
+  }
+  if (at >= total) {
+    // Trailing deletions stay inline: append right after the last text node
+    // (inside its paragraph), not at the container root.
+    const last = nodes[nodes.length - 1]!;
+    last.parentNode?.insertBefore(element, last.nextSibling);
     return;
   }
   let index = 0;
@@ -283,14 +304,32 @@ function wrapImageIns(image: Element): void {
   ins.appendChild(image);
 }
 
+/** Whole-block stacked compare: old (red, struck) above / new (green) below. */
+function StackedCompare({ beforeSource, afterSource, links }: { beforeSource: string; afterSource: string; links?: readonly WikiLink[] }) {
+  return (
+    <div className="mt-1 space-y-1" data-wiki-diff-mod-fallback>
+      <div className={cn("rounded-xs px-2", DEL_BG, DEL_BAR, DEL_TEXT)}>
+        <WikiMarkdown markdown={beforeSource} links={links} />
+      </div>
+      <div className={cn("rounded-xs px-2", ADD_BG, ADD_BAR)}>
+        <WikiMarkdown markdown={afterSource} links={links} />
+      </div>
+    </div>
+  );
+}
+
 function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly WikiLink[] }) {
   const beforeRef = useRef<HTMLDivElement>(null);
   const afterRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
   const beforeSource = entry.before.source;
   const afterSource = entry.after.source;
+  // Fenced code (plain, mermaid, html) renders into code shells or sandboxed
+  // iframes with no comparable text nodes, and the contract wants whole-block
+  // old/new compare there anyway (§7.4 item 5) — skip word-level entirely.
+  const fenceCompare = entry.before.kind === "code" || entry.after.kind === "code";
   useLayoutEffect(() => {
-    if (failed) return;
+    if (failed || fenceCompare) return;
     const beforeRoot = beforeRef.current;
     const afterRoot = afterRef.current;
     if (!beforeRoot || !afterRoot) return;
@@ -299,7 +338,7 @@ function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly Wiki
     } catch {
       setFailed(true);
     }
-  }, [beforeSource, afterSource, failed]);
+  }, [beforeSource, afterSource, failed, fenceCompare]);
   return (
     <div className={cn("my-1 rounded-xs px-2", MOD_BAR)} data-wiki-diff-mod>
       {entry.attrChanges.length ? (
@@ -309,15 +348,8 @@ function ModBlock({ entry, links }: { entry: ModDiffEntry; links?: readonly Wiki
           ))}
         </div>
       ) : null}
-      {failed ? (
-        <div className="mt-1 space-y-1" data-wiki-diff-mod-fallback>
-          <div className={cn("rounded-xs px-2", DEL_BG, DEL_BAR, DEL_TEXT)}>
-            <WikiMarkdown markdown={beforeSource} links={links} />
-          </div>
-          <div className={cn("rounded-xs px-2", ADD_BG, ADD_BAR)}>
-            <WikiMarkdown markdown={afterSource} links={links} />
-          </div>
-        </div>
+      {failed || fenceCompare ? (
+        <StackedCompare beforeSource={beforeSource} afterSource={afterSource} links={links} />
       ) : (
         <>
           {/* Both sides render through the same markdown pipeline; the before
