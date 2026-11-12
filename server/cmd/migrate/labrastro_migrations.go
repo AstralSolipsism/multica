@@ -14,6 +14,10 @@ func init() {
 		"9062_labrastro_baseline_annotation_ordinal_index":    "idx_baseline_annotation_ordinal",
 		"9063_labrastro_baseline_review_batch_index":          "idx_baseline_review_batch",
 
+		"9068_labrastro_baseline_page_slug_index":         "idx_project_baseline_page_slug",
+		"9069_labrastro_baseline_revision_page_index":     "idx_project_baseline_revision_page",
+		"9070_labrastro_baseline_revision_activity_index": "idx_project_baseline_revision_activity",
+
 		"9040_labrastro_engineering_config_identity_index":   "idx_project_engineering_identity",
 		"9041_labrastro_engineering_doc_identity_index":      "idx_project_baseline_doc_id",
 		"9042_labrastro_engineering_doc_chapter_index":       "idx_project_baseline_doc_chapter",
