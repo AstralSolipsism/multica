@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,20 +9,26 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/cli"
-	"github.com/multica-ai/multica/server/internal/engineering"
 	"github.com/spf13/cobra"
 )
 
 func newLabrastroProjectBaselineCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "baseline", Short: "Read, propose, compare, adopt and export project baselines"}
-	for _, action := range []string{"get", "propose", "diff", "adopt", "export", "annotations", "respond"} {
-		sub := &cobra.Command{Use: action + " <project-id>", Args: func(_ *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "baseline", Short: "Read and write the project baseline wiki tree"}
+	actions := []string{"tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "search", "export"}
+	for _, action := range actions {
+		sub := &cobra.Command{Use: actionUsage(action), Args: func(_ *cobra.Command, args []string) error {
+			if action == "search" {
+				if len(args) != 2 {
+					return baselineFailure(2, "exactly one project ID and one query string are required")
+				}
+				return nil
+			}
 			if len(args) != 1 {
 				return baselineFailure(2, "exactly one project ID is required")
 			}
@@ -37,54 +42,125 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 			return err
 		}}
 		switch action {
+		case "tree":
+			sub.Short = "Print the page tree with slugs, titles, versions and section outlines"
+			sub.Flags().Bool("no-sections", false, "Omit section outlines")
 		case "get":
-			sub.Short = "Read adopted chapters or candidates, including a specific historical revision"
-			sub.Flags().Bool("index", false, "Read chapter metadata and heading outlines without bodies")
+			sub.Short = "Read a page, one section, or a historical revision"
+			sub.Flags().String("page", "", "Page slug or UUID")
 			sub.Flags().String("section", "", "Read matching sections and one-hop referenced definitions")
-			sub.Flags().Bool("candidate", false, "Read candidates instead of adopted revisions")
-			sub.Flags().String("revision", "", "Historical revision as chapter:number")
-		case "propose":
-			sub.Short = "Submit a candidate and show its server-computed Diff"
-			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory (required unless deleting a section)")
-			sub.Flags().String("chapter-title", "", "Chapter display title")
-			sub.Flags().String("section", "", "Replace or append one section by title or anchor")
-			sub.Flags().String("delete-section", "", "Remove one section by title or anchor")
-			sub.Flags().String("summary", "", "Change summary (required)")
-			sub.Flags().String("base", "", "Adopted revision number on which this proposal is based")
-			sub.Flags().Bool("base-current", false, "Use the adopted version read immediately before proposing")
-			sub.Flags().String("replaces", "", "Explicit candidate revision number to replace")
+			sub.Flags().String("revision", "", "Historical revision number")
+		case "create":
+			sub.Short = "Create a page (publishes v1 immediately)"
+			sub.Flags().String("title", "", "Page title (required)")
+			sub.Flags().String("slug", "", "Project-unique slug; generated when omitted")
+			sub.Flags().String("parent", "", "Parent page slug; omit for a root page")
+			sub.Flags().String("after", "", "Insert after this sibling slug, or \"first\"")
+			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory")
+			sub.Flags().String("summary", "", "Change summary")
 			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "write":
+			sub.Short = "Overwrite a page or one section (human and agent parity, requires --base)"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("base", "", "Revision number the write is based on (required)")
+			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory")
+			sub.Flags().String("section", "", "Replace one section by title or anchor")
+			sub.Flags().String("delete-section", "", "Remove one section by title or anchor")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "rename":
+			sub.Short = "Rename a page title or slug"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("base", "", "Revision number the rename is based on (required)")
+			sub.Flags().String("title", "", "New title")
+			sub.Flags().String("slug", "", "New slug")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "move":
+			sub.Short = "Change a page's parent or order"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("base", "", "Revision number the move is based on (required)")
+			sub.Flags().String("parent", "", "New parent page slug")
+			sub.Flags().Bool("root", false, "Move to the top level")
+			sub.Flags().String("after", "", "Place after this sibling slug, or \"first\"")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "archive":
+			sub.Short = "Archive (soft-delete) a page; its slug stays reserved"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("base", "", "Revision number the archive is based on (required)")
+			sub.Flags().Bool("recursive", false, "Archive the whole subtree")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "restore":
+			sub.Short = "Restore an archived page"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("base", "", "Revision number the restore is based on (required)")
+			sub.Flags().Bool("recursive", false, "Restore descendants archived in the same batch")
+			sub.Flags().String("parent", "", "Restore under a new parent slug when the original is archived")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "history":
+			sub.Short = "List revisions with their kinds"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("limit", "", "Page size (max 200)")
+			sub.Flags().String("before", "", "List revisions older than this number")
 		case "diff":
-			sub.Short = "Show candidate Diffs or compare two historical chapter revisions"
-			sub.Flags().String("from", "", "Historical source revision number (requires --chapter and --to)")
-			sub.Flags().String("to", "", "Historical target revision number")
-		case "adopt":
-			sub.Short = "Decide explicitly named chapter versions using the current credentials"
-			sub.Long = "Adopt chapter:number versions atomically. The server checks decider permissions,\n" +
-				"human decision credentials and concurrent changes."
-			sub.Flags().StringArray("revision", nil, "Chapter:number to adopt (required, repeatable for different chapters)")
-			sub.Flags().Bool("reject", false, "Reject the specified candidates instead of adopting")
+			sub.Short = "Compare structure metadata and sections between two revisions"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("from", "", "Source revision number (required)")
+			sub.Flags().String("to", "", "Target revision number; defaults to current")
+		case "rollback":
+			sub.Short = "Roll back to a revision (full snapshot by default)"
+			sub.Flags().String("page", "", "Page slug or UUID (required)")
+			sub.Flags().String("to", "", "Revision number to restore (required)")
+			sub.Flags().String("base", "", "Revision number the rollback is based on (required)")
+			sub.Flags().Bool("content-only", false, "Restore only the body, keep the live structure")
+			sub.Flags().String("summary", "", "Change summary")
+			sub.Flags().String("source-issue", "", "Source issue identifier or UUID")
+		case "activity":
+			sub.Short = "Recent wiki changes across the project (including archived pages)"
+			sub.Flags().String("limit", "", "Item count (max 50)")
+			sub.Flags().String("before", "", "RFC3339 timestamp cursor")
+		case "search":
+			sub.Short = "Full-text search over page titles and bodies"
+			sub.Flags().String("limit", "", "Result count (max 50)")
 		case "export":
-			sub.Short = "Export adopted chapters as read-only Markdown snapshots"
-			sub.Flags().String("dir", "./docs/baseline", "Directory for numbered chapter files")
-			sub.Flags().String("single-file", "", "Write all chapters to one Markdown file instead of --dir")
-		case "annotations":
-			sub.Short = "Read one annotation batch for a carrier issue run"
-			sub.Flags().String("batch", "", "Batch UUID or carrier issue identifier (required)")
-			sub.Flags().String("state", "open", "Include only unresolved annotations, or all")
-			sub.Flags().Bool("with-sections", false, "Append the annotated sections' subtrees from the working version")
-		case "respond":
-			sub.Short = "Write agent responses for one annotation batch (carrier issue runs only)"
-			sub.Flags().String("batch", "", "Batch UUID (required)")
-			sub.Flags().String("responses-file", "", "JSON file inside the current directory (required)")
+			sub.Short = "Export pages as Markdown files with YAML headers"
+			sub.Flags().String("dir", "./docs/baseline", "Directory for <slug>.md files")
+			sub.Flags().String("single-file", "", "Write everything to one Markdown file instead of --dir")
 		}
-		if action == "get" || action == "propose" || action == "diff" {
-			sub.Flags().String("chapter", "", "Chapter: overview, domain_rules, architecture, exclusions_and_risks or module:<slug>")
+		if action == "get" {
+			sub.Flags().String("output", "markdown", "Output format: markdown, text or json")
+		} else {
+			sub.Flags().String("output", "text", "Output format: text or json")
 		}
-		sub.Flags().String("output", "text", "Output format: text or json (get also supports markdown)")
 		cmd.AddCommand(sub)
 	}
+	// Retired candidate/annotation commands keep a stable migration pointer.
+	for _, legacy := range []struct {
+		name, hint string
+	}{
+		{"propose", "candidates are retired: use create, write or rename (saves publish immediately)"},
+		{"adopt", "decisions are retired: writes publish immediately; use rollback to undo"},
+		{"annotations", "annotation batches are retired; comments land in a follow-up release"},
+		{"respond", "annotation batches are retired; comments land in a follow-up release"},
+	} {
+		cmd.AddCommand(&cobra.Command{Use: legacy.name + " <project-id>", Short: "Retired", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			return baselineFailure(2, "%s is retired: %s; run `multica project baseline tree <project-id>` and `multica project baseline --help` for the new commands", cmd.Name(), legacy.hint)
+		}})
+	}
 	return cmd
+}
+
+func actionUsage(action string) string {
+	switch action {
+	case "search":
+		return "search <project-id> <query>"
+	case "tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "export":
+		return action + " <project-id>"
+	}
+	return action
 }
 
 type baselineCLIError struct {
@@ -97,8 +173,8 @@ func baselineFailure(code int, format string, args ...any) error {
 	return &baselineCLIError{code, fmt.Sprintf(format, args...)}
 }
 
-// Scope the contract's 0/1/2 exit convention to this command family, including
-// Cobra's flag/argument errors. Other commands retain the global CLI convention.
+// labrastroBaselineExitCode keeps the contract's 0/1/2/3 exit convention for
+// this command family, including Cobra's flag/argument errors.
 func labrastroBaselineExitCode(cmd *cobra.Command, err error) int {
 	if err == nil {
 		return 0
@@ -115,36 +191,58 @@ func labrastroBaselineExitCode(cmd *cobra.Command, err error) int {
 	return cli.ExitCodeFor(err)
 }
 
+// ---------- response shapes ----------
+
+type baselineCLIPage struct {
+	ID                   string  `json:"id"`
+	Slug                 string  `json:"slug"`
+	Title                string  `json:"title"`
+	ParentID             *string `json:"parent_id"`
+	Position             int32   `json:"position"`
+	ArchivedAt           *string `json:"archived_at"`
+	CurrentRevisionNumber int32  `json:"current_revision_number"`
+}
+
 type baselineCLIRevision struct {
-	ID        string           `json:"id"`
-	Chapter   string           `json:"chapter"`
-	Number    int32            `json:"revision_number"`
-	Status    string           `json:"status"`
-	Content   string           `json:"content_markdown"`
-	Summary   string           `json:"change_summary"`
-	Base      *string          `json:"base_revision_id"`
-	DecidedAt *string          `json:"decided_at"`
-	Diff      engineering.Diff `json:"anchors_diff"`
+	ID              string  `json:"id"`
+	PageID          string  `json:"page_id"`
+	Number          int32   `json:"revision_number"`
+	Kind            string  `json:"revision_kind"`
+	Title           string  `json:"title"`
+	Slug            string  `json:"slug"`
+	Content         string  `json:"content_markdown"`
+	Summary         string  `json:"change_summary"`
+	SourceIssueID   *string `json:"source_issue_id"`
+	CreatedByType   string  `json:"created_by_type"`
+	CreatedByID     string  `json:"created_by_id"`
+	CreatedAt       string  `json:"created_at"`
+	RestoredFrom    *string `json:"restored_from_revision_id"`
 }
-type baselineCLIChapter struct {
-	Chapter   string          `json:"chapter"`
-	Title     string          `json:"title"`
-	Position  int32           `json:"position"`
-	Adopted   json.RawMessage `json:"adopted"`
-	Candidate json.RawMessage `json:"candidate"`
+
+type baselineCLITreePage struct {
+	baselineCLIPage
+	Depth         int `json:"depth"`
+	RevisionCount int `json:"revision_count"`
+	Current       *struct {
+		Number        int32  `json:"number"`
+		Kind          string `json:"kind"`
+		CreatedAt     string `json:"created_at"`
+		CreatedByType string `json:"created_by_type"`
+		CreatedByID   string `json:"created_by_id"`
+		ChangeSummary string `json:"change_summary"`
+	} `json:"current"`
+	Sections []struct {
+		Anchor string `json:"anchor"`
+		Title  string `json:"title"`
+		Level  int    `json:"level"`
+	} `json:"sections"`
 }
-type baselineCLIState struct {
-	Engineering json.RawMessage      `json:"engineering"`
-	Chapters    []baselineCLIChapter `json:"chapters"`
+
+type baselineCLITree struct {
+	Pages []baselineCLITreePage `json:"pages"`
 }
-type baselineCLISelection struct {
-	Chapter  string          `json:"chapter"`
-	Revision json.RawMessage `json:"revision"`
-}
-type baselineCLIRef struct {
-	chapter string
-	number  int32
-}
+
+// ---------- validation ----------
 
 func baselineNumber(s string) (int32, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
@@ -153,115 +251,116 @@ func baselineNumber(s string) (int32, error) {
 	}
 	return int32(n), nil
 }
-func baselineRef(s string) (baselineCLIRef, error) {
-	i := strings.LastIndex(s, ":")
-	if i < 0 {
-		return baselineCLIRef{}, baselineFailure(2, "--revision must be chapter:number using a supported chapter")
-	}
-	chapter, number := s[:i], s[i+1:]
-	if !engineering.ValidChapter(chapter) {
-		return baselineCLIRef{}, baselineFailure(2, "--revision must be chapter:number using a supported chapter")
-	}
-	n, err := baselineNumber(number)
-	return baselineCLIRef{chapter, n}, err
-}
-func baselineDecodeRevision(raw json.RawMessage) (*baselineCLIRevision, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var r baselineCLIRevision
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &r) != nil || json.Unmarshal(raw, &fields) != nil ||
-		!uuidRegexp.MatchString(r.ID) || !engineering.ValidChapter(r.Chapter) || r.Number < 1 ||
-		len(fields["content_markdown"]) == 0 || string(fields["content_markdown"]) == "null" ||
-		r.Diff.Chapter != r.Chapter {
-		return nil, baselineFailure(1, "invalid baseline revision response")
-	}
-	return &r, nil
-}
-func baselineChapter(state baselineCLIState, chapter string) baselineCLIChapter {
-	for _, c := range state.Chapters {
-		if c.Chapter == chapter {
-			return c
-		}
-	}
-	return baselineCLIChapter{Chapter: chapter}
-}
+
 func baselineValidate(cmd *cobra.Command) error {
 	action, output := cmd.Name(), mustString(cmd, "output")
-	if output != "json" && output != "text" && output != "table" && !(action == "get" && output == "markdown") {
+	valid := map[string][]string{
+		"tree": {"text", "json"}, "get": {"markdown", "text", "json"}, "create": {"text", "json"},
+		"write": {"text", "json"}, "rename": {"text", "json"}, "move": {"text", "json"},
+		"archive": {"text", "json"}, "restore": {"text", "json"}, "history": {"text", "json"},
+		"diff": {"text", "json"}, "rollback": {"text", "json"}, "activity": {"text", "json"},
+		"search": {"text", "json"}, "export": {"text", "json"},
+	}
+	if !contains(valid[action], output) {
 		return baselineFailure(2, "unsupported --output format")
 	}
-	chapter := mustString(cmd, "chapter")
-	if chapter != "" && !engineering.ValidChapter(chapter) {
-		return baselineFailure(2, "unsupported --chapter; use overview, domain_rules, architecture, exclusions_and_risks or module:<slug>")
+	needNumber := func(flag string) (int32, error) {
+		value := mustString(cmd, flag)
+		if value == "" {
+			return 0, baselineFailure(2, "--%s is required", flag)
+		}
+		return baselineNumber(value)
+	}
+	optNumber := func(flag string) (int32, error) {
+		if !cmd.Flags().Changed(flag) {
+			return 0, nil
+		}
+		return baselineNumber(mustString(cmd, flag))
 	}
 	switch action {
 	case "get":
-		index, _ := cmd.Flags().GetBool("index")
 		section := mustString(cmd, "section")
-		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" || index && section != "" || (index || section != "") && cmd.Flags().Changed("revision") {
-			return baselineFailure(2, "--index, --section and --revision are mutually exclusive; --section must not be empty")
+		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" {
+			return baselineFailure(2, "--section must not be empty")
 		}
-		if s := mustString(cmd, "revision"); cmd.Flags().Changed("revision") {
-			r, err := baselineRef(s)
-			if err != nil {
+		if cmd.Flags().Changed("revision") {
+			if _, err := needNumber("revision"); err != nil {
 				return err
 			}
-			candidate, _ := cmd.Flags().GetBool("candidate")
-			if candidate || chapter != "" && chapter != r.chapter {
-				return baselineFailure(2, "--revision cannot be combined with --candidate or a different --chapter")
+			if mustString(cmd, "page") == "" {
+				return baselineFailure(2, "--revision requires --page")
 			}
 		}
-	case "propose":
+	case "create":
+		if strings.TrimSpace(mustString(cmd, "title")) == "" {
+			return baselineFailure(2, "--title is required")
+		}
+		if mustString(cmd, "content-file") == "" {
+			// Content is optional for create; nothing to check.
+			_ = 0
+		}
+	case "write":
+		if mustString(cmd, "page") == "" {
+			return baselineFailure(2, "--page is required")
+		}
+		base, err := needNumber("base")
+		if err != nil {
+			return err
+		}
+		_ = base
 		section, deleting := mustString(cmd, "section"), mustString(cmd, "delete-section")
-		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" || cmd.Flags().Changed("delete-section") && strings.TrimSpace(deleting) == "" || section != "" && deleting != "" || deleting != "" && cmd.Flags().Changed("content-file") {
-			return baselineFailure(2, "use --section with --content-file, or --delete-section without content")
+		if cmd.Flags().Changed("section") && strings.TrimSpace(section) == "" || cmd.Flags().Changed("delete-section") && strings.TrimSpace(deleting) == "" {
+			return baselineFailure(2, "--section and --delete-section must not be empty")
 		}
-		if chapter == "" || deleting == "" && mustString(cmd, "content-file") == "" || strings.TrimSpace(mustString(cmd, "summary")) == "" {
-			return baselineFailure(2, "--chapter, --content-file and --summary are required")
+		if section != "" && deleting != "" {
+			return baselineFailure(2, "use --section or --delete-section, not both")
 		}
-		if utf8.RuneCountInString(mustString(cmd, "summary")) > 500 {
-			return baselineFailure(2, "--summary must not exceed 500 characters")
+		if mustString(cmd, "content-file") == "" && deleting == "" {
+			return baselineFailure(2, "--content-file is required (or use --delete-section)")
 		}
-		current, _ := cmd.Flags().GetBool("base-current")
-		if current && cmd.Flags().Changed("base") {
-			return baselineFailure(2, "--base and --base-current are mutually exclusive")
+	case "rename", "move", "archive", "restore", "history", "diff", "rollback":
+		if mustString(cmd, "page") == "" {
+			return baselineFailure(2, "--page is required")
 		}
-		for _, flag := range []string{"base", "replaces"} {
-			if cmd.Flags().Changed(flag) {
-				if _, err := baselineNumber(mustString(cmd, flag)); err != nil {
-					return err
-				}
-			}
-		}
-	case "diff":
-		from, to := mustString(cmd, "from"), mustString(cmd, "to")
-		if cmd.Flags().Changed("from") || cmd.Flags().Changed("to") {
-			if chapter == "" || from == "" || to == "" {
-				return baselineFailure(2, "historical Diff requires --chapter, --from and --to")
-			}
-			for _, s := range []string{from, to} {
-				if _, err := baselineNumber(s); err != nil {
-					return err
-				}
-			}
-		}
-	case "adopt":
-		refs, _ := cmd.Flags().GetStringArray("revision")
-		if len(refs) == 0 || len(refs) > 100 {
-			return baselineFailure(2, "specify one to 100 --revision chapter:number values")
-		}
-		seen := map[string]bool{}
-		for _, s := range refs {
-			r, err := baselineRef(s)
-			if err != nil {
+		switch action {
+		case "rename":
+			if _, err := needNumber("base"); err != nil {
 				return err
 			}
-			if seen[r.chapter] {
-				return baselineFailure(2, "each chapter may be decided only once")
+			if mustString(cmd, "title") == "" && mustString(cmd, "slug") == "" {
+				return baselineFailure(2, "specify --title and/or --slug")
 			}
-			seen[r.chapter] = true
+		case "move":
+			if _, err := needNumber("base"); err != nil {
+				return err
+			}
+			parent, root := mustString(cmd, "parent"), cmd.Flags().Changed("root")
+			if parent != "" && root || parent == "" && !root && !cmd.Flags().Changed("after") {
+				return baselineFailure(2, "specify --parent <slug>, --root, or --after")
+			}
+		case "archive", "restore", "rollback":
+			if _, err := needNumber("base"); err != nil {
+				return err
+			}
+			if action == "rollback" {
+				if _, err := needNumber("to"); err != nil {
+					return err
+				}
+			}
+		case "history":
+			if _, err := optNumber("limit"); err != nil {
+				return err
+			}
+			if _, err := optNumber("before"); err != nil {
+				return err
+			}
+		case "diff":
+			if _, err := needNumber("from"); err != nil {
+				return err
+			}
+			if _, err := optNumber("to"); err != nil {
+				return err
+			}
 		}
 	case "export":
 		if cmd.Flags().Changed("single-file") && (mustString(cmd, "single-file") == "" || cmd.Flags().Changed("dir")) {
@@ -270,34 +369,34 @@ func baselineValidate(cmd *cobra.Command) error {
 		if mustString(cmd, "dir") == "" {
 			return baselineFailure(2, "--dir must not be empty")
 		}
-	case "annotations":
-		if strings.TrimSpace(mustString(cmd, "batch")) == "" {
-			return baselineFailure(2, "--batch is required; pass the batch UUID or the carrier issue identifier")
-		}
-		if state := mustString(cmd, "state"); state != "open" && state != "all" {
-			return baselineFailure(2, "--state must be open or all")
-		}
-	case "respond":
-		if strings.TrimSpace(mustString(cmd, "batch")) == "" || mustString(cmd, "responses-file") == "" {
-			return baselineFailure(2, "--batch and --responses-file are required")
-		}
-		if !uuidRegexp.MatchString(strings.TrimSpace(mustString(cmd, "batch"))) {
-			return baselineFailure(2, "--batch must be the batch UUID for respond")
-		}
 	}
 	return nil
 }
+
+func contains(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------- execution ----------
 
 func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 	if err := baselineValidate(cmd); err != nil {
 		return err
 	}
+	action := cmd.Name()
 	var content string
-	if cmd.Name() == "propose" && mustString(cmd, "delete-section") == "" {
-		var err error
-		content, err = baselineReadContent(mustString(cmd, "content-file"))
-		if err != nil {
-			return err
+	if action == "create" || action == "write" && mustString(cmd, "delete-section") == "" {
+		if path := mustString(cmd, "content-file"); path != "" {
+			var err error
+			content, err = baselineReadContent(path)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	client, err := newAPIClient(cmd)
@@ -306,8 +405,6 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := cli.APIContext(cmd.Context())
 	defer cancel()
-	// Keep local reference errors actionable without exposing HTTP response
-	// bodies or misclassifying transport failures as invalid parameters.
 	var lookupErr error
 	project, err := resolveIDByPrefix(ctx, client, "project", args[0], func(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 		candidates, err := fetchProjectCandidates(ctx, client)
@@ -320,347 +417,38 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		}
 		return baselineFailure(2, "%s", err)
 	}
-	path := "/api/projects/" + project.ID
-	if cmd.Name() == "annotations" {
-		return baselineAnnotations(ctx, cmd, client, project.ID)
-	}
-	if cmd.Name() == "respond" {
-		return baselineRespond(ctx, cmd, client, project.ID)
-	}
-	if cmd.Name() == "diff" && mustString(cmd, "from") != "" {
-		query := url.Values{"chapter": {mustString(cmd, "chapter")}, "diff_from": {mustString(cmd, "from")}, "diff_to": {mustString(cmd, "to")}}
-		var raw json.RawMessage
-		if err := client.GetJSON(ctx, path+"/baseline/revisions?"+query.Encode(), &raw); err != nil {
-			return baselineRequestError(err, false)
-		}
-		var diff engineering.Diff
-		if json.Unmarshal(raw, &diff) != nil || !engineering.ValidChapter(diff.Chapter) {
-			return baselineFailure(1, "invalid baseline Diff response")
-		}
-		baselinePrintWarnings(cmd, diff)
-		if mustString(cmd, "output") == "json" {
-			return cli.PrintJSON(cmd.OutOrStdout(), raw)
-		}
-		baselinePrintDiff(cmd, diff, true)
-		return nil
-	}
-	if cmd.Name() == "adopt" {
-		return baselineAdopt(ctx, cmd, client, project.ID)
-	}
-	if cmd.Name() == "get" && mustString(cmd, "revision") != "" {
-		ref, _ := baselineRef(mustString(cmd, "revision"))
-		raw, _, err := baselineLookupRevision(ctx, cmd, client, project.ID, ref)
-		if err != nil {
-			return err
-		}
-		return baselinePrintSelection(cmd, nil, []baselineCLISelection{{ref.chapter, raw}})
-	}
-	if cmd.Name() == "get" {
-		index, _ := cmd.Flags().GetBool("index")
-		if index || mustString(cmd, "section") != "" {
-			return baselineReadSlice(ctx, cmd, client, project.ID, index)
-		}
-	}
-	state, err := baselineReadState(ctx, cmd, client, project.ID)
-	if err != nil {
-		return err
-	}
-	switch cmd.Name() {
+	base := "/api/projects/" + project.ID + "/baseline"
+	writing := action != "tree" && action != "get" && action != "history" && action != "diff" && action != "activity" && action != "search" && action != "export"
+
+	switch action {
+	case "tree":
+		return baselineTree(ctx, cmd, client, base)
 	case "get":
-		selected := []baselineCLISelection{}
-		candidate, _ := cmd.Flags().GetBool("candidate")
-		for _, c := range state.Chapters {
-			if chapter := mustString(cmd, "chapter"); chapter != "" && chapter != c.Chapter {
-				continue
-			}
-			raw := c.Adopted
-			if candidate {
-				raw = c.Candidate
-			}
-			selected = append(selected, baselineCLISelection{c.Chapter, raw})
-		}
-		return baselinePrintSelection(cmd, state.Engineering, selected)
-	case "propose":
-		return baselinePropose(ctx, cmd, client, project.ID, state, content)
+		return baselineGet(ctx, cmd, client, base)
+	case "create":
+		return baselineCreate(ctx, cmd, client, base, content)
+	case "write":
+		return baselineWrite(ctx, cmd, client, base, content)
+	case "rename":
+		return baselineRenameMove(ctx, cmd, client, base, true)
+	case "move":
+		return baselineRenameMove(ctx, cmd, client, base, false)
+	case "archive", "restore":
+		return baselineArchiveRestore(ctx, cmd, client, base, action == "archive")
+	case "history":
+		return baselineHistory(ctx, cmd, client, base)
 	case "diff":
-		diffs := []engineering.Diff{}
-		for _, c := range state.Chapters {
-			if chapter := mustString(cmd, "chapter"); chapter != "" && chapter != c.Chapter {
-				continue
-			}
-			r, err := baselineDecodeRevision(c.Candidate)
-			if err != nil {
-				return err
-			}
-			if r != nil {
-				diffs = append(diffs, r.Diff)
-				baselinePrintWarnings(cmd, r.Diff)
-			}
-		}
-		if mustString(cmd, "output") == "json" {
-			return cli.PrintJSON(cmd.OutOrStdout(), map[string]any{"diffs": diffs})
-		}
-		for _, diff := range diffs {
-			baselinePrintDiff(cmd, diff, true)
-		}
-		if len(diffs) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No candidate revisions.")
-		}
-		return nil
+		return baselineDiff(ctx, cmd, client, base)
+	case "rollback":
+		return baselineRollback(ctx, cmd, client, base)
+	case "activity":
+		return baselineActivity(ctx, cmd, client, base)
+	case "search":
+		return baselineSearch(ctx, cmd, client, base, args[1])
 	case "export":
-		return baselineExport(cmd, state)
+		return baselineExport(ctx, cmd, client, base)
 	}
-	return baselineFailure(2, "unknown baseline subcommand")
-}
-
-func baselineReadState(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, project string) (baselineCLIState, error) {
-	var state baselineCLIState
-	err := client.GetJSON(ctx, "/api/projects/"+project+"/engineering", &state)
-	if err != nil {
-		return state, baselineRequestError(err, false)
-	}
-	seen := map[string]bool{}
-	for _, c := range state.Chapters {
-		if !engineering.ValidChapter(c.Chapter) || seen[c.Chapter] {
-			return state, baselineFailure(1, "invalid baseline chapters response")
-		}
-		seen[c.Chapter] = true
-		for _, raw := range []json.RawMessage{c.Adopted, c.Candidate} {
-			r, err := baselineDecodeRevision(raw)
-			if err != nil {
-				return state, err
-			}
-			if r != nil && r.Chapter != c.Chapter {
-				return state, baselineFailure(1, "baseline revision belongs to a different chapter")
-			}
-		}
-	}
-	for _, chapter := range engineering.Chapters {
-		if !seen[chapter] {
-			return state, baselineFailure(1, "incomplete baseline chapters response")
-		}
-	}
-	return state, nil
-}
-
-// Query immediately before the requested number, avoiding a scan through every
-// history page. An exact match is mandatory; never substitute a newer candidate.
-func baselineLookupRevision(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, project string, ref baselineCLIRef) (json.RawMessage, *baselineCLIRevision, error) {
-	q := url.Values{"chapter": {ref.chapter}, "limit": {"1"}}
-	if ref.number < 2147483647 {
-		q.Set("before", strconv.FormatInt(int64(ref.number)+1, 10))
-	}
-	var result struct {
-		Revisions []json.RawMessage `json:"revisions"`
-	}
-	if err := client.GetJSON(ctx, "/api/projects/"+project+"/baseline/revisions?"+q.Encode(), &result); err != nil {
-		return nil, nil, baselineRequestError(err, false)
-	}
-	if len(result.Revisions) == 1 {
-		raw := result.Revisions[0]
-		r, err := baselineDecodeRevision(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		if r != nil && r.Chapter == ref.chapter && r.Number == ref.number {
-			return raw, r, nil
-		}
-	}
-	return nil, nil, baselineFailure(2, "404 not_found: requested chapter revision does not exist")
-}
-
-func baselinePropose(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, project string, state baselineCLIState, content string) error {
-	chapter := mustString(cmd, "chapter")
-	c := baselineChapter(state, chapter)
-	adopted, _ := baselineDecodeRevision(c.Adopted)
-	candidate, _ := baselineDecodeRevision(c.Candidate)
-	var base, replaces *string
-	if current, _ := cmd.Flags().GetBool("base-current"); current {
-		if adopted != nil {
-			base = &adopted.ID
-		}
-	} else if s := mustString(cmd, "base"); s != "" {
-		n, _ := baselineNumber(s)
-		_, r, err := baselineLookupRevision(ctx, cmd, client, project, baselineCLIRef{chapter, n})
-		if err != nil {
-			return err
-		}
-		base = &r.ID
-	} else if adopted != nil {
-		return baselineFailure(2, "this chapter has an adopted revision; specify --base <number> or --base-current")
-	}
-	if s := mustString(cmd, "replaces"); s != "" {
-		n, _ := baselineNumber(s)
-		_, r, err := baselineLookupRevision(ctx, cmd, client, project, baselineCLIRef{chapter, n})
-		if err != nil {
-			return err
-		}
-		replaces = &r.ID
-	} else if candidate != nil {
-		return baselineFailure(1, "409 baseline_candidate_open: candidate %s:%d (%s) already exists; inspect it before using --replaces %d", chapter, candidate.Number, candidate.ID, candidate.Number)
-	}
-	body := map[string]any{"chapter": chapter, "content_markdown": content, "change_summary": mustString(cmd, "summary"), "base_revision_id": base}
-	if cmd.Flags().Changed("chapter-title") {
-		body["chapter_title"] = mustString(cmd, "chapter-title")
-	}
-	if section := mustString(cmd, "section"); section != "" {
-		body["section"] = section
-	}
-	if section := mustString(cmd, "delete-section"); section != "" {
-		body["section"], body["delete_section"] = section, true
-	}
-	if replaces != nil {
-		body["replaces_candidate_id"] = replaces
-	}
-	if source := mustString(cmd, "source-issue"); source != "" {
-		ref, err := resolveIssueRef(ctx, client, source)
-		if err != nil {
-			return baselineRequestError(err, false)
-		}
-		body["source_issue_id"] = ref.ID
-	}
-	var raw json.RawMessage
-	if err := client.PostJSON(ctx, "/api/projects/"+project+"/baseline/candidates", body, &raw); err != nil {
-		if cli.ServerErrorCode(err) == "baseline_candidate_open" {
-			// Another session may have opened a candidate after our first read.
-			// Read its identity for guidance, without retrying the failed write.
-			if latest, readErr := baselineReadState(ctx, cmd, client, project); readErr == nil {
-				if r, _ := baselineDecodeRevision(baselineChapter(latest, chapter).Candidate); r != nil {
-					return baselineFailure(1, "409 baseline_candidate_open: candidate %s:%d (%s) is now open; inspect it before replacing", chapter, r.Number, r.ID)
-				}
-			}
-		}
-		return baselineRequestError(err, true)
-	}
-	r, err := baselineDecodeRevision(raw)
-	if err != nil {
-		return err
-	}
-	if r == nil {
-		return baselineFailure(1, "empty candidate response; inspect baseline state before proposing again")
-	}
-	baselinePrintWarnings(cmd, r.Diff)
-	if mustString(cmd, "output") == "json" {
-		return cli.PrintJSON(cmd.OutOrStdout(), raw)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: revision %d (%s)\n", r.Chapter, r.Number, r.Status)
-	baselinePrintDiff(cmd, r.Diff, true)
-	if link := baselineApprovalURL(cmd, client, project, r.ID); link != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Review candidate in the engineering overview: %s\n", link)
-	} else {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Review candidate in the project's engineering overview on the dashboard (approval link unavailable).")
-	}
-	return nil
-}
-
-func baselineAdopt(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, project string) error {
-	refs, _ := cmd.Flags().GetStringArray("revision")
-	revisions := []map[string]any{}
-	selected := []*baselineCLIRevision{}
-	for _, s := range refs {
-		ref, _ := baselineRef(s)
-		_, r, err := baselineLookupRevision(ctx, cmd, client, project, ref)
-		if err != nil {
-			return err
-		}
-		revisions = append(revisions, map[string]any{"revision_id": r.ID, "expected_adopted_revision_id": r.Base})
-		selected = append(selected, r)
-	}
-	action := "adopt"
-	if reject, _ := cmd.Flags().GetBool("reject"); reject {
-		action = "reject"
-	}
-	var raw json.RawMessage
-	if err := client.PostJSON(ctx, "/api/projects/"+project+"/baseline/decisions", map[string]any{"action": action, "revisions": revisions}, &raw); err != nil {
-		if cli.ServerErrorCode(err) == "baseline_human_required" {
-			ids := make([]string, 0, len(selected))
-			for _, revision := range selected {
-				ids = append(ids, revision.ID)
-			}
-			if link := baselineApprovalURL(cmd, client, project, ids...); link != "" {
-				return baselineFailure(1, "基线只能由决定人采用或驳回：%s", link)
-			}
-			return baselineFailure(1, "基线只能由决定人采用或驳回，请在工程总览中审批候选")
-		}
-		return baselineRequestError(err, true)
-	}
-	var result struct {
-		Chapters []baselineCLIChapter `json:"chapters"`
-		Open     *struct {
-			InFlight  []struct{ Identifier, Title, Status string } `json:"in_flight"`
-			Queued    []struct{ Identifier, Title, Status string } `json:"queued"`
-			Truncated bool                                         `json:"truncated"`
-		} `json:"open_issues"`
-	}
-	if json.Unmarshal(raw, &result) != nil || result.Open == nil {
-		return baselineFailure(1, "incomplete decision response; inspect baseline state before deciding again")
-	}
-	for _, r := range selected {
-		baselinePrintWarnings(cmd, r.Diff)
-	}
-	if mustString(cmd, "output") == "json" {
-		return cli.PrintJSON(cmd.OutOrStdout(), raw)
-	}
-	for _, r := range selected {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s %s:%d\n", action, r.Chapter, r.Number)
-		baselinePrintDiff(cmd, r.Diff, false)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), "Open issues:")
-	for _, group := range []struct {
-		name   string
-		issues []struct{ Identifier, Title, Status string }
-	}{{"in_flight", result.Open.InFlight}, {"queued", result.Open.Queued}} {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s (%d):\n", group.name, len(group.issues))
-		for _, i := range group.issues {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s [%s] %s\n", i.Identifier, i.Status, i.Title)
-		}
-	}
-	if result.Open.Truncated {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Open issues truncated by server; more issues exist.")
-	}
-	return nil
-}
-
-func baselineApprovalURL(cmd *cobra.Command, client *cli.APIClient, project string, candidateIDs ...string) string {
-	ctx, cancel := cli.APIContext(cmd.Context())
-	defer cancel()
-	origin := tryResolveAppURL(cmd)
-	if origin == "" {
-		var config struct {
-			AppURL string `json:"daemon_app_url"`
-		}
-		if err := client.GetJSON(ctx, "/api/config", &config); err == nil {
-			origin = strings.TrimSpace(config.AppURL)
-		}
-	}
-	if origin == "" {
-		// Only known cloud deployments have a predictable public app origin.
-		// A self-hosted API URL may be an internal container address.
-		switch strings.TrimRight(client.BaseURL, "/") {
-		case defaultCloudServerURL:
-			origin = defaultCloudAppURL
-		case "https://api.multica.ai", "https://multica.ai":
-			origin = "https://multica.ai"
-		}
-	}
-	app, err := url.Parse(origin)
-	if err != nil || app.Host == "" || (app.Scheme != "http" && app.Scheme != "https") || app.User != nil || app.RawQuery != "" || app.Fragment != "" {
-		return ""
-	}
-	if client.WorkspaceID == "" {
-		return ""
-	}
-	var workspace struct {
-		Slug string `json:"slug"`
-	}
-	if err := client.GetJSON(ctx, "/api/workspaces/"+url.PathEscape(client.WorkspaceID), &workspace); err != nil || strings.TrimSpace(workspace.Slug) == "" {
-		return ""
-	}
-	link := strings.TrimRight(origin, "/") + "/" + url.PathEscape(workspace.Slug) + "/projects/" + url.PathEscape(project) + "/engineering"
-	if len(candidateIDs) > 0 {
-		link += "?" + url.Values{"candidate": {candidateIDs[0]}}.Encode()
-	}
-	return link
+	return baselineFailure(2, "unknown baseline subcommand %q (writing=%v)", action, writing)
 }
 
 func baselineRequestError(err error, writing bool) error {
@@ -668,17 +456,18 @@ func baselineRequestError(err error, writing bool) error {
 	if errors.As(err, &e) {
 		code := cli.ServerErrorCode(err)
 		if e.StatusCode == 401 {
-			// Preserve the task-token stop instruction, even with ambient debug
-			// enabled, without retaining a response body in the error chain.
 			safe := *e
 			safe.Body = ""
 			return baselineFailure(1, "%s", cli.FormatError(&safe, false))
+		}
+		if e.StatusCode == 409 && code == "baseline_conflict" {
+			return baselineFailure(3, "baseline conflict: the page changed since --base was read; re-read with tree/get, merge, then retry with the new --base (current revision is in the error body)")
 		}
 		if e.StatusCode >= 500 && writing {
 			return baselineFailure(1, "baseline request failed (HTTP %d); result is indeterminate. Inspect baseline state before retrying.", e.StatusCode)
 		}
 		exit := 1
-		if e.StatusCode == 400 || e.StatusCode == 404 {
+		if e.StatusCode == 400 || e.StatusCode == 404 || e.StatusCode == 422 {
 			exit = 2
 		}
 		detail := fmt.Sprintf("HTTP %d", e.StatusCode)
@@ -738,160 +527,624 @@ func readProjectInputFile(path, flag string, limit int64) (string, error) {
 	return string(data), nil
 }
 
-func baselinePrintSelection(cmd *cobra.Command, config json.RawMessage, selected []baselineCLISelection) error {
+// ---------- shared helpers ----------
+
+func baselinePrintWriteResult(cmd *cobra.Command, raw json.RawMessage, action string) error {
 	if mustString(cmd, "output") == "json" {
-		return cli.PrintJSON(cmd.OutOrStdout(), map[string]any{"engineering": config, "chapters": selected})
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
 	}
-	for _, item := range selected {
-		r, err := baselineDecodeRevision(item.Revision)
-		if err != nil {
-			return err
-		}
-		if r == nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: no revision\n", item.Chapter)
-			continue
-		}
-		if mustString(cmd, "chapter") != "" || mustString(cmd, "revision") != "" || mustString(cmd, "output") == "markdown" {
-			fmt.Fprintln(cmd.OutOrStdout(), baselineMarkdown(r))
-		} else {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: revision %d (%s) — %s\n", r.Chapter, r.Number, r.Status, r.Summary)
-		}
+	var out struct {
+		Page     baselineCLIPage     `json:"page"`
+		Revision baselineCLIRevision `json:"revision"`
+		Rebased  bool                `json:"rebased"`
+		Pages    []struct {
+			Page     baselineCLIPage     `json:"page"`
+			Revision baselineCLIRevision `json:"revision"`
+		} `json:"pages"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || out.Page.Slug == "" && len(out.Pages) == 0 {
+		return baselineFailure(1, "invalid baseline write response")
+	}
+	if out.Page.Slug != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s v%d (%s)%s\n", action, out.Page.Slug, out.Revision.Number, out.Revision.Summary, rebasedMark(out.Rebased))
+		return nil
+	}
+	for _, item := range out.Pages {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s v%d (%s)\n", action, item.Page.Slug, item.Revision.Number, item.Revision.Summary)
 	}
 	return nil
-}
-func baselineMarkdown(r *baselineCLIRevision) string {
-	when := "not adopted"
-	if r.DecidedAt != nil && (r.Status == "adopted" || r.Status == "superseded") {
-		when = *r.DecidedAt
-	}
-	return fmt.Sprintf("<!-- Revision: %d; Adopted: %s -->\n\n%s", r.Number, when, r.Content)
-}
-func baselinePrintWarnings(cmd *cobra.Command, d engineering.Diff) {
-	for _, warning := range d.Warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[BASELINE WARNING] %s [%s] %s\n", d.Chapter, warning.Anchor, warning.Code)
-	}
-}
-func baselinePrintDiff(cmd *cobra.Command, d engineering.Diff, body bool) {
-	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, "%s (base %d): +%d ~%d -%d; unchanged %d\n", d.Chapter, d.BaseRevisionNumber, len(d.Added), len(d.Modified), len(d.Removed), d.UnchangedCount)
-	if !body {
-		for _, removed := range d.Removed {
-			fmt.Fprintf(w, "@@ removed [%s] %s @@\n", removed.Anchor, removed.Title)
-		}
-		return
-	}
-	for _, group := range []struct {
-		kind    string
-		changes []engineering.Change
-	}{{"added", d.Added}, {"modified", d.Modified}, {"removed", d.Removed}} {
-		for _, c := range group.changes {
-			fmt.Fprintf(w, "@@ %s [%s] %s @@\n", group.kind, c.Anchor, c.Title)
-			// Display the server's anchored before/after bodies verbatim by line. The
-			// CLI does not recompute anchors, warnings or a competing Diff algorithm.
-			if group.kind != "added" {
-				for _, line := range strings.Split(c.Before, "\n") {
-					fmt.Fprintf(w, "-%s\n", line)
-				}
-			}
-			if group.kind != "removed" {
-				for _, line := range strings.Split(c.After, "\n") {
-					fmt.Fprintf(w, "+%s\n", line)
-				}
-			}
-		}
-	}
 }
 
-func baselineExport(cmd *cobra.Command, state baselineCLIState) error {
-	filenames := []string{"01-overview.md", "02-domain-rules.md", "03-architecture.md", "04-exclusions-and-risks.md"}
-	files := []string{}
-	var combined strings.Builder
-	dir, single := mustString(cmd, "dir"), mustString(cmd, "single-file")
-	for i, c := range state.Chapters {
-		chapter := c.Chapter
-		r, err := baselineDecodeRevision(c.Adopted)
-		if err != nil {
-			return err
-		}
-		content := "<!-- Revision: none; Adopted: never -->\n"
-		if r != nil {
-			content = baselineMarkdown(r) + "\n"
-		}
-		if single != "" {
-			fmt.Fprintf(&combined, "# %s\n\n%s\n", chapter, content)
+func rebasedMark(rebased bool) string {
+	if rebased {
+		return " [rebased]"
+	}
+	return ""
+}
+
+// ---------- subcommands ----------
+
+func baselineTree(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	query := url.Values{}
+	if noSections, _ := cmd.Flags().GetBool("no-sections"); noSections {
+		query.Set("sections", "false")
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, base+"/tree?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var tree baselineCLITree
+	if json.Unmarshal(raw, &tree) != nil {
+		return baselineFailure(1, "invalid baseline tree response")
+	}
+	if len(tree.Pages) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "(no pages; enable engineering and create the first page)")
+		return nil
+	}
+	byID := map[string]string{}
+	for _, page := range tree.Pages {
+		byID[page.ID] = page.Slug
+	}
+	for _, page := range tree.Pages {
+		if page.ArchivedAt != nil {
 			continue
 		}
-		name := fmt.Sprintf("%02d-%s.md", i+1, strings.ReplaceAll(chapter, ":", "-"))
-		for j, builtin := range engineering.Chapters {
-			if chapter == builtin {
-				name = filenames[j]
-				break
+		fmt.Fprintf(cmd.OutOrStdout(), "%s%s v%d %s\n", strings.Repeat("  ", page.Depth-1), page.Slug, page.currentRevision(), page.Title)
+		if page.Current != nil && page.Current.Kind != "" {
+			// sections only in text mode when present
+		}
+		for _, section := range page.Sections {
+			if section.Level <= 2 {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  # %s\n", strings.Repeat("  ", page.Depth-1), section.Title)
 			}
 		}
-		path := filepath.Join(dir, name)
-		if err := baselineWriteSnapshot(path, content); err != nil {
-			return err
+	}
+	archived := 0
+	for _, page := range tree.Pages {
+		if page.ArchivedAt != nil {
+			archived++
 		}
-		files = append(files, path)
 	}
-	if single != "" {
-		if err := baselineWriteSnapshot(single, combined.String()); err != nil {
-			return err
-		}
-		files = append(files, single)
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Exported %d read-only baseline snapshot(s).\n", len(files))
-	if mustString(cmd, "output") == "json" {
-		return cli.PrintJSON(cmd.OutOrStdout(), map[string]any{"files": files})
-	}
-	for _, p := range files {
-		fmt.Fprintln(cmd.OutOrStdout(), p)
+	if archived > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "(%d archived page(s); restore with `restore`)\n", archived)
 	}
 	return nil
 }
-func baselineWriteSnapshot(path, content string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return baselineFailure(1, "cannot create snapshot directory")
+
+func (p baselineCLITreePage) currentRevision() int32 {
+	if p.Current != nil {
+		return p.Current.Number
 	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return baselineFailure(1, "cannot open snapshot directory")
+	return p.CurrentRevisionNumber
+}
+
+func baselineGet(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	query := url.Values{}
+	page, section, revision := mustString(cmd, "page"), mustString(cmd, "section"), mustString(cmd, "revision")
+	if page != "" {
+		query.Set("page", "")
 	}
-	defer root.Close()
-	name := filepath.Base(path)
-	previous, statErr := root.Lstat(name)
-	if statErr == nil && !previous.Mode().IsRegular() {
-		return baselineFailure(1, "snapshot target must be a regular file")
-	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return baselineFailure(1, "cannot inspect snapshot target")
+	output := mustString(cmd, "output")
+	if section != "" && page == "" {
+		// Cross-page section lookup falls back to tree + per-page reads.
+		return baselineGetSectionAcrossPages(ctx, cmd, client, base, section)
 	}
-	temp := ".baseline-" + rand.Text()
-	f, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return baselineFailure(1, "cannot create snapshot file")
+	if page == "" {
+		return baselineFailure(2, "--page is required (or --section for a cross-page lookup)")
 	}
-	defer root.Remove(temp)
-	_, writeErr := io.WriteString(f, content)
-	if writeErr == nil {
-		writeErr = f.Chmod(0444)
+	path := base + "/pages/" + url.PathEscape(page)
+	if revision != "" {
+		query.Set("revision", revision)
 	}
-	closeErr := f.Close()
-	if writeErr != nil || closeErr != nil {
-		return baselineFailure(1, "cannot write snapshot file")
+	if section != "" {
+		query.Set("section", section)
 	}
-	// Windows cannot replace a read-only destination. Restore its original
-	// mode if replacement fails; the new snapshot is already read-only.
-	if runtime.GOOS == "windows" && previous != nil {
-		if err := root.Chmod(name, previous.Mode().Perm()|0200); err != nil {
-			return baselineFailure(1, "cannot prepare snapshot replacement")
+	if output == "json" {
+		query.Set("with", "links,backlinks,related_issues")
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, path+"?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if output == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var out struct {
+		Page        baselineCLIPage     `json:"page"`
+		Revision    baselineCLIRevision `json:"revision"`
+		Content     string              `json:"content_markdown"`
+		Sections    []struct {
+			Page   string `json:"page"`
+			Anchor string `json:"anchor"`
+			Title  string `json:"title"`
+			Body   string `json:"content_markdown"`
+		} `json:"sections"`
+		ReferencedSections []struct {
+			Page   string `json:"page"`
+			Anchor string `json:"anchor"`
+			Title  string `json:"title"`
+			Definition string `json:"definition"`
+			Why    string `json:"why"`
+		} `json:"referenced_sections"`
+	}
+	if json.Unmarshal(raw, &out) != nil || out.Page.Slug == "" {
+		return baselineFailure(1, "invalid baseline page response")
+	}
+	if len(out.Sections) > 0 {
+		for _, s := range out.Sections {
+			fmt.Fprintf(cmd.OutOrStdout(), "# %s\n\n%s\n", s.Title, s.Body)
 		}
-	}
-	if err := root.Rename(temp, name); err != nil {
-		if runtime.GOOS == "windows" && previous != nil {
-			_ = root.Chmod(name, previous.Mode().Perm())
+		for _, ref := range out.ReferencedSections {
+			fmt.Fprintf(cmd.OutOrStdout(), "→ [%s] %s\n", ref.Page, ref.Title)
+			if ref.Definition != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", ref.Definition)
+			}
 		}
-		return baselineFailure(1, "cannot replace snapshot file")
+		return nil
+	}
+	fmt.Fprint(cmd.OutOrStdout(), out.Content)
+	if output == "text" {
+		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
+}
+
+func baselineGetSectionAcrossPages(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base, section string) error {
+	var tree baselineCLITree
+	if err := client.GetJSON(ctx, base+"/tree", &tree); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return baselineFailure(2, "cross-page --section reads require --page with --output json")
+	}
+	found := false
+	for _, page := range tree.Pages {
+		for _, s := range page.Sections {
+			if strings.Contains(strings.ToLower(s.Title), strings.ToLower(section)) || strings.Contains(strings.ToLower(s.Anchor), strings.ToLower(section)) {
+				found = true
+				var raw json.RawMessage
+				path := base + "/pages/" + url.PathEscape(page.Slug) + "?" + url.Values{"section": {section}}.Encode()
+				if err := client.GetJSON(ctx, path, &raw); err != nil {
+					return baselineRequestError(err, false)
+				}
+				var out struct {
+					Sections []struct {
+						Title string `json:"title"`
+						Body  string `json:"content_markdown"`
+					} `json:"sections"`
+					ReferencedSections []struct {
+						Page   string `json:"page"`
+						Title  string `json:"title"`
+						Definition string `json:"definition"`
+						Why    string `json:"why"`
+					} `json:"referenced_sections"`
+				}
+				if json.Unmarshal(raw, &out) != nil {
+					return baselineFailure(1, "invalid baseline section response")
+				}
+				for _, s := range out.Sections {
+					fmt.Fprintf(cmd.OutOrStdout(), "[%s] # %s\n\n%s\n", page.Slug, s.Title, s.Body)
+				}
+				for _, ref := range out.ReferencedSections {
+					fmt.Fprintf(cmd.OutOrStdout(), "→ [%s] %s", ref.Page, ref.Title)
+					if ref.Why != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), " — %s", ref.Why)
+					}
+					fmt.Fprintln(cmd.OutOrStdout())
+				}
+			}
+		}
+	}
+	if !found {
+		return baselineFailure(2, "no section matches %q; run `multica project baseline tree <project-id>` for the outline", section)
+	}
+	return nil
+}
+
+func baselineCreate(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base, content string) error {
+	body := map[string]any{"title": mustString(cmd, "title")}
+	if flag := mustString(cmd, "slug"); flag != "" {
+		body["slug"] = flag
+	}
+	if flag := mustString(cmd, "parent"); flag != "" {
+		body["parent"] = flag
+	}
+	if flag := mustString(cmd, "after"); flag != "" {
+		body["after"] = flag
+	}
+	if content != "" {
+		body["content_markdown"] = content
+	}
+	if flag := mustString(cmd, "summary"); flag != "" {
+		body["change_summary"] = flag
+	}
+	source, err := baselineSourceIssueParam(ctx, cmd, client)
+	if err != nil {
+		return err
+	}
+	if source != nil {
+		body["source_issue_id"] = *source
+	}
+	var raw json.RawMessage
+	if err := client.PostJSON(ctx, base+"/pages", body, &raw); err != nil {
+		return baselineRequestError(err, true)
+	}
+	return baselinePrintWriteResult(cmd, raw, "created")
+}
+
+func baselineSourceIssueParam(ctx context.Context, cmd *cobra.Command, client *cli.APIClient) (*string, error) {
+	value := mustString(cmd, "source-issue")
+	if value == "" {
+		return nil, nil
+	}
+	resolved, err := baselineResolveSourceIssue(ctx, client, value)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
+}
+
+func baselineResolveSourceIssue(ctx context.Context, client *cli.APIClient, value string) (string, error) {
+	if uuidRegexp.MatchString(value) {
+		return value, nil
+	}
+	issue, err := fetchIssueRef(ctx, client, value)
+	if err != nil {
+		return "", baselineFailure(2, "cannot resolve --source-issue %q: %v", value, err)
+	}
+	return issue.ID, nil
+}
+
+func baselineWrite(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base, content string) error {
+	baseNumber, err := baselineNumber(mustString(cmd, "base"))
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"base_revision_number": baseNumber}
+	section, deleting := mustString(cmd, "section"), mustString(cmd, "delete-section")
+	switch {
+	case deleting != "":
+		body["delete_section"] = deleting
+	case section != "":
+		body["section"] = section
+		body["content_markdown"] = content
+	default:
+		body["content_markdown"] = content
+	}
+	if flag := mustString(cmd, "summary"); flag != "" {
+		body["change_summary"] = flag
+	}
+	source, err := baselineSourceIssueParam(ctx, cmd, client)
+	if err != nil {
+		return err
+	}
+	if source != nil {
+		body["source_issue_id"] = *source
+	}
+	var raw json.RawMessage
+	if err := client.PutJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/content", body, &raw); err != nil {
+		return baselineRequestError(err, true)
+	}
+	return baselinePrintWriteResult(cmd, raw, "written")
+}
+
+func baselineRenameMove(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string, renaming bool) error {
+	baseNumber, err := baselineNumber(mustString(cmd, "base"))
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"base_revision_number": baseNumber}
+	if renaming {
+		if flag := mustString(cmd, "title"); flag != "" {
+			body["title"] = flag
+		}
+		if flag := mustString(cmd, "slug"); flag != "" {
+			body["slug"] = flag
+		}
+	} else {
+		if flag := mustString(cmd, "parent"); flag != "" {
+			body["parent"] = flag
+		} else if root, _ := cmd.Flags().GetBool("root"); root {
+			body["parent"] = nil
+		}
+		if flag := mustString(cmd, "after"); flag != "" {
+			body["after"] = flag
+		}
+	}
+	if flag := mustString(cmd, "summary"); flag != "" {
+		body["change_summary"] = flag
+	}
+	source, err := baselineSourceIssueParam(ctx, cmd, client)
+	if err != nil {
+		return err
+	}
+	if source != nil {
+		body["source_issue_id"] = *source
+	}
+	var raw json.RawMessage
+	if err := client.PatchJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page")), body, &raw); err != nil {
+		return baselineRequestError(err, true)
+	}
+	return baselinePrintWriteResult(cmd, raw, map[bool]string{true: "renamed", false: "moved"}[renaming])
+}
+
+func baselineArchiveRestore(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string, archiving bool) error {
+	baseNumber, err := baselineNumber(mustString(cmd, "base"))
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"base_revision_number": baseNumber}
+	if recursive, _ := cmd.Flags().GetBool("recursive"); recursive {
+		body["recursive"] = true
+	}
+	if flag := mustString(cmd, "parent"); flag != "" {
+		body["parent"] = flag
+	}
+	if flag := mustString(cmd, "summary"); flag != "" {
+		body["change_summary"] = flag
+	}
+	source, err := baselineSourceIssueParam(ctx, cmd, client)
+	if err != nil {
+		return err
+	}
+	if source != nil {
+		body["source_issue_id"] = *source
+	}
+	action := "archive"
+	if !archiving {
+		action = "restore"
+	}
+	var raw json.RawMessage
+	if err := client.PostJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/"+action, body, &raw); err != nil {
+		return baselineRequestError(err, true)
+	}
+	return baselinePrintWriteResult(cmd, raw, action+"d")
+}
+
+func baselineHistory(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	query := url.Values{"with_content": {"false"}}
+	if flag := mustString(cmd, "limit"); flag != "" {
+		query.Set("limit", flag)
+	}
+	if flag := mustString(cmd, "before"); flag != "" {
+		query.Set("before", flag)
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/revisions?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var out struct {
+		Revisions []baselineCLIRevision `json:"revisions"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return baselineFailure(1, "invalid baseline history response")
+	}
+	for _, revision := range out.Revisions {
+		fmt.Fprintf(cmd.OutOrStdout(), "v%-4d %-8s %s\n", revision.Number, revision.Kind, revision.Summary)
+		fmt.Fprintf(cmd.OutOrStdout(), "      by %s %s at %s\n", revision.CreatedByType, revision.CreatedByID, revision.CreatedAt)
+	}
+	return nil
+}
+
+func baselineDiff(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	query := url.Values{"from": {mustString(cmd, "from")}}
+	if flag := mustString(cmd, "to"); flag != "" {
+		query.Set("to", flag)
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/diff?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var out struct {
+		Structure map[string]struct {
+			From any `json:"from"`
+			To   any `json:"to"`
+		} `json:"structure"`
+		Sections struct {
+			Added    []map[string]any `json:"added"`
+			Modified []map[string]any `json:"modified"`
+			Removed  []map[string]any `json:"removed"`
+		} `json:"sections"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return baselineFailure(1, "invalid baseline diff response")
+	}
+	if len(out.Structure) == 0 && len(out.Sections.Added) == 0 && len(out.Sections.Modified) == 0 && len(out.Sections.Removed) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "no differences")
+		return nil
+	}
+	for _, field := range []string{"title", "slug", "parent", "position", "archived"} {
+		if change, ok := out.Structure[field]; ok {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: %v → %v\n", field, change.From, change.To)
+		}
+	}
+	for _, section := range out.Sections.Added {
+		fmt.Fprintf(cmd.OutOrStdout(), "+ %v\n", section["title"])
+	}
+	for _, section := range out.Sections.Modified {
+		fmt.Fprintf(cmd.OutOrStdout(), "~ %v\n", section["title"])
+		fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", section["before"])
+		fmt.Fprintf(cmd.OutOrStdout(), "+ %s\n", section["after"])
+	}
+	for _, section := range out.Sections.Removed {
+		fmt.Fprintf(cmd.OutOrStdout(), "- %v\n", section["title"])
+	}
+	return nil
+}
+
+func baselineRollback(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	to, err := baselineNumber(mustString(cmd, "to"))
+	if err != nil {
+		return err
+	}
+	baseNumber, err := baselineNumber(mustString(cmd, "base"))
+	if err != nil {
+		return err
+	}
+	body := map[string]any{"revision_number": to, "base_revision_number": baseNumber}
+	if contentOnly, _ := cmd.Flags().GetBool("content-only"); contentOnly {
+		body["content_only"] = true
+	}
+	if flag := mustString(cmd, "summary"); flag != "" {
+		body["change_summary"] = flag
+	}
+	source, err := baselineSourceIssueParam(ctx, cmd, client)
+	if err != nil {
+		return err
+	}
+	if source != nil {
+		body["source_issue_id"] = *source
+	}
+	var raw json.RawMessage
+	if err := client.PostJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/rollback", body, &raw); err != nil {
+		return baselineRequestError(err, true)
+	}
+	return baselinePrintWriteResult(cmd, raw, "rolled back")
+}
+
+func baselineActivity(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	query := url.Values{}
+	if flag := mustString(cmd, "limit"); flag != "" {
+		query.Set("limit", flag)
+	}
+	if flag := mustString(cmd, "before"); flag != "" {
+		query.Set("before", flag)
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, base+"/activity?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return baselineFailure(1, "invalid baseline activity response")
+	}
+	for _, item := range out.Items {
+		fmt.Fprintf(cmd.OutOrStdout(), "%v v%v %v — %v (%v %v, %v)\n", item["slug"], item["number"], item["kind"], item["change_summary"], item["created_by_type"], item["created_by_id"], item["created_at"])
+	}
+	return nil
+}
+
+func baselineSearch(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base, queryString string) error {
+	query := url.Values{"q": {queryString}}
+	if flag := mustString(cmd, "limit"); flag != "" {
+		query.Set("limit", flag)
+	}
+	var raw json.RawMessage
+	if err := client.GetJSON(ctx, base+"/search?"+query.Encode(), &raw); err != nil {
+		return baselineRequestError(err, false)
+	}
+	if mustString(cmd, "output") == "json" {
+		return cli.PrintJSON(cmd.OutOrStdout(), raw)
+	}
+	var out struct {
+		Results []struct {
+			Slug          string `json:"slug"`
+			Title         string `json:"title"`
+			SectionTitle  string `json:"section_title"`
+			Snippet       string `json:"snippet"`
+			Match         string `json:"match"`
+		} `json:"results"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return baselineFailure(1, "invalid baseline search response")
+	}
+	for _, hit := range out.Results {
+		section := hit.SectionTitle
+		if section != "" {
+			section = "#" + section
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "[%s%s] %s (%s)\n    %s\n", hit.Slug, section, hit.Title, hit.Match, hit.Snippet)
+	}
+	if len(out.Results) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "no matches for %q\n", queryString)
+	}
+	return nil
+}
+
+func baselineExport(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string) error {
+	var bodies struct {
+		Results []struct {
+			PageID       string `json:"page_id"`
+			Slug         string `json:"slug"`
+			Title        string `json:"title"`
+			Revision     int32  `json:"revision_number"`
+			Content      string `json:"content_markdown"`
+		} `json:"results"`
+	}
+	// Reuse search's SQL shape by requesting every page through the tree and
+	// one page read per slug.
+	var tree baselineCLITree
+	if err := client.GetJSON(ctx, base+"/tree?sections=false", &tree); err != nil {
+		return baselineRequestError(err, false)
+	}
+	type exported struct {
+		slug    string
+		title   string
+		number  int32
+		content string
+	}
+	pages := make([]exported, 0, len(tree.Pages))
+	for _, page := range tree.Pages {
+		if page.ArchivedAt != nil {
+			continue
+		}
+		var raw json.RawMessage
+		if err := client.GetJSON(ctx, base+"/pages/"+url.PathEscape(page.Slug), &raw); err != nil {
+			return baselineRequestError(err, false)
+		}
+		var out struct {
+			Page     baselineCLIPage     `json:"page"`
+			Revision baselineCLIRevision `json:"revision"`
+			Content  string              `json:"content_markdown"`
+		}
+		if json.Unmarshal(raw, &out) != nil {
+			return baselineFailure(1, "invalid baseline page response")
+		}
+		pages = append(pages, exported{out.Page.Slug, out.Page.Title, out.Revision.Number, out.Content})
+	}
+	_ = bodies
+	single := mustString(cmd, "single-file")
+	if single != "" {
+		var sb strings.Builder
+		for _, page := range pages {
+			sb.WriteString(baselineExportHeader(page.slug, page.title, page.number))
+			sb.WriteString(page.content)
+			sb.WriteString("\n\n")
+		}
+		return os.WriteFile(single, []byte(sb.String()), 0o644)
+	}
+	dir := mustString(cmd, "dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return baselineFailure(1, "cannot create --dir: %v", err)
+	}
+	for _, page := range pages {
+		name := filepath.Join(dir, page.slug+".md")
+		var sb strings.Builder
+		sb.WriteString(baselineExportHeader(page.slug, page.title, page.number))
+		sb.WriteString(page.content)
+		sb.WriteString("\n")
+		if err := os.WriteFile(name, []byte(sb.String()), 0o644); err != nil {
+			return baselineFailure(1, "cannot write %s: %v", name, err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", name)
+	}
+	return nil
+}
+
+func baselineExportHeader(slug, title string, number int32) string {
+	return fmt.Sprintf("---\nslug: %s\ntitle: %q\nrevision: %d\nexported_at: %s\n---\n\n", slug, title, number, time.Now().UTC().Format(time.RFC3339))
 }
