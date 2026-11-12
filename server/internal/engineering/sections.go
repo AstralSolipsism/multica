@@ -89,8 +89,8 @@ func scanHeadings(content string) []documentHeading {
 	return headings
 }
 
-func Index(chapter, content string) ([]Heading, error) {
-	if err := validate(chapter, content); err != nil {
+func Index(content string) ([]Heading, error) {
+	if err := validate(content); err != nil {
 		return nil, err
 	}
 	out := []Heading{}
@@ -126,15 +126,15 @@ func matchingHeadings(headings []documentHeading, query string) []int {
 	return partial
 }
 
-func MergeSection(chapter, before, query, replacement string, deleting bool) (string, error) {
+func MergeSection(before, query, replacement string, deleting bool) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" || strings.ContainsAny(query, "\r\n\x00") || deleting && replacement != "" {
 		return "", &Error{"invalid_request"}
 	}
-	if err := validate(chapter, before); err != nil {
+	if err := validate(before); err != nil {
 		return "", err
 	}
-	if err := validate(chapter, replacement); err != nil {
+	if err := validate(replacement); err != nil {
 		return "", err
 	}
 	headings := scanHeadings(before)
@@ -173,25 +173,25 @@ func MergeSection(chapter, before, query, replacement string, deleting bool) (st
 		replacement += "\n\n"
 	}
 	merged := before[:start] + replacement + before[end:]
-	if err := validate(chapter, merged); err != nil {
+	if err := validate(merged); err != nil {
 		return "", err
 	}
 	return merged, nil
 }
 
-type ChapterContent struct {
-	Chapter string
+type PageContent struct {
+	Slug    string
 	Content string
 }
 
 type SectionSlice struct {
-	Chapter string `json:"chapter"`
+	Page string `json:"page"`
 	Heading
 	ContentMarkdown string `json:"content_markdown"`
 }
 
 type ReferencedSection struct {
-	Chapter string `json:"chapter"`
+	Page string `json:"page"`
 	Heading
 	Definition string `json:"definition"`
 	Why        string `json:"why"`
@@ -219,24 +219,24 @@ func sectionWhy(body string) string {
 	return ""
 }
 
-func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, error) {
+func ReadSections(pages []PageContent, page, query string) (Slice, error) {
 	out := Slice{Sections: []SectionSlice{}, ReferencedSections: []ReferencedSection{}}
 	if strings.TrimSpace(query) == "" {
 		return out, &Error{"invalid_request"}
 	}
 	type located struct {
-		chapter, content string
+		page, content string
 		documentHeading
 	}
 	all, scope := []located{}, []documentHeading{}
 	scopeIDs := []int{}
-	for _, c := range chapters {
-		if err := validate(c.Chapter, c.Content); err != nil {
+	for _, c := range pages {
+		if err := validate(c.Content); err != nil {
 			return out, err
 		}
 		for _, h := range scanHeadings(c.Content) {
-			all = append(all, located{c.Chapter, c.Content, h})
-			if chapter == "" || chapter == c.Chapter {
+			all = append(all, located{c.Slug, c.Content, h})
+			if page == "" || page == c.Slug {
 				scope = append(scope, h)
 				scopeIDs = append(scopeIDs, len(all)-1)
 			}
@@ -251,10 +251,10 @@ func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, erro
 	for _, match := range matches {
 		i := scopeIDs[match]
 		s := all[i]
-		out.Sections = append(out.Sections, SectionSlice{s.chapter, s.Heading, s.content[s.start:s.end]})
+		out.Sections = append(out.Sections, SectionSlice{s.page, s.Heading, s.content[s.start:s.end]})
 		bodies = append(bodies, s.content[s.bodyStart:s.end])
 		for j, other := range all {
-			if other.chapter == s.chapter && other.start >= s.start && other.start < s.end {
+			if other.page == s.page && other.start >= s.start && other.start < s.end {
 				selected[j] = true
 			}
 		}
@@ -270,8 +270,29 @@ func ReadSections(chapters []ChapterContent, chapter, query string) (Slice, erro
 			continue
 		}
 		if refs[strings.ToLower(s.Anchor)] || refs[strings.ToLower(s.Title)] || s.Title != "" && strings.Contains(lowerBody, strings.ToLower(s.Title)) {
-			out.ReferencedSections = append(out.ReferencedSections, ReferencedSection{s.chapter, s.Heading, paragraph(s.content[s.bodyStart:s.ownEnd]), sectionWhy(s.content[s.bodyStart:s.end])})
+			out.ReferencedSections = append(out.ReferencedSections, ReferencedSection{s.page, s.Heading, paragraph(s.content[s.bodyStart:s.ownEnd]), sectionWhy(s.content[s.bodyStart:s.end])})
 		}
 	}
 	return out, nil
+}
+
+// SectionSubtree returns a section's markdown including descendants; section
+// writes compare it byte-for-byte when deciding orthogonal auto-rebase.
+func SectionSubtree(content, query string) (string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", &Error{"invalid_request"}
+	}
+	if err := validate(content); err != nil {
+		return "", err
+	}
+	matches := exactMatchingHeadings(scanHeadings(content), query)
+	if len(matches) > 1 {
+		return "", &Error{"baseline_section_ambiguous"}
+	}
+	if len(matches) == 0 {
+		return "", &Error{"baseline_section_not_found"}
+	}
+	h := scanHeadings(content)[matches[0]]
+	return content[h.start:h.end], nil
 }

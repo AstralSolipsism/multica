@@ -1,0 +1,212 @@
+{
+  "description": "Shared golden fixture for wiki-link parsing and resolution. Loaded by Go (internal/engineering) and vitest (packages/core) to lock forward/backward link consistency.",
+  "pages": [
+    {
+      "slug": "overview",
+      "title": "项目概览",
+      "content": "# 项目概览\n\n项目简介。\n\n## [KEY-1] 目标与边界\n\n目标正文。\n\n## 核心流程\n\n流程正文。"
+    },
+    {
+      "slug": "architecture",
+      "title": "架构",
+      "content": "# 架构\n\n架构总览。\n\n## 分层\n\n分层正文，见 [[overview]]。\n\n## 重名小节\n\n重名正文A。"
+    },
+    {
+      "slug": "auth",
+      "title": "认证服务",
+      "content": "# 认证服务\n\n引用 [[overview]]、[[架构]]、[[overview#核心流程]]、[[#令牌模型]]、[[目标与边界]]、[[KEY-1]]、[[missing-page]]、[[重名小节]]、行内代码 `[[architecture]]` 与代码块：\n\n```\n[[architecture]]\n```\n\n## 令牌模型\n\n令牌正文。"
+    },
+    {
+      "slug": "scheduler",
+      "title": "任务调度",
+      "content": "# 任务调度\n\n见 [[认证服务]] 与 [[archived-page]]，阶段见 [[stage:2]]。\n\n## 重名小节\n\n重名正文B。"
+    },
+    {
+      "slug": "archived-page",
+      "title": "已归档页",
+      "archived": true,
+      "content": "归档来源 [[overview]]。"
+    },
+    {
+      "slug": "selfref",
+      "title": "自引用",
+      "content": "# 自引用\n\n自引用 [[selfref]] 与 [[selfref#自身小节]]。\n\n## 自身小节\n\n正文。"
+    }
+  ],
+  "extract": {
+    "overview": [],
+    "architecture": [
+      "overview"
+    ],
+    "auth": [
+      "overview",
+      "架构",
+      "overview#核心流程",
+      "#令牌模型",
+      "目标与边界",
+      "KEY-1",
+      "missing-page",
+      "重名小节"
+    ],
+    "scheduler": [
+      "认证服务",
+      "archived-page",
+      "stage:2"
+    ],
+    "selfref": [
+      "selfref",
+      "selfref#自身小节"
+    ]
+  },
+  "cases": [
+    {
+      "page": "architecture",
+      "raw": "overview",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "overview"
+    },
+    {
+      "page": "auth",
+      "raw": "overview",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "overview"
+    },
+    {
+      "page": "auth",
+      "raw": "overview#核心流程",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "overview",
+      "section_anchor": "核心流程"
+    },
+    {
+      "page": "auth",
+      "raw": "#令牌模型",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "auth",
+      "section_anchor": "令牌模型"
+    },
+    {
+      "page": "auth",
+      "raw": "目标与边界",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "overview",
+      "section_anchor": "KEY-1"
+    },
+    {
+      "page": "auth",
+      "raw": "KEY-1",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "overview",
+      "section_anchor": "KEY-1"
+    },
+    {
+      "page": "auth",
+      "raw": "missing-page",
+      "kind": "page",
+      "state": "missing"
+    },
+    {
+      "page": "auth",
+      "raw": "重名小节",
+      "kind": "page",
+      "state": "ambiguous"
+    },
+    {
+      "page": "scheduler",
+      "raw": "认证服务",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "auth"
+    },
+    {
+      "page": "scheduler",
+      "raw": "archived-page",
+      "kind": "page",
+      "state": "missing"
+    },
+    {
+      "page": "scheduler",
+      "raw": "stage:2",
+      "kind": "stage",
+      "state": "resolved"
+    },
+    {
+      "page": "selfref",
+      "raw": "selfref",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "selfref"
+    },
+    {
+      "page": "selfref",
+      "raw": "selfref#自身小节",
+      "kind": "page",
+      "state": "resolved",
+      "target_slug": "selfref",
+      "section_anchor": "自身小节"
+    }
+  ],
+  "backlinks": [
+    {
+      "target": "overview",
+      "expect": [
+        {
+          "slug": "architecture",
+          "section_anchor": ""
+        },
+        {
+          "slug": "auth",
+          "section_anchor": ""
+        },
+        {
+          "slug": "auth",
+          "section_anchor": "核心流程"
+        },
+        {
+          "slug": "auth",
+          "section_anchor": "KEY-1"
+        },
+        {
+          "slug": "auth",
+          "section_anchor": "KEY-1"
+        }
+      ]
+    },
+    {
+      "target": "architecture",
+      "expect": [
+        {
+          "slug": "auth",
+          "section_anchor": ""
+        }
+      ]
+    },
+    {
+      "target": "auth",
+      "expect": [
+        {
+          "slug": "scheduler",
+          "section_anchor": ""
+        }
+      ]
+    },
+    {
+      "target": "scheduler",
+      "expect": []
+    },
+    {
+      "target": "selfref",
+      "expect": []
+    },
+    {
+      "target": "missing-target",
+      "expect": []
+    }
+  ]
+}
