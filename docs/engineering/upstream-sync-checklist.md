@@ -99,7 +99,7 @@ an upstream insertion requires updating this ledger in the same PR.
 | `apps/desktop/src/renderer/src/App.tsx` | re-auth destination restore, logout clear, expiry preserve | `engineeringReauthDestination` etc. (`platform/engineering-deep-links.ts`) | 5 |
 | `apps/desktop/src/renderer/src/stores/tab-store.ts` | `?page=&section=&thread=` landing on a matched tab | `applyEngineeringWikiLanding` (`platform/engineering-deep-links.ts`) | 4 |
 | `apps/desktop/src/renderer/src/routes.tsx` | desktop route entry | `ProjectEngineeringPage` | 4 |
-| `packages/core/paths/paths.ts` | `projectEngineering(id, target?: {page?, section?, thread?})` path builder | — | 2 |
+| `packages/core/paths/paths.ts` | `projectEngineering(id, target?: {page?, section?, thread?})` path builder | — | 9 |
 | `packages/views/projects/components/index.ts` | barrel export | `EngineeringOverview` | 1 |
 | `packages/views/i18n/resources-types.ts` | locale resource typing | `engineering.json` | 2 |
 | `packages/core/diagnostics/diagnostic-context.ts` | redacted path pattern | — | 1 |
@@ -113,7 +113,7 @@ an upstream insertion requires updating this ledger in the same PR.
 
 "Expected lines" uses one mechanical metric: added lines vs the recorded
 upstream base that mention an engineering/baseline identifier
-(`git diff -U0 <base> HEAD -- <file>`). Table total: 55 lines. When a file's
+(`git diff -U0 <base> HEAD -- <file>`). Table total: 58 lines. When a file's
 residual exceeds its expected value after a sync, restore the thin plug before
 merging.
 
