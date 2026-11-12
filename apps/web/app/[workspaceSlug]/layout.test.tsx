@@ -118,8 +118,8 @@ beforeEach(() => {
 });
 
 describe("WorkspaceLayout", () => {
-  it("preserves the full engineering candidate destination when login is required", async () => {
-    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+  it("preserves the full engineering wiki destination when login is required", async () => {
+    const next = "/acme/projects/p1/engineering?page=rev-1";
     state.user = null;
     state.pathname = "/acme/projects/p1/engineering";
     window.history.replaceState({}, "", next);

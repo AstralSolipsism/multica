@@ -3,44 +3,48 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearPendingEngineeringDestination,
   consumeEngineeringDestinationForReauth,
-  isEngineeringCandidatePath,
+  isEngineeringWikiPath,
   preserveEngineeringDestinationForReauth,
 } from "./engineering-deep-links";
 
-const candidatePath = "/acme/projects/p1/engineering?candidate=rev-1";
+const pagePath = "/acme/projects/p1/engineering?page=rev-1";
+const sectionPath = "/acme/projects/p1/engineering?page=rev-1&section=%E5%88%86%E5%B1%82";
+const threadPath = "/acme/projects/p1/engineering?thread=thread-1";
 
 beforeEach(() => {
   clearPendingEngineeringDestination();
 });
 
-describe("isEngineeringCandidatePath", () => {
-  it("matches only project engineering URLs with a candidate", () => {
-    expect(isEngineeringCandidatePath(candidatePath)).toBe(true);
-    expect(isEngineeringCandidatePath(`${candidatePath}#diff`)).toBe(true);
-    expect(isEngineeringCandidatePath("/acme/projects/p1/engineering")).toBe(false);
-    expect(isEngineeringCandidatePath("/acme/projects/p1/engineering?candidate=")).toBe(false);
-    expect(isEngineeringCandidatePath("/acme/projects/p1?candidate=rev-1")).toBe(false);
-    expect(isEngineeringCandidatePath("/acme/issues?candidate=rev-1")).toBe(false);
+describe("isEngineeringWikiPath", () => {
+  it("matches only project engineering URLs with a wiki target", () => {
+    expect(isEngineeringWikiPath(pagePath)).toBe(true);
+    expect(isEngineeringWikiPath(`${pagePath}#diff`)).toBe(true);
+    expect(isEngineeringWikiPath(sectionPath)).toBe(true);
+    expect(isEngineeringWikiPath(threadPath)).toBe(true);
+    expect(isEngineeringWikiPath("/acme/projects/p1/engineering")).toBe(false);
+    expect(isEngineeringWikiPath("/acme/projects/p1/engineering?page=")).toBe(false);
+    expect(isEngineeringWikiPath("/acme/projects/p1?page=rev-1")).toBe(false);
+    expect(isEngineeringWikiPath("/acme/issues?page=rev-1")).toBe(false);
   });
 });
 
 describe("engineering re-auth destination", () => {
   it("restores once for the same account", () => {
-    preserveEngineeringDestinationForReauth("user-1", candidatePath);
+    preserveEngineeringDestinationForReauth("user-1", pagePath);
 
-    expect(consumeEngineeringDestinationForReauth("user-1")).toBe(candidatePath);
+    expect(consumeEngineeringDestinationForReauth("user-1")).toBe(pagePath);
     expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
   });
 
   it("does not restore into a different account", () => {
-    preserveEngineeringDestinationForReauth("user-1", candidatePath);
+    preserveEngineeringDestinationForReauth("user-1", pagePath);
 
     expect(consumeEngineeringDestinationForReauth("user-2")).toBeNull();
     expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
   });
 
-  it("clears on explicit logout and rejects non-candidate paths", () => {
-    preserveEngineeringDestinationForReauth("user-1", candidatePath);
+  it("clears on explicit logout and rejects non-wiki paths", () => {
+    preserveEngineeringDestinationForReauth("user-1", pagePath);
     clearPendingEngineeringDestination();
     expect(consumeEngineeringDestinationForReauth("user-1")).toBeNull();
 

@@ -2,7 +2,7 @@ import { workspaceSlugForPath } from "@multica/core/paths";
 
 let pendingDestination: { userId: string; path: string } | null = null;
 
-export function isEngineeringCandidatePath(path: string): boolean {
+export function isEngineeringWikiPath(path: string): boolean {
   const queryIndex = path.indexOf("?");
   const hashIndex = path.indexOf("#");
   if (queryIndex === -1 || (hashIndex !== -1 && hashIndex < queryIndex)) {
@@ -25,8 +25,8 @@ export function isEngineeringCandidatePath(path: string): boolean {
     queryIndex + 1,
     hashIndex === -1 ? undefined : hashIndex,
   );
-  const candidate = new URLSearchParams(search).get("candidate");
-  return candidate !== null && candidate.length > 0;
+  const params = new URLSearchParams(search);
+  return ["page", "section", "thread"].some((key) => (params.get(key) ?? "").length > 0);
 }
 
 export function preserveEngineeringDestinationForReauth(
@@ -34,7 +34,7 @@ export function preserveEngineeringDestinationForReauth(
   path: string | null | undefined,
 ): void {
   pendingDestination =
-    userId && path && isEngineeringCandidatePath(path)
+    userId && path && isEngineeringWikiPath(path)
       ? { userId, path }
       : null;
 }
@@ -86,13 +86,13 @@ interface CandidateLandingTab {
  * reference. `resourceKeyForUrl` is injected from the tab store for the same
  * cycle-avoidance reason.
  */
-export function applyEngineeringCandidateLanding<T extends CandidateLandingTab>(
+export function applyEngineeringWikiLanding<T extends CandidateLandingTab>(
   tabs: T[],
   matched: T,
   url: string,
   resourceKeyForUrl: (url: string) => string,
 ): { tabs: T[]; tab: T } {
-  if (!isEngineeringCandidatePath(url) || matched.url === url) {
+  if (!isEngineeringWikiPath(url) || matched.url === url) {
     return { tabs, tab: matched };
   }
   const landed: T = {

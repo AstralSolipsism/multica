@@ -130,11 +130,11 @@ describe("openInNewTab", () => {
     expect(group.activeTabId).toBe(agents.id);
   });
 
-  it("updates the existing engineering tab when a new candidate arrives", () => {
+  it("updates the existing engineering tab when a new wiki page arrives", () => {
     const store = useTabStore.getState();
     const issuesId = acmeGroup().activeTabId;
     store.openTab(
-      "/acme/projects/p1/engineering?candidate=rev-1",
+      "/acme/projects/p1/engineering?page=rev-1",
       "Engineering",
       { activate: true },
     );
@@ -144,14 +144,14 @@ describe("openInNewTab", () => {
 
     act(() => {
       getAdapter().openInNewTab!(
-        "/acme/projects/p1/engineering?candidate=rev-2",
+        "/acme/projects/p1/engineering?page=rev-2",
         "Engineering",
       );
     });
 
     const active = getActiveTab(useTabStore.getState())!;
     expect(active.id).toBe(engineeringId);
-    expect(active.url).toBe("/acme/projects/p1/engineering?candidate=rev-2");
+    expect(active.url).toBe("/acme/projects/p1/engineering?page=rev-2");
     expect(acmeGroup().tabs).toHaveLength(2);
   });
 

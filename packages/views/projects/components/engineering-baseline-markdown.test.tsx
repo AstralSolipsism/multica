@@ -1,72 +1,76 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithI18n } from "../../test/i18n";
-import { BaselineMarkdown, BaselineWikiProvider } from "./engineering-baseline-markdown";
-import { parseBaselineChapter } from "./engineering-baseline-utils";
+import { WikiMarkdown } from "./engineering-baseline-markdown";
+import type { WikiLink, WikiTreeSection } from "@multica/core/api";
 
-const markdownRenders = vi.hoisted(() => ({ count: 0 }));
-vi.mock("react-markdown", async (load) => {
-  const actual = await load<typeof import("react-markdown")>();
-  return {
-    ...actual,
-    default: (props: Parameters<typeof actual.default>[0]) => {
-      markdownRenders.count += 1;
-      return actual.default(props);
-    },
-  };
-});
-vi.mock("../../issues/utils/status-label", () => ({
-  useStatusLabel: () => (status: string) => status,
+vi.mock("../../rich-content/rich-code-block", () => ({
+  isRichFenceLanguage: (language: string) => language === "mermaid" || language === "html",
+  RichFenceBlock: ({ body }: { body: string }) => <div data-testid="rich-fence">{body}</div>,
+  CodeBlockShell: ({ code }: { code: string }) => <pre data-testid="code-shell">{code}</pre>,
+  StaticCodeBody: ({ body }: { body: string }) => <code>{body}</code>,
 }));
 
-const sections = parseBaselineChapter("architecture", "## Billing Ledger\n\nOwns invoices.\n\n## Checkout\n\nUses the Billing Ledger.").sections;
+const sections: WikiTreeSection[] = [
+  { anchor: "billing-ledger", title: "Billing Ledger", level: 2 },
+  { anchor: "checkout", title: "Checkout", level: 2 },
+];
 
-function wiki(lens: "understand" | "manage" = "manage") {
+function link(overrides: Partial<WikiLink>): WikiLink {
   return {
-    lens,
-    workspaceId: "ws-1",
-    chapters: [{ chapter: "architecture" as const, title: "" }],
-    sections,
-    nodes: [],
-    stages: [],
-    relations: new Map(),
-    referenceCounts: new Map(),
-    onNavigate: () => {},
+    raw: "Billing Ledger", display: "Billing Ledger", target: "Billing Ledger", section: "",
+    kind: "page", state: "resolved", targetSlug: "billing-ledger", sectionAnchor: null, candidates: [],
+    ...overrides,
   };
 }
 
-function page(value: ReturnType<typeof wiki>, contents: readonly string[], tick: number) {
-  return (
-    <BaselineWikiProvider value={value}>
-      <div data-tick={tick}>
-        {sections.map((section, index) => (
-          <BaselineMarkdown key={section.key} content={contents[index] ?? section.body} currentSection={section} />
-        ))}
-      </div>
-    </BaselineWikiProvider>
-  );
-}
+describe("WikiMarkdown", () => {
+  it("renders [[wikilinks]] as chips: resolved navigable, missing dashed with create, unknown literal", async () => {
+    const onNavigate = vi.fn();
+    const onCreateMissing = vi.fn();
+    renderWithI18n(
+      <WikiMarkdown
+        markdown={"Intro with [[Billing Ledger]] and [[Ghost Page]] and [[Unresolved]] links.\n\n## Billing Ledger\n\nOwns invoices."}
+        sections={sections}
+        links={[
+          link({}),
+          link({ raw: "Ghost Page", display: "Ghost Page", target: "Ghost Page", state: "missing", targetSlug: null }),
+        ]}
+        onNavigate={onNavigate}
+        onCreateMissing={onCreateMissing}
+      />,
+    );
 
-describe("BaselineMarkdown", () => {
-  it("does not re-parse unchanged sections when the wiki re-renders", () => {
-    markdownRenders.count = 0;
-    const value = wiki();
-    const contents = sections.map((section) => section.body);
-    const view = renderWithI18n(page(value, contents, 0));
-    expect(markdownRenders.count).toBe(2);
-    expect(screen.getByRole("button", { name: "Billing Ledger" })).toBeInTheDocument();
+    const resolved = screen.getByRole("button", { name: "Billing Ledger" });
+    expect(resolved).toHaveClass("wiki-link-chip");
+    fireEvent.click(resolved);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ slug: "billing-ledger" });
 
-    // Search input, hover and read tracking re-render the whole wiki with a
-    // fresh provider object carrying the same data.
-    view.rerender(page({ ...value }, contents, 1));
-    view.rerender(page(value, contents, 2));
-    expect(markdownRenders.count).toBe(2);
+    const missing = screen.getByRole("button", { name: "Ghost Page" });
+    expect(missing.className).toContain("border-dashed");
+    fireEvent.click(missing);
+    expect(onCreateMissing).toHaveBeenCalledExactlyOnceWith("Ghost Page");
 
-    view.rerender(page(value, [contents[0]!, "Edited body."], 3));
-    expect(markdownRenders.count).toBe(3);
-    expect(screen.getByText("Edited body.")).toBeInTheDocument();
+    // No links data → the raw syntax stays visible instead of a fake chip.
+    expect(screen.getByText(/\[\[Unresolved\]\]/)).toBeInTheDocument();
+  });
 
-    view.rerender(page(wiki("understand"), [contents[0]!, "Edited body."], 4));
-    expect(markdownRenders.count).toBe(5);
+  it("derives heading ids from the tree section anchors", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown={"## Billing Ledger\n\nBody.\n\n## Checkout\n\nBody two."}
+        sections={sections}
+      />,
+    );
+    expect(document.getElementById("s-billing-ledger")).not.toBeNull();
+    expect(document.getElementById("s-checkout")).not.toBeNull();
+  });
+
+  it("upgrades mermaid fences to the rich fence block and keeps code fences copyable", () => {
+    renderWithI18n(
+      <WikiMarkdown markdown={"```mermaid\nA --> B\n```\n\n```go\nfmt.Println(1)\n```"} />,
+    );
+    expect(screen.getByTestId("rich-fence")).toHaveTextContent("A --> B");
+    expect(screen.getByTestId("code-shell")).toHaveTextContent("fmt.Println(1)");
   });
 });

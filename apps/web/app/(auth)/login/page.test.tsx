@@ -130,10 +130,10 @@ describe("LoginPage", () => {
   // packages/views/auth/login-page.test.tsx. This wrapper suite only owns web
   // platform handoff and redirect behavior.
 
-  describe("engineering candidate destination", () => {
-    const next = "/acme/projects/p1/engineering?candidate=rev-1";
+  describe("engineering wiki destination", () => {
+    const next = "/acme/projects/p1/engineering?page=rev-1";
 
-    it("returns to the exact candidate after email-code login", async () => {
+    it("returns to the exact wiki page after email-code login", async () => {
       searchParamsState.params = new URLSearchParams({ next });
       authStateRef.state.sendCode.mockResolvedValueOnce(undefined);
       authStateRef.state.verifyCode.mockResolvedValueOnce(undefined);
@@ -154,7 +154,7 @@ describe("LoginPage", () => {
       );
     });
 
-    it("carries the exact candidate through Google OAuth state", async () => {
+    it("carries the exact wiki page through Google OAuth state", async () => {
       searchParamsState.params = new URLSearchParams({ next });
       configStore.getState().setAuthConfig({
         allowSignup: true,

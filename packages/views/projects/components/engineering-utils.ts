@@ -1,12 +1,5 @@
-import type { BaselineChapter, EngineeringConfig, EngineeringStage, IssueGraphNode } from "@multica/core/api";
+import type { EngineeringConfig, EngineeringStage, IssueGraphNode } from "@multica/core/api";
 import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types";
-
-export const ENGINEERING_CHAPTERS: readonly BaselineChapter[] = [
-  "overview",
-  "domain_rules",
-  "architecture",
-  "exclusions_and_risks",
-];
 
 export const STRIXNOVA_ENGINEERING_SKILLS = [
   "strixnova-discovery",
@@ -149,4 +142,12 @@ export function strixnovaSkillBindings(agents: readonly Agent[]): StrixnovaSkill
       .sort((a, b) => STRIXNOVA_ENGINEERING_SKILLS.indexOf(a as typeof STRIXNOVA_ENGINEERING_SKILLS[number]) - STRIXNOVA_ENGINEERING_SKILLS.indexOf(b as typeof STRIXNOVA_ENGINEERING_SKILLS[number]));
     return skills.length ? [{ agent, skills }] : [];
   });
+}
+
+export type WikiActivityKindKey = "create" | "content" | "rename" | "move" | "archive" | "restore" | "rollback" | "unknown";
+
+/** Map a wiki revision kind to the i18n activityKind key; unknown kinds degrade to "unknown". */
+export function wikiActivityKindKey(kind: string): WikiActivityKindKey {
+  const known: readonly string[] = ["create", "content", "rename", "move", "archive", "restore", "rollback"];
+  return known.includes(kind) ? (kind as WikiActivityKindKey) : "unknown";
 }
