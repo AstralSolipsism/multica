@@ -32,10 +32,10 @@ function createMockWs(): WSClient {
   } as unknown as WSClient;
 }
 
-it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
-  { type: "project_engineering:updated", invalidatesHistory: false },
-  { type: "project_baseline:changed", invalidatesHistory: true },
-])("$type invalidates only the affected project's engineering queries", ({ type, invalidatesHistory }) => {
+it.each<{ type: WSEventType; invalidatesWiki: boolean }>([
+  { type: "project_engineering:updated", invalidatesWiki: false },
+  { type: "project_baseline:changed", invalidatesWiki: true },
+])("$type invalidates only the affected project's engineering queries", ({ type, invalidatesWiki }) => {
   const qc = new QueryClient();
   const ws = createMockWs();
   const stores = {
@@ -43,11 +43,10 @@ it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
   } as unknown as RealtimeSyncStores;
   const overviewKey = projectKeys.engineering("ws-1", "project-1");
   const configKey = projectKeys.engineeringConfig("ws-1", "project-1");
-  const historyKey = projectKeys.engineeringHistory("ws-1", "project-1", "overview", {});
-  const annotationsKey = projectKeys.baselineAnnotationBatches("ws-1", "project-1", {});
+  const wikiKey = projectKeys.wikiTree("ws-1", "project-1", false);
   const otherProjectKey = projectKeys.engineering("ws-1", "project-2");
   const otherWorkspaceKey = projectKeys.engineering("ws-2", "project-1");
-  for (const key of [overviewKey, configKey, historyKey, annotationsKey, otherProjectKey, otherWorkspaceKey]) {
+  for (const key of [overviewKey, configKey, wikiKey, otherProjectKey, otherWorkspaceKey]) {
     qc.setQueryData(key, null);
   }
   renderHook(() => useRealtimeSync(ws, stores), {
@@ -61,54 +60,49 @@ it.each<{ type: WSEventType; invalidatesHistory: boolean }>([
   act(() => {
     (handler as (payload: unknown) => void)({
       project_id: "project-1",
-      ...(type === "project_baseline:changed" ? { chapter: "overview" } : {}),
+      ...(type === "project_baseline:changed"
+        ? { page_id: "00000000-0000-4000-8000-000000000001", slug: "overview", change: "content", revision_number: 3 }
+        : {}),
     });
   });
 
   expect(qc.getQueryState(overviewKey)?.isInvalidated).toBe(true);
   // Baseline changes leave the configuration-only read alone.
-  expect(qc.getQueryState(configKey)?.isInvalidated).toBe(!invalidatesHistory);
-  expect(qc.getQueryState(historyKey)?.isInvalidated).toBe(invalidatesHistory);
-  // A new working revision moves server annotation projections, so
-  // project_baseline:changed must also refresh annotation caches for the
-  // affected project only; engineering:updated leaves them alone.
-  expect(qc.getQueryState(annotationsKey)?.isInvalidated).toBe(type === "project_baseline:changed");
+  expect(qc.getQueryState(configKey)?.isInvalidated).toBe(!invalidatesWiki);
+  // Page writes refresh the whole wiki subtree for the affected project only.
+  expect(qc.getQueryState(wikiKey)?.isInvalidated).toBe(invalidatesWiki);
   expect(qc.getQueryState(otherProjectKey)?.isInvalidated).toBe(false);
   expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);
   qc.clear();
 });
 
-it("project_baseline_annotation:changed invalidates every list and detail for the affected project", () => {
+it("project_baseline_comment:changed invalidates the wiki subtree for the affected project", () => {
   const qc = new QueryClient();
   const ws = createMockWs();
   const stores = {
     authStore: { getState: () => ({ user: { id: "user-1" } }) },
   } as unknown as RealtimeSyncStores;
-  const listKey = projectKeys.baselineAnnotationBatches("ws-1", "project-1", {
-    chapter: "domain_rules", state: "active",
-  });
-  const detailKey = projectKeys.baselineAnnotationBatch("ws-1", "project-1", "batch-1", {
-    state: "all", withSections: true,
-  });
-  const otherProjectKey = projectKeys.baselineAnnotationBatches("ws-1", "project-2");
-  const otherWorkspaceKey = projectKeys.baselineAnnotationBatches("ws-2", "project-1");
-  for (const key of [listKey, detailKey, otherProjectKey, otherWorkspaceKey]) qc.setQueryData(key, null);
+  const wikiKey = projectKeys.wikiTree("ws-1", "project-1", false);
+  const pageKey = projectKeys.wikiPageAll("ws-1", "project-1", "overview");
+  const otherProjectKey = projectKeys.wikiTree("ws-1", "project-2", false);
+  const otherWorkspaceKey = projectKeys.wikiTree("ws-2", "project-1", false);
+  for (const key of [wikiKey, pageKey, otherProjectKey, otherWorkspaceKey]) qc.setQueryData(key, null);
   renderHook(() => useRealtimeSync(ws, stores), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     ),
   });
-  const handler = vi.mocked(ws.on).mock.calls.find(([event]) => event === "project_baseline_annotation:changed")?.[1];
+  const handler = vi.mocked(ws.on).mock.calls.find(([event]) => event === "project_baseline_comment:changed")?.[1];
   expect(handler).toBeDefined();
 
   act(() => {
     (handler as (payload: unknown) => void)({
-      project_id: "project-1", chapter: "domain_rules", batch_id: "batch-1",
+      project_id: "project-1", page_id: "00000000-0000-4000-8000-000000000001", thread_id: "thread-1",
     });
   });
 
-  expect(qc.getQueryState(listKey)?.isInvalidated).toBe(true);
-  expect(qc.getQueryState(detailKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(wikiKey)?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(pageKey)?.isInvalidated).toBe(true);
   expect(qc.getQueryState(otherProjectKey)?.isInvalidated).toBe(false);
   expect(qc.getQueryState(otherWorkspaceKey)?.isInvalidated).toBe(false);
   qc.clear();
@@ -123,7 +117,7 @@ it("reconnect refreshes engineering reads that project-wide invalidation no long
   const keys = [
     projectKeys.engineering("ws-1", "project-1"),
     projectKeys.engineeringConfig("ws-1", "project-2"),
-    projectKeys.engineeringHistory("ws-1", "project-1", "overview", { withContent: false }),
+    projectKeys.wikiTree("ws-1", "project-1", false),
   ];
   const otherWorkspaceKey = projectKeys.engineering("ws-2", "project-1");
   for (const key of [...keys, otherWorkspaceKey]) qc.setQueryData(key, null);

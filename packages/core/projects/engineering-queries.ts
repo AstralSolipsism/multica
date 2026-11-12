@@ -1,38 +1,35 @@
-// Fork-owned engineering query keys and query options (engineering overview,
-// baseline wiki, baseline annotations). Spread into `projectKeys` and
-// re-exported from `./queries` so upstream files and existing views keep their
-// import paths (see docs/engineering/upstream-sync-checklist.md).
+// Fork-owned engineering query keys and query options (engineering overview
+// and the baseline wiki tree). Spread into `projectKeys` and re-exported from
+// `./queries` so upstream files and existing views keep their import paths
+// (see docs/engineering/upstream-sync-checklist.md).
 //
 // This module must not import `./queries`: queries.ts spreads
 // engineeringProjectKeys into projectKeys, and a back-import would make module
-// initialization order-dependent. baselineAnnotationsAll therefore re-creates
-// the projects/{wsId}/detail/{id} prefix by value; queries.test.ts pins it to
-// projectKeys.detail so an upstream key reshape cannot pass silently.
+// initialization order-dependent.
 
 import { queryOptions } from "@tanstack/react-query";
-import {
-  api,
-  type BaselineChapter,
-  type BaselineHistoryOptions,
-  type GetProjectBaselineAnnotationBatchOptions,
-  type GetProjectBaselineAnnotationBatchesOptions,
-} from "../api";
+import { api } from "../api";
 import { issueKeys } from "../issues/queries";
 
 export const engineeringProjectKeys = {
-  baselineAnnotationsAll: (wsId: string, projectId: string) =>
-    ["projects", wsId, "detail", projectId, "baseline-annotations"] as const,
-  baselineAnnotationBatches: (
-    wsId: string,
-    projectId: string,
-    options: GetProjectBaselineAnnotationBatchesOptions = {},
-  ) => [...engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId), "batches", options] as const,
-  baselineAnnotationBatch: (
-    wsId: string,
-    projectId: string,
-    batchId: string,
-    options: GetProjectBaselineAnnotationBatchOptions = {},
-  ) => [...engineeringProjectKeys.baselineAnnotationsAll(wsId, projectId), "batch", batchId, options] as const,
+  wikiRoot: (wsId: string, projectId: string) =>
+    ["project-engineering", wsId, projectId, "wiki"] as const,
+  wikiTree: (wsId: string, projectId: string, sections: boolean) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "tree", sections] as const,
+  wikiPageAll: (wsId: string, projectId: string, page: string) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "page", page] as const,
+  wikiPage: (wsId: string, projectId: string, page: string, options: Record<string, unknown>) =>
+    [...engineeringProjectKeys.wikiPageAll(wsId, projectId, page), options] as const,
+  wikiHistoryAll: (wsId: string, projectId: string, page: string) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "history", page] as const,
+  wikiHistory: (wsId: string, projectId: string, page: string, options: Record<string, unknown>) =>
+    [...engineeringProjectKeys.wikiHistoryAll(wsId, projectId, page), options] as const,
+  wikiActivity: (wsId: string, projectId: string, options: Record<string, unknown>) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "activity", options] as const,
+  wikiDiff: (wsId: string, projectId: string, page: string, from: number, to?: number) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "diff", page, from, to ?? "current"] as const,
+  wikiSearch: (wsId: string, projectId: string, q: string) =>
+    [...engineeringProjectKeys.wikiRoot(wsId, projectId), "search", q] as const,
   // Rooted outside projects/{wsId}: issue and project events invalidate that
   // prefix, and engineering reads carry every chapter body. They refresh via
   // their own realtime events, mutations and reconnect instead.
@@ -43,15 +40,6 @@ export const engineeringProjectKeys = {
     [...engineeringProjectKeys.engineeringAll(wsId, projectId), "overview"] as const,
   engineeringConfig: (wsId: string, projectId: string) =>
     [...engineeringProjectKeys.engineeringAll(wsId, projectId), "config"] as const,
-  engineeringHistoryAll: (wsId: string, projectId: string) =>
-    [...engineeringProjectKeys.engineeringAll(wsId, projectId), "history"] as const,
-  engineeringHistory: (
-    wsId: string,
-    projectId: string,
-    chapter: BaselineChapter,
-    options: BaselineHistoryOptions,
-  ) =>
-    [...engineeringProjectKeys.engineeringHistoryAll(wsId, projectId), chapter, options] as const,
   engineeringDecisionIssuesAll: (wsId: string, projectId: string) =>
     [...issueKeys.all(wsId), "engineering-decisions", projectId] as const,
   engineeringDecisionIssues: (wsId: string, projectId: string, deciderMemberId: string) =>
@@ -73,42 +61,6 @@ export function projectEngineeringConfigOptions(wsId: string, projectId: string)
   });
 }
 
-export function projectBaselineHistoryOptions(
-  wsId: string,
-  projectId: string,
-  chapter: BaselineChapter,
-  options: BaselineHistoryOptions = {},
-) {
-  return queryOptions({
-    queryKey: engineeringProjectKeys.engineeringHistory(wsId, projectId, chapter, options),
-    queryFn: () => api.getProjectBaselineHistory(wsId, projectId, chapter, options),
-  });
-}
-
-export function projectBaselineAnnotationBatchesOptions(
-  wsId: string,
-  projectId: string,
-  options: GetProjectBaselineAnnotationBatchesOptions = {},
-) {
-  return queryOptions({
-    queryKey: engineeringProjectKeys.baselineAnnotationBatches(wsId, projectId, options),
-    queryFn: () => api.getProjectBaselineAnnotationBatches(wsId, projectId, options),
-  });
-}
-
-export function projectBaselineAnnotationBatchOptions(
-  wsId: string,
-  projectId: string,
-  batchId: string,
-  options: GetProjectBaselineAnnotationBatchOptions = {},
-) {
-  const query = { state: options.state ?? "all", withSections: options.withSections ?? false } as const;
-  return queryOptions({
-    queryKey: engineeringProjectKeys.baselineAnnotationBatch(wsId, projectId, batchId, query),
-    queryFn: () => api.getProjectBaselineAnnotationBatch(wsId, projectId, batchId, query),
-  });
-}
-
 export function projectEngineeringDecisionIssuesOptions(
   wsId: string,
   projectId: string,
@@ -125,5 +77,59 @@ export function projectEngineeringDecisionIssuesOptions(
     }),
     select: (data) => data.issues,
     enabled: Boolean(wsId && projectId && deciderMemberId),
+  });
+}
+
+export function projectWikiTreeOptions(wsId: string, projectId: string, sections = false) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiTree(wsId, projectId, sections),
+    queryFn: () => api.getProjectWikiTree(wsId, projectId, { sections }),
+  });
+}
+
+export function projectWikiPageOptions(
+  wsId: string,
+  projectId: string,
+  page: string,
+  options: { revision?: number; section?: string; with?: ("links" | "backlinks" | "related_issues")[] } = {},
+) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiPage(wsId, projectId, page, options as Record<string, unknown>),
+    queryFn: () => api.getProjectWikiPage(wsId, projectId, page, options),
+  });
+}
+
+export function projectWikiHistoryOptions(wsId: string, projectId: string, page: string, options: { limit?: number; before?: number } = {}) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiHistory(wsId, projectId, page, options as Record<string, unknown>),
+    queryFn: () => api.getProjectWikiPageHistory(wsId, projectId, page, options),
+  });
+}
+
+export function projectWikiRevisionOptions(wsId: string, projectId: string, page: string, revision: number) {
+  return queryOptions({
+    queryKey: [...engineeringProjectKeys.wikiPageAll(wsId, projectId, page), "revision", revision],
+    queryFn: () => api.getProjectWikiPageRevision(wsId, projectId, page, revision),
+  });
+}
+
+export function projectWikiDiffOptions(wsId: string, projectId: string, page: string, from: number, to?: number) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiDiff(wsId, projectId, page, from, to),
+    queryFn: () => api.diffProjectWikiPage(wsId, projectId, page, { from, to }),
+  });
+}
+
+export function projectWikiActivityOptions(wsId: string, projectId: string, options: { limit?: number; before?: string } = {}) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiActivity(wsId, projectId, options as Record<string, unknown>),
+    queryFn: () => api.getProjectWikiActivity(wsId, projectId, options),
+  });
+}
+
+export function projectWikiSearchOptions(wsId: string, projectId: string, q: string, limit?: number) {
+  return queryOptions({
+    queryKey: engineeringProjectKeys.wikiSearch(wsId, projectId, q),
+    queryFn: () => api.searchProjectWiki(wsId, projectId, q, { limit }),
   });
 }

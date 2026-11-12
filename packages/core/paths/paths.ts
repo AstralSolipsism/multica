@@ -44,10 +44,13 @@ function workspaceScoped(slug: string) {
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
-    projectEngineering: (id: string, candidateId?: string) => {
+    projectEngineering: (id: string, target?: { page?: string; section?: string; thread?: string }) => {
       const path = `${ws}/projects/${encode(id)}/engineering`;
-      if (candidateId === undefined) return path;
-      const query = new URLSearchParams({ candidate: candidateId });
+      if (!target || target.page === undefined && target.section === undefined && target.thread === undefined) return path;
+      const query = new URLSearchParams();
+      if (target.page !== undefined) query.set("page", target.page);
+      if (target.section !== undefined) query.set("section", target.section);
+      if (target.thread !== undefined) query.set("thread", target.thread);
       return `${path}?${query}`;
     },
     autopilots: () => `${ws}/autopilots`,

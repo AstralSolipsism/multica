@@ -4,13 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import {
-  projectBaselineAnnotationBatchOptions,
-  projectBaselineAnnotationBatchesOptions,
-  projectBaselineHistoryOptions,
   projectEngineeringConfigOptions,
   projectEngineeringDecisionIssuesOptions,
   projectEngineeringOptions,
   projectKeys,
+  projectWikiHistoryOptions,
+  projectWikiPageOptions,
 } from "./queries";
 
 describe("project engineering queries", () => {
@@ -42,7 +41,8 @@ describe("project engineering queries", () => {
     const keys = [
       projectKeys.engineering("ws-1", "project-1"),
       projectKeys.engineeringConfig("ws-1", "project-1"),
-      projectKeys.engineeringHistory("ws-1", "project-1", "overview", { limit: 10, withContent: false }),
+      projectKeys.wikiTree("ws-1", "project-1", false),
+      projectKeys.wikiPage("ws-1", "project-1", "overview", {}),
     ];
     for (const key of keys) qc.setQueryData(key, null);
     qc.setQueryData(projectKeys.detail("ws-1", "project-1"), null);
@@ -56,13 +56,12 @@ describe("project engineering queries", () => {
     for (const key of keys) expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
-  it("roots baseline annotation keys under the project detail key", () => {
-    // engineering-queries.ts re-creates the projects/{wsId}/detail/{id}
-    // prefix by value; pin it so an upstream detail-key reshape cannot
-    // silently break annotation invalidation.
-    expect(projectKeys.baselineAnnotationsAll("ws-1", "project-1")).toEqual([
-      ...projectKeys.detail("ws-1", "project-1"),
-      "baseline-annotations",
+  it("roots wiki page keys under the per-project wiki prefix", () => {
+    expect(projectKeys.wikiRoot("ws-1", "project-1")).toEqual([
+      "project-engineering", "ws-1", "project-1", "wiki",
+    ]);
+    expect(projectKeys.wikiPageAll("ws-1", "project-1", "overview")).toEqual([
+      ...projectKeys.wikiRoot("ws-1", "project-1"), "page", "overview",
     ]);
   });
 
@@ -77,49 +76,35 @@ describe("project engineering queries", () => {
     expect(options.queryKey).toEqual(projectKeys.engineeringConfig("ws-1", "project-1"));
   });
 
-  it("scopes baseline history by workspace, project, chapter and page shape", async () => {
+  it("scopes wiki page history by workspace, project, page and page shape", async () => {
     const history = { revisions: [], hasMore: false, nextBefore: null };
-    const getProjectBaselineHistory = vi.fn().mockResolvedValue(history);
-    setApiInstance({ getProjectBaselineHistory } as unknown as ApiClient);
-    const historyOptions = projectBaselineHistoryOptions("ws-1", "project-1", "architecture", { limit: 25, before: 7, withContent: false });
+    const getProjectWikiPageHistory = vi.fn().mockResolvedValue(history);
+    setApiInstance({ getProjectWikiPageHistory } as unknown as ApiClient);
+    const historyOptions = projectWikiHistoryOptions("ws-1", "project-1", "architecture", { limit: 25, before: 7 });
 
     await expect(qc.fetchQuery(historyOptions)).resolves.toBe(history);
-    expect(getProjectBaselineHistory).toHaveBeenCalledWith(
-      "ws-1", "project-1", "architecture", { limit: 25, before: 7, withContent: false },
+    expect(getProjectWikiPageHistory).toHaveBeenCalledWith(
+      "ws-1", "project-1", "architecture", { limit: 25, before: 7 },
     );
     expect(historyOptions.queryKey).toEqual([
-      ...projectKeys.engineeringHistoryAll("ws-1", "project-1"),
-      "architecture",
-      { limit: 25, before: 7, withContent: false },
+      ...projectKeys.wikiHistoryAll("ws-1", "project-1", "architecture"),
+      { limit: 25, before: 7 },
     ]);
   });
 
-  it("keys annotation lists by filters and applies complete detail defaults", async () => {
-    const batches = { batches: [] };
-    const detail = { batch: null, reviews: [], annotations: [], sections: [] };
-    const getProjectBaselineAnnotationBatches = vi.fn().mockResolvedValue(batches);
-    const getProjectBaselineAnnotationBatch = vi.fn().mockResolvedValue(detail);
-    setApiInstance({
-      getProjectBaselineAnnotationBatches,
-      getProjectBaselineAnnotationBatch,
-    } as unknown as ApiClient);
-    const listInput = { chapter: "domain_rules", state: "all" } as const;
-    const listOptions = projectBaselineAnnotationBatchesOptions("ws-1", "project-1", listInput);
-    const detailOptions = projectBaselineAnnotationBatchOptions("ws-1", "project-1", "batch-1");
+  it("keys wiki page reads by page and read options", async () => {
+    const page = { page: null };
+    const getProjectWikiPage = vi.fn().mockResolvedValue(page);
+    setApiInstance({ getProjectWikiPage } as unknown as ApiClient);
+    const options = projectWikiPageOptions("ws-1", "project-1", "overview", { with: ["links", "backlinks"] });
 
-    await expect(qc.fetchQuery(listOptions)).resolves.toBe(batches);
-    await expect(qc.fetchQuery(detailOptions)).resolves.toBe(detail);
-
-    expect(getProjectBaselineAnnotationBatches).toHaveBeenCalledWith("ws-1", "project-1", listInput);
-    expect(getProjectBaselineAnnotationBatch).toHaveBeenCalledWith(
-      "ws-1", "project-1", "batch-1", { state: "all", withSections: false },
+    await expect(qc.fetchQuery(options)).resolves.toBe(page);
+    expect(getProjectWikiPage).toHaveBeenCalledWith(
+      "ws-1", "project-1", "overview", { with: ["links", "backlinks"] },
     );
-    expect(listOptions.queryKey).toEqual([
-      ...projectKeys.baselineAnnotationsAll("ws-1", "project-1"), "batches", listInput,
-    ]);
-    expect(detailOptions.queryKey).toEqual([
-      ...projectKeys.baselineAnnotationsAll("ws-1", "project-1"),
-      "batch", "batch-1", { state: "all", withSections: false },
+    expect(options.queryKey).toEqual([
+      ...projectKeys.wikiPageAll("ws-1", "project-1", "overview"),
+      { with: ["links", "backlinks"] },
     ]);
   });
 

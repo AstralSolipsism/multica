@@ -75,7 +75,7 @@ export type WSEventType =
   | "project:deleted"
   | "project_engineering:updated"
   | "project_baseline:changed"
-  | "project_baseline_annotation:changed"
+  | "project_baseline_comment:changed"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -745,7 +745,7 @@ export interface WSEventPayloadMap {
   "project:deleted": ProjectDeletedPayload;
   "project_engineering:updated": Eng.ProjectEngineeringUpdatedPayload;
   "project_baseline:changed": Eng.ProjectBaselineChangedPayload;
-  "project_baseline_annotation:changed": Eng.ProjectBaselineAnnotationChangedPayload;
+  "project_baseline_comment:changed": Eng.ProjectBaselineCommentChangedPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;
