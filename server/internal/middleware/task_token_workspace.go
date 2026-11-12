@@ -68,9 +68,7 @@ func checkTaskTokenWorkspaceTarget(w http.ResponseWriter, r *http.Request, queri
 			"bound_workspace_id", boundWorkspaceID,
 			"status", status,
 		)
-		if status != http.StatusForbidden || !writeLabrastroBaselineCredentialDenied(w, r) {
-			writeError(w, status, msg)
-		}
+		writeError(w, status, msg)
 		return true
 	}
 
