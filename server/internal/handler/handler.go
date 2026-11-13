@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
+	"github.com/multica-ai/multica/server/internal/connectedapps"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dbreader"
 	"github.com/multica-ai/multica/server/internal/entitlement"
@@ -336,6 +337,9 @@ type Handler struct {
 	// the composio HTTP handlers return 403 in that case. Wired in
 	// cmd/server/router.go after handler.New.
 	Composio *composio.Service
+	// ConnectedApps serves agents' app calls through the MCP gateway (MUL-8516).
+	// Wired together with Composio; nil when Composio is.
+	ConnectedApps *connectedapps.Service
 	// ChannelSupervisor owns the per-installation supervisor goroutines
 	// that hold the §4.4 WS lease and drive each channel.Channel
 	// (MUL-3620 generalized the Feishu-only Hub into this channel-agnostic
@@ -1135,7 +1139,24 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	// Try identifier format first (e.g., "JIA-42"). resolveIssueByIdentifier
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
+	visible := func(issue db.Issue) bool {
+		if !issue.ProjectID.Valid {
+			return true
+		}
+		hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+		if !ok {
+			return false
+		}
+		if !hidden.CanSeeProject(issue.ProjectID) {
+			notFound()
+			return false
+		}
+		return true
+	}
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+		if !visible(issue) {
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -1157,6 +1178,11 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	})
 	if err != nil {
 		notFound()
+		return db.Issue{}, false
+	}
+	// MUL-8472: an issue in a private project the caller cannot see does not
+	// exist for them, on every route that loads it through here.
+	if !visible(issue) {
 		return db.Issue{}, false
 	}
 	return issue, true
@@ -1328,6 +1354,11 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 
 	if item.RecipientType != "member" || uuidToString(item.RecipientID) != userID {
 		writeError(w, http.StatusNotFound, "inbox item not found")
+		return db.InboxItem{}, false
+	}
+	// An item on an issue in a private project the caller cannot see (never
+	// granted, or revoked since it was delivered) answers like a missing one.
+	if !h.requireIssueIDVisible(w, r, workspaceID, item.IssueID, http.StatusNotFound, "inbox item not found") {
 		return db.InboxItem{}, false
 	}
 	return item, true

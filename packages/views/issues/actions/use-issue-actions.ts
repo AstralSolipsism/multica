@@ -28,6 +28,7 @@ export interface UseIssueActionsResult {
     options?: IssueSurfaceMutationOptions,
   ) => void;
   openInNewTab: () => void;
+  openInDesktop?: () => void;
   togglePin: () => void;
   copyLink: () => Promise<void>;
   copyCommentLink: (commentId: string) => Promise<void>;
@@ -150,6 +151,15 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
       "_blank",
       "noopener,noreferrer",
     );
+  }, [issueId, issueIdentifier, navigation, paths]);
+
+  const openInDesktop = useCallback(() => {
+    if (!issueId) return;
+    const path = paths.issueDetail(issueIdentifier || issueId);
+    const isCurrentIssue =
+      navigation.pathname === path ||
+      navigation.pathname === paths.issueDetail(issueId);
+    navigation.openInDesktop?.(path + (isCurrentIssue ? navigation.hash : ""));
   }, [issueId, issueIdentifier, navigation, paths]);
 
   const togglePin = useCallback(() => {
@@ -306,6 +316,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     openEditDependencies,
     updateField,
     openInNewTab,
+    openInDesktop: navigation.openInDesktop ? openInDesktop : undefined,
     togglePin,
     copyLink,
     copyCommentLink,

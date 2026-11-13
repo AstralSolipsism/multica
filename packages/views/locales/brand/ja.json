@@ -25,6 +25,12 @@
     "telegram": {
       "disconnect_confirm_description": "ボットはこのワークスペースの Telegram メッセージを受信しなくなります。Labrastro 内のチャット履歴は保持され、同じエージェントから再接続できます。",
       "connect_docs_link": "手順ガイド：Labrastro エージェントを Telegram に接続する"
+    },
+    "mcp_sources": {
+      "apps": "Labrastro で接続したチームまたは個人のアカウントを、各エージェントに追加します。"
+    },
+    "connected_apps": {
+      "catalog_description": "厳選アプリにはレビュー済みの既定ルールがあります。「すべてのアプリ」は Composio で接続できるすべてを含み、Labrastro が分類できない操作は必ず確認を求めます。カスタムリストでは選んだアプリだけを許可します。"
     }
   },
   "common": {
@@ -56,6 +62,12 @@
     },
     "not_found": {
       "back_to_multica": "Labrastroに戻る"
+    }
+  },
+  "layout": {
+    "star_prompt": {
+      "body": "Labrastro がお役に立っていたら、GitHub でスターをお願いします。ほかのチームが Labrastro を見つけやすくなります。",
+      "star_label": "GitHub で Labrastro にスターする"
     }
   },
   "runtimes": {
@@ -124,6 +136,9 @@
     }
   },
   "issues": {
+    "desktop": {
+      "link_other_instance": "デスクトップアプリは別の Labrastro インスタンスに接続されています。"
+    },
     "pickers": {
       "custom_property": {
         "unknown_value_hint": "この値は新しいバージョンの Labrastro で設定されており、ここでは編集できません。アプリを更新するか、値をクリアしてください"

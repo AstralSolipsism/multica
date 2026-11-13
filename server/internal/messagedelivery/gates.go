@@ -66,7 +66,32 @@ func (s *Service) gateRunSource(ctx context.Context, d db.LabrastroMessageDelive
 	if err != nil {
 		return s.retryGate(d.ID, "load source failed", err)
 	}
-	return s.gateRunAuthority(ctx, d, ap, route.UpdatedBy)
+	if out := s.gateRunAuthority(ctx, d, ap, route.UpdatedBy); out != nil {
+		return out
+	}
+	return s.gateRunTarget(ctx, d, ap)
+}
+
+func (s *Service) gateRunTarget(ctx context.Context, d db.LabrastroMessageDelivery, ap db.Autopilot) *gateResult {
+	var target targetSnapshot
+	if err := json.Unmarshal(d.TargetSnapshot, &target); err != nil {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "invalid target snapshot")
+	}
+	if target.TargetType != TargetMember {
+		return nil
+	}
+	// Deliveries pin their recipient: an edited route cannot authorize a
+	// previously queued send to somebody else.
+	userID, err := util.ParseUUID(target.UserID)
+	if err != nil {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "invalid recipient")
+	}
+	if err := projectAuthority(ctx, s.Queries, ap.WorkspaceID, ap.ProjectID, userID); errors.Is(err, ErrAuthorizationLost) {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "recipient cannot access source project")
+	} else if err != nil {
+		return s.retryGate(d.ID, "check recipient project access failed", err)
+	}
+	return nil
 }
 
 func (s *Service) gateRunAuthority(ctx context.Context, d db.LabrastroMessageDelivery, ap db.Autopilot, userID pgtype.UUID) *gateResult {
@@ -171,7 +196,10 @@ func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageD
 		if err != nil {
 			return s.retryGate(d.ID, "load source failed", err)
 		}
-		return s.gateRunAuthority(ctx, d, ap, d.RequestedBy)
+		if out := s.gateRunAuthority(ctx, d, ap, d.RequestedBy); out != nil {
+			return out
+		}
+		return s.gateRunTarget(ctx, d, ap)
 	}
 	if !d.RequestedBy.Valid {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "diagnostic request carries no actor")
@@ -218,6 +246,11 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 	} else if err != nil {
 		return s.retryGate(d.ID, "load recipient membership failed", err)
 	}
+	if err := s.inboxSourceAuthority(ctx, d.WorkspaceID, item.IssueID, item.RecipientID); errors.Is(err, ErrAuthorizationLost) {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "recipient cannot access source issue")
+	} else if err != nil {
+		return s.retryGate(d.ID, "check recipient project access failed", err)
+	}
 	muted, err := s.inboxMuted(ctx, d.WorkspaceID, item.RecipientID, item.Type)
 	if err != nil {
 		return s.retryGate(d.ID, "check notification preference failed", err)
@@ -250,6 +283,13 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 	}
 	if issue.WorkspaceID != d.WorkspaceID || (d.SourceProjectID.Valid && issue.ProjectID != d.SourceProjectID) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "source issue left the decision's project scope")
+	}
+	matches, err := s.teamProjectMatches(ctx, d.WorkspaceID, issue.ProjectID, d.SourceProjectID)
+	if err != nil {
+		return s.retryGate(d.ID, "check source project scope failed", err)
+	}
+	if !matches {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeConditionMismatch, "private project requires an explicit project route")
 	}
 	authorizer, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		WorkspaceID: d.WorkspaceID, UserID: route.UpdatedBy,

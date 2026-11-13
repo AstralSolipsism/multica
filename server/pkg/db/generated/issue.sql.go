@@ -18,12 +18,15 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($3::uuid[] IS NULL OR project_id IS NULL OR NOT (project_id = ANY($3::uuid[])))
 GROUP BY parent_issue_id
 `
 
 type ChildIssueProgressParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	TerminalStatusKeys []string    `json:"terminal_status_keys"`
+	WorkspaceID        pgtype.UUID   `json:"workspace_id"`
+	TerminalStatusKeys []string      `json:"terminal_status_keys"`
+	HiddenProjectIds   []pgtype.UUID `json:"hidden_project_ids"`
 }
 
 type ChildIssueProgressRow struct {
@@ -33,7 +36,7 @@ type ChildIssueProgressRow struct {
 }
 
 func (q *Queries) ChildIssueProgress(ctx context.Context, arg ChildIssueProgressParams) ([]ChildIssueProgressRow, error) {
-	rows, err := q.db.Query(ctx, childIssueProgress, arg.WorkspaceID, arg.TerminalStatusKeys)
+	rows, err := q.db.Query(ctx, childIssueProgress, arg.WorkspaceID, arg.TerminalStatusKeys, arg.HiddenProjectIds)
 	if err != nil {
 		return nil, err
 	}
@@ -179,14 +182,16 @@ WHERE i.workspace_id = $1
   AND ($5::uuid[] IS NULL OR i.assignee_id = ANY($5::uuid[]))
   AND ($6::uuid IS NULL OR i.creator_id = $6)
   AND ($7::uuid IS NULL OR i.project_id = $7)
-  AND ($8::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
-  AND ($9::jsonb IS NULL OR i.metadata @> $9::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($8::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($8::uuid[])))
+  AND ($9::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
+  AND ($10::jsonb IS NULL OR i.metadata @> $10::jsonb)
   AND (
-    $10::uuid IS NULL
+    $11::uuid IS NULL
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
           SELECT sm.squad_id
@@ -194,14 +199,14 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $10::uuid
+             AND sm.member_id   = $11::uuid
           UNION
           SELECT s.id
             FROM squad s
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
           UNION
           SELECT sm.squad_id
             FROM squad_member sm
@@ -210,22 +215,23 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
   )
 `
 
 type CountIssuesParams struct {
-	WorkspaceID    pgtype.UUID   `json:"workspace_id"`
-	Status         pgtype.Text   `json:"status"`
-	Priority       pgtype.Text   `json:"priority"`
-	AssigneeID     pgtype.UUID   `json:"assignee_id"`
-	AssigneeIds    []pgtype.UUID `json:"assignee_ids"`
-	CreatorID      pgtype.UUID   `json:"creator_id"`
-	ProjectID      pgtype.UUID   `json:"project_id"`
-	Scheduled      pgtype.Bool   `json:"scheduled"`
-	MetadataFilter []byte        `json:"metadata_filter"`
-	InvolvesUserID pgtype.UUID   `json:"involves_user_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	Status           pgtype.Text   `json:"status"`
+	Priority         pgtype.Text   `json:"priority"`
+	AssigneeID       pgtype.UUID   `json:"assignee_id"`
+	AssigneeIds      []pgtype.UUID `json:"assignee_ids"`
+	CreatorID        pgtype.UUID   `json:"creator_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+	Scheduled        pgtype.Bool   `json:"scheduled"`
+	MetadataFilter   []byte        `json:"metadata_filter"`
+	InvolvesUserID   pgtype.UUID   `json:"involves_user_id"`
 }
 
 // See ListIssues for the semantics of involves_user_id.
@@ -238,6 +244,7 @@ func (q *Queries) CountIssues(ctx context.Context, arg CountIssuesParams) (int64
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.Scheduled,
 		arg.MetadataFilter,
 		arg.InvolvesUserID,
@@ -507,6 +514,9 @@ cleared_pr_exclusions AS (
 ),
 cleared_unread AS (
     DELETE FROM issue_unread WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_environments AS (
+    DELETE FROM issue_environment WHERE issue_id IN (SELECT target.id FROM target)
 )
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target)
 `
@@ -1337,7 +1347,7 @@ func (q *Queries) ListIssueGCStatuses(ctx context.Context, arg ListIssueGCStatus
 }
 
 const listIssueRefsInWorkspace = `-- name: ListIssueRefsInWorkspace :many
-SELECT id, number, title, status FROM issue
+SELECT id, number, title, status, project_id FROM issue
 WHERE workspace_id = $1
   AND id = ANY($2::uuid[])
 `
@@ -1348,10 +1358,11 @@ type ListIssueRefsInWorkspaceParams struct {
 }
 
 type ListIssueRefsInWorkspaceRow struct {
-	ID     pgtype.UUID `json:"id"`
-	Number int32       `json:"number"`
-	Title  string      `json:"title"`
-	Status string      `json:"status"`
+	ID        pgtype.UUID `json:"id"`
+	Number    int32       `json:"number"`
+	Title     string      `json:"title"`
+	Status    string      `json:"status"`
+	ProjectID pgtype.UUID `json:"project_id"`
 }
 
 // GetIssueRefInWorkspace for a page: every original the page's duplicates
@@ -1370,6 +1381,7 @@ func (q *Queries) ListIssueRefsInWorkspace(ctx context.Context, arg ListIssueRef
 			&i.Number,
 			&i.Title,
 			&i.Status,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -1394,15 +1406,17 @@ WHERE i.workspace_id = $1
   AND ($7::uuid[] IS NULL OR i.assignee_id = ANY($7::uuid[]))
   AND ($8::uuid IS NULL OR i.creator_id = $8)
   AND ($9::uuid IS NULL OR i.project_id = $9)
-  AND ($10::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
-  AND ($11::jsonb IS NULL OR i.metadata @> $11::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($10::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($10::uuid[])))
+  AND ($11::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
+  AND ($12::jsonb IS NULL OR i.metadata @> $12::jsonb)
   AND (
-    $12::uuid IS NULL
+    $13::uuid IS NULL
     -- (1) assignee is an agent owned by the user
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
     ))
     -- (2)(3)(4) assignee is a squad related to the user — three relations
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
@@ -1412,7 +1426,7 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $12::uuid
+             AND sm.member_id   = $13::uuid
           UNION
           -- (3) the squad's canonical leader is an agent owned by the user.
           -- We read squad.leader_id directly rather than relying on a
@@ -1423,7 +1437,7 @@ WHERE i.workspace_id = $1
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
           UNION
           -- (4) the squad has an agent member owned by the user
           SELECT sm.squad_id
@@ -1433,7 +1447,7 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $12::uuid
+             AND a.owner_id     = $13::uuid
     ))
   )
 ORDER BY i.position ASC, i.created_at DESC
@@ -1441,18 +1455,19 @@ LIMIT $2 OFFSET $3
 `
 
 type ListIssuesParams struct {
-	WorkspaceID    pgtype.UUID   `json:"workspace_id"`
-	Limit          int32         `json:"limit"`
-	Offset         int32         `json:"offset"`
-	Status         pgtype.Text   `json:"status"`
-	Priority       pgtype.Text   `json:"priority"`
-	AssigneeID     pgtype.UUID   `json:"assignee_id"`
-	AssigneeIds    []pgtype.UUID `json:"assignee_ids"`
-	CreatorID      pgtype.UUID   `json:"creator_id"`
-	ProjectID      pgtype.UUID   `json:"project_id"`
-	Scheduled      pgtype.Bool   `json:"scheduled"`
-	MetadataFilter []byte        `json:"metadata_filter"`
-	InvolvesUserID pgtype.UUID   `json:"involves_user_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	Limit            int32         `json:"limit"`
+	Offset           int32         `json:"offset"`
+	Status           pgtype.Text   `json:"status"`
+	Priority         pgtype.Text   `json:"priority"`
+	AssigneeID       pgtype.UUID   `json:"assignee_id"`
+	AssigneeIds      []pgtype.UUID `json:"assignee_ids"`
+	CreatorID        pgtype.UUID   `json:"creator_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+	Scheduled        pgtype.Bool   `json:"scheduled"`
+	MetadataFilter   []byte        `json:"metadata_filter"`
+	InvolvesUserID   pgtype.UUID   `json:"involves_user_id"`
 }
 
 type ListIssuesRow struct {
@@ -1499,6 +1514,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.Scheduled,
 		arg.MetadataFilter,
 		arg.InvolvesUserID,
@@ -1560,7 +1576,9 @@ WHERE i.workspace_id = $1
   AND ($5::uuid[] IS NULL OR i.assignee_id = ANY($5::uuid[]))
   AND ($6::uuid IS NULL OR i.creator_id = $6)
   AND ($7::uuid IS NULL OR i.project_id = $7)
-  AND ($8::jsonb IS NULL OR i.metadata @> $8::jsonb)
+  -- MUL-8472: private projects the caller cannot see.
+  AND ($8::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY($8::uuid[])))
+  AND ($9::jsonb IS NULL OR i.metadata @> $9::jsonb)
   -- properties_filter is a jsonb array of groups, each group an array of
   -- patterns (built by parsePropertiesFilterParam): the issue must match at
   -- least one pattern from EVERY group (AND of ORs). Three pattern shapes:
@@ -1578,10 +1596,10 @@ WHERE i.workspace_id = $1
   -- terminal-status predicate intentionally remains a filter rather than a
   -- positive index narrowing so unknown legacy status keys stay visible.
   AND (
-    $9::jsonb IS NULL
+    $10::jsonb IS NULL
     OR NOT EXISTS (
       SELECT 1
-      FROM jsonb_array_elements($9::jsonb) AS pf(alternatives)
+      FROM jsonb_array_elements($10::jsonb) AS pf(alternatives)
       WHERE NOT EXISTS (
         SELECT 1
         FROM jsonb_array_elements(pf.alternatives) AS alt(pattern)
@@ -1619,11 +1637,11 @@ WHERE i.workspace_id = $1
     )
   )
   AND (
-    $10::uuid IS NULL
+    $11::uuid IS NULL
     OR (i.assignee_type = 'agent' AND i.assignee_id IN (
           SELECT a.id FROM agent a
            WHERE a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
     OR (i.assignee_type = 'squad' AND i.assignee_id IN (
           SELECT sm.squad_id
@@ -1631,14 +1649,14 @@ WHERE i.workspace_id = $1
             JOIN squad s ON s.id = sm.squad_id
            WHERE s.workspace_id = $1
              AND sm.member_type = 'member'
-             AND sm.member_id   = $10::uuid
+             AND sm.member_id   = $11::uuid
           UNION
           SELECT s.id
             FROM squad s
             JOIN agent a ON a.id = s.leader_id
            WHERE s.workspace_id = $1
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
           UNION
           SELECT sm.squad_id
             FROM squad_member sm
@@ -1647,7 +1665,7 @@ WHERE i.workspace_id = $1
            WHERE s.workspace_id = $1
              AND sm.member_type = 'agent'
              AND a.workspace_id = $1
-             AND a.owner_id     = $10::uuid
+             AND a.owner_id     = $11::uuid
     ))
   )
 ORDER BY i.position ASC, i.created_at DESC
@@ -1661,6 +1679,7 @@ type ListOpenIssuesParams struct {
 	AssigneeIds        []pgtype.UUID `json:"assignee_ids"`
 	CreatorID          pgtype.UUID   `json:"creator_id"`
 	ProjectID          pgtype.UUID   `json:"project_id"`
+	HiddenProjectIds   []pgtype.UUID `json:"hidden_project_ids"`
 	MetadataFilter     []byte        `json:"metadata_filter"`
 	PropertiesFilter   []byte        `json:"properties_filter"`
 	InvolvesUserID     pgtype.UUID   `json:"involves_user_id"`
@@ -1704,6 +1723,7 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.HiddenProjectIds,
 		arg.MetadataFilter,
 		arg.PropertiesFilter,
 		arg.InvolvesUserID,

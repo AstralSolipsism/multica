@@ -63,9 +63,8 @@ func (s *Service) decideInboxPair(ctx context.Context, row db.ListLabrastroMessa
 	if row.IssueNumber.Valid {
 		ident = issueIdentifier(row.WorkspaceIssuePrefix, row.IssueNumber.Int32)
 	}
-	// Content is built from the source record for EVERY outcome — a
-	// suppressed marker records what would have been sent, so the audit
-	// trail explains the decision instead of leaving a hollow row.
+	// Authorized outcomes retain content for the audit trail, including
+	// preference/filter suppression. Lost source access clears it below.
 	content := buildInboxContent(row, ident, s.AppURL, row.WorkspaceSlug)
 	ref := sourceRef{
 		SourceKind:      SourceKindInbox,
@@ -87,6 +86,14 @@ func (s *Service) decideInboxPair(ctx context.Context, row db.ListLabrastroMessa
 		sourceCreatedAt: row.ItemCreatedAt.Time,
 		installationID:  row.InstallationID, targetKey: row.TargetKey,
 		kind: SourceKindInbox, content: content, ref: ref,
+	}
+	if err := s.inboxSourceAuthority(ctx, row.ItemWorkspaceID, row.ItemIssueID, row.RecipientID); err != nil {
+		if !errors.Is(err, ErrAuthorizationLost) {
+			return err
+		}
+		base.status, base.errorCode = DeliveryStatusSuppressed, ErrorCodeAuthorizationLost
+		base.content, base.ref = contentSnapshot{}, sourceRef{}
+		return s.insertSourceDecision(ctx, base)
 	}
 	// The event filter is judged here (not in SQL) so a filtered-out pair
 	// is RECORDED as suppressed — editing the filter later must not replay
@@ -197,7 +204,11 @@ func (s *Service) decideActivityPair(ctx context.Context, row db.ListLabrastroMe
 	refID := util.UUIDToString(row.ActivityID)
 	wsID := util.UUIDToString(row.ActivityWorkspaceID)
 	instID := util.UUIDToString(row.InstallationID)
-	if (row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID) || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, row.ActivityAction)) {
+	projectMatches, err := s.teamProjectMatches(ctx, row.ActivityWorkspaceID, row.IssueProjectID, row.RouteProjectID)
+	if err != nil {
+		return err
+	}
+	if !projectMatches || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, row.ActivityAction)) {
 		return s.insertSourceDecision(ctx, sourceDecision{
 			scope: RouteSourceActivity, workspaceID: wsID, sourceRefID: refID,
 			routeID: row.RouteID, routeRevision: row.RouteRevision,
@@ -347,7 +358,11 @@ func (s *Service) decideCommentPair(ctx context.Context, row db.ListLabrastroMes
 	refID := util.UUIDToString(row.CommentID)
 	wsID := util.UUIDToString(row.CommentWorkspaceID)
 	instID := util.UUIDToString(row.InstallationID)
-	if (row.RouteProjectID.Valid && row.RouteProjectID != row.IssueProjectID) || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, notify.CommentTypeDeliverable)) {
+	projectMatches, err := s.teamProjectMatches(ctx, row.CommentWorkspaceID, row.IssueProjectID, row.RouteProjectID)
+	if err != nil {
+		return err
+	}
+	if !projectMatches || (len(row.EventTypes) > 0 && !containsString(row.EventTypes, notify.CommentTypeDeliverable)) {
 		return s.insertSourceDecision(ctx, sourceDecision{
 			scope: RouteSourceComment, workspaceID: wsID, sourceRefID: refID,
 			routeID: row.RouteID, routeRevision: row.RouteRevision,

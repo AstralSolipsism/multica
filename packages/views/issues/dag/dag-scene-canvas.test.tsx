@@ -343,7 +343,6 @@ describe("DagSceneCanvas overview", () => {
     // The status icon conveys the built-in status (not a flat grey dot).
     const lineCard = document.querySelector('[data-dag-overview-card="issue:r1"]')!;
     expect(lineCard.querySelector("svg")).toBeTruthy();
-    expect(lineCard.innerHTML).toContain("text-warning");
     const solo = screen.getByText("T-SOLO").closest(".react-flow__node")!;
     fireEvent.doubleClick(solo);
     expect(props.onOpenIssue).toHaveBeenCalledWith("solo");

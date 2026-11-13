@@ -39,6 +39,9 @@ func TestMediaExpiredTerminalJobsRemainUnchanged(t *testing.T) {
 					(state == "completed" && (before.MarkdownURL == "" || before.Markdown == "")) {
 					t.Fatalf("invalid terminal fixture: %+v", before)
 				}
+				if state == "completed" && (strings.Contains(before.MarkdownURL, "/uploads/") || !strings.Contains(before.MarkdownURL, "/api/attachments/"+attachmentID+"/download")) {
+					t.Fatalf("legacy upload URL must resolve through authenticated attachment download: %s", before.MarkdownURL)
+				}
 				dbfx.Exec(t, "UPDATE media_job SET expires_at=now()-interval '1 second' WHERE id=$1", job.ID)
 				if action == "claim" {
 					rt := mediaTestRuntime(t, "codex", 0)

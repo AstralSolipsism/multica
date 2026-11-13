@@ -38,6 +38,7 @@ import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-bann
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
 import { TipSideChatBanner } from "../you-should-know/side-chat/tip-side-chat-banner";
 import { TipSideChatStarters } from "../you-should-know/side-chat/tip-side-chat-starters";
+import { ChatAppRequests } from "../common/app-requests";
 import { useRegisterCommandBarContext } from "../search/register-context";
 
 /**
@@ -393,6 +394,10 @@ export function ChatPage() {
       ) : (
         <OfflineBanner agentName={c.activeAgent?.name} availability={c.availability} />
       )}
+
+      <div className="px-4">
+        <ChatAppRequests sessionId={c.activeSessionId} />
+      </div>
 
       <ChatQueue
         tasks={queuedTasks}

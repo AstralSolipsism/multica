@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/autopilotauth"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -34,7 +35,50 @@ func sourceAuthority(ctx context.Context, q *db.Queries, ap db.Autopilot, userID
 		(admin && member.Role != "owner" && member.Role != "admin") {
 		return ErrAuthorizationLost
 	}
+	return projectAuthority(ctx, q, ap.WorkspaceID, ap.ProjectID, userID)
+}
+
+func projectAuthority(ctx context.Context, q *db.Queries, workspaceID, projectID pgtype.UUID, principals ...pgtype.UUID) error {
+	if !projectID.Valid {
+		return nil
+	}
+	hidden, err := projectaccess.ForPrincipals(ctx, q, workspaceID, principals...)
+	if err != nil {
+		return err
+	}
+	if !hidden.CanSeeProject(projectID) {
+		return ErrAuthorizationLost
+	}
 	return nil
+}
+
+func (s *Service) inboxSourceAuthority(ctx context.Context, workspaceID, issueID, recipientID pgtype.UUID) error {
+	if !issueID.Valid {
+		return nil
+	}
+	issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrAuthorizationLost
+	}
+	if err != nil {
+		return err
+	}
+	return projectAuthority(ctx, s.Queries, workspaceID, issue.ProjectID, recipientID)
+}
+
+// Workspace-wide destinations have no private-project audience agreement.
+func (s *Service) teamProjectMatches(ctx context.Context, workspaceID, projectID, routeProjectID pgtype.UUID) (bool, error) {
+	if routeProjectID.Valid {
+		return routeProjectID == projectID, nil
+	}
+	if !projectID.Valid {
+		return true, nil
+	}
+	project, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && project.Visibility != projectaccess.VisibilityPrivate, err
 }
 
 // External verification happens before this short transaction. Re-read local
@@ -63,6 +107,9 @@ func (s *Service) withTargetWrite(ctx context.Context, workspaceID, autopilotID 
 			return &InstallationInvalidError{Reason: "installation is revoked"}
 		}
 		if target.targetType == TargetMember {
+			if err := projectAuthority(ctx, q, workspaceID, ap.ProjectID, target.userID); err != nil {
+				return err
+			}
 			_, err = q.GetChannelUserBindingForDelivery(ctx, db.GetChannelUserBindingForDeliveryParams{WorkspaceID: workspaceID, InstallationID: inst.ID, MulticaUserID: target.userID})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return &MemberNotBoundError{}

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
-import { workspaceSlugForPath } from "@multica/core/paths";
+import { workspaceSlugForPath, paths } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { useT } from "@multica/views/i18n";
 import { useTabStore } from "@/stores/tab-store";
@@ -35,13 +35,16 @@ export function WorkspaceWindowBridge() {
 
   useEffect(
     () =>
-      window.desktopAPI.onOpenWorkspacePath?.((path) => {
+      window.desktopAPI.onOpenWorkspacePath?.(({ path, navigate }) => {
         const slug = workspaceSlugForPath(path);
-        if (slug) {
-          useTabStore.getState().switchWorkspace(slug, path);
-          // switchWorkspace deduplicates by resource and may reuse a tab's
-          // older URL. An explicit handoff must carry its comment hash or
-          // chat session query into that reused tab as well.
+        if (!slug) return;
+        useTabStore.getState().switchWorkspace(slug, path);
+        // Ordinary handoffs restore the reused tab's view. Explicit deep links
+        // and issue-window chat handoffs must carry their requested URL.
+        const opensChatSession = path.startsWith(
+          `${paths.workspace(slug).chat()}?session=`,
+        );
+        if (navigate || opensChatSession) {
           useTabStore.getState().navigateActiveSession(path);
           clearCommentHighlightMemento(path);
         }

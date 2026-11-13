@@ -92,6 +92,9 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
+	if !h.requireChatProjectVisible(w, r, workspaceID, projectID, agent.ID) {
+		return
+	}
 
 	// Create inside a tx that first takes a FOR KEY SHARE lock on the workspace
 	// row: it conflicts with DeleteWorkspace's FOR UPDATE, so a session cannot be
@@ -244,7 +247,8 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	if err := h.labrastroHydrateTipChatSources(r, resp); err != nil {
+	resp, err := h.labrastroHydrateTipChatSources(r, resp)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat source")
 		return
 	}
@@ -314,6 +318,15 @@ func (h *Handler) gatePublicChatSessionForUser(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return db.ChatSession{}, false
 	}
+	visible, err := h.labrastroTipChatVisible(r.Context(), session.ID, parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat source access")
+		return db.ChatSession{}, false
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
 	if _, err := h.Queries.GetPublicChatSessionInWorkspace(r.Context(), db.GetPublicChatSessionInWorkspaceParams{
 		ID:          session.ID,
 		WorkspaceID: session.WorkspaceID,
@@ -341,12 +354,17 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	// hydrateChatSessionChannelMetadata mutates the slice element, so retain a
 	// concrete slice here rather than passing a temporary value to writeJSON.
 	responses := []ChatSessionResponse{resp}
-	if err := h.labrastroHydrateTipChatSources(r, responses); err != nil {
+	responses, err := h.labrastroHydrateTipChatSources(r, responses)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat source")
 		return
 	}
 	if err := h.hydrateChatSessionChannelMetadata(r.Context(), responses); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
+		return
+	}
+	if len(responses) == 0 {
+		writeError(w, http.StatusNotFound, "chat session not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, responses[0])
@@ -421,6 +439,9 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 			}
 			projectID, ok = parseUUIDOrBadRequest(w, rawProjectID, "project_id")
 			if !ok {
+				return
+			}
+			if !h.requireChatProjectVisible(w, r, workspaceID, projectID, session.AgentID) {
 				return
 			}
 		}
@@ -1895,6 +1916,12 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// A run on a private project is listed as restricted to members
+		// outside the project (MUL-8472); its id alone must not let them
+		// stop it.
+		if !h.requireTaskVisible(w, r, workspaceID, task, http.StatusNotFound, "task not found") {
+			return
+		}
 		// Issue / autopilot / quick_create tasks are all visible on the
 		// agent Activity tab + workspace snapshot, which gate private
 		// agents. Mirror that gate here.

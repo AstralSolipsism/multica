@@ -1,4 +1,4 @@
-import { createRef, forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { createRef, forwardRef, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -251,6 +251,12 @@ function renderCommentInput(onSubmit = vi.fn().mockResolvedValue(true)) {
   return { ...view, onSubmit, ref };
 }
 
+function DraftReplyInput(props: ComponentProps<typeof ReplyInput>) {
+  const parentId = useCommentDraftStore((s) =>
+    (props.draftKey ? s.drafts[props.draftKey]?.replyTarget?.commentId : undefined) ?? props.parentId);
+  return <ReplyInput {...props} parentId={parentId} />;
+}
+
 function renderReplyInput({
   onSubmit = vi.fn().mockResolvedValue("reply-new"),
   onAccepted,
@@ -263,7 +269,7 @@ function renderReplyInput({
   draftKey?: `reply:${string}:${string}`;
 } = {}) {
   const view = renderWithProviders(
-    <ReplyInput
+    <DraftReplyInput
       issueId="issue-1"
       parentId="comment-1"
       avatarType="member"
@@ -474,6 +480,24 @@ describe("comment composers", () => {
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);
     expect(shell.className).not.toContain("h-[60vh]");
+  });
+
+  it("makes room for recipients a pending annotation previews while the reply is empty", async () => {
+    apiListTasksByIssue.mockResolvedValue([]);
+    apiPreviewCommentTriggers.mockResolvedValue({
+      agents: [{ id: "agent-1", name: "Lambda", source: "thread_parent", reason: "" }],
+    });
+    const pending = { id: "a", sourceCommentId: "comment-1", sourceActorName: "Lambda", quote: "Selected text",
+      note: "Please revise", start: 0, prefix: "", suffix: "" };
+    renderWithProviders(
+      <ReplyInput issueId="issue-1" parentId="comment-1" avatarType="member" avatarId="user-1"
+        onSubmit={vi.fn()} draftKey="reply:issue-1:comment-1"
+        annotationComposer={{ pending, render: () => null }} />,
+    );
+
+    expect(screen.getByTestId("reply-composer-shell")).toBeInTheDocument();
+    await screen.findByRole("button", { name: /Lambda trigger/ }, { timeout: 5000 });
+    expect(screen.getByTestId("drop-zone").className).toContain("pb-9");
   });
 
   it("keeps main comment submission wired after removing expand", async () => {
@@ -879,27 +903,21 @@ describe("comment composers", () => {
   });
 });
 
-// OL-998 — the text area (editor host + its padding) shows the I-beam like
-// the readonly-first shell does, and pressing it focuses the editor at the
-// nearest caret position, without taking over control clicks.
+// OL-998 — editor hosts and padding share the shell's I-beam; pressing empty
+// surface space focuses at the nearest caret without taking over controls.
 describe("composer text surface cursor and click-to-focus", () => {
   it("keeps the I-beam on the main composer's editor host, matching the shell", () => {
     renderCommentInput();
-
     expect(screen.getByTestId("comment-composer-shell").className).toContain("cursor-text");
     activateComposer("comment-composer-shell");
-    // The mock editor's textarea is the host's direct child.
     expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
   });
 
   it("focuses the main editor at the click coordinates on host-padding mousedown", () => {
     renderCommentInput();
     activateComposer("comment-composer-shell");
-    focusAtCoordsSpy.mockClear(); // discard the shell→editor activation focus
-
-    const host = screen.getByTestId("editor").parentElement!;
-    fireEvent.mouseDown(host, { button: 0, clientX: 140, clientY: 12 });
-
+    focusAtCoordsSpy.mockClear();
+    fireEvent.mouseDown(screen.getByTestId("editor").parentElement!, { button: 0, clientX: 140, clientY: 12 });
     expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 140, y: 12 });
   });
 
@@ -908,25 +926,17 @@ describe("composer text surface cursor and click-to-focus", () => {
     activateComposer("comment-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
     focusAtCoordsSpy.mockClear();
-
-    // A press whose target is not the host itself (here: the mock editor's
-    // textarea inside it) keeps its own behavior.
     fireEvent.mouseDown(screen.getByTestId("editor"), { button: 0 });
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
-    // …and the send click itself still submits.
     fireEvent.click(getSubmitButton(container));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
   });
 
   it("wraps the reply column in a cursor-text surface that owns the vertical padding", () => {
     renderReplyInput();
-
     expect(screen.getByTestId("reply-composer-shell").className).toContain("cursor-text");
     activateComposer("reply-composer-shell");
-    // The editor host re-asserts the I-beam inside the column's arrow reset…
     expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
-    // …and the text surface around the column owns the vertical padding bands.
     const surface = screen.getByTestId("reply-text-surface");
     expect(surface.className).toContain("cursor-text");
     expect(surface.className).toContain("py-2.5");
@@ -937,9 +947,7 @@ describe("composer text surface cursor and click-to-focus", () => {
     renderReplyInput();
     activateComposer("reply-composer-shell");
     focusAtCoordsSpy.mockClear();
-
     fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 96, clientY: 6 });
-
     expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 96, y: 6 });
   });
 
@@ -948,12 +956,9 @@ describe("composer text surface cursor and click-to-focus", () => {
     activateComposer("reply-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
     focusAtCoordsSpy.mockClear();
-
-    const attach = screen.getByRole("button", { name: "Attach file" });
-    fireEvent.mouseDown(attach, { button: 0 });
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Attach file" }), { button: 0 });
     fireEvent.mouseDown(getSubmitButton(container), { button: 0 });
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
     fireEvent.click(getSubmitButton(container));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
   });
@@ -962,38 +967,25 @@ describe("composer text surface cursor and click-to-focus", () => {
     renderReplyInput();
     activateComposer("reply-composer-shell");
     focusAtCoordsSpy.mockClear();
-
     fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 2, clientX: 10, clientY: 10 });
-
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
   });
 
-  // OL-998 review: the send lock (pointer-events-none + dimmed editor host)
-  // must hold while a reply is in flight — a press on the surface or the
-  // column below the locked host must not focus the editor.
   it("does not focus the reply editor from the surface while a send is in flight", async () => {
-    let resolveSubmit: (ok: boolean) => void = () => {};
-    const onSubmit = vi.fn(
-      () => new Promise<boolean>((resolve) => { resolveSubmit = resolve; }),
-    );
+    const pendingSubmit = Promise.withResolvers<boolean>();
+    const onSubmit = vi.fn(() => pendingSubmit.promise);
     const { container } = renderReplyInput({ onSubmit });
     activateComposer("reply-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "sending" } });
     fireEvent.click(getSubmitButton(container));
-    await waitFor(() =>
-      expect(screen.getByTestId("editor").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true"),
-    );
+    await waitFor(() => expect(screen.getByTestId("editor").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true"));
     focusAtCoordsSpy.mockClear();
-
     fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 10, clientY: 4 });
-    // The column under the locked host is a non-surface target, too.
     const column = screen.getByTestId("reply-text-surface").querySelector(".relative")!;
     fireEvent.mouseDown(column, { button: 0, clientX: 10, clientY: 4 });
-
     expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
     await act(async () => {
-      resolveSubmit(true);
+      pendingSubmit.resolve(true);
       await Promise.resolve();
     });
   });

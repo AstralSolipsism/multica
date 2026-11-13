@@ -51,7 +51,7 @@ func searchIDs(t *testing.T, payload *searchIssuesPayload) []string {
 	return ids
 }
 
-func TestIssueSearch_ProjectFilter(t *testing.T) {
+func TestIssueSearch_ProjectFilterWithClosedAndEmptyProject(t *testing.T) {
 	token := "projscope" + uuid.NewString()[:8]
 	projectID := dbfx.Project(t, "Search project "+token)
 	otherProjectID := dbfx.Project(t, "Other search project "+token)
@@ -82,7 +82,7 @@ func TestIssueSearch_ProjectFilter(t *testing.T) {
 	}
 }
 
-func TestIssueSearch_ProjectFilterRejectsMalformedUUID(t *testing.T) {
+func TestIssueSearch_ProjectFilterMalformedUUIDResponse(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}

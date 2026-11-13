@@ -108,6 +108,9 @@ func (h *Handler) CreateMediaJob(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if !h.requireAttachmentVisibleWithNotFound(w, r, uuidToString(ws), att, "input attachment not found") {
+			return
+		}
 	}
 	params.Request, _ = json.Marshal(req)
 	job, err := h.Queries.CreateMediaJob(r.Context(), params)
@@ -258,6 +261,16 @@ func (h *Handler) ClaimMediaJob(w http.ResponseWriter, r *http.Request) {
 		}
 		selected := service.SelectMediaRuntime(runtimes, job.CallerID, request, time.Now())
 		if selected == nil || selected.ID != rt.ID {
+			continue
+		}
+		access := *h
+		access.Queries = q
+		visible, err := access.mediaInputsVisible(r.Context(), job, rt)
+		if err != nil {
+			writeError(w, 500, "resolve media input access failed")
+			return
+		}
+		if !visible {
 			continue
 		}
 		attempt := uuid.NewString()

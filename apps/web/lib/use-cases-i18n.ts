@@ -82,4 +82,14 @@ export const useCaseText: Record<SupportedLocale, UseCaseText> = {
     cardReadMore: "Lire →",
     tableOfContents: "Sur cette page",
   },
+  ru: {
+    indexTitle: "Сценарии использования",
+    indexSubtitle:
+      "Посмотрите, как команды объединяют людей и агентов в Labrastro.",
+    indexMetadataTitle: "Сценарии использования",
+    indexMetadataDescription:
+      "Посмотрите, как команды заставляют людей и агентов работать вместе в Labrastro.",
+    cardReadMore: "Читать →",
+    tableOfContents: "На этой странице",
+  },
 };

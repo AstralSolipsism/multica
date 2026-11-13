@@ -2,21 +2,30 @@
 // multi-skill wording). Moved from create-skill-dialog.test.tsx in OL-107:
 // harness copied, assertions unchanged.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { setCurrentWorkspace } from "@multica/core/platform";
+import { ApiError } from "@multica/core/api";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { RESOURCES } from "../../test/i18n";
+import { getTestResources } from "../../test/i18n";
 
 const mockImportSkillArchive = vi.hoisted(() => vi.fn());
 const mockPrepareFromPicker = vi.hoisted(() => vi.fn());
 const mockWrap = vi.hoisted(() => vi.fn());
 
-vi.mock("@multica/core/api", () => ({
-  api: {
-    importSkillArchive: (...args: unknown[]) => mockImportSkillArchive(...args),
-  },
-}));
+vi.mock("@multica/core/api", async () => {
+  const { ApiError } =
+    await vi.importActual<typeof import("@multica/core/api")>(
+      "@multica/core/api",
+    );
+  return {
+    ApiError,
+    api: {
+      importSkillArchive: (...args: unknown[]) => mockImportSkillArchive(...args),
+    },
+  };
+});
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -28,7 +37,7 @@ vi.mock("@multica/core/skills", async () => {
   >("@multica/core/skills");
   return {
     ...actual,
-    prepareSkillArchiveFromPickerFiles: (...args: unknown[]) =>
+    discoverSkillArchivesFromPickerFiles: (...args: unknown[]) =>
       mockPrepareFromPicker(...args),
     wrapExistingSkillArchive: (...args: unknown[]) => mockWrap(...args),
   };
@@ -47,6 +56,7 @@ const ARCHIVE_FILE = new File(["pk"], "review-helper.skill", {
 const PREPARED_OK = {
   ok: true as const,
   file: ARCHIVE_FILE,
+  reconciliationName: "review-helper",
   preview: {
     displayName: "review-helper",
     skillName: "review-helper",
@@ -56,6 +66,19 @@ const PREPARED_OK = {
   },
 };
 
+function discovery(prepared = PREPARED_OK) {
+  return {
+    ok: true as const,
+    items: [
+      {
+        id: prepared.preview.displayName,
+        preview: prepared.preview,
+        prepare: async () => prepared,
+      },
+    ],
+  };
+}
+
 function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -64,7 +87,7 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
     onCreated,
     onClose,
     ...render(
-      <I18nProvider locale="en" resources={RESOURCES}>
+      <I18nProvider locale="en" resources={getTestResources()}>
         <QueryClientProvider client={queryClient}>
           <CreateSkillDialog onClose={onClose} onCreated={onCreated} />
         </QueryClientProvider>
@@ -76,9 +99,11 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
 describe("CreateSkillDialog local import", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPrepareFromPicker.mockResolvedValue(PREPARED_OK);
+    setCurrentWorkspace("workspace-a", "ws-1");
+    mockPrepareFromPicker.mockResolvedValue(discovery());
     mockWrap.mockReturnValue({
       ...PREPARED_OK,
+      reconciliationName: null,
       preview: { ...PREPARED_OK.preview, source: "archive", fileCount: null },
     });
     mockImportSkillArchive.mockResolvedValue({
@@ -93,6 +118,10 @@ describe("CreateSkillDialog local import", () => {
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     });
+  });
+
+  afterEach(() => {
+    setCurrentWorkspace(null, null);
   });
 
   // OL-106: a folder holding sibling skills used to import just one of them
@@ -120,8 +149,10 @@ describe("CreateSkillDialog local import", () => {
   // folder path instead of that raw message (OL-106).
   it("maps the server multi-skill archive rejection to the same guidance", async () => {
     mockImportSkillArchive.mockRejectedValueOnce(
-      new Error(
+      new ApiError(
         "archive contains multiple skills; use multica skill package import <repository-url>",
+        400,
+        "Bad Request",
       ),
     );
     renderDialog();
@@ -141,7 +172,9 @@ describe("CreateSkillDialog local import", () => {
       screen.queryByText(/archive contains multiple skills/i),
     ).not.toBeInTheDocument();
     // Other server errors still pass through unchanged.
-    mockImportSkillArchive.mockRejectedValueOnce(new Error("boom"));
+    mockImportSkillArchive.mockRejectedValueOnce(
+      new ApiError("boom", 400, "Bad Request"),
+    );
     fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });

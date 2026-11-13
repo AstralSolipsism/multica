@@ -14,11 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -282,6 +284,10 @@ func (h *Handler) GetSearchIndexManifest(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	hidden, ok := h.requestHiddenProjects(w, r, uuidToString(wsUUID))
+	if !ok {
+		return
+	}
 	release, ok := acquireSearchIndexBootstrapSlot(r.Context())
 	if !ok {
 		writeSearchIndexBusy(w)
@@ -291,7 +297,10 @@ func (h *Handler) GetSearchIndexManifest(w http.ResponseWriter, r *http.Request)
 	var row db.GetSearchIndexManifestRow
 	err := h.runSearchIndexRead(r.Context(), func(q *db.Queries) error {
 		var err error
-		row, err = q.GetSearchIndexManifest(r.Context(), wsUUID)
+		row, err = q.GetSearchIndexManifest(r.Context(), db.GetSearchIndexManifestParams{
+			WorkspaceID:      wsUUID,
+			HiddenProjectIds: hidden.Param(),
+		})
 		return err
 	})
 	if err != nil {
@@ -377,19 +386,35 @@ func (h *Handler) GetSearchIndexSnapshot(w http.ResponseWriter, r *http.Request)
 		h.writeSearchIndexError(w, r, "snapshot", err)
 		return
 	}
+	hidden, ok := h.requestHiddenProjects(w, r, uuidToString(wsUUID))
+	if !ok {
+		return
+	}
+	// Paging advances over the unfiltered page so a hidden issue cannot end
+	// the snapshot early or stall it.
+	pageLen := len(issues)
+	nextAfterNumber := int32(afterNumber)
+	if pageLen > 0 {
+		nextAfterNumber = issues[pageLen-1].Number
+	}
+	visibleIssues := filterVisibleIssues(hidden, issues)
+	visibleIssueIDs := make(map[pgtype.UUID]bool, len(visibleIssues))
+	for _, is := range visibleIssues {
+		visibleIssueIDs[is.ID] = true
+	}
 
 	resp := SearchIndexSnapshotResponse{
-		Issues:          h.searchIndexIssues(ctx, wsUUID, issues),
+		Issues:          h.searchIndexIssues(ctx, wsUUID, hidden, visibleIssues),
 		Comments:        make([]SearchIndexComment, 0, len(comments)),
-		Projects:        searchIndexProjects(projects),
-		NextAfterNumber: int32(afterNumber),
-		Done:            len(issues) < limit,
+		Projects:        searchIndexProjects(visibleProjects(hidden, projects)),
+		NextAfterNumber: nextAfterNumber,
+		Done:            pageLen < limit,
 	}
 	for _, c := range comments {
+		if !visibleIssueIDs[c.IssueID] {
+			continue
+		}
 		resp.Comments = append(resp.Comments, searchIndexComment(c.ID, c.IssueID, c.Content, c.CreatedAt))
-	}
-	if n := len(issues); n > 0 {
-		resp.NextAfterNumber = issues[n-1].Number
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -503,9 +528,36 @@ func (h *Handler) ListSearchIndexChanges(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusGone, "search index cursor expired; rebuild the local index")
 		return
 	}
+	// Entities in a project the caller cannot see are reported as deleted, so
+	// a client that synced them before losing access drops its copy.
+	hidden, ok := h.requestHiddenProjects(w, r, uuidToString(wsUUID))
+	if !ok {
+		return
+	}
+	if !hidden.Empty() {
+		issues = filterVisibleIssues(hidden, issues)
+		projects = visibleProjects(hidden, projects)
+		visibleComments := comments[:0:0]
+		issueProjects := map[pgtype.UUID]pgtype.UUID{}
+		for _, c := range comments {
+			projectID, seen := issueProjects[c.IssueID]
+			if !seen {
+				projectID, err = h.Queries.GetIssueProjectID(ctx, c.IssueID)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					h.writeSearchIndexError(w, r, "changes", err)
+					return
+				}
+				issueProjects[c.IssueID] = projectID
+			}
+			if hidden.CanSeeProject(projectID) {
+				visibleComments = append(visibleComments, c)
+			}
+		}
+		comments = visibleComments
+	}
 
 	resp := SearchIndexChangesResponse{
-		Issues:   h.searchIndexIssues(ctx, wsUUID, issues),
+		Issues:   h.searchIndexIssues(ctx, wsUUID, hidden, issues),
 		Comments: []SearchIndexComment{},
 		Projects: searchIndexProjects(projects),
 		Deleted: SearchIndexDeleted{
@@ -565,7 +617,7 @@ func (h *Handler) ListSearchIndexChanges(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) searchIndexIssues(ctx context.Context, wsUUID pgtype.UUID, issues []db.Issue) []SearchIndexIssue {
+func (h *Handler) searchIndexIssues(ctx context.Context, wsUUID pgtype.UUID, hidden projectaccess.Hidden, issues []db.Issue) []SearchIndexIssue {
 	out := make([]SearchIndexIssue, 0, len(issues))
 	if len(issues) == 0 {
 		return out
@@ -575,7 +627,7 @@ func (h *Handler) searchIndexIssues(ctx context.Context, wsUUID pgtype.UUID, iss
 	for _, is := range issues {
 		originals = appendDuplicateOriginal(originals, is.Status, is.DuplicateOfIssueID)
 	}
-	fill := h.newStatusCategoryFiller(ctx, wsUUID, originals...)
+	fill := h.newStatusCategoryFiller(ctx, wsUUID, hidden, originals...)
 	for _, is := range issues {
 		resp := issueToResponse(is, prefix)
 		fill(&resp)
@@ -605,4 +657,17 @@ func searchIndexComment(id, issueID pgtype.UUID, content string, createdAt pgtyp
 		Content:   content,
 		CreatedAt: createdAt.Time.UTC().Format(time.RFC3339Nano),
 	}
+}
+
+func visibleProjects(hidden projectaccess.Hidden, projects []db.Project) []db.Project {
+	if hidden.Empty() {
+		return projects
+	}
+	out := projects[:0:0]
+	for _, p := range projects {
+		if hidden.CanSeeProject(p.ID) {
+			out = append(out, p)
+		}
+	}
+	return out
 }

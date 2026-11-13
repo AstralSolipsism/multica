@@ -11,7 +11,7 @@ SELECT id FROM workspace WHERE id = $1 FOR KEY SHARE;
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg('workspace_id')::uuid::text || ':issue_dependency', 0));
 
 -- name: ListIssueDependencyNodes :many
-SELECT id, parent_issue_id, status, revision, title, number FROM issue
+SELECT id, parent_issue_id, status, revision, title, number, project_id FROM issue
 WHERE workspace_id = $1 ORDER BY id;
 
 -- name: ListIssueDependencyEdges :one

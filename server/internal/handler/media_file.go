@@ -14,7 +14,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -65,7 +68,66 @@ func (h *Handler) authorizedMediaAttempt(w http.ResponseWriter, r *http.Request)
 		writeError(w, 403, "workspace access revoked")
 		return db.MediaJob{}, false
 	}
+	visible, err := h.mediaInputsVisible(r.Context(), job, rt)
+	if err != nil {
+		writeError(w, 500, "resolve media input access failed")
+		return db.MediaJob{}, false
+	}
+	if !visible {
+		writeError(w, 404, "input not found")
+		return db.MediaJob{}, false
+	}
 	return job, true
+}
+
+// Recheck the principals receiving the bytes at claim and transfer time.
+// Runtime sharing is consent to execute, not access to the caller's projects.
+func (h *Handler) mediaInputsVisible(ctx context.Context, job db.MediaJob, rt db.AgentRuntime) (bool, error) {
+	var request protocol.MediaRequest
+	if err := json.Unmarshal(job.Request, &request); err != nil {
+		return false, err
+	}
+	if len(request.Inputs) == 0 {
+		return true, nil
+	}
+	principals := []pgtype.UUID{job.CallerID, rt.OwnerID}
+	if job.TaskID.Valid {
+		// Task tokens name the runtime owner as their user. Keep the original
+		// run's human/agent-owner boundary from the creation check as well.
+		task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: job.TaskID, WorkspaceID: job.WorkspaceID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		agent, err := h.Queries.GetAgent(ctx, task.AgentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil || agent.WorkspaceID != job.WorkspaceID {
+			return false, err
+		}
+		principals = append(principals, projectaccess.RunPrincipals(task, agent.OwnerID)...)
+	}
+	hidden, err := projectaccess.ForPrincipals(ctx, h.Queries, job.WorkspaceID, principals...)
+	if err != nil {
+		return false, err
+	}
+	for _, input := range request.Inputs {
+		att, err := h.Queries.GetAttachment(ctx, db.GetAttachmentParams{ID: parseUUID(input.AttachmentID), WorkspaceID: job.WorkspaceID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		denied, err := h.attachmentInHiddenProject(ctx, hidden, att)
+		if err != nil || denied {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (h *Handler) DownloadMediaInput(w http.ResponseWriter, r *http.Request) {

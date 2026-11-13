@@ -1,5 +1,5 @@
 import { invalidateDependencyQueries, invalidateIssueQueries } from "./invalidation";
-import { normalizeStatusPatch } from "./status-category";
+import { issueBehavesAs, normalizeStatusPatch } from "./status-category";
 import {
   hashKey,
   useMutation,
@@ -41,6 +41,7 @@ import { refreshSubscribedIssues } from "./subscribed";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { useRecentIssuesStore } from "./stores";
+import { useStarPromptStore } from "../star-prompt";
 import type { InboxItem, Issue, IssueReaction } from "../types";
 import type {
   CreateCommentSubIssueManualRequest,
@@ -242,7 +243,7 @@ export function useUpdateIssue() {
       // is resolved against that base on the server and therefore is not safe
       // to predict optimistically. Keep the authoritative raw description in
       // cache so hidden channel-media markers remain available as the base for
-      // a rapid follow-up edit. mutationFn still sends the full payload.
+      // rapid follow-up edit. mutationFn still sends the full payload.
       // The dependency fields ride the compound write path and describe
       // relations, not Issue columns — never patch them into the cache.
       const {
@@ -422,6 +423,18 @@ export function useUpdateIssue() {
       );
       // The server has committed — safe to flush any drift it reported now.
       invalidateStaleListKeys(qc, reconcile.staleKeys);
+      if (
+        vars.status !== undefined &&
+        serverIssue.assignee_type === "agent" &&
+        serverIssue.assignee_id &&
+        issueBehavesAs(serverIssue, "done")
+      ) {
+        useStarPromptStore.getState().reportAgentIssueDone({
+          wsId,
+          agentId: serverIssue.assignee_id,
+          issueId: serverIssue.id,
+        });
+      }
     },
     onSettled: (_data, err, vars, ctx) => {
       settleInboxAfterIssueWrite(qc, wsId, ctx?.inboxWrite, err !== null);
@@ -618,7 +631,13 @@ export function useBatchUpdateIssues() {
   };
   return useMutation({
     mutationKey: issueWriteMutationKey(wsId),
-    mutationFn: ({ ids, updates }: { ids: string[]; updates: UpdateIssueRequest }) => api.batchUpdateIssues(ids, updates),
+    mutationFn: ({
+      ids,
+      updates,
+    }: {
+      ids: string[];
+      updates: UpdateIssueRequest;
+    }) => api.batchUpdateIssues(ids, updates),
     onMutate: async ({ ids, updates }) => {
       // Control and description-merge fields are not safe optimistic cache
       // patches. The server resolves description against description_base, so

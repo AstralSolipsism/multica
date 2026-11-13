@@ -43,5 +43,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.3,
     },
   ];
+
   return pages.filter((page) => !isRetiredMarketingPath(new URL(page.url).pathname));
 }

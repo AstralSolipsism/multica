@@ -27,7 +27,7 @@ func TestDependencyPlanPreservesInputAndCanonicalEdges(t *testing.T) {
 	}
 	proposed := before.Issues["target"]
 	proposed.Title = "Changed display"
-	change, err := planRelationChange(before, proposed, &replacement)
+	change, err := planRelationChange(before, proposed, &replacement, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,22 +38,22 @@ func TestDependencyPlanPreservesInputAndCanonicalEdges(t *testing.T) {
 	if !reflect.DeepEqual(change.Next.Edges, wantEdges) || !reflect.DeepEqual(change.Added, replacement[1:]) || !reflect.DeepEqual(change.Removed, before.Edges[:1]) {
 		t.Fatalf("replacement lost edge identity, history, or diff: %+v", change)
 	}
-	again, err := planRelationChange(before, proposed, &replacement)
+	again, err := planRelationChange(before, proposed, &replacement, nil)
 	if err != nil || !reflect.DeepEqual(change, again) {
 		t.Fatalf("planning the same input is not deterministic: %v", err)
 	}
-	noOp, err := planRelationChange(change.Next, proposed, &replacement)
+	noOp, err := planRelationChange(change.Next, proposed, &replacement, nil)
 	if err != nil || noOp.changed() || len(noOp.Added)+len(noOp.Removed) != 0 {
 		t.Fatalf("replacing the same edges was not a no-op: %+v, %v", noOp, err)
 	}
 	detached := proposed
 	detached.ParentID = "old"
-	reparent, err := planRelationChange(before, detached, nil)
+	reparent, err := planRelationChange(before, detached, nil, nil)
 	if err != nil || !reparent.changed() || len(reparent.Added)+len(reparent.Removed) != 0 || !reflect.DeepEqual(reparent.Next.Edges, before.Edges) {
 		t.Fatalf("ordinary reparenting rewrote historical relations: %+v, %v", reparent, err)
 	}
 	clear := []issuedependency.Edge{}
-	cleared, err := planRelationChange(before, proposed, &clear)
+	cleared, err := planRelationChange(before, proposed, &clear, nil)
 	if err != nil || !reflect.DeepEqual(cleared.Next.Edges, before.Edges[2:]) {
 		t.Fatalf("explicit empty replacement failed to clear direct prerequisites: %+v, %v", cleared, err)
 	}
@@ -72,7 +72,7 @@ func TestDependencyPlanRejectsMissingEndpoints(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original := before.Clone()
-			_, err := planRelationChange(before, tc.issue, tc.replacement)
+			_, err := planRelationChange(before, tc.issue, tc.replacement, nil)
 			var dependencyErr *DependencyError
 			if !errors.As(err, &dependencyErr) || dependencyErr.Code != "not_found" || dependencyErr.Message != tc.message {
 				t.Fatalf("missing %s error = %v, want not_found: %s", tc.name, err, tc.message)
@@ -90,7 +90,7 @@ func TestDependencyValidationScopesPreserveAffectedEvidence(t *testing.T) {
 	}, Edges: []issuedependency.Edge{{ID: "bad-cycle", IssueID: "bad", DependsOnID: "bad", Type: "blocked_by"}}}
 	proposed := before.Issues["target"]
 	proposed.ParentID = "new"
-	change, err := planRelationChange(before, proposed, nil)
+	change, err := planRelationChange(before, proposed, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestDependencyValidationScopesPreserveAffectedEvidence(t *testing.T) {
 		t.Run("corrupt "+endpoint+" component", func(t *testing.T) {
 			invalid := before.Clone()
 			invalid.Edges = append(invalid.Edges, issuedependency.Edge{ID: "affected-cycle", IssueID: endpoint, DependsOnID: endpoint, Type: "blocked_by"})
-			change, err := planRelationChange(invalid, proposed, nil)
+			change, err := planRelationChange(invalid, proposed, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider, QueryObserver, type InvalidateQueryFilters, type QueryKey } from "@tanstack/react-query";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
@@ -16,7 +16,7 @@ import { issueKeys } from "../issues/queries";
 import { chatKeys } from "../chat/queries";
 import { runtimeKeys } from "../runtimes/queries";
 import { agentTasksKeys, workspaceWorkingAgentsKeys } from "../agents/queries";
-import { workspaceKeys } from "../workspace/queries";
+import { myInvitationListOptions, workspaceKeys } from "../workspace/queries";
 import { issueStatusKeys } from "../issue-statuses/queries";
 import { issueWorkflowKeys } from "../issue-workflows/queries";
 import { issueViewKeys } from "../issue-views/queries";
@@ -25,7 +25,7 @@ import {
   markWorkspaceDeletePending,
   unmarkWorkspaceDeletePending,
 } from "../workspace/pending-delete";
-import type { IssueTableQuerySpec } from "../types";
+import type { AgentTask, Invitation, IssueTableQuerySpec } from "../types";
 import { getCurrentWsId } from "../platform/workspace-storage";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
@@ -133,12 +133,12 @@ describe("useRealtimeSync — ws instance change", () => {
 
     // Should have called invalidateQueries for all workspace-scoped keys.
     // Includes fork dependency recovery, agent folders, project engineering
-    // reads and upstream subscription invalidation (39 calls).
+    // reads and upstream account invitation invalidation (40 calls).
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(39));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(40));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -172,6 +172,7 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
     expect(calls).toContainEqual(["workspaces", "ws-1", "invitations"]);
+    expect(calls).toContainEqual(workspaceKeys.myInvitations());
     // A catalog edit made while this client was disconnected is otherwise
     // invisible for the query's whole 5-minute staleTime.
     expect(calls).toContainEqual(issueStatusKeys.all("ws-1"));
@@ -328,6 +329,72 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["task-messages"]);
   });
 
+  function subtreeEvents() {
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+    const rows = [
+      { id: "run", issue_id: "child", issue_title: "Old title" },
+      { id: "other-run", issue_id: "other", issue_title: "Other title" },
+    ] as AgentTask[];
+    qc.setQueryData(issueKeys.tasks("parent"), rows);
+    qc.setQueryData(issueKeys.subtreeTasks("parent"), rows);
+    qc.setQueryData(issueKeys.subtreeTasks("another-parent"), rows);
+    return (event: string, payload: unknown) => {
+      const handler = vi.mocked(ws.on).mock.calls.find(([name]) => name === event)?.[1];
+      expect(handler).toBeDefined();
+      handler!(payload as never);
+    };
+  }
+
+  it.each([
+    { status_changed: true, issue: { id: "child", status: "in_progress" } },
+    { assignee_changed: true, issue: { id: "child" } },
+    { priority_changed: true, issue: { id: "child" } },
+    { parent_changed: false, issue: { id: "child", parent_issue_id: "parent" } },
+  ])("does not refetch subtree history for an unrelated issue update: %j", (payload) => {
+    const emit = subtreeEvents();
+    emit("issue:updated", payload);
+    expect(qc.getQueryState(issueKeys.subtreeTasks("parent"))?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(issueKeys.tasks("parent"))?.isInvalidated).toBe(false);
+  });
+
+  it("patches matching owning-issue titles across subtree caches without refetching", () => {
+    const emit = subtreeEvents();
+    const fetchRuns = vi.fn(async () => []);
+    const observer = new QueryObserver(qc, {
+      queryKey: issueKeys.subtreeTasks("parent"), queryFn: fetchRuns, staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      emit("issue:updated", { issue: { id: "child", title: "New title" }, title_changed: true });
+      for (const root of ["parent", "another-parent"]) {
+        expect(qc.getQueryData(issueKeys.subtreeTasks(root))).toMatchObject([
+          { issue_id: "child", issue_title: "New title" },
+          { issue_id: "other", issue_title: "Other title" },
+        ]);
+        expect(qc.getQueryState(issueKeys.subtreeTasks(root))?.isInvalidated).toBe(false);
+      }
+      expect(qc.getQueryData<AgentTask[]>(issueKeys.tasks("parent"))?.[0]?.issue_title).toBe("Old title");
+      expect(fetchRuns).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it.each(["issue:updated", "issue:deleted"])("invalidates subtree history for a hierarchy change: %s", (event) => {
+    const emit = subtreeEvents();
+    emit(event, { issue: { id: "child", parent_issue_id: "new-parent" }, parent_changed: true, prev_parent_issue_id: "parent", issue_id: "child" });
+    expect(qc.getQueryState(issueKeys.subtreeTasks("parent"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(issueKeys.subtreeTasks("another-parent"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(issueKeys.tasks("parent"))?.isInvalidated).toBe(false);
+  });
+
+  it("does not invalidate subtree history when an issue is created", () => {
+    const emit = subtreeEvents();
+    emit("issue:created", { issue: { id: "child", parent_issue_id: "parent" } });
+    expect(qc.getQueryState(issueKeys.subtreeTasks("parent"))?.isInvalidated).toBe(false);
+  });
+
   it("invalidates per-chat-session caches after an established ws reconnects", () => {
     const ws = createMockWs();
     renderHook(() => useRealtimeSync(ws, stores), {
@@ -344,6 +411,54 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(chatKeys.messagesPageAll());
     expect(calls).toContainEqual(chatKeys.pendingTaskAll());
   });
+
+  it.each(["ws-1", null])(
+    "refreshes fresh account invitations on WebSocket reconnect with current workspace %s",
+    async (wsId) => {
+      vi.mocked(getCurrentWsId).mockReturnValue(wsId);
+      const invitation: Invitation = {
+        id: "concluded-invitation",
+        workspace_id: "ws-2",
+        inviter_id: "u2",
+        invitee_email: "me@example.com",
+        invitee_user_id: "u1",
+        role: "member",
+        status: "pending",
+        created_at: "",
+        updated_at: "",
+        expires_at: "",
+      };
+      let rows = [invitation];
+      const listMyInvitations = vi.fn(async () => rows);
+      setApiInstance({ listMyInvitations } as unknown as ApiClient);
+      const observer = new QueryObserver(qc, myInvitationListOptions());
+      const unsubscribe = observer.subscribe(() => {});
+      const ws = createMockWs();
+      const hook = renderHook(() => useRealtimeSync(ws, stores), {
+        wrapper: createWrapper(qc),
+      });
+
+      try {
+        await waitFor(() => expect(observer.getCurrentResult().data).toEqual(rows));
+        expect(listMyInvitations).toHaveBeenCalledTimes(1);
+        expect(observer.getCurrentResult().isStale).toBe(false);
+
+        rows = [{ ...invitation, id: "new-pending-invitation" }];
+        const reconnect = vi.mocked(ws.onReconnect).mock.calls[0]?.[0];
+        expect(reconnect).toBeDefined();
+        // Only the socket reconnects: no focus, visibility, or online event.
+        await act(async () => { reconnect!(); });
+
+        await waitFor(() => expect(observer.getCurrentResult().data).toEqual(rows));
+        expect(listMyInvitations).toHaveBeenCalledTimes(2);
+      } finally {
+        hook.unmount();
+        unsubscribe();
+        qc.clear();
+        vi.mocked(getCurrentWsId).mockReturnValue("ws-1");
+      }
+    },
+  );
 
   it("invalidates one issue attachment cache after detached channel media binds", () => {
     const ws = createMockWs();
@@ -472,6 +587,8 @@ describe("useRealtimeSync — comment folded into a queued run", () => {
     renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
     const onAny = vi.mocked(ws.onAny).mock.calls[0]![0];
     qc.setQueryData(issueKeys.tasks("issue-1"), []);
+    qc.setQueryData(issueKeys.tasks("unrelated-issue"), []);
+    qc.setQueryData(issueKeys.subtreeTasks("parent"), []);
 
     onAny({
       type: "task:coalesced",
@@ -480,6 +597,8 @@ describe("useRealtimeSync — comment folded into a queued run", () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(qc.getQueryState(issueKeys.tasks("issue-1"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(issueKeys.tasks("unrelated-issue"))?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(issueKeys.subtreeTasks("parent"))?.isInvalidated).toBe(true);
   });
 });
 
@@ -846,7 +965,7 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
     let finishSlow!: (value: IssueGraph) => void;
     const signals: AbortSignal[] = [];
     const after = { ...IssueGraphSchema.parse(referenceGraph), snapshotId: "after-trailing" };
-    const getIssueGraph = vi.fn((_ws: string, _request: unknown, { signal }: { signal: AbortSignal }) => {
+    const getIssueGraph = vi.fn((_ws: string, _query: unknown, { signal }: { signal: AbortSignal }) => {
       signals.push(signal);
       if (signals.length === 1) return new Promise<IssueGraph>((resolve) => { finishSlow = resolve; });
       return Promise.resolve(after);
@@ -862,7 +981,6 @@ describe("useRealtimeSync — graph snapshot invalidation", () => {
       }
       expect(getIssueGraph).toHaveBeenCalledTimes(1);
       expect(signals[0]?.aborted).toBe(false);
-
       finishSlow({ ...after, snapshotId: "slow-finished" });
       await vi.advanceTimersByTimeAsync(100);
       expect(getIssueGraph).toHaveBeenCalledTimes(2);
@@ -978,7 +1096,6 @@ describe("useRealtimeSync — member:removed", () => {
     await waitFor(() => expect(qc.getQueryData(workspaceKeys.list())).toEqual([]));
   });
 });
-
 
 it("invalidates card usage only in the active workspace on reconnect", () => {
   const qc = new QueryClient();
@@ -1134,4 +1251,30 @@ it("keeps the generic refresh for agent status events without a status patch", (
     vi.advanceTimersByTime(100);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: workspaceKeys.agents("ws-1") });
   } finally { unmount(); qc.clear(); vi.useRealTimers(); }
+});
+
+describe("deliverable inventory freshness", () => {
+  it.each(["comment:created", "comment:updated", "comment:deleted"])("refreshes only the affected issue on %s", (event) => {
+    const qc = new QueryClient({ defaultOptions: {queries:{retry:false,staleTime:Infinity}} });
+    const ws=createMockWs();
+    renderHook(()=>useRealtimeSync(ws,createStores()),{wrapper:createWrapper(qc)});
+    qc.setQueryData(issueKeys.attachments("affected"),[]);
+    qc.setQueryData(issueKeys.attachments("unrelated"),[]);
+    const listener=vi.mocked(ws.on).mock.calls.find(([name])=>name===event)?.[1];
+    act(()=>listener?.({comment:{issue_id:"affected"},issue_id:"affected"} as never));
+    expect(qc.getQueryState(issueKeys.attachments("affected"))?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(issueKeys.attachments("unrelated"))?.isInvalidated).toBe(false);
+    qc.clear();
+  });
+
+  it.each(["activity:created", "reaction:added", "reaction:removed", "comment:resolved"])("leaves the file inventory alone on %s", (event) => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    qc.setQueryData(issueKeys.attachments("affected"), []);
+    const listener = vi.mocked(ws.on).mock.calls.find(([name]) => name === event)?.[1];
+    act(() => listener?.({ comment: { issue_id: "affected" }, issue_id: "affected" } as never));
+    expect(qc.getQueryState(issueKeys.attachments("affected"))?.isInvalidated).toBe(false);
+    qc.clear();
+  });
 });

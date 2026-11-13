@@ -84,6 +84,8 @@ export type WSEventType =
   | "label:deleted"
   | "issue_labels:changed"
   | "issue_unread:changed"
+  | "app_request:changed"
+  | "app_call:created"
   | "issue_metadata:changed"
   | "issue_properties:changed"
   | "property:created"
@@ -106,7 +108,8 @@ export type WSEventType =
   | "pull_request:unlinked"
   | "issue_tip:created"
   | "issue_tip:updated"
-  | "issue_tip_state:changed";
+  | "issue_tip_state:changed"
+  | "environment:changed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -133,6 +136,9 @@ export interface IssueUpdatedPayload {
   assignee_changed?: boolean;
   status_changed?: boolean;
   project_changed?: boolean;
+  title_changed?: boolean;
+  parent_changed?: boolean;
+  prev_parent_issue_id?: string | null;
   // Both ends of a duplicate-mark change (MUL-7349). The mark is not on Issue,
   // so these tell the realtime layer whose duplicate relations to refresh.
   duplicate_of_issue_id?: string | null;
@@ -777,6 +783,7 @@ export interface WSEventPayloadMap {
   "issue_tip:created": IssueTipChangedPayload;
   "issue_tip:updated": IssueTipChangedPayload;
   "issue_tip_state:changed": IssueTipStateChangedPayload;
+  "environment:changed": { issue_id: string };
 }
 
 /**

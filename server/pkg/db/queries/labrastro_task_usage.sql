@@ -24,6 +24,7 @@ SELECT
 FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 JOIN issue i ON i.id = atq.issue_id
-WHERE i.workspace_id = $1
+WHERE i.workspace_id = sqlc.arg(workspace_id)
+  AND (i.project_id IS NULL OR NOT (i.project_id = ANY(sqlc.arg(hidden_project_ids)::uuid[])))
 GROUP BY atq.issue_id, LOWER(tu.provider), tu.model
 ORDER BY atq.issue_id, LOWER(tu.provider), tu.model;

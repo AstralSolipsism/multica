@@ -171,6 +171,15 @@ func (s *Service) resolveTarget(ctx context.Context, workspaceID, autopilotID pg
 	if err != nil {
 		return resolvedTarget{}, err
 	}
+	if target.targetType == TargetMember {
+		ap, err := s.Queries.GetAutopilotInWorkspace(ctx, db.GetAutopilotInWorkspaceParams{ID: autopilotID, WorkspaceID: workspaceID})
+		if err != nil {
+			return resolvedTarget{}, err
+		}
+		if err := projectAuthority(ctx, s.Queries, workspaceID, ap.ProjectID, target.userID); err != nil {
+			return resolvedTarget{}, err
+		}
+	}
 	if requireApproval && target.targetType != TargetMember {
 		if err := s.targetApproved(ctx, workspaceID, autopilotID, target.installation.ID, target.targetKey); err != nil {
 			return resolvedTarget{}, err
@@ -533,6 +542,23 @@ func (s *Service) decideDelivery(ctx context.Context, ap db.Autopilot, in decisi
 	// filters those pairs out too, so nothing accumulates.
 	if in.Route.EffectiveFrom.Valid && in.RunCompletedAtValid && in.RunCompletedAt.Before(in.Route.EffectiveFrom.Time) {
 		return 0, nil
+	}
+	authorityErr := sourceAuthority(ctx, s.Queries, ap, in.Route.UpdatedBy, false)
+	if authorityErr == nil && in.Route.TargetType == TargetMember {
+		authorityErr = projectAuthority(ctx, s.Queries, ap.WorkspaceID, ap.ProjectID, in.Route.TargetUserID)
+	}
+	if authorityErr != nil {
+		if !errors.Is(authorityErr, ErrAuthorizationLost) && !errors.Is(authorityErr, ErrSourceUnavailable) {
+			return 0, authorityErr
+		}
+		return s.insertDecision(ctx, sourceDecision{
+			scope: RouteSourceRun, workspaceID: util.UUIDToString(ap.WorkspaceID),
+			autopilotID: ap.ID, runID: mustUUID(in.RunID), sourceRefID: in.RunID,
+			sourceCreatedAt: in.RunCompletedAt, routeID: in.Route.ID, routeRevision: in.Route.Revision,
+			installationID: in.Route.InstallationID, targetKey: in.Route.TargetKey,
+			kind:   sourceKindFromRun(in.Run.IssueIDValid, in.RunTaskIDValid, in.Run.Result, in.ExecutionMode),
+			status: DeliveryStatusSuppressed, errorCode: ErrorCodeAuthorizationLost, shardTotal: 1,
+		})
 	}
 	target, content, ref, shardTotal, err := s.buildDecisionPayload(ctx, ap, in)
 	if err != nil {

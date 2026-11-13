@@ -90,7 +90,7 @@ export function WikiReadingHighlights({ readerRef, threads, contentKey, revision
 
   return <>
     <style>{`::highlight(${name}) { background: color-mix(in srgb, #eab308 22%, transparent); } ::highlight(${name}-active) { background: color-mix(in srgb, #eab308 40%, transparent); text-decoration: underline; } ::highlight(${name}-pending) { background: color-mix(in srgb, #eab308 28%, transparent); text-decoration: underline dashed; }`}</style>
-    {marks.map((mark) => <button key={mark.ids.join("-")} type="button" data-comment-ignore data-wiki-comment-count className="absolute z-10 flex items-center gap-1 rounded-full border bg-page-canvas px-1.5 py-0.5 text-micro shadow-sm" style={{ top: mark.top, left: mark.left }} aria-label={t(($) => $.wikiComments.count, { count: mark.count })} onClick={() => onThread(mark.ids[0]!, mark.ids)}><MessageSquare className="size-3" />{mark.count}</button>)}
+    {marks.map((mark) => <button key={mark.ids.join("-")} type="button" data-comment-ignore data-wiki-comment-count className="absolute z-10 flex items-center gap-1 rounded-md border bg-page-canvas px-1.5 py-0.5 text-micro shadow-sm" style={{ top: mark.top, left: mark.left }} aria-label={t(($) => $.wikiComments.count, { count: mark.count })} onClick={() => onThread(mark.ids[0]!, mark.ids)}><MessageSquare className="size-3" />{mark.count}</button>)}
     {selection ? <Button type="button" size="sm" data-comment-ignore className="absolute z-20 shadow-md" style={{ top: selection.top, left: selection.left }} onMouseDown={(e) => e.preventDefault()} onClick={() => { onCompose(selection.anchor); setSelection(null); window.getSelection()?.removeAllRanges(); }}><MessageSquare className="size-3.5" />{t(($) => $.wikiComments.add)}</Button> : null}
   </>;
 }

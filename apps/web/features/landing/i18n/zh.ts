@@ -1,228 +1,44 @@
 import { githubUrl, discordUrl } from "../components/shared";
 import type { LandingDict } from "./types";
+import { zhSiteCopy } from "./site-zh";
 
-export function createZhDict(
-  allowSignup: boolean,
-  docsHref: string,
-): LandingDict {
+export function createZhDict(): LandingDict {
   return {
-  header: {
-    github: "GitHub",
-    cta: "\u5f00\u59cb\u4f7f\u7528",
-    dashboard: "\u8fdb\u5165\u5de5\u4f5c\u53f0",
-    docs: "\u6587\u6863",
-    changelog: "\u66f4\u65b0\u65e5\u5fd7",
-    useCases: "\u6848\u4f8b",
-    navigation: "\u4e3b\u5bfc\u822a",
-    openMenu: "\u6253\u5f00\u5bfc\u822a\u83dc\u5355",
-    closeMenu: "\u5173\u95ed\u5bfc\u822a\u83dc\u5355",
-  },
-
-  hero: {
-    headlineLine1: "\u4f60\u7684\u4e0b\u4e00\u6279\u5458\u5de5",
-    headlineLine2: "\u4e0d\u662f\u4eba\u7c7b\u3002",
-    subheading:
-      "Multica 是一个源码公开的平台，\u5c06\u7f16\u7801 智能体 \u53d8\u6210\u771f\u6b63\u7684\u961f\u53cb\u3002\u5206\u914d\u4efb\u52a1\u3001\u8ddf\u8e2a\u8fdb\u5ea6\u3001\u79ef\u7d2f\u6280\u80fd\u2014\u2014\u5728\u4e00\u4e2a\u5730\u65b9\u7ba1\u7406\u4f60\u7684\u4eba\u7c7b + 智能体 \u56e2\u961f\u3002",
-    cta: "免费开始",
-    downloadDesktop: "下载桌面端",
-    talkToSales: "联系商务",
-    worksWith: "支持 20+ 种 AI 编程工具",
-    imageAlt: "Multica \u770b\u677f\u89c6\u56fe\u2014\u2014\u4eba\u7c7b\u548c 智能体 \u534f\u540c\u7ba1\u7406\u4efb\u52a1",
-  },
-
-  features: {
-    teammates: {
-      label: "\u56e2\u961f\u534f\u4f5c",
-      title: "\u50cf\u5206\u914d\u7ed9\u540c\u4e8b\u4e00\u6837\u5206\u914d\u7ed9 智能体",
-      description:
-        "智能体 \u4e0d\u662f\u88ab\u52a8\u5de5\u5177\u2014\u2014\u5b83\u4eec\u662f\u4e3b\u52a8\u53c2\u4e0e\u8005\u3002\u5b83\u4eec\u62e5\u6709\u4e2a\u4eba\u8d44\u6599\u3001\u62a5\u544a\u72b6\u6001\u3001\u521b\u5efa\u4efb\u52a1\u3001\u53d1\u8868\u8bc4\u8bba\u3001\u66f4\u65b0\u72b6\u6001\u3002\u4f60\u7684\u6d3b\u52a8\u6d41\u5c55\u793a\u4eba\u7c7b\u548c 智能体 \u5e76\u80a9\u5de5\u4f5c\u3002",
-      cards: [
-        {
-          title: "智能体 \u51fa\u73b0\u5728\u6307\u6d3e\u4eba\u9009\u62e9\u5668\u4e2d",
-          description:
-            "\u4eba\u7c7b\u548c 智能体 \u51fa\u73b0\u5728\u540c\u4e00\u4e2a\u4e0b\u62c9\u83dc\u5355\u91cc\u3002\u628a\u4efb\u52a1\u5206\u914d\u7ed9 智能体 \u548c\u5206\u914d\u7ed9\u540c\u4e8b\u6ca1\u6709\u4efb\u4f55\u533a\u522b\u3002",
-        },
-        {
-          title: "\u81ea\u4e3b\u53c2\u4e0e",
-          description:
-            "智能体 \u4e3b\u52a8\u521b\u5efa\u4efb\u52a1\u3001\u53d1\u8868\u8bc4\u8bba\u3001\u66f4\u65b0\u72b6\u6001\u2014\u2014\u800c\u4e0d\u662f\u53ea\u5728\u88ab\u63d0\u793a\u65f6\u624d\u884c\u52a8\u3002",
-        },
-        {
-          title: "\u7edf\u4e00\u7684\u6d3b\u52a8\u65f6\u95f4\u7ebf",
-          description:
-            "\u6574\u4e2a\u56e2\u961f\u5171\u7528\u4e00\u4e2a\u6d3b\u52a8\u6d41\u3002\u4eba\u7c7b\u548c 智能体 \u7684\u64cd\u4f5c\u4ea4\u66ff\u5c55\u793a\uff0c\u4f60\u59cb\u7ec8\u77e5\u9053\u53d1\u751f\u4e86\u4ec0\u4e48\u3001\u662f\u8c01\u505a\u7684\u3002",
-        },
-      ],
-    },
-    autonomous: {
-      label: "\u81ea\u4e3b\u6267\u884c",
-      title: "\u8bbe\u7f6e\u540e\u65e0\u9700\u7ba1\u7406\u2014\u2014智能体 \u5728\u4f60\u7761\u89c9\u65f6\u5de5\u4f5c",
-      description:
-        "不只是提示-响应。完整的 task 生命周期管理：入队、领取、启动、完成或失败。智能体 主动报告阻塞，你通过 WebSocket 获取实时进度。",
-      cards: [
-        {
-          title: "\u5b8c\u6574\u7684\u4efb\u52a1\u751f\u547d\u5468\u671f",
-          description:
-            "\u6bcf\u4e2a\u4efb\u52a1\u7ecf\u5386\u5165\u961f \u2192 \u9886\u53d6 \u2192 \u542f\u52a8 \u2192 \u5b8c\u6210/\u5931\u8d25\u3002\u6ca1\u6709\u65e0\u58f0\u5931\u8d25\u2014\u2014\u6bcf\u6b21\u72b6\u6001\u8f6c\u6362\u90fd\u88ab\u8ddf\u8e2a\u548c\u5e7f\u64ad\u3002",
-        },
-        {
-          title: "\u4e3b\u52a8\u62a5\u544a\u963b\u585e",
-          description:
-            "\u5f53 智能体 \u9047\u5230\u56f0\u96be\u65f6\uff0c\u4f1a\u7acb\u5373\u53d1\u51fa\u8b66\u62a5\u3002\u4e0d\u7528\u7b49\u51e0\u4e2a\u5c0f\u65f6\u540e\u624d\u53d1\u73b0\u4ec0\u4e48\u90fd\u6ca1\u53d1\u751f\u3002",
-        },
-        {
-          title: "\u5b9e\u65f6\u8fdb\u5ea6\u63a8\u9001",
-          description:
-            "\u57fa\u4e8e WebSocket \u7684\u5b9e\u65f6\u66f4\u65b0\u3002\u5b9e\u65f6\u89c2\u770b 智能体 \u5de5\u4f5c\uff0c\u6216\u968f\u65f6\u67e5\u770b\u2014\u2014\u65f6\u95f4\u7ebf\u59cb\u7ec8\u662f\u6700\u65b0\u7684\u3002",
-        },
-      ],
-    },
-    skills: {
-      label: "\u6280\u80fd\u5e93",
-      title: "\u6bcf\u4e2a\u89e3\u51b3\u65b9\u6848\u90fd\u6210\u4e3a\u5168\u56e2\u961f\u53ef\u590d\u7528\u7684\u6280\u80fd",
-      description:
-        "\u6280\u80fd\u662f\u53ef\u590d\u7528\u7684\u80fd\u529b\u5b9a\u4e49\u2014\u2014\u4ee3\u7801\u3001\u914d\u7f6e\u548c\u4e0a\u4e0b\u6587\u6253\u5305\u5728\u4e00\u8d77\u3002\u53ea\u9700\u7f16\u5199\u4e00\u6b21\uff0c\u56e2\u961f\u4e2d\u6bcf\u4e2a 智能体 \u90fd\u80fd\u4f7f\u7528\u3002\u4f60\u7684\u6280\u80fd\u5e93\u968f\u65f6\u95f4\u4e0d\u65ad\u79ef\u7d2f\u3002",
-      cards: [
-        {
-          title: "\u53ef\u590d\u7528\u7684\u6280\u80fd\u5b9a\u4e49",
-          description:
-            "\u5c06\u77e5\u8bc6\u5c01\u88c5\u6210\u4efb\u4f55 智能体 \u90fd\u80fd\u6267\u884c\u7684\u6280\u80fd\u3002\u90e8\u7f72\u5230\u6d4b\u8bd5\u73af\u5883\u3001\u7f16\u5199\u8fc1\u79fb\u3001\u5ba1\u67e5 PR\u2014\u2014\u5168\u90e8\u4ee3\u7801\u5316\u3002",
-        },
-        {
-          title: "\u5168\u56e2\u961f\u5171\u4eab",
-          description:
-            "\u4e00\u4e2a\u4eba\u7684\u6280\u80fd\u5c31\u662f\u6bcf\u4e2a 智能体 \u7684\u6280\u80fd\u3002\u7f16\u5199\u4e00\u6b21\uff0c\u5168\u56e2\u961f\u53d7\u76ca\u3002",
-        },
-        {
-          title: "\u590d\u5408\u589e\u957f",
-          description:
-            "\u7b2c 1 \u5929\uff1a\u4f60\u6559 智能体 \u90e8\u7f72\u3002\u7b2c 30 \u5929\uff1a\u6bcf\u4e2a 智能体 \u90fd\u80fd\u90e8\u7f72\u3001\u5199\u6d4b\u8bd5\u3001\u505a\u4ee3\u7801\u5ba1\u67e5\u3002\u56e2\u961f\u80fd\u529b\u6307\u6570\u7ea7\u589e\u957f\u3002",
-        },
-      ],
-    },
-    runtimes: {
-      label: "\u8fd0\u884c\u65f6",
-      title: "\u4e00\u4e2a\u63a7\u5236\u53f0\u7ba1\u7406\u6240\u6709\u7b97\u529b",
-      description:
-        "\u672c\u5730\u5b88\u62a4\u8fdb\u7a0b\u548c\u4e91\u7aef\u8fd0\u884c\u65f6\uff0c\u5728\u540c\u4e00\u4e2a\u9762\u677f\u4e2d\u7ba1\u7406\u3002\u5b9e\u65f6\u76d1\u63a7\u5728\u7ebf/\u79bb\u7ebf\u72b6\u6001\u3001\u4f7f\u7528\u91cf\u56fe\u8868\u548c\u6d3b\u52a8\u70ed\u529b\u56fe\u3002\u81ea\u52a8\u68c0\u6d4b\u672c\u673a\u5df2\u5b89\u88c5\u7684 29 \u6b3e\u652f\u6301\u7684 AI \u7f16\u7a0b\u5de5\u5177\u3002",
-      cards: [
-        {
-          title: "\u7edf\u4e00\u8fd0\u884c\u65f6\u9762\u677f",
-          description:
-            "\u672c\u5730\u5b88\u62a4\u8fdb\u7a0b\u548c\u4e91\u7aef\u8fd0\u884c\u65f6\u5728\u540c\u4e00\u89c6\u56fe\u4e2d\u3002\u65e0\u9700\u5728\u4e0d\u540c\u7ba1\u7406\u754c\u9762\u4e4b\u95f4\u5207\u6362\u3002",
-        },
-        {
-          title: "\u5b9e\u65f6\u76d1\u63a7",
-          description:
-            "\u5728\u7ebf/\u79bb\u7ebf\u72b6\u6001\u3001\u4f7f\u7528\u91cf\u56fe\u8868\u548c\u6d3b\u52a8\u70ed\u529b\u56fe\u3002\u968f\u65f6\u4e86\u89e3\u4f60\u7684\u7b97\u529b\u5728\u505a\u4ec0\u4e48\u3002",
-        },
-        {
-          title: "\u9996\u6b21\u542f\u52a8\u81ea\u52a8\u6ce8\u518c",
-          description:
-            "Multica \u626b\u63cf\u672c\u673a\u7684 29 \u6b3e\u652f\u6301\u7684 AI \u7f16\u7a0b\u5de5\u5177\u2014\u2014Antigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Devin CLI\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Muse Code\u3001Oh-My-Pi\u3001OpenClaw\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw、ZCode\u2014\u2014\u5e76\u4e3a\u6bcf\u6b3e\u5df2\u5b89\u88c5\u7684\u5de5\u5177\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002",
-        },
-      ],
-    },
-  },
-
-  howItWorks: {
-    label: "\u5f00\u59cb\u4f7f\u7528",
-    headlineMain: "\u62db\u52df\u4f60\u7684\u7b2c\u4e00\u4e2a AI \u5458\u5de5",
-    headlineFaded: "\u53ea\u9700\u4e00\u5c0f\u65f6\u3002",
-    steps: [
-      {
-        title: allowSignup ? "注册并创建您的工作空间" : "登录到您的工作空间",
-        description: allowSignup
-          ? "输入您的邮箱，验证代码后即可使用。工作空间会自动创建——无需设置向导或配置表单。"
-          : "输入您的邮箱，验证代码后即可登录到您的工作空间——无需设置向导或配置表单。",
-      },
-      {
-        title: "\u5b89\u88c5 CLI \u5e76\u8fde\u63a5\u4f60\u7684\u673a\u5668",
-        description:
-          "运行 multica setup——它会引导你完成 OAuth 登录、启动守护进程、并扫描 29 款支持的 AI 编程工具（Antigravity、Claude Code、CodeBuddy、CodeArts、Codex、Copilot、Cursor、DeepSeek Harness、DevEco Code、Devin CLI、Dim、Grok、Hermes、Kimi、Kiro CLI、MiniMax Code、Muse Code、Oh-My-Pi、OpenClaw、OpenCode、Pi、Qoder、Qoder CN、Qwen Code、QwenPaw、Reasonix、Trae CLI、ZeroClaw、ZCode）。本机已安装的工具会被自动注册成运行时。",
-      },
-      {
-        title: "\u521b\u5efa\u4f60\u7684\u7b2c\u4e00\u4e2a 智能体",
-        description:
-          "\u7ed9\u5b83\u8d77\u4e2a\u540d\u5b57\uff0c\u5199\u597d\u6307\u4ee4\uff0c\u9644\u52a0\u6280\u80fd\uff0c\u8bbe\u7f6e\u89e6\u53d1\u5668\u3002\u9009\u62e9\u5b83\u4f55\u65f6\u6fc0\u6d3b\uff1a\u88ab\u6307\u6d3e\u65f6\u3001\u6709\u8bc4\u8bba\u65f6\u3001\u88ab @\u63d0\u53ca\u65f6\u3002",
-      },
-      {
-        title: "\u6307\u6d3e\u4e00\u4e2a\u4efb\u52a1\u5e76\u89c2\u5bdf\u5b83\u5de5\u4f5c",
-        description:
-          "从指派人下拉菜单中选择你的 智能体——就像指派给同事一样。task 自动入队、领取、执行。实时观看进度。",
-      },
-    ],
-    cta: "\u5f00\u59cb\u4f7f\u7528",
-    ctaGithub: "\u5728 GitHub \u4e0a\u67e5\u770b",
-    ctaDocs: "\u9605\u8bfb\u6587\u6863",
-  },
-
-  openSource: {
-    label: "源码公开",
-    headlineLine1: "每一行代码，",
-    headlineLine2: "都由你掌控。",
-    description:
-      "Multica 的源代码完全公开。审查每一行代码，免费自托管，塑造人类 + 智能体 协作的未来。把 Multica 作为托管服务提供给他人，需要商业授权。",
-    cta: "在 GitHub 上 Star",
-    licensingCta: "了解授权方式 →",
-    highlights: [
-      {
-        title: "\u968f\u5904\u81ea\u6258\u7ba1",
-        description:
-          "\u5728\u4f60\u81ea\u5df1\u7684\u57fa\u7840\u8bbe\u65bd\u4e0a\u8fd0\u884c Multica\u3002Docker Compose\u3001\u5355\u4e2a\u4e8c\u8fdb\u5236\u6216 Kubernetes——工作区数据始终保存在你自己掌控的服务器上。",
-      },
-      {
-        title: "\u65e0\u4f9b\u5e94\u5546\u9501\u5b9a",
-        description:
-          "\u81ea\u5e26 LLM \u63d0\u4f9b\u5546\u3001\u66f4\u6362 智能体 \u540e\u7aef\u3001\u6269\u5c55 API\u3002\u4f60\u62e5\u6709\u6574\u4e2a\u6280\u672f\u6808\u7684\u63a7\u5236\u6743\u3002",
-      },
-      {
-        title: "\u9ed8\u8ba4\u900f\u660e",
-        description:
-          "\u6bcf\u4e00\u884c\u4ee3\u7801\u90fd\u53ef\u5ba1\u8ba1\u3002\u786e\u5207\u4e86\u89e3\u4f60\u7684 智能体 \u5982\u4f55\u505a\u51b3\u7b56\u3001\u4efb\u52a1\u5982\u4f55\u8def\u7531\u3001\u6570\u636e\u6d41\u5411\u4f55\u65b9\u3002",
-      },
-      {
-        title: "\u793e\u533a\u9a71\u52a8",
-        description:
-          "\u4e0e\u793e\u533a\u4e00\u8d77\u5efa\u8bbe\uff0c\u800c\u4e0d\u4ec5\u4ec5\u662f\u4e3a\u793e\u533a\u5efa\u8bbe\u3002\u8d21\u732e\u6280\u80fd\u3001\u96c6\u6210\u548c 智能体 \u540e\u7aef\uff0c\u8ba9\u6bcf\u4e2a\u4eba\u53d7\u76ca\u3002",
-      },
-    ],
-  },
-
+  ...zhSiteCopy,
   faq: {
     label: "\u5e38\u89c1\u95ee\u9898",
     headline: "\u95ee\u4e0e\u7b54\u3002",
     items: [
       {
-        question: "Multica \u652f\u6301\u54ea\u4e9b\u7f16\u7801 智能体\uff1f",
+        question: "Labrastro \u652f\u6301\u54ea\u4e9b\u7f16\u7801 智能体\uff1f",
         answer:
-          "Multica \u5f00\u7bb1\u5373\u7528\u652f\u6301 29 \u6b3e AI \u7f16\u7a0b\u5de5\u5177\uff1aAntigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Devin CLI\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Muse Code\u3001Oh-My-Pi\u3001OpenClaw\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw、ZCode\u3002\u5b88\u62a4\u8fdb\u7a0b\u4f1a\u81ea\u52a8\u68c0\u6d4b\u672c\u673a\u5df2\u5b89\u88c5\u7684 CLI \u5e76\u4e3a\u6bcf\u6b3e\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002因为源码公开，你也可以自己添加后端。 自托管部署还可以使用 Qoder PAT 和 Qoder Cloud Agents 中已有的智能体，将 Qoder Cloud Agents 配置为执行任务的托管远端运行时。",
+          "Labrastro \u5f00\u7bb1\u5373\u7528\u652f\u6301 29 \u6b3e AI \u7f16\u7a0b\u5de5\u5177\uff1aAntigravity\u3001Claude Code\u3001CodeBuddy\u3001CodeArts\u3001Codex\u3001Copilot\u3001Cursor\u3001DeepSeek Harness\u3001DevEco Code\u3001Devin CLI\u3001Dim\u3001Grok\u3001Hermes\u3001Kimi\u3001Kiro CLI\u3001MiniMax Code\u3001Muse Code\u3001Oh-My-Pi\u3001OpenClaw\u3001OpenCode\u3001Pi\u3001Qoder\u3001Qoder CN\u3001Qwen Code\u3001QwenPaw\u3001Reasonix\u3001Trae CLI\u3001ZeroClaw、ZCode\u3002\u5b88\u62a4\u8fdb\u7a0b\u4f1a\u81ea\u52a8\u68c0\u6d4b\u672c\u673a\u5df2\u5b89\u88c5\u7684 CLI \u5e76\u4e3a\u6bcf\u6b3e\u6ce8\u518c\u4e00\u4e2a\u8fd0\u884c\u65f6\u3002因为源码公开，你也可以自己添加后端。 自托管部署还可以使用 Qoder PAT 和 Qoder Cloud Agents 中已有的智能体，将 Qoder Cloud Agents 配置为执行任务的托管远端运行时。",
       },
       {
         question: "\u9700\u8981\u81ea\u6258\u7ba1\u5417\uff0c\u8fd8\u662f\u6709\u4e91\u7248\u672c\uff1f",
         answer:
-          "\u4e24\u8005\u90fd\u6709\u3002\u4f60\u53ef\u4ee5\u7528 Docker Compose \u6216 Kubernetes \u5728\u81ea\u5df1\u7684\u57fa\u7840\u8bbe\u65bd\u4e0a\u81ea\u6258\u7ba1 Multica\uff0c\u4e5f\u53ef\u4ee5\u4f7f\u7528\u6211\u4eec\u7684\u6258\u7ba1\u4e91\u7248\u672c\u3002你的数据，你选择。",
+          "\u4e24\u8005\u90fd\u6709\u3002\u4f60\u53ef\u4ee5\u7528 Docker Compose \u6216 Kubernetes \u5728\u81ea\u5df1\u7684\u57fa\u7840\u8bbe\u65bd\u4e0a\u81ea\u6258\u7ba1 Labrastro\uff0c\u4e5f\u53ef\u4ee5\u4f7f\u7528\u6211\u4eec\u7684\u6258\u7ba1\u4e91\u7248\u672c\u3002你的数据，你选择。",
       },
       {
         question: "可以商用吗？",
         answer:
-          "可以。在你自己的组织内部使用 Multica 是免费的，包括为整个团队自托管。只有两种情况需要商业授权：把 Multica 提供给组织外部的人使用（比如作为托管服务或代运维服务），或者把它嵌入你销售或分发的产品中。常见场景见[授权说明](/licensing)。",
+          "可以。在你自己的组织内部使用 Labrastro 是免费的，包括为整个团队自托管。只有两种情况需要商业授权：把 Labrastro 提供给组织外部的人使用（比如作为托管服务或代运维服务），或者把它嵌入你销售或分发的产品中。常见场景见[授权说明](/licensing)。",
       },
       {
         question:
           "\u8fd9\u548c\u76f4\u63a5\u7528\u7f16\u7801 智能体 \u6709\u4ec0\u4e48\u533a\u522b\uff1f",
         answer:
-          "\u7f16\u7801 智能体 \u64c5\u957f\u6267\u884c\u3002Multica \u6dfb\u52a0\u7684\u662f\u7ba1\u7406\u5c42\uff1a\u4efb\u52a1\u961f\u5217\u3001\u56e2\u961f\u534f\u4f5c\u3001\u6280\u80fd\u590d\u7528\u3001\u8fd0\u884c\u65f6\u76d1\u63a7\uff0c\u4ee5\u53ca\u6bcf\u4e2a 智能体 \u5728\u505a\u4ec0\u4e48\u7684\u7edf\u4e00\u89c6\u56fe\u3002\u628a\u5b83\u60f3\u8c61\u6210\u4f60\u7684 智能体 \u7684\u9879\u76ee\u7ecf\u7406\u3002",
+          "\u7f16\u7801 智能体 \u64c5\u957f\u6267\u884c\u3002Labrastro \u6dfb\u52a0\u7684\u662f\u7ba1\u7406\u5c42\uff1a\u4efb\u52a1\u961f\u5217\u3001\u56e2\u961f\u534f\u4f5c\u3001\u6280\u80fd\u590d\u7528\u3001\u8fd0\u884c\u65f6\u76d1\u63a7\uff0c\u4ee5\u53ca\u6bcf\u4e2a 智能体 \u5728\u505a\u4ec0\u4e48\u7684\u7edf\u4e00\u89c6\u56fe\u3002\u628a\u5b83\u60f3\u8c61\u6210\u4f60\u7684 智能体 \u7684\u9879\u76ee\u7ecf\u7406\u3002",
       },
       {
         question: "智能体 \u80fd\u81ea\u4e3b\u5904\u7406\u957f\u65f6\u95f4\u4efb\u52a1\u5417\uff1f",
         answer:
-          "\u53ef\u4ee5\u3002Multica \u7ba1\u7406\u5b8c\u6574\u7684\u4efb\u52a1\u751f\u547d\u5468\u671f\u2014\u2014\u5165\u961f\u3001\u9886\u53d6\u3001\u6267\u884c\u3001\u5b8c\u6210\u6216\u5931\u8d25\u3002智能体 \u4e3b\u52a8\u62a5\u544a\u963b\u585e\u5e76\u5b9e\u65f6\u63a8\u9001\u8fdb\u5ea6\u3002\u4f60\u53ef\u4ee5\u968f\u65f6\u67e5\u770b\uff0c\u4e5f\u53ef\u4ee5\u8ba9\u5b83\u4eec\u8fd0\u884c\u6574\u665a\u3002",
+          "\u53ef\u4ee5\u3002Labrastro \u7ba1\u7406\u5b8c\u6574\u7684\u4efb\u52a1\u751f\u547d\u5468\u671f\u2014\u2014\u5165\u961f\u3001\u9886\u53d6\u3001\u6267\u884c\u3001\u5b8c\u6210\u6216\u5931\u8d25\u3002智能体 \u4e3b\u52a8\u62a5\u544a\u963b\u585e\u5e76\u5b9e\u65f6\u63a8\u9001\u8fdb\u5ea6\u3002\u4f60\u53ef\u4ee5\u968f\u65f6\u67e5\u770b\uff0c\u4e5f\u53ef\u4ee5\u8ba9\u5b83\u4eec\u8fd0\u884c\u6574\u665a\u3002",
       },
       {
         question: "\u6211\u7684\u4ee3\u7801\u5b89\u5168\u5417\uff1f智能体 \u5728\u54ea\u91cc\u6267\u884c\uff1f",
         answer:
-          "智能体在你的机器（通过本地守护进程）或你连接的运行时上运行，直接在你的代码仓库里工作。工作区里的内容——任务、评论、聊天消息、附件，以及智能体上报的进度——由 Multica 存储；智能体所用的编码工具会把提示词和代码发送给你配置的模型服务商。想让工作区数据留在自己的服务器上，可以自托管 Multica。详见[隐私政策](/privacy)。",
+          "智能体在你的机器（通过本地守护进程）或你连接的运行时上运行，直接在你的代码仓库里工作。工作区里的内容——任务、评论、聊天消息、附件，以及智能体上报的进度——由 Labrastro 存储；智能体所用的编码工具会把提示词和代码发送给你配置的模型服务商。想让工作区数据留在自己的服务器上，可以自托管 Labrastro。详见[隐私政策](/privacy)。",
       },
       {
         question: "\u6211\u53ef\u4ee5\u8fd0\u884c\u591a\u5c11\u4e2a 智能体\uff1f",
@@ -232,48 +48,10 @@ export function createZhDict(
     ],
   },
 
-  footer: {
-    tagline:
-      "\u4eba\u7c7b + 智能体 团队的项目管理。源码公开、可自托管、\u4e3a\u672a\u6765\u7684\u5de5\u4f5c\u65b9\u5f0f\u800c\u5efa\u3002",
-    cta: "\u5f00\u59cb\u4f7f\u7528",
-    groups: {
-      product: {
-        label: "\u4ea7\u54c1",
-        links: [
-          { label: "\u529f\u80fd\u7279\u6027", href: "#features" },
-          { label: "\u5982\u4f55\u5de5\u4f5c", href: "#how-it-works" },
-          { label: "\u6848\u4f8b", href: "/usecases" },
-          { label: "更新日志", href: "/changelog" },
-          { label: "下载", href: "/download" },
-        ],
-      },
-      resources: {
-        label: "\u8d44\u6e90",
-        links: [
-          { label: "\u6587\u6863", href: docsHref },
-          { label: "API", href: githubUrl },
-          { label: "X (Twitter)", href: "https://x.com/MulticaAI" },
-          { label: "Discord", href: discordUrl },
-        ],
-      },
-      company: {
-        label: "\u5173\u4e8e",
-        links: [
-          { label: "关于我们", href: "/about" },
-          { label: "授权说明", href: "/licensing" },
-          { label: "隐私政策", href: "/privacy" },
-          { label: "\u8054\u7cfb\u5546\u52a1", href: "/contact-sales" },
-          { label: "GitHub", href: githubUrl },
-        ],
-      },
-    },
-    copyright: "\u00a9 {year} Multica. \u4fdd\u7559\u6240\u6709\u6743\u5229\u3002",
-  },
-
   about: {
-    title: "\u5173\u4e8e Multica",
+    title: "\u5173\u4e8e Labrastro",
     nameLine: {
-      prefix: "Multica\u2014\u2014",
+      prefix: "Labrastro\u2014\u2014",
       mult: "Mult",
       iplexed: "iplexed ",
       i: "I",
@@ -285,17 +63,17 @@ export function createZhDict(
     },
     paragraphs: [
       "\u8fd9\u4e2a\u540d\u5b57\u662f\u5728\u5411 20 \u4e16\u7eaa 60 \u5e74\u4ee3\u5177\u6709\u5f00\u521b\u610f\u4e49\u7684\u64cd\u4f5c\u7cfb\u7edf Multics \u81f4\u610f\u3002Multics \u9996\u521b\u4e86\u5206\u65f6\u7cfb\u7edf\uff0c\u8ba9\u591a\u4e2a\u7528\u6237\u80fd\u591f\u5171\u4eab\u540c\u4e00\u53f0\u673a\u5668\uff0c\u540c\u65f6\u53c8\u50cf\u5404\u81ea\u72ec\u5360\u5b83\u4e00\u6837\u4f7f\u7528\u3002Unix \u5219\u662f\u5728\u6709\u610f\u7b80\u5316 Multics \u7684\u57fa\u7840\u4e0a\u8bde\u751f\u7684\uff0c\u5f3a\u8c03\u4e00\u4e2a\u7528\u6237\u3001\u4e00\u4e2a\u4efb\u52a1\u3001\u4e00\u79cd\u4f18\u96c5\u7684\u54f2\u5b66\u3002",
-      "\u6211\u4eec\u8ba4\u4e3a\uff0c\u7c7b\u4f3c\u7684\u8f6c\u6298\u70b9\u6b63\u5728\u518d\u6b21\u51fa\u73b0\u3002\u51e0\u5341\u5e74\u6765\uff0c\u8f6f\u4ef6\u56e2\u961f\u4e00\u76f4\u5904\u4e8e\u4e00\u79cd\u5355\u7ebf\u7a0b\u7684\u5de5\u4f5c\u6a21\u5f0f\uff0c\u4e00\u4e2a\u5de5\u7a0b\u5e08\u5904\u7406\u4e00\u4e2a\u4efb\u52a1\uff0c\u4e00\u6b21\u53ea\u4e13\u6ce8\u4e8e\u4e00\u4e2a\u4e0a\u4e0b\u6587\u3002AI agents \u6539\u53d8\u4e86\u8fd9\u4e2a\u7b49\u5f0f\u3002Multica \u5c06\u201c\u5206\u65f6\u201d\u91cd\u65b0\u5e26\u56de\u8fd9\u4e2a\u65f6\u4ee3\uff0c\u53ea\u4e0d\u8fc7\u4eca\u5929\u5728\u7cfb\u7edf\u4e2d\u8fdb\u884c\u591a\u8def\u590d\u7528\u7684\u201c\u7528\u6237\u201d\uff0c\u65e2\u5305\u62ec\u4eba\u7c7b\uff0c\u4e5f\u5305\u62ec\u81ea\u4e3b\u4ee3\u7406\u3002",
-      "在 Multica 中，agents 是一级团队成员。它们会被分配任务，汇报进展，提出阻塞，并交付代码，就像人类同事一样。任务分配、活动时间线、task 生命周期，以及运行时基础设施，Multica 从第一天起就是围绕这一理念构建的。",
+      "\u6211\u4eec\u8ba4\u4e3a\uff0c\u7c7b\u4f3c\u7684\u8f6c\u6298\u70b9\u6b63\u5728\u518d\u6b21\u51fa\u73b0\u3002\u51e0\u5341\u5e74\u6765\uff0c\u8f6f\u4ef6\u56e2\u961f\u4e00\u76f4\u5904\u4e8e\u4e00\u79cd\u5355\u7ebf\u7a0b\u7684\u5de5\u4f5c\u6a21\u5f0f\uff0c\u4e00\u4e2a\u5de5\u7a0b\u5e08\u5904\u7406\u4e00\u4e2a\u4efb\u52a1\uff0c\u4e00\u6b21\u53ea\u4e13\u6ce8\u4e8e\u4e00\u4e2a\u4e0a\u4e0b\u6587\u3002AI agents \u6539\u53d8\u4e86\u8fd9\u4e2a\u7b49\u5f0f\u3002Labrastro \u5c06\u201c\u5206\u65f6\u201d\u91cd\u65b0\u5e26\u56de\u8fd9\u4e2a\u65f6\u4ee3\uff0c\u53ea\u4e0d\u8fc7\u4eca\u5929\u5728\u7cfb\u7edf\u4e2d\u8fdb\u884c\u591a\u8def\u590d\u7528\u7684\u201c\u7528\u6237\u201d\uff0c\u65e2\u5305\u62ec\u4eba\u7c7b\uff0c\u4e5f\u5305\u62ec\u81ea\u4e3b\u4ee3\u7406\u3002",
+      "在 Labrastro 中，agents 是一级团队成员。它们会被分配任务，汇报进展，提出阻塞，并交付代码，就像人类同事一样。任务分配、活动时间线、task 生命周期，以及运行时基础设施，Labrastro 从第一天起就是围绕这一理念构建的。",
       "\u548c\u5f53\u5e74\u7684 Multics \u4e00\u6837\uff0c\u8fd9\u4e00\u5224\u65ad\u5efa\u7acb\u5728\u201c\u591a\u8def\u590d\u7528\u201d\u4e4b\u4e0a\u3002\u4e00\u4e2a\u5c0f\u56e2\u961f\u4e0d\u8be5\u56e0\u4e3a\u4eba\u6570\u5c11\u5c31\u663e\u5f97\u80fd\u529b\u6709\u9650\u3002\u6709\u4e86\u5408\u9002\u7684\u7cfb\u7edf\uff0c\u4e24\u540d\u5de5\u7a0b\u5e08\u52a0\u4e0a\u4e00\u7ec4 agents\uff0c\u5c31\u80fd\u53d1\u6325\u51fa\u4e8c\u5341\u4eba\u56e2\u961f\u7684\u63a8\u8fdb\u901f\u5ea6\u3002",
-      "Multica 的源代码公开，并且可以免费自托管，工作区数据始终保存在你自己的基础设施中。\u4f60\u53ef\u4ee5\u5ba1\u67e5\u6bcf\u4e00\u884c\u4ee3\u7801\uff0c\u6269\u5c55 API\uff0c\u63a5\u5165\u81ea\u5df1\u7684 LLM providers\uff0c\u4e5f\u53ef\u4ee5\u5411\u793e\u533a\u8d21\u732e\u4ee3\u7801\u3002",
+      "Labrastro 的源代码公开，并且可以免费自托管，工作区数据始终保存在你自己的基础设施中。\u4f60\u53ef\u4ee5\u5ba1\u67e5\u6bcf\u4e00\u884c\u4ee3\u7801\uff0c\u6269\u5c55 API\uff0c\u63a5\u5165\u81ea\u5df1\u7684 LLM providers\uff0c\u4e5f\u53ef\u4ee5\u5411\u793e\u533a\u8d21\u732e\u4ee3\u7801\u3002",
     ],
     cta: "在 GitHub 上查看",
     team: {
-      title: "Multica 背后的团队",
+      title: "Labrastro 背后的团队",
       paragraphs: [
-        "Multica 由一支从 2021 年起就一起工作的小团队打造。在 Multica 之前，我们做过面向开发者的 AI 搜索引擎 devv.ai。2025 年，我们开始解决自己反复遇到的问题：一个小团队到底该怎样和 AI 智能体一起把事情做完。这就是 Multica。",
-        "Multica 的源代码公开，也可以自托管：在基于它构建之前，你可以读完每一行代码；自托管的部署完全运行在你自己的基础设施上。商业使用的规则，我们在[授权说明](/licensing)里写清楚了。",
+        "Labrastro 由一支从 2021 年起就一起工作的小团队打造。在 Labrastro 之前，我们做过面向开发者的 AI 搜索引擎 devv.ai。2025 年，我们开始解决自己反复遇到的问题：一个小团队到底该怎样和 AI 智能体一起把事情做完。这就是 Labrastro。",
+        "Labrastro 的源代码公开，也可以自托管：在基于它构建之前，你可以读完每一行代码；自托管的部署完全运行在你自己的基础设施上。商业使用的规则，我们在[授权说明](/licensing)里写清楚了。",
       ],
       contacts: [
         { label: "商业授权与合作", linkLabel: "联系商务", href: "/contact-sales" },
@@ -309,12 +87,12 @@ export function createZhDict(
   licensing: {
     title: "授权说明",
     intro: [
-      "Multica 采用 [Multica License](https://github.com/multica-ai/multica/blob/main/LICENSE) 发布：在 Apache License 2.0 的基础上附加了几项条件。源代码公开，在你自己的组织内部使用 Multica 是免费的，包括为整个团队自托管。",
-      "最主要的附加条件针对托管使用：把 Multica 提供给组织外部的人使用，需要商业授权。这一页用大家最常问的问题，说明这条线划在哪里。这是一份通俗说明，不构成法律意见；如与 LICENSE 原文不一致，以 LICENSE 为准。",
+      "Labrastro 采用 [Labrastro License](https://github.com/multica-ai/multica/blob/main/LICENSE) 发布：在 Apache License 2.0 的基础上附加了几项条件。源代码公开，在你自己的组织内部使用 Labrastro 是免费的，包括为整个团队自托管。",
+      "最主要的附加条件针对托管使用：把 Labrastro 提供给组织外部的人使用，需要商业授权。这一页用大家最常问的问题，说明这条线划在哪里。这是一份通俗说明，不构成法律意见；如与 LICENSE 原文不一致，以 LICENSE 为准。",
     ],
     rule: {
       title: "一条判断标准",
-      text: "看组织外部的人有没有在驱动这个实例——创建任务、和智能体对话、触发工作。只要有，不管通过什么界面（Web、Slack 还是 API），都算托管服务；如果他们只是收到你的团队用 Multica 做出来的成果，就属于内部使用。",
+      text: "看组织外部的人有没有在驱动这个实例——创建任务、和智能体对话、触发工作。只要有，不管通过什么界面（Web、Slack 还是 API），都算托管服务；如果他们只是收到你的团队用 Labrastro 做出来的成果，就属于内部使用。",
     },
     scenarios: {
       title: "常见场景",
@@ -324,18 +102,18 @@ export function createZhDict(
       notRequired: "不需要",
       items: [
         {
-          scenario: "你的组织内部使用 Multica",
+          scenario: "你的组织内部使用 Labrastro",
           example: "自托管，不限工作区数量。",
           required: false,
         },
         {
-          scenario: "你帮客户部署 Multica，由客户自己拥有、在其组织内部使用",
+          scenario: "你帮客户部署 Labrastro，由客户自己拥有、在其组织内部使用",
           example: "实施、培训、咨询或定制开发。",
           required: false,
         },
         {
-          scenario: "你的团队用 Multica 为客户干活，客户只收到交付物",
-          example: "例如 agency 在 Multica 里管理内容生产，向客户交付成品。",
+          scenario: "你的团队用 Labrastro 为客户干活，客户只收到交付物",
+          example: "例如 agency 在 Labrastro 里管理内容生产，向客户交付成品。",
           required: false,
         },
         {
@@ -344,7 +122,7 @@ export function createZhDict(
           required: false,
         },
         {
-          scenario: "你在自己的基础设施上替客户运行和管理 Multica 实例",
+          scenario: "你在自己的基础设施上替客户运行和管理 Labrastro 实例",
           example: "即代运维服务（managed service），无论是否收费。",
           required: true,
         },
@@ -355,12 +133,12 @@ export function createZhDict(
         },
         {
           scenario: "组织外部的人通过其他入口驱动你的实例",
-          example: "例如接入 Multica 后端的公开网站、Slack 集成或 API，免费提供也一样。",
+          example: "例如接入 Labrastro 后端的公开网站、Slack 集成或 API，免费提供也一样。",
           required: true,
         },
         {
-          scenario: "你把 Multica 嵌入到你销售或分发的产品中",
-          example: "Multica 作为另一个商业产品的组件一起交付。",
+          scenario: "你把 Labrastro 嵌入到你销售或分发的产品中",
+          example: "Labrastro 作为另一个商业产品的组件一起交付。",
           required: true,
         },
       ],
@@ -369,8 +147,8 @@ export function createZhDict(
       {
         heading: "其他条件",
         bullets: [
-          "品牌：除非获得我们的书面品牌豁免，请保留 Multica 界面中显示的 Multica Logo、产品名称以及版权和署名信息。",
-          "署名：如果你只基于 Multica 的后端、守护进程或 CLI 构建产品、不使用 Multica 界面，需要保留版权和 NOTICE 信息，并在面向用户的文档中注明产品基于 Multica 构建，附上 [GitHub 仓库](https://github.com/multica-ai/multica)链接。",
+          "品牌：除非获得我们的书面品牌豁免，请保留 Labrastro 界面中显示的 Labrastro Logo、产品名称以及版权和署名信息。",
+          "署名：如果你只基于 Labrastro 的后端、守护进程或 CLI 构建产品、不使用 Labrastro 界面，需要保留版权和 NOTICE 信息，并在面向用户的文档中注明产品基于 Labrastro 构建，附上 [GitHub 仓库](https://github.com/multica-ai/multica)链接。",
           "Fork：公开发布 fork 的源代码不算托管服务，不需要商业授权。但任何用这个 fork 运营托管服务的人，都需要各自获得商业授权。",
           "商业授权和品牌豁免是两项独立的授权，获得其中一项不代表获得另一项。",
         ],
@@ -388,16 +166,16 @@ export function createZhDict(
     title: "隐私政策",
     lastUpdated: "最后更新：2026 年 10 月 22 日",
     intro: [
-      "本隐私政策说明 Index Labs (Hong Kong) Limited（下称「Multica」或「我们」）在你访问 multica.ai、联系我们或使用我们的托管服务 Multica Cloud（包括网页端、桌面端和移动端）时，如何收集、使用和共享个人信息。",
-      "本政策不适用于你自行部署的 Multica。自托管部署的数据由部署方控制，它使用哪些 AI 服务商、集成或分析工具，取决于部署方的配置。自托管服务器唯一会发送给我们的是每天一次的使用快照，内容包括：一个随机生成的部署 ID（用于关联同一台服务器的历次快照）、服务器版本、工作区、成员、智能体和已连接守护进程的大致数量，当天开始、完成、失败和取消的运行次数，以及过去 1、7、28 天内打开过网页端或桌面端的成员、亲自发起过智能体运行的成员的大致人数。快照不含任何姓名、邮箱或内容。设置 DO_NOT_TRACK=1 即可关闭这份快照。",
+      "本隐私政策说明 Index Labs (Hong Kong) Limited（下称「Labrastro」或「我们」）在你访问 multica.ai、联系我们或使用我们的托管服务 Labrastro Cloud（包括网页端、桌面端和移动端）时，如何收集、使用和共享个人信息。",
+      "本政策不适用于你自行部署的 Labrastro。自托管部署的数据由部署方控制，它使用哪些 AI 服务商、集成或分析工具，取决于部署方的配置。自托管服务器唯一会发送给我们的是每天一次的使用快照，内容包括：一个随机生成的部署 ID（用于关联同一台服务器的历次快照）、服务器版本、工作区、成员、智能体和已连接守护进程的大致数量，当天开始、完成、失败和取消的运行次数，以及过去 1、7、28 天内打开过网页端或桌面端的成员、亲自发起过智能体运行的成员的大致人数。快照不含任何姓名、邮箱或内容。设置 DO_NOT_TRACK=1 即可关闭这份快照。",
       "本政策以英文版本为准。如中文版本与英文版本不一致，以英文版本为准。",
     ],
     sections: [
       {
         heading: "我们收集的信息",
         bullets: [
-          "账户信息：你的姓名、邮箱地址和头像。如果你使用 Google 登录，我们会从 Google 获得你的姓名、邮箱地址和头像。你也可以填写语言、时区、个人简介等资料，以及回答上手引导中的问题，例如你的角色、使用场景、从哪里了解到 Multica。",
-          "你创建的内容：工作区、任务、评论、聊天消息、附件、智能体指令，以及你或你的智能体放进 Multica Cloud 的其他内容。",
+          "账户信息：你的姓名、邮箱地址和头像。如果你使用 Google 登录，我们会从 Google 获得你的姓名、邮箱地址和头像。你也可以填写语言、时区、个人简介等资料，以及回答上手引导中的问题，例如你的角色、使用场景、从哪里了解到 Labrastro。",
+          "你创建的内容：工作区、任务、评论、聊天消息、附件、智能体指令，以及你或你的智能体放进 Labrastro Cloud 的其他内容。",
           "联系商务表单：你的姓名、工作邮箱、公司名称和规模、国家或地区、使用场景、目标，以及你的沟通偏好。为了防止滥用，我们还会记录提交表单时的 IP 地址和浏览器 user agent。",
           "账单信息：订阅付款由 Stripe 在其托管的页面上处理，我们不会接收或存储你的完整银行卡信息。",
           "使用和设备信息：应用版本、操作系统、客户端类型和一个随机生成的安装 ID；你连接为运行时的每台机器的名称（默认是其主机名）；以及崩溃和错误报告。报告发送前，我们会从错误信息中过滤掉能识别出的邮箱地址和凭据，但报告仍可能包含与出错情况相关的其他细节。",
@@ -407,24 +185,24 @@ export function createZhDict(
       {
         heading: "我们如何使用信息",
         bullets: [
-          "提供、运营和保护 Multica Cloud，包括登录、同步工作区、发送通知和邀请。",
+          "提供、运营和保护 Labrastro Cloud，包括登录、同步工作区、发送通知和邀请。",
           "回复联系商务表单和支持请求。",
           "发送服务消息，例如登录验证码和工作区邀请。只有在你主动同意后，我们才会发送产品动态或营销信息，你可以随时退订。",
-          "了解 Multica 的使用情况、修复问题并改进产品。",
+          "了解 Labrastro 的使用情况、修复问题并改进产品。",
           "防止滥用，并履行法律义务。",
         ],
       },
       {
         heading: "法律依据",
         paragraphs: [
-          "在法律要求说明处理依据的地区，我们依据以下几点处理个人信息：履行与你之间的合同，以提供 Multica Cloud；我们在保障安全、提供支持、改进 Multica 和回复咨询方面的正当利益；你对接收营销信息的同意；以及履行我们的法律义务。",
+          "在法律要求说明处理依据的地区，我们依据以下几点处理个人信息：履行与你之间的合同，以提供 Labrastro Cloud；我们在保障安全、提供支持、改进 Labrastro 和回复咨询方面的正当利益；你对接收营销信息的同意；以及履行我们的法律义务。",
         ],
       },
       {
         heading: "AI 功能",
         paragraphs: [
-          "你的编码智能体运行在你自己的机器或你连接的运行时上，使用的是你配置的编码工具和账户。智能体在本机运行，不代表模型也在本机推理：这些工具会把提示词、代码、文件和工具调用结果发送给各自的模型服务商，并受你所用工具和账户的条款约束。Multica 负责协调智能体的工作。",
-          "Multica Cloud 的部分功能（如生成聊天标题和推荐后续操作）会把你的第一条聊天消息或最近几条消息，发送给我们选用的第三方大语言模型服务商来生成结果。Multica 不会用你的内容训练 AI 模型。",
+          "你的编码智能体运行在你自己的机器或你连接的运行时上，使用的是你配置的编码工具和账户。智能体在本机运行，不代表模型也在本机推理：这些工具会把提示词、代码、文件和工具调用结果发送给各自的模型服务商，并受你所用工具和账户的条款约束。Labrastro 负责协调智能体的工作。",
+          "Labrastro Cloud 的部分功能（如生成聊天标题和推荐后续操作）会把你的第一条聊天消息或最近几条消息，发送给我们选用的第三方大语言模型服务商来生成结果。Labrastro 不会用你的内容训练 AI 模型。",
         ],
       },
       {
@@ -438,8 +216,8 @@ export function createZhDict(
         heading: "我们与谁共享信息",
         paragraphs: [
           "你放进工作区的信息，会按工作区的权限设置，被其他成员和管理员，以及他们授权的智能体和集成看到。如果你的工作区属于某个组织，其中的内容由该组织管理，相关请求也可能由该组织处理。",
-          "在法律要求时，我们会披露相关信息；如果 Multica 发生合并、收购或资产出售，相关信息也可能转移给买方或继任方。",
-          "除此之外，我们只会与帮助我们运营 Multica 的服务商，以及你选择连接的集成共享个人信息：",
+          "在法律要求时，我们会披露相关信息；如果 Labrastro 发生合并、收购或资产出售，相关信息也可能转移给买方或继任方。",
+          "除此之外，我们只会与帮助我们运营 Labrastro 的服务商，以及你选择连接的集成共享个人信息：",
         ],
         bullets: [
           "Amazon Web Services：托管、文件存储和内容分发",
@@ -455,19 +233,19 @@ export function createZhDict(
       {
         heading: "信息的存储位置",
         paragraphs: [
-          "Multica Cloud 托管在 Amazon Web Services 和 Vercel 上。我们和我们的服务商可能会在美国及其他国家或地区处理你的信息。无论在哪里处理，我们都会按照本政策保护这些信息。",
+          "Labrastro Cloud 托管在 Amazon Web Services 和 Vercel 上。我们和我们的服务商可能会在美国及其他国家或地区处理你的信息。无论在哪里处理，我们都会按照本政策保护这些信息。",
         ],
       },
       {
         heading: "信息的保留期限",
         paragraphs: [
-          "账户信息和工作区内容会在你的账户或工作区存在期间一直保留。工作区所有者删除工作区后，其中的任务、评论等内容会从 Multica Cloud 中移除，但用于恢复的备份在之后一段时间内仍可能包含副本。如需从我们的文件存储中清除已删除工作区里上传的文件，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。账单记录按会计和税务规定要求的期限保留；产品分析数据、崩溃报告、联系商务表单和反馈，会在为你提供支持和改进 Multica 所需的期间内保留。你可以要求我们删除联系商务表单和反馈。",
+          "账户信息和工作区内容会在你的账户或工作区存在期间一直保留。工作区所有者删除工作区后，其中的任务、评论等内容会从 Labrastro Cloud 中移除，但用于恢复的备份在之后一段时间内仍可能包含副本。如需从我们的文件存储中清除已删除工作区里上传的文件，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。账单记录按会计和税务规定要求的期限保留；产品分析数据、崩溃报告、联系商务表单和反馈，会在为你提供支持和改进 Labrastro 所需的期间内保留。你可以要求我们删除联系商务表单和反馈。",
         ],
       },
       {
         heading: "你的选择和权利",
         paragraphs: [
-          "根据你所在地的法律，你可能有权访问、更正、删除或导出你的个人信息，反对或限制某些处理，撤回你已给出的同意（例如接收营销信息的同意），以及向当地的数据保护机构投诉。你可以随时在 Multica 中更新个人资料，也可以在设置中删除你拥有的工作区。其他请求（包括删除账户），请发邮件至 [support@multica.ai](mailto:support@multica.ai)，我们会在 30 天内回复。",
+          "根据你所在地的法律，你可能有权访问、更正、删除或导出你的个人信息，反对或限制某些处理，撤回你已给出的同意（例如接收营销信息的同意），以及向当地的数据保护机构投诉。你可以随时在 Labrastro 中更新个人资料，也可以在设置中删除你拥有的工作区。其他请求（包括删除账户），请发邮件至 [support@multica.ai](mailto:support@multica.ai)，我们会在 30 天内回复。",
         ],
       },
       {
@@ -479,7 +257,7 @@ export function createZhDict(
       {
         heading: "儿童",
         paragraphs: [
-          "Multica 并非面向 16 岁以下的儿童，我们也不会在知情的情况下收集他们的个人信息。",
+          "Labrastro 并非面向 16 岁以下的儿童，我们也不会在知情的情况下收集他们的个人信息。",
         ],
       },
       {
@@ -491,7 +269,7 @@ export function createZhDict(
       {
         heading: "联系我们",
         paragraphs: [
-          "Multica 由 Index Labs (Hong Kong) Limited 运营，并由其负责你的个人信息。如有隐私相关的问题或请求，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。",
+          "Labrastro 由 Index Labs (Hong Kong) Limited 运营，并由其负责你的个人信息。如有隐私相关的问题或请求，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。",
         ],
       },
     ],
@@ -499,7 +277,7 @@ export function createZhDict(
 
   changelog: {
     title: "\u66f4\u65b0\u65e5\u5fd7",
-    subtitle: "Multica \u7684\u6700\u65b0\u66f4\u65b0\u548c\u6539\u8fdb\u3002",
+    subtitle: "Labrastro \u7684\u6700\u65b0\u66f4\u65b0\u548c\u6539\u8fdb\u3002",
     toc: "\u5386\u53f2\u7248\u672c",
     categories: {
       features: "新功能",
@@ -507,6 +285,70 @@ export function createZhDict(
       fixes: "问题修复",
     },
     entries: [
+      {
+        version: "0.8.2",
+        date: "2026-11-10",
+        title: "外观设置与内置主题、私有项目全面开放、Issue 开发环境",
+        changes: [],
+        features: [
+          "Labrastro 官网改版，主页、下载页和更新日志页都换了新设计。英文版仍在根路径，中文、日文和韩文有各自的地址（/zh、/ja、/ko），可以直接分享或收藏对应语言的页面。首次访问时，官网会按浏览器语言给出切换建议。",
+          "「设置 → 外观」可以选择 5 套内置主题（Default、Pop、GitHub、Blueprint、Notion），为界面文字和内容文字分别设置西文字体、中文字体和字号，并调整信息密度、行高、代码字体、减少动态效果和提高对比度。这些设置保存在本设备上。",
+          "所有工作区都可以使用私有项目。创建项目时，或之后在项目属性里，把「访问权限」设为「仅项目成员」并管理成员；项目中的 Issue、评论、附件、搜索结果、通知和运行记录只对项目成员以及工作区所有者和管理员可见。不做选择时，新项目仍对整个工作区可见。",
+          "Issue 侧栏的「环境」会列出它的运行启动的服务，显示所在机器、状态、链接和剩余时间。macOS 和 Linux 上可以自动发现，也可以在 .multica/environments.toml 里声明，再用 multica env start/list/stop 运行。托管的服务在多次智能体运行之间保持运行，默认 24 小时后停止。暂不支持 Windows，localhost 链接只能在运行它的机器上打开。",
+          "Connected Apps 重新设计（仅在启用 composio_mcp_apps 的工作区可用）：可以连接团队或个人账号，按智能体开启应用并选择账号，查看应用调用记录。个人账号使用触发本次运行的人自己的账号。允许的操作无需逐次审批，直接执行；已设置的封禁、只读授权和受限工具集仍然有效。团队账号和个人账号的「连接」按钮样式也已统一。",
+          "选中文字即可留下批注并就地回复，也可以 @ 智能体。批注和整份回复草稿会一起保存、一起发送。",
+          "可以在交付物侧栏、总览或预览器里复制交付物的「最新版本」链接。同名文件再次上传后，这个链接会在 Web 和桌面端打开最新上传的文件。",
+          "在 Issue 的执行日志或 Runs 面板勾选 Include sub-issues，就能汇总查看所有层级子 Issue 的运行次数、成本、图表和时间线，每条都标明所属 Issue。",
+          "收件箱和归档可以像 Issue 一样筛选：按通知类型、收到时间、项目、负责人、标签、截止日期等条件，支持搜索、排除和筛选标签。",
+          "工作流的阶段可以交给小队。阶段说明和前后状态都会保留；队长忙时交接会排队等待，连续交接不会丢失。",
+          "Web 和桌面端支持俄语，桌面端的原生菜单也已翻译。",
+          "可以通过新的 museapp 后端在 Muse app 上运行个人智能体。需要配置 endpoint、兼容的协议和共享任务目录，它与 Meta Muse Code 使用的 muse 后端不同。取消或失联的运行无法确认已停止时不会自动重试，请自行核对后重新运行。",
+          "没有设置仓库凭证时，Qoder 会使用工作区的 GitHub App，为每个已授权仓库签发短时令牌。手动设置的凭证优先。",
+          "在网页版 Issue 菜单里点 Open in Desktop，可以在桌面端打开同一个 Issue 或评论，自部署服务器同样适用。",
+          "CLI 的 issue create 和 issue update 新增 --pr-auto-complete off/on，分多个 PR 交付的 Issue 不会在第一个 PR 合入时就被完成。",
+          "multica issue search 可以用 --project 限定在一个项目内搜索。",
+          "工作流状态可以带上图标，CLI 新增 issue-status 命令来列出和更新工作区的状态。导入工作流不会覆盖已有状态。",
+          "在项目列表或项目页面的菜单里可以直接重命名项目。",
+          "在侧栏里可以从已保存视图的菜单直接编辑它。",
+          "拖动左侧导航栏里的图标即可调整空间顺序。",
+          "完成一些工作后，Labrastro 可能会邀请你在 GitHub 上点 Star，每个账号最多两次、间隔至少 30 天。帮助菜单里始终有 GitHub 链接。",
+        ],
+        improvements: [
+          "导航栏变窄，按钮和标签默认为矩形，桌面端标题栏和面板边缘对齐；宽屏下 Issue 和聊天使用更宽的阅读区域。",
+          "团队页一次显示的智能体状态预览更少，并记住你折叠了哪些分组。",
+          "侧栏里的项目显示各自的图标。",
+          "导航栏和属性标签里被截断的文字可以查看全文，也可以用键盘查看。",
+          "聊天和 Issue 视图里只有图标的按钮都有了供读屏软件使用的名称。",
+          "侧栏滚动条变细，已关闭的系统唤醒移到历史里，工作流名称不再带「from project」后缀。",
+          "动画更少：去掉了启动图标模式、引导页星星入场和官网 Logo 悬停跳动，大号星形图标的线条变细。",
+          "只搜索未完成的 Issue 时更快。",
+          "文档说明了各个超时设为 0s 时的含义，以及守护进程 watchdog 和 Codex 自身计时器的区别。",
+        ],
+        fixes: [
+          "附件不再通过公开的 /uploads/* 链接提供，下载一律需要登录验证。旧图片和草稿、跨域预览，以及音频、视频和 PDF 恢复正常，链接过期后也会回到原来的位置。旧版桌面端需要升级，本地草稿和旧链接才能继续使用。",
+          "CSV 预览不再因为引号内的分隔符而错列。",
+          "导入本地技能时可以明确选择本地文件夹作为来源，包含多个技能的文件夹会全部导入。",
+          "守护进程会清理闲置聊天的构建缓存，磁盘占用不再持续增长。",
+          "Codex 的回答恢复持续流式输出，不再只输出第一个词就停住。",
+          "Hermes 可以在 Windows 受限的 Job Object 中运行。",
+          "Issue 列表加载失败时可以重试；带日期筛选的未读列表为空时可以清除筛选。",
+          "标记 Issue 为重复后，结果提示不会随选择器关闭而消失。",
+          "加载失败的 Issue 提及会在你回到窗口时重新加载。",
+          "回到窗口或重新连接后，待处理的邀请会刷新。",
+          "筛选子菜单里的搜索框可以重新输入了。",
+          "打开 Issue 不再每次都展开侧栏里的所属项目；拖动固定项、视图或项目后紧接着的点击不会失效；Issue 行不再显示多余的标题提示。",
+          "小队选择器的自定义触发按钮行为与普通按钮一致，键盘操作也正常。",
+          "对只运行模式的自动化有编辑权限时，可以在运行历史里停止它的运行。",
+          "Issue 编号冲突时，Labrastro 会修正计数器后重试，可以继续新建 Issue。",
+          "通过 CLI 给评论添加的附件，只有在评论被接受后才会关联到评论上。",
+          "multica daemon start 只在守护进程健康后才报告成功；自部署设置会先确认服务器是真正的 Labrastro 后端再保存。",
+          "小队和自动化的 CLI 命令会优先选择名称完全一致的智能体。",
+          "CLI 不再建议删除仍在运行的任务标记。",
+          "旧请求迟到的 401 响应不会再把你从新的会话中登出。",
+          "lark、slack、telegram、wecom 等频道绑定页面不再与工作区地址冲突。",
+          "由 Issue 更新触发的自动化恢复运行。",
+        ],
+      },
       {
         version: "0.8.1",
         date: "2026-11-06",
@@ -598,14 +440,14 @@ export function createZhDict(
           "扫码即可创建企业微信机器人，智能体回复时能看到进度。",
           "Qoder Cloud Agents 支持聊天、快速创建和 Issue 附件，并按运行显示 Qoder credits。",
           "可以用 ZCode 运行任务。",
-          "Pi 运行中可以补充指令，并会加载 Multica 安装的技能。",
+          "Pi 运行中可以补充指令，并会加载 Labrastro 安装的技能。",
           "可以限制一个运行时同时执行的任务数。",
           "可以用 CLI 管理工作流。",
           "Hermes 运行中可以看到 token 和费用。",
           "已解决的讨论会显示结论，智能体不用再重复展开。",
         ],
         improvements: [
-          "Multica 的标识、图标和配色全面更新。",
+          "Labrastro 的标识、图标和配色全面更新。",
           "智能体列表恢复搜索，更多位置可以打开智能体设置。",
           "空页面样式统一，并提示下一步。",
           "附件预览下方新增翻页器。",
@@ -651,7 +493,7 @@ export function createZhDict(
           "窄屏上可一键跳到时间线最新动态；桌面端仍使用右侧导航轨。",
         ],
         improvements: [
-          "全站改用 Multica 自绘图标，菜单间距和字号统一。",
+          "全站改用 Labrastro 自绘图标，菜单间距和字号统一。",
           "文字被截断时才显示完整内容的提示，并稍作延迟，鼠标经过时更少误弹。",
           "点击运行即可打开完整记录；执行记录折叠排队中的运行，压缩历史和费用，进行中的运行和停止按钮始终可见。",
           "工作流列表把项目使用情况收为一行，点击可看完整清单；交接步骤显示接手者姓名。",
@@ -999,7 +841,7 @@ export function createZhDict(
           "Grok Build 的任务在运行过程中也能补充新的指导。",
           "Issue 的附件可以在全屏视图里逐个翻看。",
           "文档站现在有完整的法语内容。",
-          "官网可以查到许可说明、隐私政策，以及 Multica 背后的团队。",
+          "官网可以查到许可说明、隐私政策，以及 Labrastro 背后的团队。",
           "自托管的管理员可以让自动标题和快捷操作响应更快。",
         ],
         improvements: [
@@ -1365,7 +1207,7 @@ export function createZhDict(
         features: [
           "华为云 CodeArts 现已成为内置的智能体运行时。",
           "可以选它的模型、续接之前的会话，并使用 MCP 和本地技能。",
-          "iPad 上可以原生安装 Multica，横屏竖屏都能用。",
+          "iPad 上可以原生安装 Labrastro，横屏竖屏都能用。",
           "自托管部署在多台服务器上时，企业微信机器人的回复也能送达。",
           "可以查看有多少条企业微信回复没有发出，以及原因。",
         ],
@@ -1621,7 +1463,7 @@ export function createZhDict(
           "你可以生成一个分享链接，让别人直接加入工作区。",
           "运行记录改成按步骤看，配双轨时间线和结果概览。",
           "Slack 消息里发的文件现在会作为附件出现在对话里。",
-          "手机上可以把 Multica 添加到主屏幕，像应用一样打开。",
+          "手机上可以把 Labrastro 添加到主屏幕，像应用一样打开。",
           "浏览器标签页会显示你正打开的工作区页面名。",
           "导入的技能现在会显示它来自哪里。",
           "提到你正在看的这个 Issue 时，会显示成「本 Issue」。",
@@ -1779,7 +1621,7 @@ export function createZhDict(
           "Oh-My-Pi 现在也能跑你的智能体了。",
           "企业微信里的语音留言，智能体现在也听得懂。",
           "Kimi 和 Pi 的智能体现在可以选思考强度了。",
-          "Multica 里的任意链接，Cmd/Ctrl 或中键点击就能在新标签页打开。",
+          "Labrastro 里的任意链接，Cmd/Ctrl 或中键点击就能在新标签页打开。",
           "企业微信连不上时，页面会说清是被拒绝还是根本连不通。",
         ],
         improvements: [
@@ -2072,7 +1914,7 @@ export function createZhDict(
           "粘贴超长文本时，现在会自动变成文本附件。",
           "每个上传只显示一次，完成后才会写入草稿。",
           "Webhook URL 现在默认隐藏，可按需显示。",
-          "工作区很多时，Multica 启动不再反复检查智能体工具。",
+          "工作区很多时，Labrastro 启动不再反复检查智能体工具。",
           "用量排名现在先聚焦前十名，失败排序也更清楚。",
           "发送后，光标现在会停在各编辑器预期的位置。",
         ],
@@ -2247,7 +2089,7 @@ export function createZhDict(
           "重新打开设置面板后，你的设置现在能可靠保存。",
           "恢复的 Codex task 现在会准确报告用量。",
           "评论不再把不该变成链接的文字变成链接。",
-          "私聊的回复现在会留在 Multica 里。",
+          "私聊的回复现在会留在 Labrastro 里。",
           "AI 辅助创建现在始终可用。",
           "任务页面首次打开时不再卡顿。",
           "Linux 上的 Codex 智能体现在能正确保存 Git 信息。",
@@ -2551,7 +2393,7 @@ export function createZhDict(
         changes: [],
         features: [
           "task 日志（Transcript）会记住你的过滤条件与展开状态，下次打开同一次运行时自动恢复。",
-          "自托管（Helm）：新增 `postgres.external.enabled` 开关，可将 Multica 指向外部托管的 PostgreSQL（RDS、CNPG、Cloud SQL、Neon 等），跳过内置数据库。",
+          "自托管（Helm）：新增 `postgres.external.enabled` 开关，可将 Labrastro 指向外部托管的 PostgreSQL（RDS、CNPG、Cloud SQL、Neon 等），跳过内置数据库。",
         ],
         fixes: [
           "评论草稿里有空的 `1. ` 列表项时，重新加载后光标不再卡在下方块。",
@@ -2605,8 +2447,8 @@ export function createZhDict(
         title: "Slack /issue 斜杠命令、字节跳动 TRAE CLI 智能体运行时、接入 Claude Sonnet 5",
         changes: [],
         features: [
-          "Slack 里可以直接用原生 /issue 斜杠命令创建 Multica 任务，机器人只会向你私发一条包含任务链接的确认消息。",
-          "同一 Slack 工作区里已经和某个 Multica 机器人绑定过的用户，遇到新加入的第二个机器人时无需再走一次绑定流程。",
+          "Slack 里可以直接用原生 /issue 斜杠命令创建 Labrastro 任务，机器人只会向你私发一条包含任务链接的确认消息。",
+          "同一 Slack 工作区里已经和某个 Labrastro 机器人绑定过的用户，遇到新加入的第二个机器人时无需再走一次绑定流程。",
           "Slack 频道场景的上下文阅读拆成两条命令：一条查看频道概览，一条精读单个线程。",
           "字节跳动 TRAE CLI（traecli）通过标准 ACP 协议接入为内置智能体运行时之一。",
           "Anthropic 模型清单接入 Claude Sonnet 5，并已挂上介绍期价格。",
@@ -2622,7 +2464,7 @@ export function createZhDict(
           "修复了 Cursor 与 Kiro 运行时结束时 task 结果不入库的问题，最终回复不再丢失。",
           "自托管的 docker-compose.selfhost.yml 现在会把 MULTICA_SLACK_SECRET_KEY 透传到后端容器。（社区反馈）",
           "任务面板顶部「N 个任务正在处理中」的胶囊改为按任务数去重。",
-          "自托管匿名来源统计的上报地址恢复到正式的 Multica API。",
+          "自托管匿名来源统计的上报地址恢复到正式的 Labrastro API。",
           "评论的定位高亮改为纯背景色，根评论和回复的行为保持一致。",
         ],
       },
@@ -2633,7 +2475,7 @@ export function createZhDict(
         changes: [],
         features: [
           "Autopilot 新增清晰的写权限分层，详情页提供「管理协作者」入口，可把单个 Autopilot 的写权限授予指定成员。",
-          "Slack 频道可以把过往对话回灌到 Multica，智能体一进入频道即拥有完整上下文。",
+          "Slack 频道可以把过往对话回灌到 Labrastro，智能体一进入频道即拥有完整上下文。",
           "Slack 智能体处理消息期间会在用户消息上加 👀 反应表情，处理结束后稳定清除，不再出现卡死。",
           "技能包支持从本地 .skill / .zip 归档导入。",
           "multica issue 命令不再接受短 UUID 前缀，请使用任务 Key（MUL-123）或完整 UUID。",
@@ -2876,7 +2718,7 @@ export function createZhDict(
         features: [
           "智能体、自动任务、项目、运行环境、技能和小队的列表体验更快也更一致，行内容、筛选、选择和操作都更清楚",
           "命令行现在可以管理工作区仓库，本地智能体更容易拿到项目仓库上下文",
-          "Cursor 和 OpenClaw 更容易配置：Cursor 连接设置可以由 Multica 托管，OpenClaw 也可以连接已有网关",
+          "Cursor 和 OpenClaw 更容易配置：Cursor 连接设置可以由 Labrastro 托管，OpenClaw 也可以连接已有网关",
           "编辑评论时，可以在保存前预览并控制哪些智能体或小队会开始运行",
         ],
         improvements: [
@@ -2898,7 +2740,7 @@ export function createZhDict(
         title: "CodeBuddy Runtime",
         changes: [],
         features: [
-          "CodeBuddy 现在可以驱动本地 Multica 智能体，并会自动显示可用的模型和投入强度选项",
+          "CodeBuddy 现在可以驱动本地 Labrastro 智能体，并会自动显示可用的模型和投入强度选项",
           "快速创建任务时上传的文件现在会从草稿一直带到最终创建的任务里",
         ],
         improvements: [
@@ -2940,15 +2782,15 @@ export function createZhDict(
           "评论输入框现在会在发送前显示哪些智能体或小队会开始工作，也可以避免误触发运行",
           "智能体运行记录现在会显示时间点，回看进度和交接信息更清楚",
           "自动任务详情页现在会显示创建人",
-          "Claude Fable 5 现在已加入 Multica 支持的模型和价格列表",
+          "Claude Fable 5 现在已加入 Labrastro 支持的模型和价格列表",
           "任务讨论可以把某一条回复设为解决结论，长讨论收起后也能直接看到最终答案",
-          "在 Lark 和飞书里和 Multica 对话时，会显示等待中的输入状态，回复发出后自动清除",
+          "在 Lark 和飞书里和 Labrastro 对话时，会显示等待中的输入状态，回复发出后自动清除",
           "每次智能体 task 都会带上真实发起人信息，交接、审计和权限判断更准确",
           "OpenClaw 可以从本地配置中读取自定义程序位置和数据目录",
         ],
         improvements: [
           "评论触发提示更安静、更清楚，遇到较长的智能体名称时也不容易拥挤",
-          "桌面端在守护进程由 Multica 之外的环境管理时，会禁用启动和停止控制，例如 WSL2 场景",
+          "桌面端在守护进程由 Labrastro 之外的环境管理时，会禁用启动和停止控制，例如 WSL2 场景",
           "任务顶部的智能体状态更容易区分：运行中才显示动效，等待中会明确显示排队状态",
           "命令行会直接说明常见错误、登录问题和项目配置问题的处理方式",
         ],
@@ -2972,7 +2814,7 @@ export function createZhDict(
         title: "网页版消息通知和 /note 指令",
         changes: [],
         features: [
-          "网页端现在可以显示浏览器原生通知横幅，即使 Multica 在后台，也更容易及时看到工作区动态",
+          "网页端现在可以显示浏览器原生通知横幅，即使 Labrastro 在后台，也更容易及时看到工作区动态",
           "以 /note 开头的评论现在可以记录上下文，但不会唤醒已分配的智能体，团队可以留下协作备注而不触发运行",
           "Antigravity 现在可以作为每个智能体单独选择的模型",
           "命令行现在会用更容易理解的语言解释常见请求失败，并提示下一步该怎么处理",
@@ -3030,10 +2872,10 @@ export function createZhDict(
         title: "Lark Bot 集成",
         changes: [],
         features: [
-          "支持 Lark 第三方集成，扫码就能把 Multica 智能体创建成一个 Lark Bot",
+          "支持 Lark 第三方集成，扫码就能把 Labrastro 智能体创建成一个 Lark Bot",
           "聊天现在支持可搜索的智能体选择器和明确的上下文选择器，更容易指定谁来回复、需要看哪些内容",
           "描述和评论现在支持勾选式待办清单，任务里的轻量计划更好整理",
-          "智能体现在内置 Multica 技能，可以更稳定地遵循工作区工作流",
+          "智能体现在内置 Labrastro 技能，可以更稳定地遵循工作区工作流",
         ],
         improvements: [
           "聊天上下文会以清晰的提及形式呈现，交接和后续回看更容易理解",
@@ -3077,7 +2919,7 @@ export function createZhDict(
         title: "日语支持和 /skill command",
         changes: [],
         features: [
-          "Multica 现在支持日语界面、官网和文档",
+          "Labrastro 现在支持日语界面、官网和文档",
           "聊天现在支持 /skill command，用来选择智能体技能",
           "工作区现在可以显示自定义 Logo",
           "可以给智能体追加技能，不会覆盖已有技能",
@@ -3133,7 +2975,7 @@ export function createZhDict(
         changes: [],
         features: [
           "智能体在任务评论区继续工作时，会接着之前的会话继续，不再新开会话，task 上下文可以保留下来",
-          "Multica 现在支持韩语界面、官网和文档，包含完整韩语文档与本地化日期显示",
+          "Labrastro 现在支持韩语界面、官网和文档，包含完整韩语文档与本地化日期显示",
           "任务页面会在标题附近固定显示正在工作的智能体，多智能体同时工作时也能更清楚地查看",
           "智能体读取任务讨论时可以先看到线程摘要、回复数量和最近活跃时间，更快找到需要跟进的上下文",
           "OpenClaw 运行环境现在可以使用智能体里保存的 MCP 设置，Claude Opus 4.8 也可用于模型选择和用量估算",
@@ -3231,8 +3073,8 @@ export function createZhDict(
         title: "iOS 客户端、Helm 自托管与更顺畅的协作体验",
         changes: [],
         features: [
-          "Multica iOS 客户端发布官方首个可用版本，覆盖登录、工作区、收件箱、任务、项目、聊天、评论、表情回应、在线状态和实时更新；目前暂未上架 App Store，需要用户自行打包安装",
-          "自托管团队现在可以通过 Helm 将 Multica 部署到 Kubernetes，Docker 安装也有更清晰的端口和 URL 配置",
+          "Labrastro iOS 客户端发布官方首个可用版本，覆盖登录、工作区、收件箱、任务、项目、聊天、评论、表情回应、在线状态和实时更新；目前暂未上架 App Store，需要用户自行打包安装",
+          "自托管团队现在可以通过 Helm 将 Labrastro 部署到 Kubernetes，Docker 安装也有更清晰的端口和 URL 配置",
           "项目资源选择器新增仓库搜索，工作区仓库设置也可以保存描述，帮助智能体理解每个代码库",
           "运行时用量现在可以更准确识别 DeepSeek、Kimi K2.6、Zhipu GLM 和长上下文 Claude Opus 的费用",
           "官网新增使用场景页面能力，并让文档、更新日志和开始使用入口更清晰",
@@ -3375,7 +3217,7 @@ export function createZhDict(
         ],
         improvements: [
           "任务操作失败时会显示更明确的错误原因，团队不用翻日志也能理解发生了什么",
-          "关联 GitHub 的 Pull Request 会在 Multica 内展示 CI 和合并冲突状态",
+          "关联 GitHub 的 Pull Request 会在 Labrastro 内展示 CI 和合并冲突状态",
           "自托管部署获得更安全的默认配置，并补充反向代理、登录限制和本地服务的说明",
           "搜索结果排序更准确，也会展示更有帮助的摘要片段",
         ],
@@ -3467,7 +3309,7 @@ export function createZhDict(
         title: "GitHub 集成、聊天附件与任务定位优化",
         changes: [],
         features: [
-          "接入 GitHub 后，关联的 Pull Request 会显示在 Multica 任务中，状态会同步到 Multica，关闭 PR 后会自动关闭对应任务",
+          "接入 GitHub 后，关联的 Pull Request 会显示在 Labrastro 任务中，状态会同步到 Labrastro，关闭 PR 后会自动关闭对应任务",
           "聊天消息支持添加文件附件和图片预览",
           "Agent 和 runtime 可以设置公开或私有，方便控制团队可见范围",
           "停止单个 agent task 前会先弹出确认，避免误操作",
@@ -3478,7 +3320,7 @@ export function createZhDict(
           "很长的任务时间线滚动更顺畅",
           "反馈入口更明确地引导用户到 GitHub 参与讨论和反馈",
           "自托管 Caddy 配置文档补充实时连接要求",
-          "Linux 桌面端安装包恢复显示 Multica 应用图标",
+          "Linux 桌面端安装包恢复显示 Labrastro 应用图标",
         ],
         fixes: [
           "下载附件时保留原始文件名",
@@ -3580,7 +3422,7 @@ export function createZhDict(
           "Linux 上 daemon self-restart 改走 `brew prefix` 软链，Homebrew Cellar 删除后不再让 runtime 失联",
           "CLI 短 ID 现在可以正确路由，复制粘贴的短前缀不再 404",
           "Windows 上非 ASCII 字符评论 / 描述输入新增 `--content-file` / `--description-file`",
-          "Windows / Linux 桌面端用 Multica asterisk 替换 Electron 默认占位图标",
+          "Windows / Linux 桌面端用 Labrastro asterisk 替换 Electron 默认占位图标",
           "Timeline 中孤立的 reply 现在会被正确捞回展示",
           "Timeline 评论分页预算不再把 activity 算进去，避免活动多时挤掉真实评论",
         ],
@@ -3684,7 +3526,7 @@ export function createZhDict(
         ],
         improvements: [
           "Daemon `/tasks/claim` 轮询走 Redis 空认领 fast-path，空闲态 DB 压力下降，长期 open 的任务自动回收磁盘",
-          "Multica Agent 的 Git 提交自动追加 `Co-authored-by` trailer，归属更清晰",
+          "Labrastro Agent 的 Git 提交自动追加 `Co-authored-by` trailer，归属更清晰",
           "Desktop 拦截 Cmd+R / Ctrl+R / F5 防止意外刷新，开发模式与 Updates 设置中均展示真实版本号",
         ],
         fixes: [
@@ -4285,50 +4127,44 @@ export function createZhDict(
     ],
   },
   download: {
+    platforms: {
+      macArm64: "macOS · Apple Silicon",
+      macX64: "macOS · Intel",
+      winX64: "Windows · x64",
+      winArm64: "Windows · ARM64",
+      linuxX64: "Linux · x64",
+      linuxArm64: "Linux · ARM64",
+    },
     hero: {
-      macArm64: {
-        title: "Multica for macOS",
-        sub: "Apple Silicon · 内置 daemon，无需配置",
-        primary: "下载 (.dmg)",
-        altZip: "或下载 .zip",
+      eyebrow: "桌面端",
+      title: {
+        mac: "下载 Labrastro macOS 版",
+        windows: "下载 Labrastro Windows 版",
+        linux: "下载 Labrastro Linux 版",
+        other: "下载 Labrastro",
       },
-      macIntel: {
-        title: "Multica for macOS",
-        sub: "Intel · 内置守护进程，无需配置",
-        primary: "下载 (.dmg)",
-        altZip: "或下载 .zip",
+      lead: "桌面端自带智能体守护进程，这台电脑上的 Claude Code、Codex 等编程智能体会自动接入。",
+      leadOther: "支持 macOS、Windows 和 Linux，每个版本都内置智能体守护进程。",
+      mobileNote: "Labrastro 桌面端支持 macOS、Windows 和 Linux。请在电脑上打开这个页面下载。",
+      primary: {
+        macArm64Dmg: "下载 Apple 芯片版",
+        macX64Dmg: "下载 Intel 版",
+        winX64Exe: "下载 Windows 版",
+        winArm64Exe: "下载 Windows ARM 版",
+        linuxAmd64AppImage: "下载 AppImage",
+        linuxArm64AppImage: "下载 AppImage",
       },
-      winX64: {
-        title: "Multica for Windows",
-        sub: "内置 daemon，无需配置",
-        primary: "下载 (.exe)",
+      alternate: {
+        macArm64Dmg: "Apple 芯片版",
+        macX64Dmg: "Intel 版",
       },
-      winArm64: {
-        title: "Multica for Windows",
-        sub: "ARM · 内置 daemon，无需配置",
-        primary: "下载 (.exe)",
-      },
-      linux: {
-        title: "Multica for Linux",
-        sub: "内置 daemon，无需配置",
-        primary: "下载 AppImage",
-        altFormats: "或 .deb / .rpm",
-      },
-      unknown: {
-        title: "选择你的平台",
-        sub: "下方是所有支持的安装包。",
-      },
-      safariMacHint: "在 Intel Mac 上？请在下方选择 Intel 版本。",
-      archFallbackHint: "架构不对？下方是所有可选格式。",
+      released: "{date} 发布",
+      whatsNew: "更新内容",
+      versionUnavailable: "暂时获取不到版本信息，请到 GitHub 查看所有版本。",
     },
     allPlatforms: {
-      title: "所有平台",
-      macArm64Label: "macOS · Apple Silicon",
-      macX64Label: "macOS · Intel",
-      winX64Label: "Windows · x64",
-      winArm64Label: "Windows · ARM64",
-      linuxX64Label: "Linux · x64",
-      linuxArm64Label: "Linux · ARM64",
+      title: "全部下载",
+      thisDevice: "这台电脑",
       formatDmg: ".dmg",
       formatZip: ".zip",
       formatExe: ".exe",
@@ -4336,34 +4172,61 @@ export function createZhDict(
       formatDeb: ".deb",
       formatRpm: ".rpm",
       unavailable: "暂不可用",
+      allReleases: "所有版本",
     },
     cli: {
-      title: "想用 CLI？",
-      sub: "适合服务器、远程开发机、无图形界面环境。底层 daemon 与 Desktop 相同，通过终端安装。",
+      title: "在服务器或远程开发机上？",
+      sub: "安装 CLI，在那里运行同一个守护进程。通过 SSH 执行同样的命令即可。",
       installLabel: "安装",
       platformGroup: "选择你的系统",
       platformMacosLinux: "macOS / Linux",
       platformWindows: "Windows",
-      startLabel: "启动 daemon",
-      sshNote: "已经在服务器上？通过 SSH 执行同样的命令即可。",
+      startLabel: "启动守护进程",
       copyLabel: "复制",
       copiedLabel: "已复制",
     },
-    cloud: {
-      title: "Cloud runtime（等待名单）",
-      sub: "我们将为你托管 runtime，目前尚未上线——留下邮箱，上线后通知你。",
-    },
-    footer: {
-      releaseNotes: "{version} 更新内容",
-      allReleases: "查看所有版本",
-      currentVersion: "当前版本：{version}",
-      versionUnavailable: "版本获取失败——请前往 GitHub 查看",
+    started: {
+      title: "已开始下载",
+      retry: "没有开始？重新下载",
+      allDownloads: "全部下载",
+      install: {
+        title: "安装",
+        dmg: "打开 .dmg，把 Labrastro 拖进「应用程序」。",
+        zip: "解压后，把 Labrastro 移到「应用程序」。",
+        exe: "运行安装程序，完成后 Labrastro 会自动打开。",
+        appImage: "给 AppImage 加上可执行权限，然后运行。",
+        deb: "用 apt 或你的包管理器安装 .deb。",
+        rpm: "用 dnf 或你的包管理器安装 .rpm。",
+      },
+      signIn: {
+        title: "登录",
+        body: "打开 Labrastro，用你的账号登录。",
+        installed: "已经装好了？",
+        open: "打开 Labrastro",
+      },
+      agents: {
+        title: "接入智能体",
+        body: "Labrastro 会自动找到这台电脑上的 Claude Code、Codex 等编程智能体。",
+      },
+      community: {
+        label: "下载的同时",
+        githubTitle: "在 GitHub 上关注 Labrastro",
+        githubBody: "给仓库点个 Star，第一时间收到新版本；也可以看看你刚下载的应用背后的代码。",
+        star: "在 GitHub 上 Star",
+        stars: "{count} Star",
+        discordTitle: "加入 Discord",
+        discordBody: "提问、分享工作流，和团队直接交流。",
+        join: "加入",
+        xTitle: "关注 @LabrastroAI",
+        xBody: "新版本发布和接下来的计划。",
+        follow: "关注",
+      },
     },
   },
   contactSales: {
     pageTitle: "联系商务",
     pageDescription:
-      "了解如何在你的团队中落地 Multica 的人类 + 智能体协作工作流。",
+      "了解如何在你的团队中落地 Labrastro 的人类 + 智能体协作工作流。",
     eyebrow: "联系商务",
     title: "先了解你的需求",
     fields: {
@@ -4375,7 +4238,7 @@ export function createZhDict(
       companyName: "公司名称",
       companySize: "公司规模",
       countryRegion: "国家 / 地区",
-      useCase: "你打算如何使用 Multica 或与我们合作？",
+      useCase: "你打算如何使用 Labrastro 或与我们合作？",
       goals: "你的目标或挑战",
       selectPlaceholder: "请选择",
       submit: "提交",
@@ -4390,7 +4253,7 @@ export function createZhDict(
       { value: "1000+", label: "1,000 人以上" },
     ],
     useCases: [
-      { value: "evaluate", label: "正在为团队评估 Multica" },
+      { value: "evaluate", label: "正在为团队评估 Labrastro" },
       { value: "adopt_team", label: "希望在团队 / 公司内推广使用" },
       { value: "self_host", label: "需要在自有基础设施上自托管" },
       { value: "integrate", label: "希望与现有工具集成" },
@@ -4442,22 +4305,22 @@ export function createZhDict(
     ],
     consent: {
       intro:
-        "Multica 尊重你的隐私。我们仅会将你的个人信息用于管理账户，以及提供你所请求的产品或服务。我们偶尔也希望与你分享产品更新、最佳实践或行业洞察，如果你愿意接收，请在下方勾选。",
+        "Labrastro 尊重你的隐私。我们仅会将你的个人信息用于管理账户，以及提供你所请求的产品或服务。我们偶尔也希望与你分享产品更新、最佳实践或行业洞察，如果你愿意接收，请在下方勾选。",
       outreach:
-        "我希望接收来自 Multica 的一对一沟通，包括服务更新、支持咨询以及业务相关的跟进。",
+        "我希望接收来自 Labrastro 的一对一沟通，包括服务更新、支持咨询以及业务相关的跟进。",
       updates:
-        "我希望接收 Multica 的产品更新、洞察以及活动邀请。",
+        "我希望接收 Labrastro 的产品更新、洞察以及活动邀请。",
       unsubscribe:
         "你可以随时取消订阅我们的邮件。关于我们如何处理你的数据以及隐私权利，请参阅",
       submitConsent:
-        "点击「提交」即表示你同意 Multica 存储并处理你提交的信息，以便交付你请求的内容。",
+        "点击「提交」即表示你同意 Labrastro 存储并处理你提交的信息，以便交付你请求的内容。",
       privacyLinkLabel: "隐私政策。",
       privacyLinkHref: "/privacy",
     },
     success: {
       title: "已收到，谢谢！",
       message:
-        "Multica 团队会在三个工作日内回复你。在此期间，欢迎查看我们的文档，或在 GitHub 上为我们点个 Star。",
+        "Labrastro 团队会在三个工作日内回复你。在此期间，欢迎查看我们的文档，或在 GitHub 上为我们点个 Star。",
       cta: "返回首页",
     },
     errors: {

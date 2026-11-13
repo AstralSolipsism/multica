@@ -16,7 +16,7 @@ import {
   useTriggerIssueWakeup,
   issueTasksOptions,
 } from "@multica/core/issues";
-import type { AgentTask, IssueWakeup, WakeupCondition } from "@multica/core/types";
+import type { AgentTask, IssueWakeup, SystemWakeup, WakeupCondition } from "@multica/core/types";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import {
   Popover,
@@ -423,6 +423,19 @@ export function WakeupsSection({
   if (closed && !hasContent) return null;
   const current = data.filter((w) => isCurrentWakeup(w, wakeupRun(w, tasks)));
   const history = data.filter((w) => !isCurrentWakeup(w, wakeupRun(w, tasks)));
+  const visibleSystemRules = closed ? [] : systemRules;
+  const currentSystemRules = visibleSystemRules.filter((rule) => rule.enabled);
+  const offSystemRules = visibleSystemRules.filter((rule) => !rule.enabled);
+  const historyCount = history.length + offSystemRules.length;
+  const systemRow = (rule: SystemWakeup) => (
+    <SystemWakeupRow
+      key={rule.rule}
+      rule={rule}
+      workspaceId={workspaceId}
+      issueId={issueId}
+      onTurnedOff={() => setHistoryOpen(true)}
+    />
+  );
   const row = (wakeup: IssueWakeup) => (
     <WakeupRow
       key={wakeup.id}
@@ -457,7 +470,7 @@ export function WakeupsSection({
       <IssueSidebarSectionHeader
         id={`issue-wakeups-${issueId}`}
         title={t(($) => $.wakeups.title)} open={open} onOpenChange={setOpen}
-        count={current.length + (!closed ? systemRules.length : 0)}
+        count={current.length + currentSystemRules.length}
         collapsible={hasContent}
         actions={!closed ? <WakeupCreate workspaceId={workspaceId} issueId={issueId} defaultAgentId={defaultAgentId} /> : undefined}
       />
@@ -477,12 +490,9 @@ export function WakeupsSection({
               {t(($) => $.wakeups.closed_hint)}
             </p>
           )}
-          {!closed &&
-            systemRules.map((rule) => (
-              <SystemWakeupRow key={rule.rule} rule={rule} workspaceId={workspaceId} issueId={issueId} />
-            ))}
+          {currentSystemRules.map(systemRow)}
           {current.map(row)}
-          {history.length > 0 && (
+          {historyCount > 0 && (
             <>
               <button
                 type="button"
@@ -494,9 +504,14 @@ export function WakeupsSection({
                   className={`size-3 ${historyOpen ? "rotate-90" : ""}`}
                   aria-hidden="true"
                 />
-                {t(($) => $.wakeups.ended, { count: history.length })}
+                {t(($) => $.wakeups.ended, { count: historyCount })}
               </button>
-              {historyOpen && history.map(row)}
+              {historyOpen && (
+                <>
+                  {offSystemRules.map(systemRow)}
+                  {history.map(row)}
+                </>
+              )}
             </>
           )}
         </div>

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -75,16 +76,16 @@ func TestLabrastroYSKActiveQueryCostDoesNotFollowHistory(t *testing.T) {
 			SELECT $1,i.id,gen_random_uuid(),$2,'you_should_know','tip '||n,'title','explanation'
 			FROM issue i CROSS JOIN generate_series(1,5) n WHERE i.number<=$3`, f.WorkspaceID, f.agent, history/5)
 		exec(`ANALYZE labrastro_issue_tip`)
-		rows, err := q.LabrastroYSKListActiveTips(ctx, db.LabrastroYSKListActiveTipsParams{WorkspaceID: parseUUID(f.WorkspaceID), UserID: parseUUID(testUserID)})
+		rows, err := q.LabrastroYSKListActiveTips(ctx, db.LabrastroYSKListActiveTipsParams{WorkspaceID: parseUUID(f.WorkspaceID), UserID: parseUUID(testUserID), HiddenProjectIds: []pgtype.UUID{}})
 		if err != nil || len(rows) != 50 {
 			t.Fatalf("active result: rows=%d err=%v", len(rows), err)
 		}
 		name := fmt.Sprintf("ysk_active_%d", history)
-		exec("PREPARE " + name + " (uuid,uuid) AS " + capture.query)
+		exec("PREPARE " + name + " (uuid,uuid,uuid[]) AS " + capture.query)
 		for _, mode := range []string{"force_custom_plan", "force_generic_plan"} {
 			exec("SET LOCAL plan_cache_mode = " + mode)
 			var raw []byte
-			explain := fmt.Sprintf("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE %s ('%s','%s')", name, f.WorkspaceID, testUserID)
+			explain := fmt.Sprintf("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE %s ('%s','%s','{}')", name, f.WorkspaceID, testUserID)
 			if err := tx.QueryRow(ctx, explain).Scan(&raw); err != nil {
 				t.Fatal(err)
 			}

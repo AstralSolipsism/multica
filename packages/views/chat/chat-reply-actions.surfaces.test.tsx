@@ -8,6 +8,7 @@
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type {
   Agent,
@@ -518,9 +519,11 @@ describe("ChatPage (full-page Chat)", () => {
     };
     return render(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <NavigationProvider value={navigation}>
-          <ChatPage />
-        </NavigationProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          <NavigationProvider value={navigation}>
+            <ChatPage />
+          </NavigationProvider>
+        </QueryClientProvider>
       </I18nProvider>,
     );
   }
@@ -555,9 +558,22 @@ describe("ChatPage (full-page Chat)", () => {
 
 describe("ChatWindow (floating window)", () => {
   function renderChatWindow() {
+    const navigation: NavigationAdapter = {
+      push: vi.fn(),
+      replace: vi.fn(),
+      back: vi.fn(),
+      pathname: "/acme/chat",
+      searchParams: new URLSearchParams(),
+      hash: "",
+      getShareableUrl: (path: string) => path,
+    };
     return render(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <ChatWindow />
+        <QueryClientProvider client={new QueryClient()}>
+          <NavigationProvider value={navigation}>
+            <ChatWindow />
+          </NavigationProvider>
+        </QueryClientProvider>
       </I18nProvider>,
     );
   }

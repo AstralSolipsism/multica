@@ -632,6 +632,7 @@ export const RichContent = memo(function RichContent({
         <div
           ref={wrapperRef}
           data-rich-content=""
+          data-mc="content"
           data-density={density}
           data-phase={phase}
           className={cn(

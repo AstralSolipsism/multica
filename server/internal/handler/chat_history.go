@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -93,6 +94,13 @@ func (h *Handler) GetChatChannelHistory(w http.ResponseWriter, r *http.Request) 
 // (created_at, id) cursor the frontend's message list uses, so an agent can walk
 // a long session back without re-reading the recent window each time.
 func (h *Handler) chatMessageHistory(r *http.Request, scope chatHistoryScope) (channel.HistoryPage, error) {
+	visible, accessErr := h.labrastroTipChatVisible(r.Context(), scope.sessionID)
+	if accessErr != nil {
+		return channel.HistoryPage{}, accessErr
+	}
+	if !visible {
+		return channel.HistoryPage{}, service.ErrProjectAccessDenied
+	}
 	limit := clampTranscriptLimit(parseHistoryLimit(r.URL.Query().Get("limit")))
 	beforeCreatedAt, beforeID := parseTranscriptCursor(r.URL.Query().Get("before"))
 	var messages []db.ChatMessage
@@ -306,6 +314,10 @@ func (h *Handler) chatHistorySession(w http.ResponseWriter, r *http.Request) (ch
 // respondChatHistory writes the shared response: a note (200) when the session
 // is not channel-backed, a 502 on a real read failure, the page otherwise.
 func (h *Handler) respondChatHistory(w http.ResponseWriter, r *http.Request, sessionID pgtype.UUID, page channel.HistoryPage, err error) {
+	if errors.Is(err, service.ErrProjectAccessDenied) {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
 	if err != nil {
 		if errors.Is(err, slack.ErrNoSlackSession) {
 			// One read of the binding, two derived fields. Reading it twice

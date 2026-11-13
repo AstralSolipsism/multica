@@ -1,20 +1,48 @@
 // @vitest-environment node
 import { MAX_FILE_SIZE } from "@multica/core/constants/upload";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hasLocalMatch } from "next/dist/shared/lib/match-local-pattern";
 
+vi.mock("dotenv", () => ({ config: vi.fn() }));
+vi.mock("fumadocs-mdx/next", () => ({
+  createMDX: () => (config: unknown) => config,
+}));
+
+import nextConfig from "./next.config";
+
+// Reload the module so each test can set environment before config evaluation.
 async function loadConfig() {
   const mod = await import("./next.config");
   return mod.default;
 }
 
-describe("next.config rewrite proxy timeout", () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
+beforeEach(() => {
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("image optimization paths", () => {
+  it.each([
+    "/uploads/workspaces/workspace/attachment.png",
+    "/api/attachments/attachment/download",
+    "/api/attachments/attachment/signed-download?exp=1&sig=signature",
+    "/images/hero.png?url=/uploads/workspaces/workspace/attachment.png",
+  ])("rejects private or unexpected sources: %s", (url) => {
+    expect(hasLocalMatch(nextConfig.images?.localPatterns, url)).toBe(false);
   });
 
+  it.each(["/images/hero.png", "/usecases/team/screenshot.webp"])(
+    "keeps landing images available: %s",
+    (url) => {
+      expect(hasLocalMatch(nextConfig.images?.localPatterns, url)).toBe(true);
+    },
+  );
+});
+
+describe("next.config rewrite proxy timeout", () => {
   // Self-host default topology proxies /api/* through the Next rewrite proxy
   // (REMOTE_API_URL set, NEXT_PUBLIC_API_URL empty). Next caps an upstream
   // response at 30s by default, while the backend allows skill package
@@ -30,7 +58,7 @@ describe("next.config rewrite proxy timeout", () => {
     expect(proxyTimeout).toBeGreaterThan(45_000);
   });
 
-  it("keeps the API rewrite proxy in place", async () => {
+  it("keeps API rewrites without restoring public uploads forwarding", async () => {
     vi.stubEnv("REMOTE_API_URL", "http://backend:8080");
     const config = await loadConfig();
     const rewrites = await config.rewrites?.();
@@ -41,14 +69,11 @@ describe("next.config rewrite proxy timeout", () => {
         (r) => r.source === "/api/:path*" || r.source === "/v1/:path*",
       ),
     ).toBe(true);
+    expect(afterFiles?.some((r) => r.source === "/uploads/:path*")).toBe(false);
   });
 });
 
 describe("next.config proxy request body buffer", () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-
   // proxy.ts matches /api/**, so Next buffers every proxied request body and
   // silently truncates it past proxyClientMaxBodySize (10 MB by default). An
   // 18 MB chat attachment reached /api/upload-file as a cut multipart body and

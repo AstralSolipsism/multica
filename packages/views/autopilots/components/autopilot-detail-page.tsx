@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   Zap, Play, Clock, Plus, Trash2, CheckCircle2, XCircle, Loader2, Pencil,
   Ban, ChevronDown, ChevronRight, MoreHorizontal, Link2, ArrowUpRight, FilePlus2,
-  Webhook, RotateCw, Server, FileQuestion, FileText,
+  Webhook, RotateCw, Server, FileQuestion, FileText, Square,
 } from "@multica/ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import { autopilotDetailOptions, autopilotRunsOptions, autopilotRunOptions } from "@multica/core/autopilots/queries";
@@ -164,16 +164,51 @@ function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId
   return <WebhookPayloadPreview payload={data.trigger_payload} />;
 }
 
+// Stops a run_only run by cancelling its task. The server then fails the run
+// and broadcasts autopilot:run_done, which refetches this list, so the row
+// needs no local status patch.
+function StopRunButton({ taskId }: { taskId: string }) {
+  const { t } = useT("autopilots");
+  const [stopping, setStopping] = useState(false);
+
+  const stop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      await api.cancelTaskById(taskId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.run.stop_failed));
+      setStopping(false);
+    }
+  };
+
+  return (
+    <IconButton
+      size="icon-sm"
+      variant="ghost"
+      className="shrink-0 text-muted-foreground hover:text-destructive"
+      onClick={stop}
+      disabled={stopping}
+      aria-busy={stopping}
+      label={t(($) => $.run.stop)}
+    >
+      {stopping ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3 fill-current" />}
+    </IconButton>
+  );
+}
+
 function RunRow({
   run,
   agentId,
   agentName,
+  canStop = false,
   onOpenDelivery,
   onOpenRunDeliveries,
 }: {
   run: AutopilotRun;
   agentId: string;
   agentName: string;
+  canStop?: boolean;
   onOpenDelivery: (delivery: MessageDelivery) => void;
   onOpenRunDeliveries: (runId: string) => void;
 }) {
@@ -252,6 +287,9 @@ function RunRow({
           }
         />
       )}
+      {canStop && run.task_id && !run.issue_id && run.status === "running" && (
+        <StopRunButton taskId={run.task_id} />
+      )}
     </>
   );
 
@@ -295,6 +333,7 @@ export function RunHistoryList({
           run={run}
           agentId={agentId}
           agentName={agentName}
+          canStop={canWrite}
           onOpenDelivery={setOpenDelivery}
           onOpenRunDeliveries={setRunListId}
         />

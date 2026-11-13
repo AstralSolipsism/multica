@@ -7,6 +7,7 @@ export const projectKeys = {
   list: (wsId: string) => [...projectKeys.all(wsId), "list"] as const,
   detail: (wsId: string, id: string) =>
     [...projectKeys.all(wsId), "detail", id] as const,
+  members: (wsId: string, id: string) => [...projectKeys.detail(wsId, id), "members"] as const,
   // Engineering keys are fork-owned; see engineering-queries.ts.
   ...engineeringProjectKeys,
 };
@@ -23,6 +24,13 @@ export function projectDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: projectKeys.detail(wsId, id),
     queryFn: () => api.getProject(id),
+  });
+}
+
+export function projectMembersOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: projectKeys.members(wsId, id),
+    queryFn: () => api.getProjectMembers(id),
   });
 }
 

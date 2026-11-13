@@ -25,6 +25,12 @@
     "telegram": {
       "disconnect_confirm_description": "Le bot cessera de recevoir les messages Telegram de cet espace de travail. L'historique des conversations dans Labrastro est conservé ; vous pourrez le reconnecter plus tard depuis le même agent.",
       "connect_docs_link": "Pas à pas : connecter votre agent Labrastro à Telegram"
+    },
+    "mcp_sources": {
+      "apps": "Des comptes d'équipe ou personnels connectés via Labrastro et ajoutés à chaque agent."
+    },
+    "connected_apps": {
+      "catalog_description": "Les apps sélectionnées ont des règles par défaut vérifiées. « Toutes les apps » ajoute tout ce que Composio peut connecter ; les actions que Labrastro ne sait pas classer demandent toujours d'abord. Une liste personnalisée n'autorise que les apps choisies."
     }
   },
   "common": {
@@ -56,6 +62,12 @@
     },
     "not_found": {
       "back_to_multica": "Retour à Labrastro"
+    }
+  },
+  "layout": {
+    "star_prompt": {
+      "body": "Si Labrastro vous est utile, une étoile sur GitHub aide d'autres équipes à le découvrir.",
+      "star_label": "Mettre une Star à Labrastro sur GitHub"
     }
   },
   "runtimes": {
@@ -127,6 +139,9 @@
     }
   },
   "issues": {
+    "desktop": {
+      "link_other_instance": "L’application de bureau est connectée à une autre instance Labrastro."
+    },
     "pickers": {
       "custom_property": {
         "unknown_value_hint": "Cette valeur a été définie par une version plus récente de Labrastro et ne peut pas être modifiée ici — mettez l'application à jour, ou effacez-la"

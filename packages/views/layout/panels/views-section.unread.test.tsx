@@ -13,6 +13,7 @@ import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { SpacePanelOpenProvider } from "../space-panel-open-context";
 import { ViewsSection } from "./views-section";
+import type { IssueViewActions } from "../../issue-views/use-view-actions";
 
 const actions = vi.hoisted(() => ({
   sidebar: { items: [] as unknown[], reorder: vi.fn(), unstar: vi.fn() },
@@ -86,8 +87,10 @@ function renderSection({
           wsId="ws-1"
           pathname={issueId ? `/acme/issues/${issueId}` : "/acme/issues"}
           plainRowsLit
-          issueLitInTree={false}
+          issueInAllIssues={false}
           activeIssueId={issueId}
+          litSource={viewSidebarSource(UNREAD_VIEW_ID)}
+          actions={actions as unknown as IssueViewActions}
         />
         </SpacePanelOpenProvider>
       </NavigationProvider>

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
+import { useReducedMotion } from "@multica/core/appearance";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
@@ -74,6 +75,7 @@ import { ChatReplyActionsProvider } from "../chat-reply-actions-context";
 import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { ChatQueue } from "./chat-queue";
+import { ChatAppRequests } from "../../common/app-requests";
 import { EmptyState } from "./chat-empty-state";
 import { SessionRenameInput } from "./session-rename-input";
 import { SessionHistoryList } from "./session-history-list";
@@ -93,7 +95,7 @@ import { useTipSideChatLookup } from "@multica/core/you-should-know";
 import { TipSideChatBanner } from "../../you-should-know/side-chat/tip-side-chat-banner";
 import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse , ChatSendAttempt } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse, ChatSendAttempt } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 import { useLocale, useT } from "../../i18n";
 
@@ -125,7 +127,7 @@ export function ChatWindow() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
-  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery(
+  const { data: sessions = [], isSuccess: sessionsLoaded, dataUpdatedAt: sessionsDataUpdatedAt } = useQuery(
     chatSessionsOptions(wsId),
   );
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
@@ -196,7 +198,20 @@ export function ChatWindow() {
   // Labrastro (OL-362): a YSK side chat is left out of the list until its
   // first message; the lookup resolves it from its own record.
   const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
-  const currentSession = sideChat.currentSession;
+  // A session created by a lost first send is reused by the retry. Keep its
+  // accepted record available until the sessions list next answers, so the
+  // dangling-id healer cannot clear the session activated by that retry.
+  const createdSessionRef = useRef<{
+    session: ChatSession;
+    sessionsDataUpdatedAt: number;
+  } | null>(null);
+  const created = createdSessionRef.current;
+  const currentSession =
+    sideChat.currentSession ??
+    (created?.session.id === activeSessionId &&
+    created.sessionsDataUpdatedAt === sessionsDataUpdatedAt
+      ? created.session
+      : null);
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -314,11 +329,11 @@ export function ChatWindow() {
   useEffect(() => {
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
-    if (sideChat.currentSession || sideChat.pending) return;
+    if (currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId (floating)", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [activeSessionId, sessionsLoaded, sessions, sideChat.currentSession, sideChat.pending, qc, setActiveSession]);
+  }, [activeSessionId, sessionsLoaded, sessions, currentSession, sideChat.pending, qc, setActiveSession]);
 
   // WS events are handled globally in useRealtimeSync — the query cache
   // stays current even when this window is closed. See packages/core/realtime/.
@@ -390,6 +405,7 @@ export function ChatWindow() {
             title: titleSeed.slice(0, 50),
             project_id: activeProjectId,
           });
+          createdSessionRef.current = { session, sessionsDataUpdatedAt };
           return session.id;
         } finally {
           sessionPromiseRef.current = null;
@@ -405,6 +421,7 @@ export function ChatWindow() {
       createSession,
       currentSession,
       sessionsLoaded,
+      sessionsDataUpdatedAt,
       qc,
     ],
   );
@@ -563,6 +580,10 @@ export function ChatWindow() {
       const live = useChatStore.getState();
       const stillOnSourceSession = isStillOnComposeTarget(live.activeSessionId, activeSessionId);
       if (stillOnSourceSession) {
+        const created = createdSessionRef.current;
+        if (created?.session.id === sessionId) {
+          createdSessionRef.current = { ...created, sessionsDataUpdatedAt };
+        }
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
@@ -613,6 +634,7 @@ export function ChatWindow() {
       pendingTask,
       pendingTaskId,
       ensureSession,
+      sessionsDataUpdatedAt,
       cancelChatTask,
       qc,
       setActiveSession,
@@ -758,6 +780,7 @@ export function ChatWindow() {
   const isExpanded = useChatStore((s) => s.isExpanded);
 
   const { renderWidth, renderHeight, isAtMax, boundsReady, isDragging, toggleExpand, startDrag } = useChatResize(windowRef);
+  const reduceMotion = useReducedMotion();
   const { contentReady, markContentReady } = useChatOpenReveal(isOpen);
 
   const isVisible = isOpen && (isExpanded || boundsReady) && contentReady;
@@ -825,8 +848,18 @@ export function ChatWindow() {
   const contextItems = useChatContextItems(wsId, isOpen);
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
+  const showRestore = isExpanded || isAtMax;
+  const newChatLabel = t(($) => $.window.new_chat_tooltip);
+  const expandLabel = showRestore
+    ? t(($) => $.window.restore_tooltip)
+    : t(($) => $.window.expand_tooltip);
+  const minimizeLabel = t(($) => $.window.minimize_tooltip);
+  const sizeTransition =
+    isDragging || reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.3, bounce: 0 };
+
   const windowPanel = (
     <motion.div
+      data-mc="chat-window"
       ref={windowRef}
       inert={!isOpen}
       aria-hidden={!isOpen}
@@ -838,8 +871,8 @@ export function ChatWindow() {
         ...motionSize,
       }}
       transition={{
-        width: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
-        height: isDragging ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 },
+        width: sizeTransition,
+        height: sizeTransition,
         opacity: { duration: 0.15 },
       }}
     >
@@ -853,14 +886,15 @@ export function ChatWindow() {
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="rounded-full text-muted-foreground"
+                  className="text-muted-foreground"
+                  aria-label={newChatLabel}
                   onClick={handleNewChat}
                 />
               }
             >
               <Plus />
             </TooltipTrigger>
-            <TooltipContent side="top">{t(($) => $.window.new_chat_tooltip)}</TooltipContent>
+            <TooltipContent side="top">{newChatLabel}</TooltipContent>
           </Tooltip>
           <SessionDropdown
             sessions={sessions}
@@ -881,15 +915,14 @@ export function ChatWindow() {
                     variant="ghost"
                     size="icon-sm"
                     className="text-muted-foreground"
+                    aria-label={expandLabel}
                     onClick={toggleExpand}
                   />
                 }
               >
-                {isExpanded || isAtMax ? <Minimize2 /> : <Maximize2 />}
+                {showRestore ? <Minimize2 /> : <Maximize2 />}
               </TooltipTrigger>
-              <TooltipContent side="top">
-                {isExpanded || isAtMax ? t(($) => $.window.restore_tooltip) : t(($) => $.window.expand_tooltip)}
-              </TooltipContent>
+              <TooltipContent side="top">{expandLabel}</TooltipContent>
             </Tooltip>
           )}
           <Tooltip>
@@ -899,6 +932,7 @@ export function ChatWindow() {
                   variant="ghost"
                   size="icon-sm"
                   className="text-muted-foreground"
+                  aria-label={minimizeLabel}
                   onClick={handleMinimize}
                 />
               }
@@ -906,7 +940,7 @@ export function ChatWindow() {
               <Minus />
             </TooltipTrigger>
             <TooltipContent side="top">
-              {t(($) => $.window.minimize_tooltip)}
+              {minimizeLabel}
               <ActionShortcutKeycaps action="toggleChat" />
             </TooltipContent>
           </Tooltip>
@@ -987,6 +1021,10 @@ export function ChatWindow() {
       ) : (
         <OfflineBanner agentName={activeAgent?.name} availability={availability} />
       )}
+
+      <div className="px-4">
+        <ChatAppRequests sessionId={activeSessionId} />
+      </div>
 
       <ChatQueue
         tasks={queuedTasks}

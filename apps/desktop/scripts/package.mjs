@@ -37,10 +37,10 @@
 // real `git describe` invocation against a throwaway repo.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 // Circular by design: check-release.mjs imports normalizeGitVersion from this
 // file. Neither side touches the other's bindings at module-evaluation time,
 // so the ESM cycle resolves cleanly.
@@ -666,7 +666,7 @@ function main() {
 // Only run when invoked as a CLI, not when imported by a test file.
 if (
   process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
 ) {
   main();
 }

@@ -308,12 +308,14 @@ JOIN labrastro_issue_tip t ON t.workspace_id = $1
 JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
 LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
     AND s.tip_id = t.id AND s.user_id = $2
+WHERE i.project_id IS NULL OR NOT (i.project_id = ANY($3::uuid[]))
 ORDER BY t.created_at DESC, t.id DESC
 `
 
 type LabrastroYSKListActiveTipsParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	UserID      pgtype.UUID `json:"user_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	UserID           pgtype.UUID   `json:"user_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
 }
 
 type LabrastroYSKListActiveTipsRow struct {
@@ -325,7 +327,7 @@ type LabrastroYSKListActiveTipsRow struct {
 }
 
 func (q *Queries) LabrastroYSKListActiveTips(ctx context.Context, arg LabrastroYSKListActiveTipsParams) ([]LabrastroYSKListActiveTipsRow, error) {
-	rows, err := q.db.Query(ctx, labrastroYSKListActiveTips, arg.WorkspaceID, arg.UserID)
+	rows, err := q.db.Query(ctx, labrastroYSKListActiveTips, arg.WorkspaceID, arg.UserID, arg.HiddenProjectIds)
 	if err != nil {
 		return nil, err
 	}

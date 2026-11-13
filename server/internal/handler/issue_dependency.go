@@ -46,7 +46,7 @@ type dependencyEndpointKey struct{}
 
 func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
 	if !h.IssueService.Dependencies.WritesEnabled {
-		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
+		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
 		return
 	}
 	h.CreateIssue(w, r.WithContext(context.WithValue(r.Context(), dependencyEndpointKey{}, true)))
@@ -54,7 +54,7 @@ func (h *Handler) CreateIssueWithDependencies(w http.ResponseWriter, r *http.Req
 
 func (h *Handler) UpdateIssueWithDependencies(w http.ResponseWriter, r *http.Request) {
 	if !h.IssueService.Dependencies.WritesEnabled {
-		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
+		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "dependency writes are not enabled"})
 		return
 	}
 	h.UpdateIssue(w, r.WithContext(context.WithValue(r.Context(), dependencyEndpointKey{}, true)))
@@ -169,6 +169,11 @@ func (h *Handler) parseDependencyWrite(w http.ResponseWriter, r *http.Request, f
 		}
 	}
 	write.BlockedBy = &ids
+	hidden, ok := h.requestHiddenProjects(w, r, h.resolveWorkspaceID(r))
+	if !ok {
+		return write, false
+	}
+	write.HiddenProjects = hidden
 	return write, true
 }
 
@@ -179,26 +184,34 @@ func (h *Handler) GetIssueDependencies(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := h.IssueService.Dependencies.Read(r.Context(), issue.WorkspaceID, uuidToString(issue.ID))
 	if err != nil {
-		if !writeDependencyError(w, err) {
+		if !h.writeDependencyError(w, r, err) {
 			writeError(w, http.StatusInternalServerError, "failed to read dependencies")
 		}
 		return
 	}
-	view := h.dependencyView(r, snapshot, issue.ID)
+	view, err := h.dependencyView(r, snapshot, issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve project access")
+		return
+	}
 	writeJSON(w, http.StatusOK, view)
 }
 
 func (h *Handler) loadDependencyIssue(w http.ResponseWriter, r *http.Request, id string) (db.Issue, bool) {
 	return h.loadIssueForUserWithNotFound(w, r, id, func() {
-		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "issue not found"})
+		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "issue not found"})
 	})
 }
 
-func (h *Handler) dependencyView(r *http.Request, snapshot *service.DependencySnapshot, id pgtype.UUID) service.DependencyView {
-	// Issue access is currently workspace membership (loadIssueForUser plus the
-	// router's membership gate). Cross-workspace references never enter a valid
-	// snapshot; no project-level visibility rule is invented here.
-	v := snapshot.View(uuidToString(id), func(string) bool { return true })
+func (h *Handler) dependencyView(r *http.Request, snapshot *service.DependencySnapshot, id pgtype.UUID) (service.DependencyView, error) {
+	hidden, err := h.hiddenProjects(r, uuidToString(snapshot.WorkspaceID))
+	if err != nil {
+		return service.DependencyView{}, err
+	}
+	v := snapshot.View(uuidToString(id), func(issueID string) bool {
+		projectID, exists := snapshot.ProjectIDs[issueID]
+		return exists && hidden.CanSeeProject(projectID)
+	})
 	prefix := h.getIssuePrefix(r.Context(), snapshot.WorkspaceID)
 	fill := func(issueID string) string {
 		n := snapshot.Model.Issues[issueID]
@@ -219,7 +232,7 @@ func (h *Handler) dependencyView(r *http.Request, snapshot *service.DependencySn
 	for i := range v.Blocking {
 		v.Blocking[i].Identifier = fill(v.Blocking[i].IssueID)
 	}
-	return v
+	return v, nil
 }
 
 func dependencyHTTPStatus(code string) int {
@@ -233,16 +246,26 @@ func dependencyHTTPStatus(code string) int {
 	}
 }
 
-func writeDependencyError(w http.ResponseWriter, err error) bool {
+func (h *Handler) writeDependencyError(w http.ResponseWriter, r *http.Request, err error) bool {
 	var e *service.DependencyError
 	if !errors.As(err, &e) {
 		return false
 	}
 	body := map[string]any{"error": e.Message, "reason_code": e.Code}
-	// Data-unverified errors deliberately disclose no raw historical endpoints.
-	// Cycle witnesses here are from a validated, workspace-visible proposal.
 	if e.Violation != nil && e.Code != "dependency_data_unverified" {
-		body["path"] = e.Violation
+		// A cycle can pass through a hidden prerequisite even when both edited
+		// endpoints are visible. Withhold the entire witness in that case.
+		hidden, err := h.hiddenProjects(r, h.resolveWorkspaceID(r))
+		if err == nil {
+			ids := make([]pgtype.UUID, 0, len(e.Violation.IssueIDs))
+			for _, id := range e.Violation.IssueIDs {
+				ids = append(ids, parseUUID(id))
+			}
+			restricted, err := h.hiddenIssueIDs(r, hidden, ids)
+			if err == nil && len(restricted) == 0 {
+				body["path"] = e.Violation
+			}
+		}
 	}
 	writeJSON(w, dependencyHTTPStatus(e.Code), body)
 	return true
@@ -260,6 +283,10 @@ func (h *Handler) fillIssueDependencyResponse(r *http.Request, issue db.Issue, s
 			return
 		}
 	}
-	view := h.dependencyView(r, snapshot, issue.ID)
+	view, err := h.dependencyView(r, snapshot, issue.ID)
+	if err != nil {
+		slog.Warn("dependency response access failed", "error", err)
+		return
+	}
 	resp.Dependencies = &view
 }

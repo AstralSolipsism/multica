@@ -32,7 +32,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if uuidToString(ws) != h.resolveWorkspaceID(r) {
-		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
+		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
 		return
 	}
 	user, ok := parseUUIDOrBadRequest(w, userID, "user_id")
@@ -85,7 +85,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(context.Background())
 	access, err := snapshot.Queries.GetIssueGraphAccess(ctx, db.GetIssueGraphAccessParams{ID: ws, UserID: user})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
+		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
 		return
 	}
 	if err != nil {
@@ -93,6 +93,10 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := service.IssueGraphScope{Type: spec.Scope.Kind}
+	hidden, ok := snapshot.requestHiddenProjects(w, r, uuidToString(ws))
+	if !ok {
+		return
+	}
 	if spec.Scope.Kind == "project" {
 		id, ok := parseUUIDOrBadRequest(w, spec.Scope.ProjectID, "project_id")
 		if !ok {
@@ -100,7 +104,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		project, err := snapshot.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: id, WorkspaceID: ws})
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeDependencyError(w, &service.DependencyError{Code: "not_found", Message: "project not found"})
+			h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "project not found"})
 			return
 		}
 		if err != nil {
@@ -108,6 +112,10 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		projectID := uuidToString(project.ID)
+		if !hidden.CanSeeProject(project.ID) {
+			h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "project not found"})
+			return
+		}
 		scope.ProjectID = &projectID
 	}
 	var focus *string
@@ -186,7 +194,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		if detail.ProjectID.Valid {
 			if !detail.ProjectTitle.Valid {
-				writeDependencyError(w, &service.DependencyError{Code: "dependency_data_unverified", Message: "graph project references must be audited"})
+				h.writeDependencyError(w, r, &service.DependencyError{Code: "dependency_data_unverified", Message: "graph project references must be audited"})
 				return
 			}
 			projectID := uuidToString(detail.ProjectID)
@@ -202,9 +210,12 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	for _, p := range projects {
 		projectList = append(projectList, p)
 	}
-	graph, err := deps.Graph(nodes, projectList, matched, scope, focus, access.CapturedAt.Time, func(string) bool { return true })
+	graph, err := deps.Graph(nodes, projectList, matched, scope, focus, access.CapturedAt.Time, func(id string) bool {
+		projectID, exists := deps.ProjectIDs[id]
+		return exists && hidden.CanSeeProject(projectID)
+	})
 	if err != nil {
-		if !writeDependencyError(w, err) {
+		if !h.writeDependencyError(w, r, err) {
 			writeIssueGraphFailure(w, r, err)
 		}
 		return

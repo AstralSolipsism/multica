@@ -28,7 +28,6 @@ import { RAIL_ICON_BUTTON_CLASS } from "./rail-styles";
 import { DOWNLOAD_URL } from "./help-links";
 import { useWhatsNewMenuPanel, WhatsNewMenuPanel } from "../whats-new/whats-new-menu-panel";
 
-
 export function HelpLauncher() {
   const { t } = useT("layout");
   const { t: tLark } = useT("lark");

@@ -24,6 +24,10 @@ func TestMain(m *testing.M) {
 		"MULTICA_WORKSPACE_ID",
 		"MULTICA_SERVER_URL",
 		"MULTICA_TASK_CONFIG_ROOT",
+		"MULTICA_TASK_WORKSPACES_ROOT",
+		"MULTICA_AGENT_NAME",
+		devEnvHomeEnv,
+		devEnvNameEnv,
 	} {
 		os.Unsetenv(key)
 	}
@@ -55,11 +59,18 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	testLaunchDir = originalDir
+
 	code := m.Run()
 	_ = os.Chdir(originalDir)
 	_ = os.RemoveAll(scratchHome)
 	os.Exit(code)
 }
+
+// testLaunchDir is the working directory the test binary started in, before
+// TestMain moved it into the scratch home. A helper process whose parent set
+// exec.Cmd.Dir reads its fixtures from there.
+var testLaunchDir string
 
 var redirectTestHome = testutil.RedirectUserHome
 

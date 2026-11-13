@@ -3,7 +3,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
-import { RESOURCES } from "../test/i18n";
+import enLayout from "../locales/en/layout.json";
+import enLark from "../locales/en/lark.json";
 import { isDesktopShell } from "../platform/local-directory";
 import { HelpLauncher } from "./help-launcher";
 
@@ -20,15 +21,15 @@ vi.mock("../whats-new/whats-new-menu-panel", () => ({
   WhatsNewMenuPanel: () => null,
 }));
 
-// react-i18next isn't initialised in the views test env, so resolve the
-// selector against the assembled namespace to assert on actual copy.
+// react-i18next isn't initialised in the views test env, so resolve each
+// selector against its real namespace to assert on actual copy.
 vi.mock("../i18n", () => ({
   useT: (namespace: string) => ({
     t: (
       sel: (r: unknown) => string,
       vars?: Record<string, string>,
     ) => {
-      const template = sel(RESOURCES.en[namespace]);
+      const template = sel(namespace === "lark" ? enLark : enLayout);
       return vars
         ? template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? ""))
         : template;
@@ -36,8 +37,9 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-// Flatten the Base UI dropdown primitives to plain children so the menu
-// content stays in the DOM instead of exercising the real portal interaction.
+// Follows the app-sidebar.test.tsx convention of flattening the Base UI
+// dropdown primitives to plain children so the menu content is always in
+// the DOM, instead of exercising the real portal/open-state interaction.
 //
 // The mock deliberately preserves ONE real invariant: DropdownMenuLabel wraps
 // Base UI's Menu.GroupLabel, whose useMenuGroupRootContext() throws when it has
@@ -129,12 +131,13 @@ describe("HelpLauncher", () => {
     expect(link).toHaveAttribute("href", "https://multica.outlune.com/download");
   });
 
-  it("omits retired docs, changelog, and Discord links", () => {
+  it("omits retired external links and the GitHub Star entry", () => {
     render(<HelpLauncher />);
 
-    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg"]) {
+    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg", "github.com"]) {
       expect(document.querySelector(`a[href*="${href}"]`)).toBeNull();
     }
+    expect(screen.queryByText("Star on GitHub")).not.toBeInTheDocument();
   });
 
   // The community entry opens the group QR dialog in place — it must not be

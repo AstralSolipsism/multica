@@ -1725,6 +1725,9 @@ LEFT JOIN labrastro_message_approved_target approval
  AND approval.installation_id = rt.installation_id AND approval.target_key = rt.target_key
  AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE al.action IN ('status_changed', 'assignee_changed')
+  AND (rt.project_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM project p WHERE p.id = iss.project_id AND p.visibility = 'private'
+  ))
   AND al.created_at >= rt.effective_from
   AND al.created_at >= $1::timestamptz
   AND al.created_at <= $2::timestamptz
@@ -1921,6 +1924,9 @@ LEFT JOIN labrastro_message_approved_target approval
  AND approval.installation_id = rt.installation_id AND approval.target_key = rt.target_key
  AND approval.project_id IS NOT DISTINCT FROM rt.project_id AND approval.revoked_at IS NULL
 WHERE c.type = 'comment'
+  AND (rt.project_id IS NOT NULL OR NOT EXISTS (
+      SELECT 1 FROM project p WHERE p.id = iss.project_id AND p.visibility = 'private'
+  ))
   AND c.deleted_at IS NULL
   AND c.created_at >= rt.effective_from
   AND c.created_at >= $1::timestamptz
@@ -2402,6 +2408,13 @@ JOIN labrastro_message_route rt
 JOIN workspace w ON w.id = i.workspace_id
 LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.recipient_type = 'member'
+  AND (iss.project_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM project p WHERE p.id = iss.project_id AND p.visibility = 'private'
+      AND NOT EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = i.workspace_id
+                      AND m.user_id = i.recipient_id AND m.role IN ('owner', 'admin'))
+      AND NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id
+                      AND pm.user_id = i.recipient_id)
+  ))
   AND i.created_at >= rt.effective_from
   AND i.created_at >= $1::timestamptz
   AND i.created_at <= $2::timestamptz
