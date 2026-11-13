@@ -1139,8 +1139,22 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	// Try identifier format first (e.g., "JIA-42"). resolveIssueByIdentifier
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
+	visible := func(issue db.Issue) bool {
+		if !issue.ProjectID.Valid {
+			return true
+		}
+		hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+		if !ok {
+			return false
+		}
+		if !hidden.CanSeeProject(issue.ProjectID) {
+			notFound()
+			return false
+		}
+		return true
+	}
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
-		if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
+		if !visible(issue) {
 			return db.Issue{}, false
 		}
 		return issue, true
@@ -1168,7 +1182,7 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	}
 	// MUL-8472: an issue in a private project the caller cannot see does not
 	// exist for them, on every route that loads it through here.
-	if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
+	if !visible(issue) {
 		return db.Issue{}, false
 	}
 	return issue, true

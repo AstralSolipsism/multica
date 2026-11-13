@@ -374,6 +374,10 @@ func extractEventRefs(eventType string, payload any) eventRefs {
 		return m
 	}
 	isProjectEvent := strings.HasPrefix(eventType, "project:") || strings.HasPrefix(eventType, "project_resource:")
+	switch eventType {
+	case protocol.EventProjectEngineeringUpdated, protocol.EventProjectBaselineChanged, protocol.EventProjectBaselineCommentChanged:
+		isProjectEvent = true
+	}
 	if isProjectEvent {
 		if p := object("project"); p != nil {
 			if id, ok := str(p, "id"); ok && id != "" {

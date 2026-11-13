@@ -14,6 +14,8 @@ import (
 // Frequency rules for the "Star us on GitHub" prompt. The client mirrors them
 // to avoid pointless claims; these are the authority.
 const (
+	// Labrastro keeps the upstream schema without soliciting GitHub stars.
+	starPromptEnabled       = false
 	starPromptMaxShowings   = 2
 	starPromptCooldown      = 30 * 24 * time.Hour
 	starPromptMinAccountAge = 3 * 24 * time.Hour
@@ -25,6 +27,10 @@ const (
 func (h *Handler) ClaimStarPromptShowing(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+	if !starPromptEnabled {
+		writeError(w, http.StatusConflict, "star prompt is disabled")
 		return
 	}
 	now := time.Now()
@@ -51,6 +57,10 @@ func (h *Handler) ClaimStarPromptShowing(w http.ResponseWriter, r *http.Request)
 func (h *Handler) MarkStarPromptStarred(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+	if !starPromptEnabled {
+		h.GetMe(w, r)
 		return
 	}
 	user, err := h.Queries.MarkStarPromptStarred(r.Context(), parseUUID(userID))

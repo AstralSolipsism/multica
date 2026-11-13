@@ -51,85 +51,23 @@ func storedStarPromptShownCount(t *testing.T, userID string) int {
 	return n
 }
 
-func backdateStarPromptShowing(t *testing.T, userID string, days int) {
-	t.Helper()
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE "user" SET star_prompt_last_shown_at = now() - make_interval(days => $2) WHERE id = $1`,
-		userID, days,
-	); err != nil {
-		t.Fatalf("backdate showing: %v", err)
-	}
-}
-
-func TestClaimStarPromptShowingFrequency(t *testing.T) {
-	userID := starPromptUser(t, "star-prompt-frequency@multica.ai", 4)
-
-	w := callStarPrompt(t, userID, "claim")
-	if w.Code != http.StatusOK {
-		t.Fatalf("first claim: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp UserResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.StarPromptShownCount != 1 || resp.StarPromptLastShownAt == nil {
-		t.Fatalf("first claim: got count %d, last shown %v", resp.StarPromptShownCount, resp.StarPromptLastShownAt)
-	}
-
-	if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusConflict {
-		t.Fatalf("claim inside cooldown: expected 409, got %d", w.Code)
-	}
-
-	backdateStarPromptShowing(t, userID, 31)
-	if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusOK {
-		t.Fatalf("claim after cooldown: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	backdateStarPromptShowing(t, userID, 31)
-	if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusConflict {
-		t.Fatalf("claim past the last showing: expected 409, got %d", w.Code)
-	}
-	if n := storedStarPromptShownCount(t, userID); n != 2 {
-		t.Fatalf("stored count = %d, want 2", n)
-	}
-}
-
-func TestClaimStarPromptShowingWaitsForAccountAge(t *testing.T) {
-	userID := starPromptUser(t, "star-prompt-new-account@multica.ai", 1)
-
-	if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusConflict {
-		t.Fatalf("claim on a new account: expected 409, got %d", w.Code)
-	}
-	if n := storedStarPromptShownCount(t, userID); n != 0 {
-		t.Fatalf("refused claim must not write, got count %d", n)
-	}
-}
-
-func TestStarPromptStarredRetiresThePrompt(t *testing.T) {
-	userID := starPromptUser(t, "star-prompt-starred@multica.ai", 4)
-
-	w := callStarPrompt(t, userID, "starred")
-	if w.Code != http.StatusOK {
-		t.Fatalf("starred: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var first UserResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if first.StarPromptStarredAt == nil {
-		t.Fatal("starred_at should be set")
-	}
-
-	var again UserResponse
-	if err := json.Unmarshal(callStarPrompt(t, userID, "starred").Body.Bytes(), &again); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if again.StarPromptStarredAt == nil || *again.StarPromptStarredAt != *first.StarPromptStarredAt {
-		t.Fatalf("repeat click must keep the first time: %v vs %v", again.StarPromptStarredAt, first.StarPromptStarredAt)
-	}
-
-	if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusConflict {
-		t.Fatalf("claim after starring: expected 409, got %d", w.Code)
+func TestLabrastroStarPromptDisabled(t *testing.T) {
+	for _, age := range []int{1, 4, 365} {
+		userID := starPromptUser(t, fmt.Sprintf("star-prompt-disabled-%d@test.invalid", age), age)
+		for _, env := range []string{"", "false", "true"} {
+			t.Setenv("DISABLE_STAR_PROMPT", env)
+			if w := callStarPrompt(t, userID, "claim"); w.Code != http.StatusConflict {
+				t.Fatalf("claim = %d: %s", w.Code, w.Body.String())
+			}
+			var user UserResponse
+			w := callStarPrompt(t, userID, "starred")
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &user) != nil || user.StarPromptShownCount < starPromptMaxShowings {
+				t.Fatalf("legacy client could show the prompt: %d %s", w.Code, w.Body.String())
+			}
+			if n := storedStarPromptShownCount(t, userID); n != 0 || user.StarPromptLastShownAt != nil || user.StarPromptStarredAt != nil {
+				t.Fatal("disabled prompt changed stored bookkeeping")
+			}
+		}
 	}
 }
 
@@ -147,8 +85,8 @@ func TestGetMeAlwaysSerializesStarPromptCount(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got, ok := raw["star_prompt_shown_count"]; !ok || string(got) != "0" {
-		t.Fatalf("star_prompt_shown_count must be present and 0 for a fresh user, got %s (present=%v)", got, ok)
+	if got, ok := raw["star_prompt_shown_count"]; !ok || string(got) != "2" {
+		t.Fatalf("star_prompt_shown_count must be present and exhausted for a fresh user, got %s (present=%v)", got, ok)
 	}
 }
 

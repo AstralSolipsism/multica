@@ -146,6 +146,9 @@ func TestRegisterListeners_PrivateProjectEventsReachOnlyItsAudience(t *testing.T
 	}
 	sort.Strings(want)
 	private := []events.Event{
+		{Type: protocol.EventProjectEngineeringUpdated, Payload: map[string]any{"project_id": ppPrivate}},
+		{Type: protocol.EventProjectBaselineChanged, Payload: map[string]any{"project_id": ppPrivate}},
+		{Type: protocol.EventProjectBaselineCommentChanged, Payload: map[string]any{"project_id": ppPrivate, "thread_id": "thread"}},
 		{Type: protocol.EventIssueUpdated, Payload: map[string]any{"issue": map[string]any{"id": ppSecretIssue, "project_id": ppPrivate}}},
 		{Type: protocol.EventIssueUpdated, Payload: map[string]any{"issue_id": ppSecretIssue}},
 		{Type: protocol.EventCommentCreated, Payload: map[string]any{"comment": map[string]any{"id": ppSecretComment, "issue_id": ppSecretIssue}}},
@@ -178,6 +181,9 @@ func TestRegisterListeners_PrivateProjectEventsReachOnlyItsAudience(t *testing.T
 	}
 
 	public := []events.Event{
+		{Type: protocol.EventProjectEngineeringUpdated, Payload: map[string]any{"project_id": ppPublic}},
+		{Type: protocol.EventProjectBaselineChanged, Payload: map[string]any{"project_id": ppPublic}},
+		{Type: protocol.EventProjectBaselineCommentChanged, Payload: map[string]any{"project_id": ppPublic}},
 		{Type: protocol.EventIssueUpdated, Payload: map[string]any{"issue": map[string]any{"id": ppPublicIssue, "project_id": nil}}},
 		{Type: protocol.EventIssueUpdated, Payload: map[string]any{"issue_id": ppPublicIssue}},
 		// A deleted issue cannot be resolved: keep fanout, never go silent.

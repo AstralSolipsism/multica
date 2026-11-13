@@ -59,19 +59,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// The daemon-task marker lookup walks up from the working directory. Run
-	// from a checkout inside an agent task workdir, the package directory sits
-	// below that task's real marker, and every API, config and daemon path
-	// refuses. Tests that need a marker create one and t.Chdir into it.
 	testLaunchDir = originalDir
-	if err == nil {
-		err = os.Chdir(scratchHome)
-	}
-	if err != nil {
-		_ = os.RemoveAll(scratchHome)
-		fmt.Fprintf(os.Stderr, "move cmd/multica tests into scratch home: %v\n", err)
-		os.Exit(1)
-	}
 
 	code := m.Run()
 	_ = os.Chdir(originalDir)

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -47,6 +48,7 @@ func NewDependencyService(q *db.Queries, tx TxStarter) *DependencyService {
 type DependencySnapshot struct {
 	WorkspaceID pgtype.UUID
 	Model       issuedependency.Model
+	ProjectIDs  map[string]pgtype.UUID
 	Catalog     []db.IssueStatus
 	service     *DependencyService
 }
@@ -108,10 +110,12 @@ func (s *DependencyService) load(ctx context.Context, q *db.Queries, ws pgtype.U
 	// Reuse endpoint strings across dense edges instead of allocating two new
 	// UUID strings per edge. Missing/foreign endpoints still retain their IDs.
 	ids := make(map[pgtype.UUID]string, len(nodes))
+	projects := make(map[string]pgtype.UUID, len(nodes))
 	resolver := issuestatus.NewResolver(ws)
 	for _, n := range nodes {
 		id := util.UUIDToString(n.ID)
 		ids[n.ID] = id
+		projects[id] = n.ProjectID
 		model.Issues[id] = issuedependency.Issue{ID: id, ParentID: util.UUIDToString(n.ParentIssueID), Status: n.Status, Category: issuestatus.WireCategory(n.Status, resolver.Category(ctx, q, n.Status)), Revision: n.Revision, Title: n.Title, Number: n.Number}
 	}
 	endpoint := func(id pgtype.UUID) string {
@@ -123,7 +127,7 @@ func (s *DependencyService) load(ctx context.Context, q *db.Queries, ws pgtype.U
 	for i, id := range edges.Ids {
 		model.Edges = append(model.Edges, issuedependency.Edge{ID: util.UUIDToString(id), IssueID: endpoint(edges.IssueIds[i]), DependsOnID: endpoint(edges.DependsOnIds[i]), Type: edges.Types[i]})
 	}
-	return &DependencySnapshot{WorkspaceID: ws, Model: model, Catalog: catalog, service: s}, nil
+	return &DependencySnapshot{WorkspaceID: ws, Model: model, ProjectIDs: projects, Catalog: catalog, service: s}, nil
 }
 
 func (s *DependencyService) Read(ctx context.Context, ws pgtype.UUID, issueID string) (*DependencySnapshot, error) {
@@ -270,6 +274,11 @@ func (s *DependencyService) Apply(ctx context.Context, q *db.Queries, before *De
 	}
 	next := *before
 	next.Model = change.Next
+	next.ProjectIDs = maps.Clone(before.ProjectIDs)
+	if next.ProjectIDs == nil {
+		next.ProjectIDs = make(map[string]pgtype.UUID)
+	}
+	next.ProjectIDs[id] = issue.ProjectID
 	return &next, change.changed(), nil
 }
 

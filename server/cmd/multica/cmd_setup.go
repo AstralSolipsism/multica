@@ -239,7 +239,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 		case 0:
 			fmt.Fprintf(os.Stderr, "\n⚠ Server at %s is not reachable.\n", serverURL)
 		case http.StatusOK:
-			fmt.Fprintf(os.Stderr, "\n⚠ Server at %s did not return a healthy Multica backend response.\n", serverURL)
+			fmt.Fprintf(os.Stderr, "\n⚠ Server at %s did not return a healthy Labrastro backend response.\n", serverURL)
 			fmt.Fprintln(os.Stderr, "  A login gateway may be intercepting the request to /health.")
 		default:
 			fmt.Fprintf(os.Stderr, "\n⚠ Server at %s returned HTTP %d (%s) from /health.\n", serverURL, probeResult.statusCode, http.StatusText(probeResult.statusCode))
@@ -338,7 +338,7 @@ func daemonActiveTaskCount(health map[string]any) int64 {
 }
 
 // persistSelfHostConfigIfReachable writes the self-host URLs only after a
-// healthy Multica response, preserving the existing profile on probe failure.
+// healthy Labrastro response, preserving the existing profile on probe failure.
 func persistSelfHostConfigIfReachable(serverURL, appURL, profile string, probe func(string) serverProbeResult) (serverProbeResult, error) {
 	result := probe(serverURL)
 	if !result.healthy {
@@ -446,7 +446,7 @@ type serverProbeResult struct {
 
 const maxServerHealthResponseBytes = 4 * 1024
 
-// probeServer requires a healthy Multica payload, including after redirects.
+// probeServer requires a healthy Labrastro payload, including after redirects.
 func probeServer(baseURL string) serverProbeResult {
 	url := strings.TrimRight(baseURL, "/") + "/health"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

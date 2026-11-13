@@ -112,11 +112,12 @@ func (h *Handler) userToResponse(u db.User) UserResponse {
 		OnboardingQuestionnaire: json.RawMessage(q),
 		ProfileDescription:      u.ProfileDescription,
 		WhatsNewSeenVersion:     textToPtr(u.WhatsNewSeenVersion),
-		StarPromptShownCount:    u.StarPromptShownCount,
-		StarPromptLastShownAt:   timestampToPtr(u.StarPromptLastShownAt),
-		StarPromptStarredAt:     timestampToPtr(u.StarPromptStarredAt),
-		CreatedAt:               timestampToString(u.CreatedAt),
-		UpdatedAt:               timestampToString(u.UpdatedAt),
+		// Exhaust the allowance for installed clients without changing storage.
+		StarPromptShownCount:  max(u.StarPromptShownCount, starPromptMaxShowings),
+		StarPromptLastShownAt: timestampToPtr(u.StarPromptLastShownAt),
+		StarPromptStarredAt:   timestampToPtr(u.StarPromptStarredAt),
+		CreatedAt:             timestampToString(u.CreatedAt),
+		UpdatedAt:             timestampToString(u.UpdatedAt),
 	}
 }
 

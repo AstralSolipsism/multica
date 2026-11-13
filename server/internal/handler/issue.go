@@ -3721,7 +3721,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if writeIssueLimitReached(w, err) {
 		return
 	}
-	if writeDependencyError(w, err) || writeIssueNumberCollision(w, err) {
+	if h.writeDependencyError(w, r, err) || writeIssueNumberCollision(w, err) {
 		return
 	}
 	if err != nil {
@@ -4301,7 +4301,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if writeDependencyError(w, err) {
+		if h.writeDependencyError(w, r, err) {
 			return
 		}
 		if writeIssueStatusRaceError(w, err) {

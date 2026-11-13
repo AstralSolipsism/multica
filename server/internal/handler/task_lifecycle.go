@@ -245,7 +245,7 @@ func (h *Handler) rerunIssue(w http.ResponseWriter, r *http.Request, issue db.Is
 	}
 
 	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, fresh, canInvoke)
-	if writeDependencyError(w, err) {
+	if h.writeDependencyError(w, r, err) {
 		return
 	}
 	if errors.Is(err, service.ErrRerunInvokeNotAllowed) {
@@ -301,7 +301,7 @@ func (h *Handler) RetrySourceContextQuickCreate(w http.ResponseWriter, r *http.R
 	if writeIssueLimitReached(w, err) {
 		return
 	}
-	if writeDependencyError(w, err) {
+	if h.writeDependencyError(w, r, err) {
 		return
 	}
 	if errors.Is(err, service.ErrRerunInvokeNotAllowed) {

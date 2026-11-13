@@ -934,7 +934,7 @@ start_desktop() {
   fi
   if component_pid desktop >/dev/null; then
     warn "desktop launcher exists but its renderer/backend/CDP identity is stale; restarting it."
-    stop_component desktop
+    stop_component desktop || true
   fi
   if ! port_free "$DESKTOP_RENDERER_PORT"; then
     die "Desktop renderer port $DESKTOP_RENDERER_PORT is busy: $(describe_port_owner "$DESKTOP_RENDERER_PORT")."

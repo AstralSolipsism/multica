@@ -97,7 +97,7 @@ func (q *Queries) ListIssueDependencyEdges(ctx context.Context, workspaceID pgty
 }
 
 const listIssueDependencyNodes = `-- name: ListIssueDependencyNodes :many
-SELECT id, parent_issue_id, status, revision, title, number FROM issue
+SELECT id, parent_issue_id, status, revision, title, number, project_id FROM issue
 WHERE workspace_id = $1 ORDER BY id
 `
 
@@ -108,6 +108,7 @@ type ListIssueDependencyNodesRow struct {
 	Revision      int64       `json:"revision"`
 	Title         string      `json:"title"`
 	Number        int32       `json:"number"`
+	ProjectID     pgtype.UUID `json:"project_id"`
 }
 
 func (q *Queries) ListIssueDependencyNodes(ctx context.Context, workspaceID pgtype.UUID) ([]ListIssueDependencyNodesRow, error) {
@@ -126,6 +127,7 @@ func (q *Queries) ListIssueDependencyNodes(ctx context.Context, workspaceID pgty
 			&i.Revision,
 			&i.Title,
 			&i.Number,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}

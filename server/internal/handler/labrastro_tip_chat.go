@@ -68,6 +68,11 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	access := *h
+	access.Queries = q
+	if !access.requireProjectVisible(w, r, uuidToString(ws), issue.ProjectID, http.StatusNotFound, "issue not found") {
+		return
+	}
 
 	var session db.ChatSession
 	source, err := q.LabrastroGetTipChat(ctx, db.LabrastroGetTipChatParams{WorkspaceID: ws, UserID: user, TipID: id})
