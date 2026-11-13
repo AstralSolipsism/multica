@@ -30,9 +30,15 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 JOIN issue i ON i.id = atq.issue_id
 WHERE i.workspace_id = $1
+  AND (i.project_id IS NULL OR NOT (i.project_id = ANY($2::uuid[])))
 GROUP BY atq.issue_id, LOWER(tu.provider), tu.model
 ORDER BY atq.issue_id, LOWER(tu.provider), tu.model
 `
+
+type ListWorkspaceIssueUsageParams struct {
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
+}
 
 type ListWorkspaceIssueUsageRow struct {
 	IssueID                  pgtype.UUID `json:"issue_id"`
@@ -57,8 +63,8 @@ type ListWorkspaceIssueUsageRow struct {
 // The inner joins omit issues with no usage, but preserve metered zeroes.
 // The handler drops the five cost-split fields on rows where nothing was
 // priced; the front-end treats their absence as all-uncosted (compat).
-func (q *Queries) ListWorkspaceIssueUsage(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceIssueUsageRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceIssueUsage, workspaceID)
+func (q *Queries) ListWorkspaceIssueUsage(ctx context.Context, arg ListWorkspaceIssueUsageParams) ([]ListWorkspaceIssueUsageRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceIssueUsage, arg.WorkspaceID, arg.HiddenProjectIds)
 	if err != nil {
 		return nil, err
 	}

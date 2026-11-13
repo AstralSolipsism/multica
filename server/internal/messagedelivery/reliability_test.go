@@ -134,8 +134,9 @@ func TestWorkerDefinitiveVerificationFailureDoesNotRetry(t *testing.T) {
 
 func TestDiagnosticSourceReadFailureIsTransient(t *testing.T) {
 	fx := newMDFixture(t, "test-send-read-failure", nil)
-	fx.bindMember(t, testUID, "ou_test_send_failure")
-	route := loadRoute(t, fx.memberTargetRoute(t, "member", testUID, nil))
+	// A group target reaches the diagnostic send gate without the earlier
+	// personal-recipient project check consuming this source-read fault.
+	route := loadRoute(t, fx.groupRoute(t, "oc_test_send_failure"))
 	sender := &fakeSender{}
 	svc := newTestService(sender, nil)
 	fault := &failingDeliveryRead{DBTX: testPool, name: "GetAutopilotInWorkspace"}

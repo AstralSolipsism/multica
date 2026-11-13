@@ -22,7 +22,7 @@ func (c relationChange) changed() bool { return c.BeforeState != c.AfterState }
 
 // planRelationChange is pure: the caller supplies IDs for candidate new edges.
 // Existing canonical IDs and unrelated historical rows are always retained.
-func planRelationChange(before issuedependency.Model, issue issuedependency.Issue, replacement *[]issuedependency.Edge) (relationChange, error) {
+func planRelationChange(before issuedependency.Model, issue issuedependency.Issue, replacement *[]issuedependency.Edge, visible func(string) bool) (relationChange, error) {
 	change := relationChange{Next: before.Clone(), BeforeState: relationState(before, issue.ID)}
 	change.Next.Issues[issue.ID] = issue
 	if issue.ParentID != "" {
@@ -33,6 +33,9 @@ func planRelationChange(before issuedependency.Model, issue issuedependency.Issu
 	if replacement != nil {
 		requested := make(map[string]issuedependency.Edge, len(*replacement))
 		for _, edge := range *replacement {
+			if visible != nil && !visible(edge.DependsOnID) {
+				return relationChange{}, dependencyError("not_found", "prerequisite not found")
+			}
 			if _, ok := change.Next.Issues[edge.DependsOnID]; !ok {
 				return relationChange{}, dependencyError("not_found", "prerequisite not found")
 			}
@@ -44,7 +47,7 @@ func planRelationChange(before issuedependency.Model, issue issuedependency.Issu
 				kept = append(kept, edge)
 				continue
 			}
-			if _, ok := requested[edge.DependsOnID]; ok {
+			if _, ok := requested[edge.DependsOnID]; ok || (visible != nil && !visible(edge.DependsOnID)) {
 				kept = append(kept, edge)
 				delete(requested, edge.DependsOnID)
 			} else {

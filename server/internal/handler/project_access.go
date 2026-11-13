@@ -255,6 +255,10 @@ func (h *Handler) attachmentInHiddenProject(ctx context.Context, hidden projecta
 // requireAttachmentVisible 404s an attachment on an issue (or a comment on an
 // issue) in a project the caller cannot see.
 func (h *Handler) requireAttachmentVisible(w http.ResponseWriter, r *http.Request, workspaceID string, att db.Attachment) bool {
+	return h.requireAttachmentVisibleWithNotFound(w, r, workspaceID, att, "attachment not found")
+}
+
+func (h *Handler) requireAttachmentVisibleWithNotFound(w http.ResponseWriter, r *http.Request, workspaceID string, att db.Attachment, notFound string) bool {
 	if !att.IssueID.Valid && !att.CommentID.Valid {
 		return true
 	}
@@ -268,7 +272,7 @@ func (h *Handler) requireAttachmentVisible(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	if inHidden {
-		writeError(w, http.StatusNotFound, "attachment not found")
+		writeError(w, http.StatusNotFound, notFound)
 		return false
 	}
 	return true

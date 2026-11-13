@@ -61,7 +61,11 @@ func (h *Handler) ListWorkspaceIssueUsage(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	rows, err := h.Queries.ListWorkspaceIssueUsage(r.Context(), member.WorkspaceID)
+	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListWorkspaceIssueUsage(r.Context(), db.ListWorkspaceIssueUsageParams{WorkspaceID: member.WorkspaceID, HiddenProjectIds: hidden.IDs()})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list issue usage")
 		return

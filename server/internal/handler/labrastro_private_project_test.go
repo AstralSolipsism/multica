@@ -149,3 +149,56 @@ func TestLabrastroPrivateProjectDependencyCycleWitness(t *testing.T) {
 		}
 	}
 }
+
+func TestLabrastroPrivateProjectDependencyReplacementKeepsHiddenEdge(t *testing.T) {
+	f := newPrivateProjectFixture(t)
+	edge := dbfx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": f.publicIssue, "depends_on_issue_id": f.secretIssue, "type": "blocked_by"})
+	other := dbfx.Issue(t, "visible prerequisite")
+	read := func(user string) service.DependencyView {
+		var view service.DependencyView
+		testutil.Call(t, testHandler.GetIssueDependencies, withURLParam(asUser(newRequest("GET", "/", nil), user), "id", f.publicIssue)).Want(200).JSON(&view)
+		return view
+	}
+	write := func(user string, ids []string, status int) {
+		view := read(user)
+		r := withURLParam(asUser(newRequest("PATCH", "/", map[string]any{"blocked_by": ids, "expected_dependency_version": view.DependencyVersion}), user), "id", f.publicIssue)
+		body := testutil.Call(t, testHandler.UpdateIssueWithDependencies, r).Want(status).Text()
+		if user == f.outsider && (strings.Contains(body, f.secretIssue) || strings.Contains(body, edge)) {
+			t.Fatal("write response disclosed the hidden edge")
+		}
+	}
+	for _, ids := range [][]string{{other}, {}} {
+		write(f.outsider, ids, 200)
+		view := read(f.outsider)
+		if !view.HasRestrictedBlockers || len(view.BlockedBy) != len(ids) || dbfx.Count(t, "SELECT count(*) FROM issue_dependency WHERE id=$1", edge) != 1 {
+			t.Fatalf("visible replacement removed or disclosed hidden blocker: %+v", view)
+		}
+	}
+	write(f.outsider, []string{f.secretIssue}, 404)
+	write(f.insider, []string{}, 200)
+	if read(f.insider).HasRestrictedBlockers || dbfx.Count(t, "SELECT count(*) FROM issue_dependency WHERE id=$1", edge) != 0 {
+		t.Fatal("authorized member could not remove the private prerequisite")
+	}
+}
+
+func TestLabrastroPrivateProjectWorkspaceUsage(t *testing.T) {
+	f := newPrivateProjectFixture(t)
+	agent := createHandlerTestAgent(t, "usage visibility", []byte("[]"))
+	publicProject := dbfx.Project(t, "public usage")
+	public := dbfx.Issue(t, "public project usage", testutil.Cols{"project_id": publicProject})
+	for _, issue := range []string{f.secretIssue, f.publicIssue, public} {
+		task := dbfx.Task(t, agent, testutil.Cols{"issue_id": issue, "status": "completed", "runtime_id": handlerTestRuntimeID(t)})
+		dbfx.Insert(t, "task_usage", testutil.Cols{"task_id": task, "provider": "test", "model": "test", "input_tokens": 7, "cost_usd_ticks": 13})
+	}
+	for _, user := range []string{f.outsider, f.insider, testUserID} {
+		var rows []IssueUsageRowResponse
+		testutil.Call(t, testHandler.ListWorkspaceIssueUsage, asUser(newRequest("GET", "/api/issues/usage", nil), user)).Want(200).JSON(&rows)
+		found := map[string]bool{}
+		for _, row := range rows {
+			found[row.IssueID] = true
+		}
+		if found[f.secretIssue] != (user != f.outsider) || !found[f.publicIssue] || !found[public] {
+			t.Fatalf("usage visibility for %s: %+v", user, rows)
+		}
+	}
+}

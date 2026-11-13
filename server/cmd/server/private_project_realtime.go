@@ -409,6 +409,11 @@ func extractEventRefs(eventType string, payload any) eventRefs {
 		}
 	}
 	if refs.issueID == "" {
+		if tip := object("tip"); tip != nil {
+			refs.issueID, _ = str(tip, "issue_id")
+		}
+	}
+	if refs.issueID == "" {
 		if id, ok := str(top, "issue_id"); ok {
 			refs.issueID = id
 		}

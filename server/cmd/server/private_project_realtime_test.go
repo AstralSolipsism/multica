@@ -146,6 +146,8 @@ func TestRegisterListeners_PrivateProjectEventsReachOnlyItsAudience(t *testing.T
 	}
 	sort.Strings(want)
 	private := []events.Event{
+		{Type: protocol.EventIssueTipCreated, Payload: map[string]any{"tip": map[string]any{"issue_id": ppSecretIssue, "line": "secret"}}},
+		{Type: protocol.EventIssueTipUpdated, Payload: map[string]any{"tip": map[string]any{"issue_id": ppSecretIssue, "line": "secret"}}},
 		{Type: protocol.EventProjectEngineeringUpdated, Payload: map[string]any{"project_id": ppPrivate}},
 		{Type: protocol.EventProjectBaselineChanged, Payload: map[string]any{"project_id": ppPrivate}},
 		{Type: protocol.EventProjectBaselineCommentChanged, Payload: map[string]any{"project_id": ppPrivate, "thread_id": "thread"}},
@@ -181,6 +183,8 @@ func TestRegisterListeners_PrivateProjectEventsReachOnlyItsAudience(t *testing.T
 	}
 
 	public := []events.Event{
+		{Type: protocol.EventIssueTipCreated, Payload: map[string]any{"tip": map[string]any{"issue_id": ppPublicIssue}}},
+		{Type: protocol.EventIssueTipUpdated, Payload: map[string]any{"tip": map[string]any{"issue_id": ppPublicIssue}}},
 		{Type: protocol.EventProjectEngineeringUpdated, Payload: map[string]any{"project_id": ppPublic}},
 		{Type: protocol.EventProjectBaselineChanged, Payload: map[string]any{"project_id": ppPublic}},
 		{Type: protocol.EventProjectBaselineCommentChanged, Payload: map[string]any{"project_id": ppPublic}},

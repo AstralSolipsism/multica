@@ -62,6 +62,39 @@ func (q *Queries) LabrastroGetTipChat(ctx context.Context, arg LabrastroGetTipCh
 	return i, err
 }
 
+const labrastroGetTipChatAccess = `-- name: LabrastroGetTipChatAccess :one
+SELECT cs.workspace_id, cs.creator_id, a.owner_id,
+       cs.project_id AS snapshot_project_id, i.project_id AS source_project_id
+FROM labrastro_tip_chat tc
+JOIN chat_session cs ON cs.id = tc.chat_session_id
+JOIN agent a ON a.id = cs.agent_id
+LEFT JOIN issue i ON i.id = tc.issue_id AND i.workspace_id = tc.workspace_id
+WHERE tc.chat_session_id = $1
+`
+
+type LabrastroGetTipChatAccessRow struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	CreatorID         pgtype.UUID `json:"creator_id"`
+	OwnerID           pgtype.UUID `json:"owner_id"`
+	SnapshotProjectID pgtype.UUID `json:"snapshot_project_id"`
+	SourceProjectID   pgtype.UUID `json:"source_project_id"`
+}
+
+// The snapshot retains its original project boundary, while the source may
+// have moved to another project since the chat opened.
+func (q *Queries) LabrastroGetTipChatAccess(ctx context.Context, chatSessionID pgtype.UUID) (LabrastroGetTipChatAccessRow, error) {
+	row := q.db.QueryRow(ctx, labrastroGetTipChatAccess, chatSessionID)
+	var i LabrastroGetTipChatAccessRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.CreatorID,
+		&i.OwnerID,
+		&i.SnapshotProjectID,
+		&i.SourceProjectID,
+	)
+	return i, err
+}
+
 const labrastroListTipChatSources = `-- name: LabrastroListTipChatSources :many
 SELECT workspace_id, user_id, tip_id, chat_session_id, issue_id, source_task_id, issue_identifier, tip_snapshot, created_at FROM labrastro_tip_chat
 WHERE workspace_id = $1 AND user_id = $2 AND chat_session_id = ANY($3::uuid[])

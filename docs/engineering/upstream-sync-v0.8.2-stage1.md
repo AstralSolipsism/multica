@@ -141,6 +141,19 @@ again after restoring fork package manifest dependencies.
 - CI retains its Ubuntu 24.04 pins, `CI required`, retained E2E and formatting/
   branding gates while adding the upstream catalog and tooling checks.
 
+## Private-project review corrections
+
+The fork entry points below now reuse `projectaccess` at discovery, mutation
+and delivery time, including jobs queued before access was revoked.
+
+| Review item | Correction and core regression |
+| --- | --- |
+| Media inputs (#1) | Creation returns the same 404 for hidden and missing issue/comment attachments. Claim and transfer recheck the caller and runtime owner, plus the original task's human/agent owner for task-token jobs; membership removal or moving the input issue into a private project prevents token issuance/download. Runtime sharing does not grant project access. |
+| YSK and side chats (#2) | Nested `tip.issue_id` events use the private-project audience; active lists filter hidden projects and state writes reject hidden tips before remembering topics. Opening, listing, reading and claiming side chats recheck creator/agent-owner access to both the saved chat project and the live source issue project. Revoked chats expose neither previews nor hidden model context/resume pointers. |
+| Message delivery (#3) | Workspace-wide activity/comment routes exclude private projects; explicitly scoped routes remain eligible. Inbox candidates, decisions and retries recheck recipient access. Autopilot route saves, decisions and sends check the authorizer and personal recipient. Queued sends check their frozen recipient even after the route changes. Tests use a fake sender and assert no additional external call after revocation. |
+| Workspace issue usage (#4) | SQL filters hidden projects before returning per-issue usage. Tests retain public/projectless usage for ordinary members and private usage for project members/managers. |
+| Dependency replacement (#5) | Full-list replacements preserve existing hidden prerequisite edges and their canonical IDs; an explicit hidden reference still returns 404. An authorized member can remove the edge. The HTTP regression checks `has_restricted_blockers` and response redaction after visible edits. |
+
 ## Migration and insertion audit
 
 All 40 up/down files for migrations 617–636 are byte-identical to v0.8.2.
@@ -219,3 +232,31 @@ The following checks pass:
 Frontend builds/tests, browser E2E, mobile/native packaging and the final
 fresh-install-versus-upgrade schema comparison remain Stage 2/3 work. The
 retained-E2E gate's script tests do not substitute for browser E2E.
+
+## Review-correction validation
+
+The corrections above were tested on the isolated UTF-8 PostgreSQL 17 database
+with Go 1.27.3, through the repository's agent-CLI guard. Database tests actually
+ran. Final package results with `-race -count=1`:
+
+| Package | Result / seconds |
+| --- | --- |
+| `internal/handler` | PASS / 321.073 |
+| `cmd/server` | PASS / 31.836 |
+| `internal/messagedelivery` | PASS / 173.234 |
+| `internal/service` | PASS / 77.492 |
+| `internal/projectaccess` | PASS / 1.033 |
+| `internal/issuedependency` | PASS / 9.976 |
+
+Targeted tests also cover task-token media jobs: revoking either the original
+human or the agent owner blocks downloads and reclaims even when the token user
+and media runtime owner are workspace managers. Existing message fault tests
+still exercise the send-time gate; revocation now happens after enqueue, and
+the diagnostic source-read fault uses a group target to reach that gate.
+The YSK query-cost test includes the new hidden-project parameter while retaining
+its custom/generic-plan scan bound for 10,000 and 100,000 historical tips.
+
+`go -C server vet ./...`, the gofmt gate and its script tests, brand verification,
+and `git diff --check` pass. Two repeated `make sqlc` runs reproduce the generated
+files byte for byte. This correction adds no migration, dependency or frontend
+change; the Stage 2/3 validation scope above remains unchanged.

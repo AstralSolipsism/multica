@@ -169,6 +169,11 @@ func (h *Handler) parseDependencyWrite(w http.ResponseWriter, r *http.Request, f
 		}
 	}
 	write.BlockedBy = &ids
+	hidden, ok := h.requestHiddenProjects(w, r, h.resolveWorkspaceID(r))
+	if !ok {
+		return write, false
+	}
+	write.HiddenProjects = hidden
 	return write, true
 }
 

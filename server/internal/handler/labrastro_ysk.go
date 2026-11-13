@@ -202,7 +202,11 @@ func (h *Handler) labrastroYSKList(w http.ResponseWriter, r *http.Request, works
 			appendTip(row.LabrastroIssueTip, row.IssueNumber, row.UserState, row.UserFeedback, row.StateUpdatedAt)
 		}
 	} else {
-		rows, err := h.Queries.LabrastroYSKListActiveTips(ctx, db.LabrastroYSKListActiveTipsParams{WorkspaceID: workspaceID, UserID: userID})
+		hidden, ok := h.requestHiddenProjects(w, r, uuidToString(workspaceID))
+		if !ok {
+			return
+		}
+		rows, err := h.Queries.LabrastroYSKListActiveTips(ctx, db.LabrastroYSKListActiveTipsParams{WorkspaceID: workspaceID, UserID: userID, HiddenProjectIds: hidden.IDs()})
 		if err != nil {
 			h.labrastroYSKError(w, err)
 			return
@@ -260,6 +264,11 @@ func (h *Handler) LabrastroSetTipState(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		h.labrastroYSKError(w, err)
+		return
+	}
+	access := *h
+	access.Queries = q
+	if !access.requireIssueIDVisible(w, r, uuidToString(ws), tip.IssueID, http.StatusNotFound, "tip or source not found") {
 		return
 	}
 	state, err := q.LabrastroYSKSetState(ctx, db.LabrastroYSKSetStateParams{WorkspaceID: ws, TipID: tip.ID, UserID: user, State: req.State, Feedback: ptrToText(req.Feedback)})

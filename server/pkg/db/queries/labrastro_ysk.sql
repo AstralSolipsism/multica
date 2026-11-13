@@ -48,6 +48,7 @@ JOIN labrastro_issue_tip t ON t.workspace_id = sqlc.arg(workspace_id)
 JOIN issue i ON i.id = t.issue_id AND i.workspace_id = t.workspace_id
 LEFT JOIN labrastro_issue_tip_state s ON s.workspace_id = t.workspace_id
     AND s.tip_id = t.id AND s.user_id = sqlc.arg(user_id)
+WHERE i.project_id IS NULL OR NOT (i.project_id = ANY(sqlc.arg(hidden_project_ids)::uuid[]))
 ORDER BY t.created_at DESC, t.id DESC;
 
 -- name: LabrastroYSKGetTip :one

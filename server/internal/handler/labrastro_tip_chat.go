@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
@@ -73,6 +74,9 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 	if !access.requireProjectVisible(w, r, uuidToString(ws), issue.ProjectID, http.StatusNotFound, "issue not found") {
 		return
 	}
+	if !access.requireChatProjectVisible(w, r, uuidToString(ws), issue.ProjectID, tip.AgentID) {
+		return
+	}
 
 	var session db.ChatSession
 	source, err := q.LabrastroGetTipChat(ctx, db.LabrastroGetTipChatParams{WorkspaceID: ws, UserID: user, TipID: id})
@@ -89,6 +93,17 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 	if session.ID.Valid && (session.CreatorID != user || session.AgentID != tip.AgentID) {
 		writeErrorCode(w, http.StatusForbidden, "invocation_not_allowed", "you do not have access to this chat")
 		return
+	}
+	if session.ID.Valid {
+		visible, err := access.labrastroTipChatVisible(ctx, session.ID, user)
+		if err != nil {
+			h.labrastroYSKError(w, err)
+			return
+		}
+		if !visible {
+			writeError(w, http.StatusNotFound, "tip or source not found")
+			return
+		}
 	}
 	if !h.labrastroTipChatAgentAvailable(w, ctx, q, ws, user, tip.AgentID) {
 		return
@@ -239,11 +254,11 @@ func labrastroCreateTipChat(ctx context.Context, q *db.Queries, tip db.Labrastro
 	return session, source, err
 }
 
-func (h *Handler) labrastroHydrateTipChatSources(r *http.Request, sessions []ChatSessionResponse) error {
+func (h *Handler) labrastroHydrateTipChatSources(r *http.Request, sessions []ChatSessionResponse) ([]ChatSessionResponse, error) {
 	// Tip discovery remains human-only. Task-scoped chat history is the one
 	// intentional exception, and can read only its own session's hidden input.
 	if len(sessions) == 0 || isMachineCredentialActor(r) {
-		return nil
+		return sessions, nil
 	}
 	ids := make([]pgtype.UUID, len(sessions))
 	for i, session := range sessions {
@@ -253,20 +268,53 @@ func (h *Handler) labrastroHydrateTipChatSources(r *http.Request, sessions []Cha
 		WorkspaceID: parseUUID(sessions[0].WorkspaceID), UserID: parseUUID(requestUserID(r)), SessionIds: ids,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	bySession := make(map[string]*LabrastroTipChatSource, len(rows))
+	denied := make(map[string]bool)
 	for _, row := range rows {
+		visible, err := h.labrastroTipChatVisible(r.Context(), row.ChatSessionID, parseUUID(requestUserID(r)))
+		if err != nil {
+			return nil, err
+		}
+		if !visible {
+			denied[uuidToString(row.ChatSessionID)] = true
+			continue
+		}
 		source, err := labrastroTipChatSource(row)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		bySession[uuidToString(row.ChatSessionID)] = source
 	}
-	for i := range sessions {
-		sessions[i].TipSource = bySession[sessions[i].ID]
+	visible := sessions[:0]
+	for _, session := range sessions {
+		if denied[session.ID] {
+			continue // Titles and last-message previews can contain source data too.
+		}
+		session.TipSource = bySession[session.ID]
+		visible = append(visible, session)
 	}
-	return nil
+	return visible, nil
+}
+
+// Saved side-chat content and resumed model sessions inherit both the snapshot
+// and the live source boundary. Check again on reads and immediately before a
+// claimed task receives any input or resume pointer.
+func (h *Handler) labrastroTipChatVisible(ctx context.Context, sessionID pgtype.UUID, principals ...pgtype.UUID) (bool, error) {
+	source, err := h.Queries.LabrastroGetTipChatAccess(ctx, sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil // Ordinary chats have no tip source.
+	}
+	if err != nil {
+		return false, err
+	}
+	principals = append(principals, source.CreatorID)
+	if source.OwnerID.Valid {
+		principals = append(principals, source.OwnerID)
+	}
+	hidden, err := projectaccess.ForPrincipals(ctx, h.Queries, source.WorkspaceID, principals...)
+	return err == nil && hidden.CanSeeProject(source.SnapshotProjectID) && hidden.CanSeeProject(source.SourceProjectID), err
 }
 
 func (h *Handler) labrastroAllowChatAutoTitle(ctx context.Context, sessionID pgtype.UUID) bool {

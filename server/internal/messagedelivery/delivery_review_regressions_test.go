@@ -111,13 +111,14 @@ func TestReviewDepartedRouteAuthorCannotContinueDelivery(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Remove the grant and the member, as the workspace-revoke flow does.
+	run := fx.run(t, "completed", nil)
+	if n, err := svc.EnqueueRunDeliveries(ctx, uuidOf(t, run)); err != nil || n != 1 {
+		t.Fatalf("initial authorized decision: %d %v", n, err)
+	}
+	// Revoke after enqueue so this exercises the send-time gate, not the
+	// decision-time suppression that now rejects an already departed author.
 	testFx.Exec(t, `DELETE FROM autopilot_collaborator WHERE autopilot_id = $1 AND user_id = $2`, fx.autopilot, writer)
 	testFx.Exec(t, `DELETE FROM member WHERE id = $1`, memberID)
-	run := fx.run(t, "completed", nil)
-	if _, err := svc.EnqueueRunDeliveries(ctx, uuidOf(t, run)); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := svc.ProcessNext(ctx); err != nil {
 		t.Fatal(err)
 	}

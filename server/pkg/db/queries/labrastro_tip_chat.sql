@@ -2,6 +2,17 @@
 SELECT * FROM labrastro_tip_chat
 WHERE workspace_id = $1 AND user_id = $2 AND tip_id = $3;
 
+-- name: LabrastroGetTipChatAccess :one
+-- The snapshot retains its original project boundary, while the source may
+-- have moved to another project since the chat opened.
+SELECT cs.workspace_id, cs.creator_id, a.owner_id,
+       cs.project_id AS snapshot_project_id, i.project_id AS source_project_id
+FROM labrastro_tip_chat tc
+JOIN chat_session cs ON cs.id = tc.chat_session_id
+JOIN agent a ON a.id = cs.agent_id
+LEFT JOIN issue i ON i.id = tc.issue_id AND i.workspace_id = tc.workspace_id
+WHERE tc.chat_session_id = $1;
+
 -- name: LabrastroSaveTipChat :one
 -- Caller serializes opens with LockSubscriberWrites and locks the session
 -- before replacing a stale reference. Tasks are not a source of provenance:
