@@ -25,8 +25,8 @@ type baselineWikiRevisionOut struct {
 }
 
 type baselineWikiDiffOut struct {
-	Structure map[string]wikiStructureChange `json:"structure"`
-	Sections  engineering.Diff               `json:"sections"`
+	Structure map[string]engineering.WikiStructureChange `json:"structure"`
+	Sections  engineering.Diff                           `json:"sections"`
 }
 
 func (f baselineWikiFixture) tryHistory(page, query string) *testutil.Response {
