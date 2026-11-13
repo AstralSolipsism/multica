@@ -43,11 +43,11 @@ func CommentSections(content string) []CommentSection {
 		end = headings[0].start
 	}
 	if strings.TrimSpace(content[:end]) != "" {
-		out = append(out, CommentSection{Heading{"_preamble", "", 0}, content[:end], renderedAnnotationText(content[:end])})
+		out = append(out, CommentSection{Heading{"_preamble", "", 0}, content[:end], renderedCommentText(content[:end])})
 	}
 	for _, h := range headings {
 		own := content[h.start:h.ownEnd]
-		out = append(out, CommentSection{h.Heading, own, renderedAnnotationText(own)})
+		out = append(out, CommentSection{h.Heading, own, renderedCommentText(own)})
 	}
 	return out
 }
