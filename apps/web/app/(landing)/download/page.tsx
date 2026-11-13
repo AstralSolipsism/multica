@@ -1,47 +1,23 @@
-import { DEPLOYMENT_URL } from "@multica/core/deployment";
 import type { Metadata } from "next";
-import type { SupportedLocale } from "@multica/core/i18n";
-import { getRequestLocale } from "@/lib/request-locale";
+import { pageMetadata } from "@/features/landing/utils/page-metadata";
+import { fetchLatestRelease } from "@/features/landing/utils/github-release";
+import { getRequestPlatform } from "@/features/landing/utils/request-platform";
+import { isDownloadKey } from "@/features/landing/utils/download-target";
 import { DownloadClient } from "./download-client";
 
-export const metadata: Metadata = {
-  title: "Download",
-};
-
-// Server-side fetch of the internal desktop update feed so the page shows the
-// live desktop version without baking it into the bundle. Failures degrade to
-// a version-less page (the internal source being briefly unreachable must not
-// take /download down), so no revalidate bomb and no throw.
-const DESKTOP_FEED_PATH = "/downloads/desktop/labrastro.yml";
-const DESKTOP_ASSET_DIR = "/downloads/desktop";
-
-type DesktopFeed = { version: string | null; url: string | null };
-
-async function fetchDesktopFeed(): Promise<DesktopFeed> {
-  const base = process.env.MULTICA_APP_URL ?? DEPLOYMENT_URL;
-  try {
-    const res = await fetch(`${base}${DESKTOP_FEED_PATH}`, {
-      next: { revalidate: 300 },
-    });
-    if (!res.ok) return { version: null, url: null };
-    const text = await res.text();
-    const version = /^version:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? null;
-    const url = /^path:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? null;
-    return { version, url };
-  } catch {
-    return { version: null, url: null };
-  }
+export function generateMetadata(): Promise<Metadata> {
+  return pageMetadata("download", "/download");
 }
 
-export default async function DownloadPage() {
-  const locale = await getRequestLocale();
-  const feed = await fetchDesktopFeed();
-
-  return (
-    <DownloadClient
-      locale={locale}
-      desktopVersion={feed.version}
-      desktopPath={feed.url ? `${DESKTOP_ASSET_DIR}/${feed.url}` : null}
-    />
-  );
+// The page renders per request so its first paint names the visitor's
+// platform. The release itself comes from the fetch cache, refreshed at
+// most every 5 minutes (see fetchLatestRelease).
+export default async function DownloadPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ started?: string | string[] }>;
+}) {
+  const [release, platform, params] = await Promise.all([fetchLatestRelease(), getRequestPlatform(), searchParams]);
+  const started = isDownloadKey(params.started) ? params.started : null;
+  return <DownloadClient release={release} platform={platform} started={started} />;
 }

@@ -115,11 +115,8 @@ vi.mock("@multica/views/search", () => ({
 vi.mock("@multica/views/chat", () => ({
   FloatingChat: () => <div data-testid="floating-chat" />,
 }));
-
-// Opens issue-window side chats in this workspace's chat; it resolves the
-// workspace's Chat path, so it is workspace-scoped chrome too (OL-362).
-vi.mock("@/platform/chat-session-handoff", () => ({
-  DesktopChatSessionBridge: () => <div data-testid="chat-session-bridge" />,
+vi.mock("@multica/views/star-prompt", () => ({
+  StarPrompt: () => <div data-testid="star-prompt" />,
 }));
 
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
@@ -174,7 +171,7 @@ describe("DesktopShell workspace gating", () => {
     expect(queryByTestId("global-shortcuts")).not.toBeNull();
     expect(queryByTestId("modal-registry")).not.toBeNull();
     expect(queryByTestId("floating-chat")).not.toBeNull();
-    expect(queryByTestId("chat-session-bridge")).not.toBeNull();
+    expect(queryByTestId("star-prompt")).not.toBeNull();
     expect(queryByRole("status", { name: /loading workspace/i })).toBeNull();
   });
 
@@ -210,7 +207,6 @@ describe("DesktopShell workspace gating", () => {
     expect(queryByTestId("global-shortcuts")).toBeNull();
     expect(queryByTestId("modal-registry")).toBeNull();
     expect(queryByTestId("floating-chat")).toBeNull();
-    expect(queryByTestId("chat-session-bridge")).toBeNull();
     expect(queryByTestId("tab-content")).not.toBeNull();
   });
 

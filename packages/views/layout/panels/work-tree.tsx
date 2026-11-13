@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useId, useMemo, useRef, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -26,7 +26,6 @@ import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { Issue, ListIssuesResponse, Project } from "@multica/core/types";
 import { useT } from "../../i18n";
-import { ProjectEngineeringMenuItems } from "../../projects/components/project-engineering-menu-item";
 import {
   PANEL_ROW_CLASS,
   PanelCount,
@@ -36,8 +35,8 @@ import {
   isPathWithin,
   panelRowStateClass,
 } from "../panel-nav";
-import { useSpacePanelOpen } from "../space-panel-open-context";
-import { RowMenu } from "./row-menu";
+import { ProjectIcon } from "../../projects/components/project-icon";
+import { useDragClickGuard } from "../use-drag-click-guard";
 import { ProjectsSectionSettings } from "./sidebar-settings";
 import { SidebarIssueList, TreeRow } from "./sidebar-tree";
 
@@ -56,12 +55,20 @@ function usePrefetch(wsId: string, source: string, request: SidebarIssuesRequest
   };
 }
 
+export interface IssueInTree {
+  /** `null` when no expanded row lists the issue. */
+  issueId: string | null;
+  /** The sidebar sources of the expanded rows that list or keep it. */
+  sources: readonly string[];
+}
+
+const NOT_IN_TREE: IssueInTree = { issueId: null, sources: [] };
+
 /**
- * The id of the issue an expanded row lists or keeps under `ref` — its UUID,
- * or an identifier like `MUL-123` matched case-insensitively as the server
- * does — or `null` when no expanded row lists it.
+ * Where the expanded rows list or keep the issue under `ref` — its UUID, or
+ * an identifier like `MUL-123` matched case-insensitively as the server does.
  */
-export function useIssueIdInTree(wsId: string, ref: string | null): string | null {
+export function useIssueInTree(wsId: string, ref: string | null): IssueInTree {
   const qc = useQueryClient();
   const cache = qc.getQueryCache();
   const subscribe = useCallback(
@@ -75,23 +82,36 @@ export function useIssueIdInTree(wsId: string, ref: string | null): string | nul
     },
     [cache],
   );
-  return useSyncExternalStore(subscribe, () => {
-    if (!ref) return null;
+  // The snapshot is a string so an unchanged answer compares equal.
+  const snapshot = useSyncExternalStore(subscribe, () => {
+    if (!ref) return "";
     const identifier = ref.toUpperCase();
     const matches = (issue: Issue) => issue.id === ref || issue.identifier.toUpperCase() === identifier;
+    const sourceAt = issueKeys.sidebarAll(wsId).length;
     const shown = (queryKey: readonly unknown[]) =>
       cache.findAll({ queryKey }).filter((query) => query.getObserversCount() > 0);
+    let issueId: string | null = null;
+    const sources = new Set<string>();
     for (const query of shown(issueKeys.sidebarAll(wsId))) {
       const issue = (query.state.data as ListIssuesResponse | undefined)?.issues?.find(matches);
-      if (issue) return issue.id;
+      if (!issue) continue;
+      issueId = issue.id;
+      sources.add(String(query.queryKey[sourceAt]));
     }
     // A shown list keeps the open issue its query dropped (`useKeptActiveItem`).
     for (const [list, held] of Object.entries(useSidebarKeptStore.getState().held)) {
       const issue = qc.getQueryData<Issue>(issueKeys.detail(wsId, held.id));
-      if (issue && matches(issue) && shown([...issueKeys.sidebarAll(wsId), list]).length > 0) return issue.id;
+      if (!issue || !matches(issue) || shown([...issueKeys.sidebarAll(wsId), list]).length === 0) continue;
+      issueId = issue.id;
+      sources.add(list);
     }
-    return null;
+    return issueId ? [issueId, ...sources].join("\n") : "";
   });
+  return useMemo(() => {
+    if (!snapshot) return NOT_IN_TREE;
+    const [issueId, ...sources] = snapshot.split("\n");
+    return { issueId: issueId!, sources };
+  }, [snapshot]);
 }
 
 interface ProjectsSectionProps {
@@ -99,10 +119,14 @@ interface ProjectsSectionProps {
   userId: string | undefined;
   pathname: string;
   /** Already filtered and ordered by the section's settings. */
-  projects: Project[];
+  projects: readonly Project[];
   totalProjects: number;
   plainRowsLit: boolean;
   activeIssueId: string | null;
+  /** The one list that lights the open issue. */
+  litSource: string | null;
+  /** The project whose row marks the open issue no list shows. */
+  locatedProjectId: string | null;
 }
 
 export function ProjectsSection({
@@ -113,19 +137,21 @@ export function ProjectsSection({
   totalProjects,
   plainRowsLit,
   activeIssueId,
+  litSource,
+  locatedProjectId,
 }: ProjectsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
-  const open = useSpacePanelOpen();
   const collapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
-  const prefsEnabled = open && !collapsed;
   const setCollapsed = useSidebarTreeStore((s) => s.setProjectsCollapsed);
-  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId, prefsEnabled);
-  const updatePrefs = useUpdateSidebarProjectPrefs(wsId, prefsEnabled);
+  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId);
+  const updatePrefs = useUpdateSidebarProjectPrefs(wsId);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
 
   const onDragEnd = useCallback(
     ({ active, over }: DragEndEvent) => {
+      releaseClickGuard();
       if (!over || active.id === over.id) return;
       const ids = projects.map((project) => project.id);
       const from = ids.indexOf(String(active.id));
@@ -138,7 +164,7 @@ export function ProjectsSection({
         projectSettings: { ordering: "manual" },
       });
     },
-    [projects, projectOrder, updatePrefs],
+    [projects, projectOrder, releaseClickGuard, updatePrefs],
   );
 
   return (
@@ -148,11 +174,7 @@ export function ProjectsSection({
       onCollapsedChange={setCollapsed}
       action={
         <>
-          <ProjectsSectionSettings
-            wsId={wsId}
-            enabled={prefsEnabled}
-            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100"
-          />
+          <ProjectsSectionSettings wsId={wsId} className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100" />
           <IconButton
             label={t(($) => $.panels.work.new_project)}
             size="icon-xs"
@@ -164,7 +186,14 @@ export function ProjectsSection({
         </>
       }
     >
-      <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={DRAG_MODIFIERS} onDragEnd={onDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        modifiers={DRAG_MODIFIERS}
+        onDragStart={armClickGuard}
+        onDragEnd={onDragEnd}
+        onDragCancel={releaseClickGuard}
+      >
         <SortableContext items={projects.map((project) => project.id)} strategy={verticalListSortingStrategy}>
           <PanelList>
             {projects.map((project) => (
@@ -176,7 +205,9 @@ export function ProjectsSection({
                 active={plainRowsLit && isPathWithin(pathname, p.projectDetail(project.id))}
                 showCount={projectSettings.showCount}
                 issueSettings={issueSettings}
-                activeIssueId={activeIssueId}
+                activeIssueId={litSource === projectSidebarSource(project.id) ? activeIssueId : null}
+                openIssueId={activeIssueId}
+                located={locatedProjectId === project.id}
               />
             ))}
           </PanelList>
@@ -222,6 +253,8 @@ function ProjectTreeItem({
   showCount,
   issueSettings,
   activeIssueId,
+  openIssueId,
+  located,
 }: {
   wsId: string;
   userId: string | undefined;
@@ -230,6 +263,8 @@ function ProjectTreeItem({
   showCount: boolean;
   issueSettings: SidebarIssueSettings;
   activeIssueId: string | null;
+  openIssueId: string | null;
+  located: boolean;
 }) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
@@ -237,9 +272,7 @@ function ProjectTreeItem({
   const linkRef = useRef<HTMLAnchorElement>(null);
   const source = projectSidebarSource(project.id);
   const [expanded, setExpanded] = useExpanded(source);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const open = useSpacePanelOpen();
-  const statusCatalog = useIssueStatuses(wsId, open);
+  const statusCatalog = useIssueStatuses(wsId);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
   const params = catalogDependency.unresolved
     ? undefined
@@ -247,10 +280,6 @@ function ProjectTreeItem({
   const prefetch = usePrefetch(wsId, source, params);
 
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: project.id });
-  const wasDragged = useRef(false);
-  useEffect(() => {
-    if (isDragging) wasDragged.current = true;
-  }, [isDragging]);
 
   return (
     <li
@@ -267,24 +296,18 @@ function ProjectTreeItem({
         {...listeners}
         href={p.projectDetail(project.id)}
         label={project.title}
-        icon={<Folder className="size-4 shrink-0" />}
+        icon={
+          project.icon ? <ProjectIcon project={project} size="md" /> : <Folder className="size-4 shrink-0" />
+        }
         active={active}
+        located={located}
         expanded={expanded}
         onExpandedChange={setExpanded}
         listId={listId}
         toggleLabel={t(($) => $.panels.work.project_issues, { name: project.title })}
         onPrefetch={prefetch}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
-        }}
-        onNavigate={(event) => {
-          if (!wasDragged.current) return;
-          wasDragged.current = false;
-          event.preventDefault();
-        }}
         trailing={
-          // The actions take the count's place on hover, so the row never reflows.
+          // The button takes the count's place on hover, so the row never reflows.
           <span className="relative flex h-5 min-w-5 items-center justify-end">
             {showCount && (
               <PanelCount
@@ -292,24 +315,15 @@ function ProjectTreeItem({
                 className="transition-opacity group-focus-within/row:opacity-0 group-hover/row:opacity-0 [@media(pointer:coarse)]:opacity-0"
               />
             )}
-            <span className="absolute -right-2 z-10 flex items-center opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
-              <RowMenu
-                label={t(($) => $.panels.work.project_actions, { name: project.title })}
-                open={menuOpen}
-                onOpenChange={setMenuOpen}
-              >
-                <ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={open && menuOpen} />
-              </RowMenu>
-              <IconButton
-                label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
-                size="icon-xs"
-                className="text-muted-foreground"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
-              >
-                <Plus />
-              </IconButton>
-            </span>
+            <IconButton
+              label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
+              size="icon-xs"
+              className="absolute -right-2 z-10 text-muted-foreground opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
+            >
+              <Plus />
+            </IconButton>
           </span>
         }
       />
@@ -322,6 +336,8 @@ function ProjectTreeItem({
           paramsError={catalogDependency.error}
           onRetry={catalogDependency.retry}
           activeIssueId={activeIssueId}
+          openIssueId={openIssueId}
+          ownsOpen={(issue) => issue.project_id === project.id}
           onCollapse={() => {
             setExpanded(false);
             linkRef.current?.focus();

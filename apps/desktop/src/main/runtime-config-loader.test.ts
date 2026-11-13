@@ -1,22 +1,13 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, writeFile } from "fs/promises";
+import { mkdtemp, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { describe, expect, it, vi } from "vitest";
 
-const ctx = vi.hoisted(() => ({ homePath: "" }));
-
-// runtime-config-loader pulls `app` from electron at module load. Without this
-// mock Vitest loads the real electron package, whose index.js downloads the
-// platform binary on first run — a network round trip that has no place in a
-// unit test. Same shape as updater.test.ts.
 vi.mock("electron", () => ({
-  app: {
-    getPath: vi.fn(() => ctx.homePath),
-  },
+  app: { getPath: () => tmpdir() },
 }));
 
-import { app } from "electron";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 
 describe("loadRuntimeConfig", () => {
@@ -61,9 +52,9 @@ describe("loadRuntimeConfig", () => {
       ok: true,
       config: {
         schemaVersion: 1,
-        apiUrl: "https://multica.outlune.com",
-        wsUrl: "wss://multica.outlune.com/ws",
-        appUrl: "https://multica.outlune.com",
+        apiUrl: "https://api.multica.ai",
+        wsUrl: "wss://api.multica.ai/ws",
+        appUrl: "https://multica.ai",
       },
     });
   });
@@ -101,34 +92,5 @@ describe("loadRuntimeConfig", () => {
       expect(result.error.message).toContain(configPath);
       expect(result.error.message).toContain("Invalid desktop runtime config JSON");
     }
-  });
-
-  it("reads desktopConfigPath() under the electron home dir when configPath is omitted", async () => {
-    const home = await mkdtemp(join(tmpdir(), "multica-desktop-home-"));
-    ctx.homePath = home;
-    const configDir = join(home, ".multica");
-    await mkdir(configDir, { recursive: true });
-    await writeFile(
-      join(configDir, "desktop.json"),
-      JSON.stringify({
-        schemaVersion: 1,
-        apiUrl: "https://defaults.example.com",
-        wsUrl: "wss://defaults.example.com/ws",
-        appUrl: "https://web.example.com",
-      }),
-    );
-
-    await expect(
-      loadRuntimeConfig({ isDev: false, env: {} }),
-    ).resolves.toEqual({
-      ok: true,
-      config: {
-        schemaVersion: 1,
-        apiUrl: "https://defaults.example.com",
-        wsUrl: "wss://defaults.example.com/ws",
-        appUrl: "https://web.example.com",
-      },
-    });
-    expect(app.getPath).toHaveBeenCalledWith("home");
   });
 });

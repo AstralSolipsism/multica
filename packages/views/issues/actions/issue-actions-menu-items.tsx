@@ -15,6 +15,8 @@ import {
   FolderOpen,
   Hash,
   Link2,
+  LocateFixed,
+  Monitor,
   Network,
   Pin,
   PinOff,
@@ -121,6 +123,8 @@ interface IssueActionsMenuItemsProps {
   variant?: "full" | "sidebar";
   /** Sidebar variant: asks the parent to confirm stopping a running task. */
   onStopRun?: (task: AgentTask) => void;
+  /** Adds "Show in sidebar", for the page the issue is open on. */
+  onShowInSidebar?: () => void;
 }
 
 export function IssueActionsMenuItems({
@@ -132,6 +136,7 @@ export function IssueActionsMenuItems({
   archivedInboxItemId,
   variant = "full",
   onStopRun,
+  onShowInSidebar,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
   const { t: tDependencies } = useT("dependencies");
@@ -158,6 +163,7 @@ export function IssueActionsMenuItems({
     isPinned,
     updateField,
     openInNewTab,
+    openInDesktop,
     togglePin,
     copyLink,
     openCreateSubIssue,
@@ -416,6 +422,12 @@ export function IssueActionsMenuItems({
         <ExternalLink className="h-3.5 w-3.5" />
         {t(($) => $.actions.open_in_new_tab)}
       </P.Item>
+      {openInDesktop && (
+        <P.Item onClick={openInDesktop}>
+          <Monitor className="h-3.5 w-3.5" />
+          {t(($) => $.web.open_in_desktop)}
+        </P.Item>
+      )}
       <P.Item onClick={togglePin}>
         {isPinned ? (
           <PinOff className="h-3.5 w-3.5" />
@@ -424,6 +436,12 @@ export function IssueActionsMenuItems({
         )}
         {isPinned ? t(($) => $.actions.unpin_from_sidebar) : t(($) => $.actions.pin_to_sidebar)}
       </P.Item>
+      {onShowInSidebar && (
+        <P.Item onClick={onShowInSidebar}>
+          <LocateFixed className="h-3.5 w-3.5" />
+          {t(($) => $.actions.locate_in_sidebar)}
+        </P.Item>
+      )}
       {archivedInboxItemId && <InboxRestoreMenuItem itemId={archivedInboxItemId} Item={P.Item} />}
       {sidebar &&
         (unread ? (

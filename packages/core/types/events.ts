@@ -7,9 +7,6 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
-import type { z } from "zod";
-import type { IssueTipSchema } from "../api/labrastro-ysk-schemas";
-import type * as Eng from "./labrastro-engineering-events";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -51,7 +48,6 @@ export type WSEventType =
   | "member:removed"
   | "daemon:heartbeat"
   | "daemon:register"
-  | "runtime:telemetry_updated"
   | "skill:created"
   | "skill:updated"
   | "skill:deleted"
@@ -73,9 +69,6 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
-  | "project_engineering:updated"
-  | "project_baseline:changed"
-  | "project_baseline_comment:changed"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -84,6 +77,8 @@ export type WSEventType =
   | "label:deleted"
   | "issue_labels:changed"
   | "issue_unread:changed"
+  | "app_request:changed"
+  | "app_call:created"
   | "issue_metadata:changed"
   | "issue_properties:changed"
   | "property:created"
@@ -104,9 +99,7 @@ export type WSEventType =
   | "pull_request:linked"
   | "pull_request:updated"
   | "pull_request:unlinked"
-  | "issue_tip:created"
-  | "issue_tip:updated"
-  | "issue_tip_state:changed";
+  | "environment:changed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -133,6 +126,9 @@ export interface IssueUpdatedPayload {
   assignee_changed?: boolean;
   status_changed?: boolean;
   project_changed?: boolean;
+  title_changed?: boolean;
+  parent_changed?: boolean;
+  prev_parent_issue_id?: string | null;
   // Both ends of a duplicate-mark change (MUL-7349). The mark is not on Issue,
   // so these tell the realtime layer whose duplicate relations to refresh.
   duplicate_of_issue_id?: string | null;
@@ -141,33 +137,6 @@ export interface IssueUpdatedPayload {
 
 export interface IssueDeletedPayload {
   issue_id: string;
-}
-
-// You Should Know (YSK) tips. The created/updated payloads are emitted
-// workspace-wide like comment:created; the state payload goes to the acting
-// user only. Shapes follow the OL-188 server implementation (PR #95,
-// docs/engineering/labrastro-ysk-api.md).
-//
-// `tip` is the RAW server JSON, not a parsed IssueTip: these events are
-// broadcast workspace-wide and never carry `user_state` — the key is absent
-// (undefined), never null. Writing it into a cache un-parsed would make
-// isTipShownToMe (`user_state === null`) treat a fresh tip as already
-// handled. To apply one to a cache, parse with IssueTipSchema first and keep
-// the cached row's own `user_state` (parsing normalizes the absent key to
-// null, which would wipe the viewer's state on `issue_tip:updated`);
-// realtime.ts currently only invalidates.
-export interface IssueTipChangedPayload {
-  tip: z.input<typeof IssueTipSchema>;
-}
-
-export interface IssueTipStateChangedPayload {
-  workspace_id: string;
-  issue_id: string;
-  tip_id: string;
-  user_id: string;
-  state: "known" | "dismissed";
-  feedback: "helpful" | "not_relevant" | "not_understood" | null;
-  updated_at: string | null;
 }
 
 export interface IssueLabelsChangedPayload {
@@ -253,14 +222,12 @@ export interface InboxNewPayload {
 }
 
 export interface InboxReadPayload {
-  workspace_id?: string;
   item_id: string;
   recipient_id: string;
 }
 
 /** Emitted when a recipient flips a notification back to unread. */
 export interface InboxUnreadPayload {
-  workspace_id?: string;
   item_id: string;
   recipient_id: string;
 }
@@ -364,25 +331,7 @@ export interface ActivityCreatedPayload {
   entry: TimelineEntry;
 }
 
-export interface TaskMessageThinkingMetadata {
-  level: string;
-  mode: "adapt" | "fixed";
-  step?: number;
-  source?: string;
-  confidence?: number;
-  probabilities?: Record<string, number>;
-  latency_ms?: number;
-  fallback?: "timeout" | "error" | "invalid" | "breaker" | "disabled" | "no_candidates";
-  [key: string]: unknown;
-}
-
-export interface TaskMessageMetadata {
-  thinking?: TaskMessageThinkingMetadata;
-  [key: string]: unknown;
-}
-
 export interface TaskMessagePayload {
-  metadata?: TaskMessageMetadata;
   /** Opaque tool-call identity, scoped to one backend execution. */
   call_id?: string;
   task_id: string;
@@ -630,8 +579,6 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
-export type * from "./labrastro-engineering-events";
-
 export interface InvitationCreatedPayload {
   invitation: Invitation;
   workspace_name?: string;
@@ -743,9 +690,6 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
-  "project_engineering:updated": Eng.ProjectEngineeringUpdatedPayload;
-  "project_baseline:changed": Eng.ProjectBaselineChangedPayload;
-  "project_baseline_comment:changed": Eng.ProjectBaselineCommentChangedPayload;
   "invitation:created": InvitationCreatedPayload;
   "invitation:accepted": InvitationAcceptedPayload;
   "invitation:declined": InvitationDeclinedPayload;
@@ -754,9 +698,6 @@ export interface WSEventPayloadMap {
   // currently consume as opaque triggers (refetch on receipt).
   "daemon:heartbeat": unknown;
   "daemon:register": unknown;
-  // Server publishes this when a runtime's plan-quota snapshot changes;
-  // clients treat it as an opaque "refetch runtime queries" trigger.
-  "runtime:telemetry_updated": unknown;
   "skill:created": unknown;
   "skill:updated": unknown;
   "skill:deleted": unknown;
@@ -774,9 +715,7 @@ export interface WSEventPayloadMap {
   "pull_request:linked": unknown;
   "pull_request:updated": unknown;
   "pull_request:unlinked": unknown;
-  "issue_tip:created": IssueTipChangedPayload;
-  "issue_tip:updated": IssueTipChangedPayload;
-  "issue_tip_state:changed": IssueTipStateChangedPayload;
+  "environment:changed": { issue_id: string };
 }
 
 /**

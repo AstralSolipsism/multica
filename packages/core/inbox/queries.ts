@@ -1,6 +1,7 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { ArchivedInboxPage } from "../types/inbox";
-import { EMPTY_INBOX_FILTERS, type ArchivedInboxFilters } from "./filter-store";
+import { EMPTY_INBOX_FILTERS, archivedInboxQuery, type ArchivedInboxFilters } from "./filters";
+import { groupInboxItemsByIssue } from "./group";
 import { infiniteQueryOptions, keepPreviousData, queryOptions, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
@@ -21,7 +22,7 @@ export const inboxKeys = {
 export function inboxListOptions(wsId: string) {
   return queryOptions({
     queryKey: inboxKeys.list(wsId),
-    queryFn: ({ signal }) => api.listInbox({ view: "grouped", signal }),
+    queryFn: () => api.listInbox(),
   });
 }
 
@@ -37,11 +38,11 @@ export function archivedInboxListOptions(wsId: string) {
   });
 }
 
-// Lists the archived dimensions explicitly, so an `idleOnly` carried in from
-// the active inbox never changes the key or refetches the archive.
-function normalizedInboxFilters(filters: ArchivedInboxFilters): ArchivedInboxFilters {
-  return { statuses: [...filters.statuses].sort(), priorities: [...filters.priorities].sort(),
-    actors: [...filters.actors].sort(), unreadOnly: filters.unreadOnly };
+// Keyed by the request parameters themselves: an `agent` selection carried in
+// from the active inbox never changes the key, and the relative windows
+// (received, due date) re-key when the day turns.
+function normalizedInboxFilters(filters: ArchivedInboxFilters): Record<string, string> {
+  return archivedInboxQuery(filters);
 }
 
 // A filter change re-keys the archive. Keep the previous result while the new
@@ -65,11 +66,19 @@ export function archivedInboxPagesOptions(wsId: string, filters: ArchivedInboxFi
 }
 
 export function archivedInboxLookupOptions(wsId: string, groupId: string, filters: ArchivedInboxFilters = EMPTY_INBOX_FILTERS) {
+  const prefix = inboxKeys.lookup(wsId);
   return queryOptions({
-    queryKey: [...inboxKeys.lookup(wsId), groupId, normalizedInboxFilters(filters)],
+    queryKey: [...prefix, groupId, normalizedInboxFilters(filters)],
     queryFn: ({ signal }) => api.listArchivedInboxPage(filters, { groupId, signal }),
     enabled: !!groupId,
     retry: false,
+    // A filter change re-asks for the same group. Its last answer stays up
+    // meanwhile, so the open row is judged by the new filters at once instead
+    // of the selection hanging on the request.
+    placeholderData: (previousData, previousQuery) =>
+      isSameWorkspace(previousQuery?.queryKey, wsId) && previousQuery?.queryKey[prefix.length] === groupId
+        ? previousData
+        : undefined,
   });
 }
 
@@ -218,49 +227,4 @@ export function deduplicateInboxItems(items: InboxItem[]): InboxItem[] {
  */
 export function deduplicateArchivedInboxItems(items: InboxItem[]): InboxItem[] {
   return groupInboxItemsByIssue(items.filter((i) => i.archived));
-}
-
-// JS Date truncates PostgreSQL microseconds. Keep them when selecting the
-// newest row/anchor, then use the same ID tie-breaker as both server queries.
-function compareInboxItems(a: InboxItem, b: InboxItem): number {
-  const micros = (item: InboxItem) =>
-    Date.parse(item.created_at) * 1000 +
-    Number((item.created_at.match(/\.(\d+)/)?.[1] ?? "").padEnd(6, "0").slice(3, 6));
-  const delta = micros(b) - micros(a);
-  if (delta) return delta;
-  // Older servers truncate to seconds; their SQL order remains authoritative
-  // for ties that may actually have different fractional timestamps.
-  return a.created_at.includes(".") && b.created_at.includes(".")
-    ? b.id.localeCompare(a.id) : 0;
-}
-
-function groupInboxItemsByIssue(items: InboxItem[]): InboxItem[] {
-  const groups = new Map<string, InboxItem[]>();
-  for (const item of items) {
-    const key = item.issue_id ?? item.id;
-    const group = groups.get(key) ?? [];
-    group.push(item);
-    groups.set(key, group);
-  }
-  const merged: InboxItem[] = [];
-  for (const group of groups.values()) {
-    group.sort(compareInboxItems);
-    const newest = group[0];
-    if (!newest) continue;
-
-    const commentId =
-      newest.details?.comment_id ??
-      group.find((item) => item.details?.comment_id)?.details?.comment_id;
-
-    if (commentId && newest.details?.comment_id !== commentId) {
-      merged.push({
-        ...newest,
-        details: { ...(newest.details ?? {}), comment_id: commentId },
-      });
-      continue;
-    }
-
-    merged.push(newest);
-  }
-  return merged.sort(compareInboxItems);
 }

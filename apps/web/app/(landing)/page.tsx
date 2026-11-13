@@ -1,25 +1,18 @@
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+import { pageMetadata } from "@/features/landing/utils/page-metadata";
+import { HomePage } from "@/features/landing/site/home-page";
+import { getHomeDownload } from "@/features/landing/utils/home-download";
+import { RedirectIfAuthenticated } from "@/features/landing/components/redirect-if-authenticated";
 
-/**
- * The root path is an entry redirect, not a destination: this instance has
- * no public marketing site, so unauthenticated visitors go to /login and
- * authenticated users go straight to their last workspace.
- *
- * The Next.js proxy (proxy.ts) already performs the same redirect for the
- * session + last-workspace-cookie case before a route renders — this page
- * covers what falls through it: no session, or a session without a
- * last-workspace cookie yet (first login). /login resolves an already
- * authenticated visitor against their workspace list (pending invitations,
- * zero-workspace state) and replaces to the right destination.
- */
-export default async function RootRedirectPage() {
-  const cookieStore = await cookies();
-  const hasSession = cookieStore.has("multica_logged_in");
-  const lastSlug = cookieStore.get("last_workspace_slug")?.value;
+export function generateMetadata(): Promise<Metadata> {
+  return pageMetadata("home", "/");
+}
 
-  if (hasSession && lastSlug) {
-    redirect(`/${lastSlug}/issues`);
-  }
-  redirect("/login");
+export default async function LandingPage() {
+  return (
+    <>
+      <RedirectIfAuthenticated />
+      <HomePage download={await getHomeDownload()} />
+    </>
+  );
 }

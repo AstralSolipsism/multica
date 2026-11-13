@@ -22,9 +22,8 @@ if (typeof window !== "undefined") {
       }) as MediaQueryList;
   }
 
-  // jsdom doesn't provide ResizeObserver; thread-minimap (mounted by the
-  // issue detail) observes its scroll container with it. Mirrors
-  // packages/views/test/setup.ts.
+  // jsdom doesn't provide ResizeObserver; a focusable TruncatedTooltip
+  // observes its trigger. Mirrors packages/views/test/setup.ts.
   if (typeof globalThis.ResizeObserver === "undefined") {
     globalThis.ResizeObserver = class ResizeObserver {
       observe() {}

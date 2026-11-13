@@ -15,13 +15,12 @@ import type {
   DaemonStatus,
   DaemonPrefs,
   LocalRuntimeProbe,
-  WorkspacesRootInfo,
 } from "../shared/daemon-types";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 import type {
-  ChatSessionHandoff,
-  ChatSessionHandoffResult,
-} from "../shared/chat-session-handoff";
+  WorkspacePathOptions,
+  WorkspacePathRequest,
+} from "../shared/workspace-window";
 
 interface DesktopAPI {
   /** App version + normalized OS, captured synchronously at preload time. */
@@ -50,6 +49,8 @@ interface DesktopAPI {
   onAuthToken: (callback: (token: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */
   onInviteOpen: (callback: (invitationId: string) => void) => () => void;
+  /** Listen for issue links from the web once authentication is ready. */
+  onIssueOpen: (callback: (url: string) => void) => () => void;
   /** Open a URL in the default browser. */
   openExternal: (url: string) => Promise<void>;
   /** Download a file by URL through Electron's native download system.
@@ -125,28 +126,22 @@ interface DesktopAPI {
   openIssueWindow: (
     request: IssueWindowRequest,
   ) => Promise<{ ok: true } | { ok: false; reason: "invalid_request" }>;
-  /** From a dedicated issue window: bring the main window forward on a chat
-   *  session. Main accepts it only from issue windows of the current account. */
-  openChatSessionInMainWindow: (
-    handoff: ChatSessionHandoff,
-  ) => Promise<ChatSessionHandoffResult>;
-  /** Main window: listen for chat sessions handed over by issue windows.
-   *  Returns an unsubscribe function. */
-  onOpenChatSession: (
-    callback: (handoff: ChatSessionHandoff) => void,
-  ) => () => void;
   /** Tell main which workspace this main window shows (null while none). */
   reportWindowWorkspace: (workspaceSlug: string | null) => void;
   /** Workspaces shown by the other main windows (synchronous). */
   getOtherWindowWorkspaces: () => string[];
   /** Hand a workspace (and optionally a path inside it) to the other main
    *  window that shows it. Returns false when no other window does. */
-  focusWorkspaceWindow: (workspaceSlug: string, path?: string) => boolean;
+  focusWorkspaceWindow: (
+    workspaceSlug: string,
+    path?: string,
+    options?: WorkspacePathOptions,
+  ) => boolean;
   /** Open a workspace in its own main window, or focus the one showing it. */
   openWorkspaceWindow: (workspaceSlug: string) => Promise<{ ok: boolean }>;
   /** Listen for workspace paths routed here from another window.
    *  Returns an unsubscribe function. */
-  onOpenWorkspacePath: (callback: (path: string) => void) => () => void;
+  onOpenWorkspacePath: (callback: (request: WorkspacePathRequest) => void) => () => void;
   /** Listen for Cmd/Ctrl+Shift+N new-window requests. Returns an
    *  unsubscribe function. */
   onNewWindowShortcut: (callback: () => void) => () => void;
@@ -175,14 +170,6 @@ interface DaemonAPI {
   isCliInstalled: () => Promise<boolean>;
   getPrefs: () => Promise<DaemonPrefs>;
   setPrefs: (prefs: Partial<DaemonPrefs>) => Promise<DaemonPrefs>;
-  /** Effective workspaces root of the Desktop-owned daemon profile, or null
-   *  until the profile is resolved (target API URL not reported yet). */
-  getWorkspacesRoot: () => Promise<WorkspacesRootInfo | null>;
-  /** Persist `workspaces_root` via the bundled CLI; "" restores the default.
-   *  Takes effect on the next daemon start — restart separately. */
-  setWorkspacesRoot: (
-    path: string,
-  ) => Promise<{ success: boolean; error?: string }>;
   autoStart: () => Promise<void>;
   retryInstall: () => Promise<void>;
   startLogStream: () => void;

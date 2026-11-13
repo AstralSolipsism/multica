@@ -17,6 +17,11 @@ WITH active AS MATERIALIZED (
     FROM inbox_item i
     WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
       AND i.archived = false
+      AND ($4::uuid[] IS NULL OR i.issue_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM issue hidden_issue
+          WHERE hidden_issue.id = i.issue_id
+            AND hidden_issue.project_id = ANY($4::uuid[])
+      ))
 ), newest AS (
     SELECT DISTINCT ON (group_id) id
     FROM active
@@ -31,7 +36,16 @@ WITH active AS MATERIALIZED (
     UNION
     SELECT id FROM anchors
 )
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section, iss.status AS issue_status, iss.priority AS issue_priority
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section,
+       iss.status AS issue_status,
+       iss.priority AS issue_priority,
+       iss.project_id AS issue_project_id,
+       iss.assignee_type AS issue_assignee_type,
+       iss.assignee_id AS issue_assignee_id,
+       iss.due_date AS issue_due_date,
+       ARRAY(SELECT il.label_id::text FROM issue_to_label il
+             WHERE iss.id IS NOT NULL AND il.issue_id = iss.id
+             ORDER BY il.label_id)::text[] AS issue_label_ids
 FROM inbox_item i
 JOIN selected ON selected.id = i.id
 LEFT JOIN issue iss ON iss.id = i.issue_id
@@ -39,37 +53,48 @@ ORDER BY i.created_at DESC, i.id DESC
 `
 
 type ListGroupedInboxItemsParams struct {
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	RecipientType string      `json:"recipient_type"`
-	RecipientID   pgtype.UUID `json:"recipient_id"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	RecipientType    string        `json:"recipient_type"`
+	RecipientID      pgtype.UUID   `json:"recipient_id"`
+	HiddenProjectIds []pgtype.UUID `json:"hidden_project_ids"`
 }
 
 type ListGroupedInboxItemsRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	RecipientType string             `json:"recipient_type"`
-	RecipientID   pgtype.UUID        `json:"recipient_id"`
-	Type          string             `json:"type"`
-	Severity      string             `json:"severity"`
-	IssueID       pgtype.UUID        `json:"issue_id"`
-	Title         string             `json:"title"`
-	Body          pgtype.Text        `json:"body"`
-	Read          bool               `json:"read"`
-	Archived      bool               `json:"archived"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	ActorType     pgtype.Text        `json:"actor_type"`
-	ActorID       pgtype.UUID        `json:"actor_id"`
-	Details       []byte             `json:"details"`
-	Section       pgtype.Text        `json:"section"`
-	IssueStatus   pgtype.Text        `json:"issue_status"`
-	IssuePriority pgtype.Text        `json:"issue_priority"`
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	RecipientType     string             `json:"recipient_type"`
+	RecipientID       pgtype.UUID        `json:"recipient_id"`
+	Type              string             `json:"type"`
+	Severity          string             `json:"severity"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	Title             string             `json:"title"`
+	Body              pgtype.Text        `json:"body"`
+	Read              bool               `json:"read"`
+	Archived          bool               `json:"archived"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	ActorType         pgtype.Text        `json:"actor_type"`
+	ActorID           pgtype.UUID        `json:"actor_id"`
+	Details           []byte             `json:"details"`
+	Section           pgtype.Text        `json:"section"`
+	IssueStatus       pgtype.Text        `json:"issue_status"`
+	IssuePriority     pgtype.Text        `json:"issue_priority"`
+	IssueProjectID    pgtype.UUID        `json:"issue_project_id"`
+	IssueAssigneeType pgtype.Text        `json:"issue_assignee_type"`
+	IssueAssigneeID   pgtype.UUID        `json:"issue_assignee_id"`
+	IssueDueDate      pgtype.Date        `json:"issue_due_date"`
+	IssueLabelIds     []string           `json:"issue_label_ids"`
 }
 
 // Keep every active group, with its newest row and newest comment anchor.
 // Joining full rows only after selecting IDs avoids copying historical bodies.
 // No LIMIT: this list must cover the same groups as the unread summary.
 func (q *Queries) ListGroupedInboxItems(ctx context.Context, arg ListGroupedInboxItemsParams) ([]ListGroupedInboxItemsRow, error) {
-	rows, err := q.db.Query(ctx, listGroupedInboxItems, arg.WorkspaceID, arg.RecipientType, arg.RecipientID)
+	rows, err := q.db.Query(ctx, listGroupedInboxItems,
+		arg.WorkspaceID,
+		arg.RecipientType,
+		arg.RecipientID,
+		arg.HiddenProjectIds,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +121,11 @@ func (q *Queries) ListGroupedInboxItems(ctx context.Context, arg ListGroupedInbo
 			&i.Section,
 			&i.IssueStatus,
 			&i.IssuePriority,
+			&i.IssueProjectID,
+			&i.IssueAssigneeType,
+			&i.IssueAssigneeID,
+			&i.IssueDueDate,
+			&i.IssueLabelIds,
 		); err != nil {
 			return nil, err
 		}

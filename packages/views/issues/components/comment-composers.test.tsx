@@ -1,4 +1,4 @@
-import { createRef, forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -7,7 +7,7 @@ import type { Attachment } from "@multica/core/types";
 import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../test/i18n";
-import { CommentInput, type CommentInputRef } from "./comment-input";
+import { CommentInput } from "./comment-input";
 import { ReplyInput } from "./reply-input";
 
 /** Shape of ContentEditor's `quickActionMenu` prop, as the composers pass it. */
@@ -41,7 +41,6 @@ const editorQuickActionMenu = vi.hoisted(() => ({
 // Post-send caret policy: both the top-level composer and a thread reply blur,
 // so the page's keyboard shortcuts work again straight after a send.
 const focusCalls = vi.hoisted(() => ({ focused: 0, blurred: 0 }));
-const focusAtCoordsSpy = vi.hoisted(() => vi.fn());
 const insertMarkdownSpy = vi.hoisted(() => vi.fn());
 const insertPlaceholderSpy = vi.hoisted(() => vi.fn());
 const insertMarkdownBehavior = vi.hoisted(() => ({ succeed: true }));
@@ -141,7 +140,6 @@ vi.mock("../../editor", async () => ({
     editorUploadSignal.notify = onUploadingChange;
     const initialValue = value ?? defaultValue ?? "";
     const valueRef = useRef(initialValue);
-    const dirtyRef = useRef(false);
     const [editorValue, setEditorValue] = useState(initialValue);
     // Mirrors the real editor's `uploading` node attrs: the placeholder exists
     // from before the await until the upload settles, `hasActiveUploads` reads
@@ -160,25 +158,19 @@ vi.mock("../../editor", async () => ({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     useEffect(() => {
-      if (value === undefined || value === valueRef.current || dirtyRef.current) return;
+      if (value === undefined || value === valueRef.current) return;
       valueRef.current = value;
       setEditorValue(value);
     }, [value]);
 
     useImperativeHandle(ref, () => ({
       getMarkdown: () => valueRef.current,
-      adoptContent: (markdown: string) => {
-        dirtyRef.current = false;
-        valueRef.current = markdown;
-        setEditorValue(markdown);
-      },
       clearContent: () => {
-        dirtyRef.current = false;
         valueRef.current = "";
         setEditorValue("");
       },
       focus: () => { focusCalls.focused += 1; },
-      focusAtCoords: focusAtCoordsSpy,
+      focusAtCoords: () => {},
       blur: () => { focusCalls.blurred += 1; },
       uploadFile: async (file: File) => {
         inFlightRef.current += 1;
@@ -219,7 +211,6 @@ vi.mock("../../editor", async () => ({
         value={editorValue}
         placeholder={placeholder}
         onChange={(event) => {
-          dirtyRef.current = true;
           valueRef.current = event.target.value;
           setEditorValue(event.target.value);
           onUpdate?.(event.target.value);
@@ -246,9 +237,14 @@ function renderWithProviders(ui: ReactNode) {
 }
 
 function renderCommentInput(onSubmit = vi.fn().mockResolvedValue(true)) {
-  const ref = createRef<CommentInputRef>();
-  const view = renderWithProviders(<CommentInput ref={ref} issueId="issue-1" onSubmit={onSubmit} />);
-  return { ...view, onSubmit, ref };
+  const view = renderWithProviders(<CommentInput issueId="issue-1" onSubmit={onSubmit} />);
+  return { ...view, onSubmit };
+}
+
+function DraftReplyInput(props: ComponentProps<typeof ReplyInput>) {
+  const parentId = useCommentDraftStore((s) =>
+    (props.draftKey ? s.drafts[props.draftKey]?.replyTarget?.commentId : undefined) ?? props.parentId);
+  return <ReplyInput {...props} parentId={parentId} />;
 }
 
 function renderReplyInput({
@@ -263,7 +259,7 @@ function renderReplyInput({
   draftKey?: `reply:${string}:${string}`;
 } = {}) {
   const view = renderWithProviders(
-    <ReplyInput
+    <DraftReplyInput
       issueId="issue-1"
       parentId="comment-1"
       avatarType="member"
@@ -323,7 +319,6 @@ beforeEach(() => {
   editorQuickActionMenu.last = undefined;
   focusCalls.focused = 0;
   focusCalls.blurred = 0;
-  focusAtCoordsSpy.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -415,37 +410,6 @@ async function chooseRecipientAction(chip: string, action: RegExp) {
 }
 
 describe("comment composers", () => {
-  it("activates and focuses the lazy editor when a panel fills its draft", async () => {
-    renderCommentInput();
-    expect(screen.getByTestId("comment-composer-shell")).toBeVisible();
-    act(() => useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer"));
-    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
-    expect(focusCalls.focused).toBeGreaterThan(0);
-  });
-
-  it("adopts a panel answer over an edited draft and submits the displayed text", async () => {
-    const { container, onSubmit, ref } = renderCommentInput();
-    activateComposer("comment-composer-shell");
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "old draft" } });
-    act(() => {
-      ref.current!.adoptContent("panel answer");
-      useCommentDraftStore.getState().setDraft("new:issue-1", "panel answer");
-    });
-    await waitFor(() => expect(screen.getByTestId("editor")).toHaveValue("panel answer"));
-    fireEvent.click(getSubmitButton(container));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("panel answer", undefined, undefined, undefined));
-  });
-
-  it("keeps dirty editor text when a completed upload appends to the persisted draft", async () => {
-    const { container, onSubmit } = renderCommentInput();
-    activateComposer("comment-composer-shell");
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "latest typing" } });
-    act(() => useCommentDraftStore.getState().appendToDraftContent("new:issue-1", "![upload](https://cdn.example/finished.png)"));
-    expect(screen.getByTestId("editor")).toHaveValue("latest typing");
-    fireEvent.click(getSubmitButton(container));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("latest typing", undefined, undefined, undefined));
-  });
-
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 
@@ -474,6 +438,24 @@ describe("comment composers", () => {
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);
     expect(shell.className).not.toContain("h-[60vh]");
+  });
+
+  it("makes room for recipients a pending annotation previews while the reply is empty", async () => {
+    apiListTasksByIssue.mockResolvedValue([]);
+    apiPreviewCommentTriggers.mockResolvedValue({
+      agents: [{ id: "agent-1", name: "Lambda", source: "thread_parent", reason: "" }],
+    });
+    const pending = { id: "a", sourceCommentId: "comment-1", sourceActorName: "Lambda", quote: "Selected text",
+      note: "Please revise", start: 0, prefix: "", suffix: "" };
+    renderWithProviders(
+      <ReplyInput issueId="issue-1" parentId="comment-1" avatarType="member" avatarId="user-1"
+        onSubmit={vi.fn()} draftKey="reply:issue-1:comment-1"
+        annotationComposer={{ pending, render: () => null }} />,
+    );
+
+    expect(screen.getByTestId("reply-composer-shell")).toBeInTheDocument();
+    await screen.findByRole("button", { name: /Lambda trigger/ }, { timeout: 5000 });
+    expect(screen.getByTestId("drop-zone").className).toContain("pb-9");
   });
 
   it("keeps main comment submission wired after removing expand", async () => {
@@ -876,126 +858,6 @@ describe("comment composers", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     // Failed send must NOT clear — the box still has content, submit stays live.
     await waitFor(() => expect(isSendBlocked(getSubmitButton(container))).toBe(false));
-  });
-});
-
-// OL-998 — the text area (editor host + its padding) shows the I-beam like
-// the readonly-first shell does, and pressing it focuses the editor at the
-// nearest caret position, without taking over control clicks.
-describe("composer text surface cursor and click-to-focus", () => {
-  it("keeps the I-beam on the main composer's editor host, matching the shell", () => {
-    renderCommentInput();
-
-    expect(screen.getByTestId("comment-composer-shell").className).toContain("cursor-text");
-    activateComposer("comment-composer-shell");
-    // The mock editor's textarea is the host's direct child.
-    expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
-  });
-
-  it("focuses the main editor at the click coordinates on host-padding mousedown", () => {
-    renderCommentInput();
-    activateComposer("comment-composer-shell");
-    focusAtCoordsSpy.mockClear(); // discard the shell→editor activation focus
-
-    const host = screen.getByTestId("editor").parentElement!;
-    fireEvent.mouseDown(host, { button: 0, clientX: 140, clientY: 12 });
-
-    expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 140, y: 12 });
-  });
-
-  it("does not take over presses inside the main composer's host", async () => {
-    const { container, onSubmit } = renderCommentInput();
-    activateComposer("comment-composer-shell");
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
-    focusAtCoordsSpy.mockClear();
-
-    // A press whose target is not the host itself (here: the mock editor's
-    // textarea inside it) keeps its own behavior.
-    fireEvent.mouseDown(screen.getByTestId("editor"), { button: 0 });
-    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
-    // …and the send click itself still submits.
-    fireEvent.click(getSubmitButton(container));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-  });
-
-  it("wraps the reply column in a cursor-text surface that owns the vertical padding", () => {
-    renderReplyInput();
-
-    expect(screen.getByTestId("reply-composer-shell").className).toContain("cursor-text");
-    activateComposer("reply-composer-shell");
-    // The editor host re-asserts the I-beam inside the column's arrow reset…
-    expect(screen.getByTestId("editor").parentElement?.className).toContain("cursor-text");
-    // …and the text surface around the column owns the vertical padding bands.
-    const surface = screen.getByTestId("reply-text-surface");
-    expect(surface.className).toContain("cursor-text");
-    expect(surface.className).toContain("py-2.5");
-    expect(surface.contains(screen.getByTestId("editor"))).toBe(true);
-  });
-
-  it("focuses the reply editor at the click coordinates on surface-padding mousedown", () => {
-    renderReplyInput();
-    activateComposer("reply-composer-shell");
-    focusAtCoordsSpy.mockClear();
-
-    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 96, clientY: 6 });
-
-    expect(focusAtCoordsSpy).toHaveBeenCalledWith({ x: 96, y: 6 });
-  });
-
-  it("does not take over the reply composer's button presses", async () => {
-    const { container, onSubmit } = renderReplyInput();
-    activateComposer("reply-composer-shell");
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "typed" } });
-    focusAtCoordsSpy.mockClear();
-
-    const attach = screen.getByRole("button", { name: "Attach file" });
-    fireEvent.mouseDown(attach, { button: 0 });
-    fireEvent.mouseDown(getSubmitButton(container), { button: 0 });
-    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
-    fireEvent.click(getSubmitButton(container));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-  });
-
-  it("leaves the reply composer's non-primary-button presses untouched", () => {
-    renderReplyInput();
-    activateComposer("reply-composer-shell");
-    focusAtCoordsSpy.mockClear();
-
-    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 2, clientX: 10, clientY: 10 });
-
-    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-  });
-
-  // OL-998 review: the send lock (pointer-events-none + dimmed editor host)
-  // must hold while a reply is in flight — a press on the surface or the
-  // column below the locked host must not focus the editor.
-  it("does not focus the reply editor from the surface while a send is in flight", async () => {
-    let resolveSubmit: (ok: boolean) => void = () => {};
-    const onSubmit = vi.fn(
-      () => new Promise<boolean>((resolve) => { resolveSubmit = resolve; }),
-    );
-    const { container } = renderReplyInput({ onSubmit });
-    activateComposer("reply-composer-shell");
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "sending" } });
-    fireEvent.click(getSubmitButton(container));
-    await waitFor(() =>
-      expect(screen.getByTestId("editor").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true"),
-    );
-    focusAtCoordsSpy.mockClear();
-
-    fireEvent.mouseDown(screen.getByTestId("reply-text-surface"), { button: 0, clientX: 10, clientY: 4 });
-    // The column under the locked host is a non-surface target, too.
-    const column = screen.getByTestId("reply-text-surface").querySelector(".relative")!;
-    fireEvent.mouseDown(column, { button: 0, clientX: 10, clientY: 4 });
-
-    expect(focusAtCoordsSpy).not.toHaveBeenCalled();
-
-    await act(async () => {
-      resolveSubmit(true);
-      await Promise.resolve();
-    });
   });
 });
 

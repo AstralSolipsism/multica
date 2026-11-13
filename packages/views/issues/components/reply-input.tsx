@@ -1,8 +1,10 @@
 "use client";
 
 import { composeAnnotatedReply, EMPTY_REPLY_ANNOTATIONS, hasReplyIntent } from "@multica/core/drafts/reply-annotation";
+import { annotationsWithPending, type AnnotationComposerSlot } from "./annotation-composer";
 import { ReplyAnnotations } from "./reply-annotations";
 import { useRef, useState, useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
@@ -16,13 +18,12 @@ import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
-import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
+import { commentTriggerPreviewSignature, useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerAttachmentNotice } from "./steer-attachment-notice";
 import { useStopRunsBeforeSend } from "./use-stop-runs-before-send";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
-import { focusComposerOnSurfaceMouseDown } from "./composer-text-surface";
 
 // Types
 
@@ -44,6 +45,7 @@ interface ReplyInputProps {
   draftKey?: CommentDraftKey;
   targetMissing?: boolean;
   onEditAnnotation?: (id: string) => boolean;
+  annotationComposer?: AnnotationComposerSlot;
   /** Whether a running turn takes this reply by default: true for the turn
    *  that belongs to this thread. Other recipients' turns can still be chosen. */
   steerByDefault?: (task: AgentTask) => boolean;
@@ -64,6 +66,7 @@ function ReplyInput({
   size = "default",
   draftKey,
   onEditAnnotation,
+  annotationComposer,
   targetMissing = false,
   steerByDefault = NEVER_STEER_BY_DEFAULT,
 }: ReplyInputProps) {
@@ -88,9 +91,12 @@ function ReplyInput({
   const setDraft = useCommentDraftStore((s) => s.setDraft);
   const [isEmpty, setIsEmpty] = useState(!initialDraft?.trim());
   const annotations = useCommentDraftStore((s) => draftKey ? s.getAnnotations(draftKey) : EMPTY_REPLY_ANNOTATIONS);
-  const composedContent = useMemo(() => composeAnnotatedReply(content, annotations), [content, annotations]);
+  const previewAnnotations = useMemo(() => annotationsWithPending(annotations, annotationComposer?.pending), [annotations, annotationComposer?.pending]);
+  const composedContent = useMemo(() => composeAnnotatedReply(content, previewAnnotations), [content, previewAnnotations]);
   const canSend = !targetMissing && (annotations.length ? hasReplyIntent(content, annotations) : !isEmpty);
-  const triggerPreview = useCommentTriggerPreview({ issueId, parentId, content: canSend ? composedContent : "" });
+  // Saving the first pending annotation will fix the target before submission.
+  const previewParentId = annotations.length === 0 ? annotationComposer?.pending.sourceCommentId ?? parentId : parentId;
+  const triggerPreview = useCommentTriggerPreview({ issueId, parentId: previewParentId, content: !targetMissing && (canSend || annotationComposer?.pending.note.trim()) ? composedContent : "" });
   // Uploads for this reply session (MUL-5181) — owned by the coordinator. With
   // a draftKey they persist in the draft store so scroll-out/close no longer
   // drops an in-flight upload; without one (no persistence context) they fall
@@ -109,9 +115,12 @@ function ReplyInput({
     allowSteer: true,
     hasAttachments,
     steerByDefault,
-    resetKey: `${issueId}:${parentId}`,
+    resetKey: `${issueId}:${previewParentId}`,
   });
   const stopRunsBeforeSend = useStopRunsBeforeSend(issueId);
+  // A pending annotation note previews recipients while the reply itself is
+  // still empty, so the chip row can render under the one-line placeholder.
+  const showsTriggerChips = recipients.length > 0 || triggerPreview.blocked.length > 0 || triggerPreview.hasAllMembersMention;
 
   // Readonly-first: static shell until intent; an unsent draft mounts the
   // real editor immediately (see CommentInput). This is also what keeps the
@@ -174,10 +183,16 @@ function ReplyInput({
     afterAccepted: () => (editorScrubbedRef.current ? "blur" : "none"),
     onSubmit: async (content) => {
       editorScrubbedRef.current = false;
+      const currentParentId = (draftKey ? useCommentDraftStore.getState().drafts[draftKey]?.replyTarget?.commentId : undefined) ?? parentId;
+      if (currentParentId !== previewParentId) {
+        toast.error(t(($) => $.reply.recipients_changed));
+        return false;
+      }
       const { suppressAgentIds, steerTaskIds } = routing;
       // A preview still catching up with an edited @mention can name a
       // recipient this comment no longer addresses: never stop a run on it.
-      const restartTaskIds = triggerPreview.isCurrent ? routing.restartTaskIds : [];
+      const previewMatches = triggerPreview.isCurrent && commentTriggerPreviewSignature(content) === commentTriggerPreviewSignature(composedContent);
+      const restartTaskIds = previewMatches ? routing.restartTaskIds : [];
       if (!(await stopRunsBeforeSend(restartTaskIds))) return false;
       if (draftKey) {
         // Flush pending debounce before snapshotting — see CommentInput.
@@ -226,38 +241,26 @@ function ReplyInput({
 
   const avatarSize: AvatarSize = size === "sm" ? "sm" : "md";
 
-  return (
+  return (<>
+    {annotationComposer?.render({
+      submit, submitting, uploading: gate.uploading, targetMissing, restart: routing.restartTaskIds.length > 0,
+      draftContent: content, annotations,
+      recipients: <CommentTriggerChips recipients={recipients} blocked={triggerPreview.blocked}
+        hasAllMembersMention={triggerPreview.hasAllMembersMention} draftContent={composedContent} onActionChange={setAction} />,
+    })}
     <div className="group/editor flex items-start gap-2.5">
       <ActorAvatar
         actorType={avatarType}
         actorId={avatarId}
         size={avatarSize}
-        // mt-3 = the 10px the thread wrapper's py-2.5 used to add above the
-        // row plus the original mt-0.5 — the text surface owns that padding
-        // now, so the avatar keeps its exact pre-OL-998 offset.
-        className="mt-3 shrink-0"
+        className="mt-0.5 shrink-0"
       />
-      {/* Text surface. Owns the vertical padding the thread wrapper in
-          comment-card used to provide, so the bands above/below the input
-          column share the I-beam and focus the editor on press — the same
-          contract the shell already advertises with its own cursor-text.
-          While the send lock is on (the editor host is pointer-events-none),
-          the surface stands down too — a press must not focus a locked
-          editor. */}
-      <div
-        data-testid="reply-text-surface"
-        className="flex min-w-0 flex-1 cursor-text flex-col py-2.5"
-        onMouseDown={submitting ? undefined : (e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
-      >
       <div
         {...dropZoneProps}
         ref={composerRef}
         className={cn(
-          // The column resets to the arrow so the pb-9 toolbar strip (its own
-          // bottom padding) never inherits the text surface's I-beam; the
-          // editor host and the shell re-assert cursor-text inside it.
-          "relative min-w-0 flex-1 flex flex-col cursor-default",
-          (!isEmpty || annotations.length > 0) && "pb-9",
+          "relative min-w-0 flex-1 flex flex-col",
+          (!isEmpty || annotations.length > 0 || showsTriggerChips) && "pb-9",
         )}
       >
         {attachmentsBlockSteer && <SteerAttachmentNotice />}
@@ -270,7 +273,7 @@ function ReplyInput({
         {lazy.active && (
         <div
           className={cn(
-            "flex-1 min-h-0 overflow-y-auto cursor-text",
+            "flex-1 min-h-0 overflow-y-auto",
             submitting && "pointer-events-none opacity-60",
             !lazy.ready && "hidden",
           )}
@@ -341,7 +344,8 @@ function ReplyInput({
             <Button
               size="sm"
               variant="destructive"
-              className="rounded-full cursor-pointer"
+              // eslint-disable-next-line no-restricted-syntax -- composer send button, the one round button
+              className="rounded-full"
               onClick={submit}
               disabled={!canSend || submitting || gate.uploading}
             >
@@ -372,9 +376,8 @@ function ReplyInput({
         </div>
         {isDragOver && <FileDropOverlay />}
       </div>
-      </div>
     </div>
-  );
+  </>);
 }
 
 export { ReplyInput, type ReplyInputProps };

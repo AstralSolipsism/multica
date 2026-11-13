@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { BUILT_IN_THEMES, type ThemeTokens } from "@multica/core/appearance";
 
 /**
  * Is every tone the product paints text and marks with actually legible, and is
@@ -142,10 +143,11 @@ function expectTonePasses(
   declarations: Map<string, string>,
   tone: string,
   floor: number,
+  backgrounds: readonly string[] = backgroundTokens,
 ) {
   const foreground = oklchToRgb(resolveToken(declarations, tone));
 
-  for (const token of backgroundTokens) {
+  for (const token of backgrounds) {
     const background = oklchToRgb(resolveToken(declarations, token));
     const ratio = contrastRatio(foreground, background);
 
@@ -158,6 +160,22 @@ function expectTonePasses(
 
 const tokensCss = () =>
   readFileSync(resolve(repoRoot, "packages/ui/styles/tokens.css"), "utf8");
+const landingCss = () =>
+  readFileSync(resolve(repoRoot, "apps/web/app/custom.css"), "utf8");
+
+/** Later declarations win, as the generated theme stylesheet does over tokens.css. */
+const layered = (...blocks: Map<string, string>[]) =>
+  new Map(blocks.flatMap((block) => [...block]));
+
+const asDeclarations = (tokens: ThemeTokens | undefined) =>
+  new Map(Object.entries(tokens ?? {}).map(([name, value]) => [`--${name}`, value]));
+
+/** What each mode paints under a theme: tokens.css for that mode, then the manifest. */
+function themePalette(mode: "light" | "dark", tokens: ThemeTokens | undefined) {
+  const base = readBlock(tokensCss(), ":root");
+  const palette = mode === "dark" ? layered(base, readBlock(tokensCss(), ".dark")) : base;
+  return layered(palette, asDeclarations(tokens));
+}
 
 // ── source scanning ────────────────────────────────────────────────────────
 
@@ -423,6 +441,73 @@ describe("text contrast", () => {
       ).toBeLessThan(contrastRatio(muted, surface));
     });
   });
+
+  describe("themes", () => {
+    const modes = ["light", "dark"] as const;
+    const cases = BUILT_IN_THEMES.flatMap((theme) =>
+      modes.map((mode) => [theme.name, mode, theme] as const),
+    );
+    const readingSurfaces = ["--background", "--page-canvas", "--surface", "--surface-raised"];
+
+    it.each(cases)("%s keeps both tones legible in %s mode", (_name, mode, theme) => {
+      const palette = themePalette(mode, theme.tokens[mode]);
+      // A theme with its own frame paints the shell behind the rail and tabs,
+      // which read the frame tokens instead; the frame test covers them.
+      const backgrounds = theme.frame?.[mode]
+        ? backgroundTokens.filter((token) => token !== "--app-shell")
+        : backgroundTokens;
+      expectTonePasses(palette, "--muted-foreground", WCAG_AA_NORMAL_TEXT, backgrounds);
+      expectTonePasses(palette, "--faint-foreground", WCAG_AA_NON_TEXT, backgrounds);
+      expectTonePasses(palette, "--brand", WCAG_AA_NORMAL_TEXT, readingSurfaces);
+    });
+
+    it.each(cases)("%s's primary button label is legible in %s mode", (_name, mode, theme) => {
+      const palette = themePalette(mode, theme.tokens[mode]);
+      if (!palette.has("--button-primary")) return;
+      expectTonePasses(palette, "--button-primary-foreground", WCAG_AA_NORMAL_TEXT, [
+        "--button-primary",
+      ]);
+    });
+
+    it.each(cases.filter(([, mode, theme]) => theme.frame?.[mode]))(
+      "%s's frame is legible in %s mode",
+      (_name, mode, theme) => {
+        const palette = layered(
+          themePalette(mode, theme.tokens[mode]),
+          asDeclarations(theme.frame?.[mode]),
+        );
+        const frameBackgrounds = [
+          "--app-shell",
+          "--background",
+          "--page-canvas",
+          "--surface",
+          "--surface-raised",
+          "--surface-hover",
+          "--surface-selected",
+          "--muted",
+          "--sidebar-accent",
+        ];
+        for (const tone of ["--foreground", "--muted-foreground", "--sidebar-accent-foreground"]) {
+          expectTonePasses(palette, tone, WCAG_AA_NORMAL_TEXT, frameBackgrounds);
+        }
+        expectTonePasses(palette, "--faint-foreground", WCAG_AA_NON_TEXT, frameBackgrounds);
+      },
+    );
+  });
+
+  // The landing route tree re-declares the light palette so token-driven
+  // components stay light under next-themes' `.dark` class. That copy is only
+  // correct while it matches the source, so drift here is a bug in itself — a
+  // tone missing from the copy silently inherits its `.dark` value on a white
+  // surface.
+  it.each(["--muted-foreground", "--faint-foreground"])(
+    "keeps the landing-light copy of %s in sync with the light token",
+    (tone) => {
+      expect(resolveToken(readBlock(landingCss(), ".landing-light"), tone)).toBe(
+        resolveToken(readBlock(tokensCss(), ":root"), tone),
+      );
+    },
+  );
 
   /**
    * The detector is the part of this guard most likely to rot, because every

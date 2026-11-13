@@ -2,8 +2,9 @@
 
 import type { ReactNode } from "react";
 import { SidebarProvider } from "@multica/ui/components/ui/sidebar";
+import { AppearanceSync } from "../common/appearance-sync";
 import { ModalRegistry } from "../modals/registry";
-import { YouShouldKnowProvider } from "../you-should-know";
+import { SourceBackfillModal } from "../onboarding";
 import { AppRail } from "./app-rail";
 import { AppShellProvider } from "./app-shell-context";
 import { CompactNavSheet } from "./compact-nav-sheet";
@@ -29,7 +30,7 @@ interface DashboardLayoutProps {
  */
 export function AppShellCard({ children }: { children: ReactNode }) {
   return (
-    <main className="relative flex min-w-0 flex-1 flex-row overflow-hidden bg-page-canvas md:my-2 md:mr-2 md:rounded-xl md:shadow-[var(--surface-shadow)] md:ring-1 md:ring-surface-border">
+    <main data-mc="page" className="relative flex min-w-0 flex-1 flex-row overflow-hidden bg-page-canvas md:my-2 md:mr-2 md:rounded-page md:shadow-[var(--page-shadow,var(--surface-shadow))] md:ring-1 md:ring-page-border">
       <SpacePanel />
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
     </main>
@@ -42,29 +43,33 @@ export function DashboardLayout({
   loadingIndicator,
 }: DashboardLayoutProps) {
   return (
-    <DashboardGuard
-      loadingFallback={
-        <div className="flex h-svh items-center justify-center">
-          {loadingIndicator}
-        </div>
-      }
-    >
-      <SidebarProvider className="h-svh bg-app-shell [--sidebar-wrapper-fill:var(--app-shell)]">
-        <AppShellProvider>
-          <ShellRouteDataPrefetch>
-            <GlobalShortcuts />
-            <WorkspacePresencePrefetch />
-            <AppRail className="hidden md:flex" />
-            <CompactNavSheet />
-            <AppShellCard>
-              <NavigationProgress />
-              <YouShouldKnowProvider>{children}</YouShouldKnowProvider>
-              <ModalRegistry />
-              {extra}
-            </AppShellCard>
-          </ShellRouteDataPrefetch>
-        </AppShellProvider>
-      </SidebarProvider>
-    </DashboardGuard>
+    <>
+      <AppearanceSync />
+      <DashboardGuard
+        loadingFallback={
+          <div className="flex h-svh items-center justify-center">
+            {loadingIndicator}
+          </div>
+        }
+      >
+        <SidebarProvider className="h-svh bg-app-shell [--sidebar-wrapper-fill:var(--app-shell)]">
+          <AppShellProvider>
+            <ShellRouteDataPrefetch>
+              <GlobalShortcuts />
+              <WorkspacePresencePrefetch />
+              <AppRail className="hidden md:flex" />
+              <CompactNavSheet />
+              <AppShellCard>
+                <NavigationProgress />
+                {children}
+                <ModalRegistry />
+                <SourceBackfillModal />
+                {extra}
+              </AppShellCard>
+            </ShellRouteDataPrefetch>
+          </AppShellProvider>
+        </SidebarProvider>
+      </DashboardGuard>
+    </>
   );
 }

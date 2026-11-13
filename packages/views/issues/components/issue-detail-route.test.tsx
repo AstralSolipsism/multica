@@ -104,32 +104,34 @@ describe("useCanonicalIssueUrl", () => {
     expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7");
   });
 
-  // OL-302: desktop reuses the route instance across issues (no remount, no
-  // key), so the once-guard survives into the NEXT visit. A second UUID
-  // arrival for the same issue then compares equal to the stored target and
-  // the tab URL stays UUID-spelled. The guard must be scoped to the routeId
-  // stint that produced it.
-  it("rewrites again when the same issue is re-entered via its UUID after the route moved on", () => {
-    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
-    const { rerender } = renderHook(
-      ({ routeId, identifier }: { routeId: string; identifier?: string }) =>
-        useCanonicalIssueUrl(routeId, identifier),
-      { wrapper, initialProps: { routeId: uuid, identifier: undefined as string | undefined } },
+  it("keeps a deliverable link's tail while canonicalizing a UUID", () => {
+    renderHook(
+      () => useCanonicalIssueUrl(
+        "cb240efb-154c-42a8-ae92-42b02676feca",
+        "TRS-134",
+        "",
+        "调研 报告.html",
+      ),
+      { wrapper },
     );
+    expect(replace).toHaveBeenCalledWith(
+      "/acme/issues/TRS-134/deliverables/%E8%B0%83%E7%A0%94%20%E6%8A%A5%E5%91%8A.html",
+    );
+  });
 
-    // First UUID visit: rewrite once the issue resolves, then the committed
-    // URL catches up and the routeId becomes the identifier spelling.
-    rerender({ routeId: uuid, identifier: "TRS-134" });
-    expect(replace).toHaveBeenCalledTimes(1);
-    rerender({ routeId: "TRS-134", identifier: "TRS-134" });
+  it("leaves a canonical deliverable link alone", () => {
+    renderHook(() => useCanonicalIssueUrl("TRS-134", "TRS-134", "", "report.html"), { wrapper });
+    expect(replace).not.toHaveBeenCalled();
+  });
 
-    // Away to another issue, then back to the same one via its UUID again.
-    rerender({ routeId: "TRS-9", identifier: "TRS-9" });
-    rerender({ routeId: uuid, identifier: undefined });
-    rerender({ routeId: uuid, identifier: "TRS-134" });
-
-    expect(replace).toHaveBeenCalledTimes(2);
-    expect(replace).toHaveBeenLastCalledWith("/acme/issues/TRS-134");
+  // The deliverable argument is optional: every existing caller passes the
+  // hash alone, and its comment deep link must come out exactly as before.
+  it("still keeps only the comment hash when no deliverable is named", () => {
+    renderHook(
+      () => useCanonicalIssueUrl("trs-134", "TRS-134", "#comment-c1", undefined),
+      { wrapper },
+    );
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-c1");
   });
 });
 

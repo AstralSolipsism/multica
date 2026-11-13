@@ -1,9 +1,11 @@
 import { cloneElement, type ReactElement, type ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configStore } from "@multica/core/config";
-import { RESOURCES } from "../test/i18n";
+import { githubStarsOptions } from "@multica/core/github/stars";
+import { markStarPromptStarred } from "@multica/core/star-prompt";
+import enLayout from "../locales/en/layout.json";
 import { isDesktopShell } from "../platform/local-directory";
 import { HelpLauncher } from "./help-launcher";
 
@@ -14,21 +16,29 @@ vi.mock("../platform/local-directory", () => ({
   isDesktopShell: vi.fn(() => false),
 }));
 
+vi.mock("@multica/core/star-prompt", () => ({
+  markStarPromptStarred: vi.fn(() => Promise.resolve()),
+}));
+
 // The What's new entry is covered with the real menu in whats-new-menu-panel.test.tsx.
 vi.mock("../whats-new/whats-new-menu-panel", () => ({
   useWhatsNewMenuPanel: () => ({ available: false }),
   WhatsNewMenuPanel: () => null,
 }));
 
+// The UI language the mocked i18n instance reports; drives locale-aware links.
+const i18nState = vi.hoisted(() => ({ language: "en" }));
+
 // react-i18next isn't initialised in the views test env, so resolve the
-// selector against the assembled namespace to assert on actual copy.
+// selector against the real en/layout.json to assert on actual copy.
 vi.mock("../i18n", () => ({
-  useT: (namespace: string) => ({
+  useT: () => ({
+    i18n: i18nState,
     t: (
-      sel: (r: unknown) => string,
+      sel: (r: typeof enLayout) => string,
       vars?: Record<string, string>,
     ) => {
-      const template = sel(RESOURCES.en[namespace]);
+      const template = sel(enLayout);
       return vars
         ? template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? ""))
         : template;
@@ -36,8 +46,9 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-// Flatten the Base UI dropdown primitives to plain children so the menu
-// content stays in the DOM instead of exercising the real portal interaction.
+// Follows the app-sidebar.test.tsx convention of flattening the Base UI
+// dropdown primitives to plain children so the menu content is always in
+// the DOM, instead of exercising the real portal/open-state interaction.
 //
 // The mock deliberately preserves ONE real invariant: DropdownMenuLabel wraps
 // Base UI's Menu.GroupLabel, whose useMenuGroupRootContext() throws when it has
@@ -55,33 +66,16 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
     // Base UI's `render` prop swaps in a caller-supplied element (here the
     // <a>) and adopts the item's children. Flattening it to a bare fragment —
     // as this mock originally did — would drop the anchor entirely and make an
-    // href assertion silently unfalsifiable. Items without `render` carry
-    // their onClick (community QR entry, feedback) — forward it so item
-    // activation stays testable.
+    // href assertion silently unfalsifiable.
     DropdownMenuItem: ({
       children,
       render,
       onClick,
     }: {
       children: ReactNode;
-      render?: ReactElement<{ onClick?: () => void }>;
+      render?: ReactElement;
       onClick?: () => void;
-    }) => {
-      if (render) {
-        return cloneElement(
-          render,
-          onClick ? { onClick } : undefined,
-          children,
-        );
-      }
-      return onClick ? (
-        <button type="button" onClick={onClick}>
-          {children}
-        </button>
-      ) : (
-        <>{children}</>
-      );
-    },
+    }) => (render ? cloneElement(render, { onClick } as object, children) : <>{children}</>),
     DropdownMenuGroup: ({ children }: { children: ReactNode }) => (
       <GroupContext.Provider value={true}>{children}</GroupContext.Provider>
     ),
@@ -98,12 +92,21 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
   };
 });
 
+let qc: QueryClient;
+
+function render(ui: ReactElement) {
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
 beforeEach(() => {
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.mocked(isDesktopShell).mockReturnValue(false);
+  i18nState.language = "en";
 });
 
 afterEach(() => {
   configStore.getState().setServerVersion("");
+  qc.clear();
 });
 
 describe("HelpLauncher", () => {
@@ -121,49 +124,47 @@ describe("HelpLauncher", () => {
   // MUL-6462: after web onboarding the desktop download CTA was unreachable —
   // no entry anywhere in the app, so users had to remember the URL or detour
   // through the marketing site. The Help menu is the persistent home for it.
-  // The instance serves its own /download page (internal release artifacts),
-  // so the entry stays in-app instead of pointing at the upstream site.
-  it("links to the in-app download page on web", () => {
+  it("links to the download page on web", () => {
     render(<HelpLauncher />);
     const link = screen.getByRole("link", { name: /Desktop app/ });
-    expect(link).toHaveAttribute("href", "https://multica.outlune.com/download");
+    expect(link).toHaveAttribute("href", "https://multica.ai/download");
   });
 
-  it("omits retired docs, changelog, and Discord links", () => {
+  it.each([
+    ["en", "https://multica.ai/docs"],
+    ["zh-Hans", "https://multica.ai/docs/zh"],
+    ["zh-Hant", "https://multica.ai/docs/zh-Hant"],
+    ["fr", "https://multica.ai/docs/fr"],
+  ])("links Docs to the %s docs", (language, href) => {
+    i18nState.language = language;
     render(<HelpLauncher />);
-
-    for (const href of ["multica.ai/docs", "multica.ai/changelog", "discord.gg"]) {
-      expect(document.querySelector(`a[href*="${href}"]`)).toBeNull();
-    }
+    expect(screen.getByRole("link", { name: /Docs/ })).toHaveAttribute(
+      "href",
+      href,
+    );
   });
 
-  // The community entry opens the group QR dialog in place — it must not be
-  // an outbound anchor, so joining never leaves the app or hits a
-  // third-party host.
-  it("opens the group QR dialog from the community entry", async () => {
-    const user = userEvent.setup();
-    render(<HelpLauncher />);
-
-    expect(
-      screen.queryByRole("img", { name: /Feishu group QR code/ }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Feishu group" }));
-
-    const qr = screen.getByRole("img", { name: /Feishu group QR code/ });
-    expect(qr).toHaveAttribute("src", "/feishu-group-qr.png");
-    expect(
-      screen.queryByRole("link", { name: /Feishu group/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  // HelpLauncher is shared: apps/desktop renders the same component tree. Without
+  // AppSidebar is shared: apps/desktop renders the same component tree. Without
   // this gate the desktop app would offer to download the desktop app.
   it("hides the download entry inside the desktop shell", () => {
     vi.mocked(isDesktopShell).mockReturnValue(true);
     render(<HelpLauncher />);
     expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
     // The rest of the menu is unaffected by the gate.
-    expect(screen.getByText("Feedback")).toBeInTheDocument();
+    expect(screen.getByText("Docs")).toBeInTheDocument();
+  });
+
+  it("links to the GitHub repo and retires the star prompt on click", () => {
+    render(<HelpLauncher />);
+    const link = screen.getByRole("link", { name: /Star on GitHub/ });
+    expect(link).toHaveAttribute("href", "https://github.com/multica-ai/multica");
+    fireEvent.click(link);
+    expect(markStarPromptStarred).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the star count once it is known", () => {
+    qc.setQueryData(githubStarsOptions().queryKey, 37_612);
+    render(<HelpLauncher />);
+    expect(screen.getByRole("link", { name: /Star on GitHub/ })).toHaveTextContent("37.6k");
   });
 });

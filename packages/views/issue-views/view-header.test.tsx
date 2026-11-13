@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setApiInstance } from "@multica/core/api";
@@ -11,6 +11,7 @@ import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-contex
 import { getIssueSurfaceViewStore } from "@multica/core/issues/stores/surface-view-store";
 import { issueViewSeedDefinition } from "@multica/core/issue-views/definition";
 import { useIssueViewRenameStore } from "@multica/core/issue-views/rename-store";
+import { useIssueViewEditStore } from "@multica/core/issue-views/edit-store";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import { renderWithI18n } from "../test/i18n";
 import type { IssueSurfaceController } from "../issues/surface/use-issue-surface-controller";
@@ -122,6 +123,7 @@ beforeEach(() => {
   rename.mockClear();
   active.view = null;
   useIssueViewRenameStore.setState({ target: null });
+  useIssueViewEditStore.setState({ viewId: null });
   myIssuesViewStore.setState({ scope: "assigned" });
 });
 
@@ -222,5 +224,34 @@ describe("IssueViewHeader setup of a new view", () => {
     renderHeader("workspace", "header-setup-defined");
 
     expect(screen.queryByTestId("view-setup-bar")).toBeNull();
+  });
+});
+
+describe("IssueViewHeader edit from elsewhere", () => {
+  it("opens the filter menu of the view asked to be edited, once", () => {
+    active.view = savedView({ query: { labelFilters: ["bug"] } });
+    useIssueViewEditStore.setState({ viewId: "view-1" });
+    renderHeader("workspace", "header-edit-defined");
+
+    expect(screen.getByRole("menu", { name: "Filter menu" })).toBeInTheDocument();
+    expect(useIssueViewEditStore.getState().viewId).toBeNull();
+  });
+
+  it("opens the setup bar's menu for a view that saves nothing yet", () => {
+    active.view = savedView();
+    useIssueViewEditStore.setState({ viewId: "view-1" });
+    renderHeader("workspace", "header-edit-setup");
+
+    expect(within(screen.getByTestId("view-setup-bar")).getByRole("menu", { name: "Filter menu" })).toBeInTheDocument();
+    expect(screen.getAllByRole("menu", { name: "Filter menu" })).toHaveLength(1);
+  });
+
+  it("leaves another view's request alone", () => {
+    active.view = savedView({ query: { labelFilters: ["bug"] } });
+    useIssueViewEditStore.setState({ viewId: "view-2" });
+    renderHeader("workspace", "header-edit-other");
+
+    expect(screen.queryByRole("menu", { name: "Filter menu" })).toBeNull();
+    expect(useIssueViewEditStore.getState().viewId).toBe("view-2");
   });
 });

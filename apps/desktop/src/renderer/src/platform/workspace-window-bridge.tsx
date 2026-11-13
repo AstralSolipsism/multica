@@ -5,7 +5,6 @@ import { workspaceSlugForPath } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { useT } from "@multica/views/i18n";
 import { useTabStore } from "@/stores/tab-store";
-import { clearCommentHighlightMemento } from "./navigation";
 import {
   nextWorkspaceForNewWindow,
   openWorkspaceInNewWindow,
@@ -35,16 +34,11 @@ export function WorkspaceWindowBridge() {
 
   useEffect(
     () =>
-      window.desktopAPI.onOpenWorkspacePath?.((path) => {
+      window.desktopAPI.onOpenWorkspacePath?.(({ path, navigate }) => {
         const slug = workspaceSlugForPath(path);
-        if (slug) {
-          useTabStore.getState().switchWorkspace(slug, path);
-          // switchWorkspace deduplicates by resource and may reuse a tab's
-          // older URL. An explicit handoff must carry its comment hash or
-          // chat session query into that reused tab as well.
-          useTabStore.getState().navigateActiveSession(path);
-          clearCommentHighlightMemento(path);
-        }
+        if (!slug) return;
+        useTabStore.getState().switchWorkspace(slug, path);
+        if (navigate) useTabStore.getState().navigateActiveSession(path);
       }),
     [],
   );

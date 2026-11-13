@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Loader2, MessageSquare, X } from "@multica/ui/icons";
 import {
   applyDraftModelChange,
@@ -12,7 +12,6 @@ import {
 import { isRuntimeUsableForUser } from "@multica/core/runtimes";
 import type {
   ChatMessage,
-  ChatSendAttempt,
   MemberWithUser,
   RuntimeDevice,
 } from "@multica/core/types";
@@ -101,9 +100,7 @@ export function BuilderSetup({
             runtimeId={selectedRuntime?.id ?? null}
             runtimeOnline={selectedRuntime?.status === "online"}
             value={draft.model}
-            onChange={(model, levels) =>
-              onChange(applyDraftModelChange(draft, model, levels))
-            }
+            onChange={(model) => onChange(applyDraftModelChange(draft, model))}
             disabled={!selectedRuntime}
           />
         </div>
@@ -158,7 +155,7 @@ export function BuilderConversation({
   runtimeOnline: boolean;
   /** `commitInput` is the composer's clear; the owner runs it as soon as the
    *  server accepts the message. The prompt buttons below send without one. */
-  onSend: (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => Promise<boolean>;
+  onSend: (content: string, commitInput?: () => void) => Promise<boolean>;
   onStop: () => void;
   restoreDraftRequest: BuilderRestore | null;
   onRestoreDraftApplied: () => void;
@@ -169,22 +166,6 @@ export function BuilderConversation({
   const { t: tModals } = useT("modals");
   const pending = !!pendingTask?.task_id;
   const draftKey = `agent-builder:${sessionId}`;
-  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
-  // the live-end follow and jumps to the reader's own bubble — the follow now
-  // releases after one line of upward scrolling (OL-272), so a reader who
-  // peeked up before sending would otherwise watch their message and the
-  // streaming reply grow silently below the fold. Unlike the chat surfaces
-  // (use-chat-controller.ts), no stillOnSourceSession guard is needed here:
-  // the page remounts this whole subtree per conversation (`key={sessionId}`
-  // in ai-builder-session-page.tsx), so a mid-send navigation drops this state
-  // with the unmounted instance, and the conversation opened instead mounts
-  // its own list at the live end.
-  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
-  const handleSend = async (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => {
-    const sent = await onSend(content, commitInput, attempt);
-    if (sent) setResumeFollowNonce((n) => n + 1);
-    return sent;
-  };
   const prompts = [
     t(($) => $.creation_studio.builder.prompt_review),
     t(($) => $.creation_studio.builder.prompt_research),
@@ -225,7 +206,6 @@ export function BuilderConversation({
           // Applies to the live stream as well as history, which is what keeps
           // the half-written JSON block off the screen mid-reply.
           transformContent={stripBuilderDraft}
-          resumeFollowNonce={resumeFollowNonce}
         />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
@@ -241,8 +221,8 @@ export function BuilderConversation({
                 <button
                   key={prompt}
                   type="button"
-                  onClick={() => void handleSend(prompt)}
-                  className="rounded-full border bg-background px-3 py-1.5 text-caption transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => void onSend(prompt)}
+                  className="rounded-md border bg-background px-3 py-1.5 text-caption transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {prompt}
                 </button>
@@ -280,8 +260,8 @@ export function BuilderConversation({
       ) : null}
 
       <ChatInput
-        onSend={(content, _attachmentIds, commitInput, _attachments, attempt) =>
-          handleSend(content, commitInput, attempt)
+        onSend={(content, _attachmentIds, commitInput) =>
+          onSend(content, commitInput)
         }
         onStop={onStop}
         isRunning={pending}

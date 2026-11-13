@@ -24,6 +24,11 @@ runs:
     - name: Test YSK runtime extensions
       shell: bash
       run: pnpm test:ysk
+    - name: Check shared dependencies use the pnpm catalog
+      shell: bash
+      run: |
+        node --test scripts/check-dependency-catalog.test.mjs
+        node scripts/check-dependency-catalog.mjs
 
     # Keep existing knip findings advisory in either caller.
     - name: Check for dead code and phantom dependencies (knip)
