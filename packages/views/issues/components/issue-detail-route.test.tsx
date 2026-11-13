@@ -133,6 +133,27 @@ describe("useCanonicalIssueUrl", () => {
     );
     expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-c1");
   });
+
+  // Desktop reuses the route instance across issues, so the once-guard must be
+  // scoped to the route-id stint that produced it.
+  it("rewrites again when the same issue is re-entered via its UUID after the route moved on", () => {
+    const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
+    const { rerender } = renderHook(
+      ({ routeId, identifier }: { routeId: string; identifier?: string }) =>
+        useCanonicalIssueUrl(routeId, identifier),
+      { wrapper, initialProps: { routeId: uuid, identifier: undefined as string | undefined } },
+    );
+
+    rerender({ routeId: uuid, identifier: "TRS-134" });
+    expect(replace).toHaveBeenCalledTimes(1);
+    rerender({ routeId: "TRS-134", identifier: "TRS-134" });
+    rerender({ routeId: "TRS-9", identifier: "TRS-9" });
+    rerender({ routeId: uuid, identifier: undefined });
+    rerender({ routeId: uuid, identifier: "TRS-134" });
+
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenLastCalledWith("/acme/issues/TRS-134");
+  });
 });
 
 describe("parseCommentHighlightHash", () => {

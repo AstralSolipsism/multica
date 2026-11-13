@@ -136,18 +136,16 @@ describe("RichContent link routing", () => {
     );
   });
 
-  it("keeps a same-origin /uploads file external — the backend serves it, not the router", () => {
+  it("keeps a same-origin /uploads file external because it is not a workspace route", () => {
     const upload = `${APP_ORIGIN}/uploads/2026/07/notes.pdf`;
     renderContent(`[notes.pdf](${upload})`);
 
     screen.getByText("notes.pdf").click();
 
+    // Legacy Markdown previews authenticate through the attachment pipeline;
+    // an ordinary link is not routed to a retired frontend/backend file route.
     expect(navigatedPaths).toEqual([]);
-    expect(openSpy).toHaveBeenCalledWith(
-      upload,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    expect(openSpy).toHaveBeenCalledWith(upload, "_blank", "noopener,noreferrer");
   });
 
   // WK-11: a plain-link attachment download URL (the shape `buildMarkdownURL`

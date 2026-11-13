@@ -22,7 +22,7 @@ export const inboxKeys = {
 export function inboxListOptions(wsId: string) {
   return queryOptions({
     queryKey: inboxKeys.list(wsId),
-    queryFn: () => api.listInbox(),
+    queryFn: ({ signal }) => api.listInbox({ view: "grouped", signal }),
   });
 }
 

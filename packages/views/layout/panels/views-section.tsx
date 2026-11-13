@@ -7,15 +7,12 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { Bot, CircleUser, Copy, EyeOff, Filter, Layers, Link2, ListTodo, MoreHorizontal, Pencil, Plus, Trash2 } from "@multica/ui/icons";
+import { Bot, CircleUser, Copy, EyeOff, Filter, Layers, Link2, ListTodo, Pencil, Plus, Trash2 } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import type { IssueView } from "@multica/core/api/schemas";
 import { isMyAgentsSearch, useWorkspacePaths } from "@multica/core/paths";
@@ -64,17 +61,15 @@ import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { PANEL_ROW_CLASS, PanelCount, PanelLink, PanelList, PanelSection, isPathWithin, panelRowAnchor, panelRowStateClass } from "../panel-nav";
 import { useDragClickGuard } from "../use-drag-click-guard";
-import { SidebarIssueList, TREE_ROW_BUTTON_CLASS, TreeRow } from "./sidebar-tree";
+import { useSpacePanelOpen } from "../space-panel-open-context";
+import { RowMenu } from "./row-menu";
+import { SidebarIssueList, TreeRow } from "./sidebar-tree";
 
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 const EMPTY_VIEWS: IssueView[] = [];
 const WORKSPACE_SCOPE = { scope_type: "workspace" } as const;
 const MY_SCOPE = { scope_type: "my" } as const;
 const NO_SEARCH = new URLSearchParams();
-const ROW_MENU_CLASS = cn(
-  TREE_ROW_BUTTON_CLASS,
-  "text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[popup-open]:opacity-100 [@media(pointer:coarse)]:opacity-100",
-);
 
 interface ViewsSectionProps {
   wsId: string;
@@ -109,11 +104,15 @@ export function ViewsSection({
 }: ViewsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
   const { items, reorder } = actions.sidebar;
-  const { data: allViews = EMPTY_VIEWS } = useQuery(issueViewEverywhereOptions(wsId));
+  const { data: allViews = EMPTY_VIEWS } = useQuery({
+    ...issueViewEverywhereOptions(wsId),
+    enabled: open && !collapsed,
+  });
   const [deleteTarget, setDeleteTarget] = useState<IssueView | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
   const setCollapsed = useSidebarTreeStore((s) => s.setViewsCollapsed);
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
 
@@ -256,41 +255,6 @@ function SortableViewRow({ id, children }: { id: string; children: (drag: DragBi
   );
 }
 
-/** "…" on hover, and the same menu on right-click. */
-function RowMenu({
-  label,
-  open,
-  onOpenChange,
-  className,
-  children,
-}: {
-  label: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={label}
-            onPointerDown={(event) => event.stopPropagation()}
-            className={cn(ROW_MENU_CLASS, className)}
-          />
-        }
-      >
-        <MoreHorizontal className="size-3.5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="right" className="w-auto min-w-48">
-        {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 type ScopeBuiltinViewKey = Exclude<BuiltinViewKey, "unread">;
 
 const BUILTIN_ICON: Record<ScopeBuiltinViewKey, React.ReactNode> = {
@@ -350,8 +314,10 @@ function BuiltinViewRow({
   const source = builtinSidebarSource(builtin);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const statusCatalog = useIssueStatuses(wsId);
-  const { issueSettings } = useSidebarProjectPrefs(wsId);
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
+  const statusCatalog = useIssueStatuses(wsId, open && !collapsed);
+  const { issueSettings } = useSidebarProjectPrefs(wsId, open && !collapsed);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
   const request = catalogDependency.unresolved
     ? undefined
@@ -443,7 +409,9 @@ function UnreadViewRow({
   const source = viewSidebarSource(UNREAD_VIEW_ID);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const unread = useIssueUnreadIds(wsId);
+  // Collapsed, the panel stays mounted; unread changes re-read on expand.
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, panelOpen);
   const unreadDependency = filterDependencyState(true, [unread]);
   const count = unread.data?.length ?? 0;
   const request = unreadDependency.unresolved
@@ -556,7 +524,8 @@ function SavedViewRow({
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
   const needsUnread = viewSidebarNeedsUnread(view);
-  const unread = useIssueUnreadIds(wsId, needsUnread);
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, needsUnread && panelOpen);
   const unreadDependency = filterDependencyState(needsUnread, [unread]);
   const request = unreadDependency.unresolved
     ? undefined

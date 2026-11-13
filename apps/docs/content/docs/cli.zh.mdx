@@ -14,23 +14,16 @@ Multica CLI 既负责连接本机运行时，也可以在终端中管理工作�
 <Tab value="macOS / Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-安装了 Homebrew 时也可以运行：
-
-```bash
-brew install multica-ai/tap/multica
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
 </Tab>
 <Tab value="Windows">
 
-在 PowerShell 中运行：
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+从内部发布源 `https://multica.outlune.com/downloads/cli/v<version>/`（版本号见
+`https://multica.outlune.com/downloads/latest.json`）下载对应 release 的
+`multica-cli-<version>-windows-<arch>.zip` 压缩包，解压出 `multica.exe` 并放入
+`PATH`。
 
 </Tab>
 </Tabs>
@@ -373,7 +366,7 @@ CLI 配置文件包含可代表你访问 Multica 的令牌。不要提交到仓�
 | | `assign <id>` | 指派或取消指派 | `--to`（名称模糊匹配成员、智能体或小队）、`--to-id`、`--unassign`、`--no-start` |
 | | `status <id> <status>` | 修改状态 | `--no-start`、`--duplicate-of` |
 | | `reorder <id>` | 在列内移动 | |
-| | `search <query>` | 搜索任务 | `--limit`、`--include-closed`、`--project` |
+| | `search <query>` | 搜索任务 | `--limit`、`--offset`、`--project`、`--scope`、`--include-closed` |
 | | `children <id>` | 按阶段分组列出子任务 | |
 | | `pull-requests <id>` | 列出关联的 PR | |
 | | `comment list/add/update/delete/resolve/unresolve` | 管理评论 | `add`：`--content` / `--content-stdin` / `--content-file`、`--parent`、`--attachment`；`update`：`--expected-revision`（必填）、`--content` / `--content-stdin` / `--content-file`；`list`：`--since`、`--thread`、`--tail`、`--recent`、`--roots-only`、`--summary`、`--compact`、`--full` |
@@ -461,3 +454,15 @@ CLI 配置文件包含可代表你访问 Multica 的令牌。不要提交到仓�
 - [认证与令牌](/auth-tokens) — PAT 的创建、续期和吊销。
 - [故障排查](/troubleshooting) — 命令报错和运行不开始的排查路径。
 - [创建和配置智能体](/agents-create) — `agent create` 各字段的完整语义。
+
+## 在任务中调用受管评分
+
+运行中的智能体任务可调用平台决策服务，对业务内容评分：
+
+```bash
+multica jev evaluate --input-file evaluation.json --output json
+```
+
+`--input-file -` 从标准输入读取。JSON 包含 `state`（对象或字符串）及 `questions`；后者按问题名组织，每题填写 `type: "score"`、`instructions` 和有序 `criteria` 数组。原始分数从零到最后一项标准的下标。来源、模型与凭据由 daemon 统管，调用方不配置基础设施；CLI 与 daemon 都须升级到支持此命令的版本。
+
+成功 JSON 含 `ok: true`、`answers`、`latency_ms` 和 `daemon_version`。未完成评分时命令以非零退出，不能记作评分通过。输入文字会发往 daemon 已配置的决策服务。

@@ -54,6 +54,8 @@ import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { cn } from "@multica/ui/lib/utils";
 import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
+// Labrastro fork: import notices and archive error wording live in a fork-owned file.
+import { localArchiveImportError, useImportNotices } from "./create-skill-notices";
 import { useT } from "../../i18n";
 import { isNameConflictError } from "../lib/utils";
 
@@ -301,6 +303,7 @@ function UrlForm({
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const importNotices = useImportNotices(onCreated);
   const source = detectUrlSource(url);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
@@ -311,8 +314,14 @@ function UrlForm({
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkillParsed(wsId, { url: trimmed });
+      if (!skill) {
+        setError(importNotices.unreadableMessage);
+        setLoading(false);
+        return;
+      }
       seedAfterCreate(qc, wsId, skill);
+      if (importNotices.hold(skill)) return;
       toast.success(t(($) => $.create.url.toast_imported));
       onCreated(skill);
     } catch (err) {
@@ -320,6 +329,8 @@ function UrlForm({
       setLoading(false);
     }
   };
+
+  if (importNotices.view) return importNotices.view;
 
   const submittingLabel = (() => {
     if (!loading) return t(($) => $.create.url.import);
@@ -455,9 +466,11 @@ function LocalForm({
   onBusyChange: (busy: boolean) => void;
 }) {
   const { t } = useT("skills");
+  const { t: tForkUi } = useT("fork-ui");
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const [loading, setLoading] = useState(false);
+  const importNotices = useImportNotices(onCreated);
   const running = useRef(false);
   const stop = useRef(false);
   const mounted = useRef(false);
@@ -517,6 +530,7 @@ function LocalForm({
   const errorLabel = (error: PreparedSkillArchiveError) =>
     ({
       missing_skill_md: t(($) => $.create.local.missing_skill_md),
+      multiple_skills: tForkUi(($) => $.skills.create.local.multiple_skills),
       too_large: t(($) => $.create.local.too_large),
       empty: t(($) => $.create.local.empty),
       too_many_files: t(($) => $.create.local.too_many_files),
@@ -568,6 +582,7 @@ function LocalForm({
             skill,
             canContinue() ? "active" : "none",
           );
+          if (!bulk && canContinue() && importNotices.hold(skill)) return;
           if (mounted.current)
             setResults((prev) => ({
               ...prev,
@@ -594,9 +609,10 @@ function LocalForm({
                   ? reconciliationName === null
                     ? t(($) => $.create.local.uncertain_manual)
                     : t(($) => $.create.local.uncertain)
-                  : err instanceof Error
-                    ? err.message
-                    : t(($) => $.create.local.fallback_error),
+                  : localArchiveImportError(err, t, tForkUi) ??
+                    (err instanceof Error
+                      ? err.message
+                      : t(($) => $.create.local.fallback_error)),
               },
             }));
           if (uncertain)
@@ -652,6 +668,8 @@ function LocalForm({
       setBusy(false);
     }
   };
+
+  if (importNotices.view) return importNotices.view;
 
   return (
     <>

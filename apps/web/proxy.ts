@@ -70,7 +70,7 @@ function routeLandingLocale(
     headers.set(MULTICA_LOCALE_HEADER, prefixed.locale);
     return NextResponse.rewrite(url, { request: { headers } });
   }
-  if (!isLandingPath(pathname)) return null;
+  if (!isLandingPath(pathname) || pathname === "/") return null;
 
   // A remembered language choice goes to that language's URL. Without one the
   // root URL stays English — the same page crawlers index — and the page
@@ -137,10 +137,10 @@ export function proxy(req: NextRequest) {
   }
 
   // --- Root path: redirect logged-in users to their last workspace ---
-  // The upstream public hosts keep serving a marketing site at `/`. Visiting
-  // such a host root must remain a public-site navigation even when a local
-  // desktop/runtime session has fresh auth cookies; explicit app routes such
-  // as /acme/issues and legacy /issues still route to the workspace app.
+  // Official upstream hosts leave `/` to the internal root page, which applies
+  // the same login/workspace resolution without a proxy-level host redirect.
+  // Explicit app routes such as /acme/issues and legacy /issues still route
+  // directly to the workspace app.
   if (
     pathname === "/" &&
     hasSession &&

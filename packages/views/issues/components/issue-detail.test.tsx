@@ -9,7 +9,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { ApiError } from "@multica/core/api/client";
 import { toast } from "sonner";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
-import { useCommentCollapseStore } from "@multica/core/issues/stores";
+import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import {
   DEFAULT_SUB_ISSUE_ROW_PROPERTIES,
   useSubIssueDisplayStore,
@@ -17,16 +17,31 @@ import {
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
+import enForkUi from "../../locales/en/fork-ui.json";
+import { useCurrentIssueRenderContext, type CurrentIssueRenderContextValue } from "../current-issue-render-context";
 
-const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues, "fork-ui": enForkUi } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
+const archiveSectionProps = vi.hoisted(() => ({ current: undefined as unknown }));
+const renderedIssueContext = vi.hoisted(() => ({ current: null as CurrentIssueRenderContextValue | null }));
 const mockLocalDirectoryHint = vi.hoisted(() => vi.fn());
 vi.mock("../../projects/components/local-directory-hint", () => ({
   LocalDirectoryHint: (props: unknown) => {
     mockLocalDirectoryHint(props);
     return null;
   },
+}));
+vi.mock("../../you-should-know/archive/archive-section", () => ({
+  YouShouldKnowArchiveSection: (props: unknown) => {
+    archiveSectionProps.current = props;
+    return null;
+  },
+}));
+vi.mock("./issue-dependencies-section", () => ({
+  IssueDependenciesSection: ({ issue }: { issue: { id: string } }) => (
+    <div data-testid="issue-dependencies-section" data-issue-id={issue.id} />
+  ),
 }));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
@@ -192,6 +207,7 @@ vi.mock("../../editor", async () => ({
   ),
   isPreviewable: () => false,
   ReadonlyContent: ({ content }: { content: string }) => {
+    renderedIssueContext.current = useCurrentIssueRenderContext();
     readonlyContentRenders.push(content);
     return <div data-testid="readonly-content">{content}</div>;
   },
@@ -798,6 +814,8 @@ describe("IssueDetail (shared)", () => {
     contentEditorMounts.count = 0;
     readonlyContentRenders.length = 0;
     descriptionSelectionAction.current = undefined;
+    archiveSectionProps.current = undefined;
+    renderedIssueContext.current = null;
     mockViewport.isMobile = false;
     // Default: issue loads successfully
     mockApiObj.getIssue.mockResolvedValue(mockIssue);
@@ -825,6 +843,53 @@ describe("IssueDetail (shared)", () => {
     // Reset project mock — individual tests override per case. Default fixture
     // has project_id: null so getProject is not invoked.
     mockApiObj.getProject.mockReset();
+  });
+
+  it("observes the issue list without fetching it and shares the cold detail read with reactions", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(mockApiObj.getIssue).toHaveBeenCalledTimes(1));
+    expect(mockApiObj.listIssues).not.toHaveBeenCalled();
+  });
+
+  it("submits decision-card answers as top-level comments and reports failures", async () => {
+    const created = { ...mockTimeline[0]!, id: "html-answer", content: "answer" };
+    mockApiObj.createComment.mockResolvedValue(created);
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.submitComment).toBeDefined());
+    let ok: boolean | undefined;
+    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("answer"); });
+    expect(ok).toBe(true);
+    expect(mockApiObj.createComment).toHaveBeenCalledWith(mockIssue.id, "answer", undefined, undefined, undefined, undefined, undefined);
+    await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalled());
+    scrollToIndexSpy.mockClear();
+    mockApiObj.createComment.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("retry"); });
+    expect(ok).toBe(false);
+    expect(scrollToIndexSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes decision-card answers to this issue's draft and scrolls to its composer", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    await waitFor(() => expect(renderedIssueContext.current?.fillCommentDraft).toBeDefined());
+    const setDraft = vi.fn();
+    const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({ ...useCommentDraftStore.getState(), setDraft });
+    act(() => renderedIssueContext.current!.fillCommentDraft!("answer"));
+    expect(setDraft).toHaveBeenCalledWith(`new:${mockIssue.id}`, "answer");
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "end" });
+    getState.mockRestore();
+  });
+
+  it("explicitly adopts a filled decision-card answer in an already edited composer", async () => {
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    fireEvent.click(screen.getByTestId("comment-composer-shell"));
+    const editor = await screen.findByPlaceholderText("Leave a comment...");
+    fireEvent.change(editor, { target: { value: "existing draft" } });
+    act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
+    expect(editor).toHaveValue("panel answer");
   });
 
   it("passes the issue's agent assignment to the local-directory hint", async () => {
@@ -1082,6 +1147,7 @@ describe("IssueDetail (shared)", () => {
     // Title and comment/reply composers remain readonly-first.
     expect(await screen.findByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
     expect(screen.getByText("Implement authentication")).toBeInTheDocument();
+    expect(screen.getByTestId("issue-dependencies-section")).toHaveAttribute("data-issue-id", "issue-1");
     expect(screen.queryByTestId("title-editor")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("rich-text-editor")).toHaveLength(1);
     expect(contentEditorMounts.count).toBe(1);
@@ -3010,6 +3076,59 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByRole("button", { name: "I can help with this" })).toBeInTheDocument();
   });
 
+    it("expands a manually collapsed thread for an arrival reply", async () => {
+      const root = { ...mockTimeline[0]!, id: "collapsed-root" };
+      const target = { ...mockTimeline[1]!, id: "collapsed-reply", parent_id: root.id, content: "Reply hidden by manual collapse" };
+      mockApiObj.listTimeline.mockResolvedValue([root, target]);
+      useCommentCollapseStore.setState({ collapsedByIssue: { "issue-1": [root.id] } });
+
+      renderIssueDetailWithHighlight(target.id);
+
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById(`comment-${target.id}`)),
+      ).toBe(true));
+      expect(useCommentCollapseStore.getState().isCollapsed("issue-1", root.id)).toBe(false);
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+  describe("highlight change on an already-mounted detail", () => {
+    const detailTree = (queryClient: QueryClient, highlight?: string, token?: number) => (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail issueId="issue-1" highlightCommentId={highlight} highlightRequestToken={token} />
+        </QueryClientProvider>
+      </I18nProvider>
+    );
+
+    it("jumps through Virtuoso without flattening the timeline", async () => {
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient));
+      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+
+      rerender(detailTree(queryClient, "comment-2"));
+
+      await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 1 })));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
+    });
+
+    it("replays and re-times the highlight when the host bumps its request token", async () => {
+      const queryClient = createTestQueryClient();
+      const { rerender } = render(detailTree(queryClient, "comment-2", 1));
+      await waitFor(() => expect(
+        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
+      ).toBe(true));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); });
+
+      rerender(detailTree(queryClient, "comment-2", 2));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
+      expect(hasHighlightedCommentBackground(document.getElementById("comment-comment-2"))).toBe(true);
+    }, 10000);
+  });
+
   describe("quick-jump rail replies", () => {
     const highlightTint = "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
 
@@ -4073,6 +4192,34 @@ describe("IssueDetail (shared)", () => {
     const rendered = Array.from(container.querySelectorAll("[id^='comment-']")).map((el) => el.id)
       .filter((id) => ["comment-confirm", "comment-step2", "comment-aside", "comment-step3"].includes(id));
     expect(rendered).toEqual(["comment-confirm", "comment-step2", "comment-aside", "comment-step3"]);
+  });
+
+  it("passes the timeline jump helper and creation times to the YSK archive", async () => {
+    const reply = {
+      ...mockTimeline[1]!, id: "archive-reply", parent_id: "comment-1",
+      content: "Reply the archive points at", created_at: "2026-01-18T00:00:00Z",
+      updated_at: "2026-01-18T05:00:00Z",
+    };
+    mockApiObj.listTimeline.mockResolvedValue([mockTimeline[0]!, reply]);
+    renderIssueDetail();
+    await screen.findByText("Started working on this");
+    const props = archiveSectionProps.current as {
+      issueId: string;
+      identifier: string;
+      onJumpToComment: (commentId: string) => void;
+      commentTime: (commentId: string) => string | undefined;
+    };
+    expect(props.issueId).toBe("issue-1");
+    expect(props.identifier).toBe("TES-1");
+    expect(props.commentTime("archive-reply")).toBe("2026-01-18T00:00:00Z");
+    expect(props.commentTime("not-in-timeline")).toBeUndefined();
+
+    scrollToIndexSpy.mockClear();
+    act(() => props.onJumpToComment("archive-reply"));
+    await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledWith({ index: 0, align: "start", offset: -16 }));
+    await waitFor(() => expect(
+      hasHighlightedCommentBackground(document.getElementById("comment-archive-reply")),
+    ).toBe(true));
   });
 
 });

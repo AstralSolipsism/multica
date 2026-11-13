@@ -24,6 +24,7 @@ import { SteerAttachmentNotice } from "./steer-attachment-notice";
 import { useStopRunsBeforeSend } from "./use-stop-runs-before-send";
 import { useCommentUploads } from "./use-comment-uploads";
 import { useQuickActionMenu } from "../hooks/use-quick-action-menu";
+import { focusComposerOnSurfaceMouseDown } from "./composer-text-surface";
 
 // Types
 
@@ -253,13 +254,18 @@ function ReplyInput({
         actorType={avatarType}
         actorId={avatarId}
         size={avatarSize}
-        className="mt-0.5 shrink-0"
+        className="mt-3 shrink-0"
       />
+      <div
+        data-testid="reply-text-surface"
+        className="flex min-w-0 flex-1 cursor-text flex-col py-2.5"
+        onMouseDown={submitting ? undefined : (e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
+      >
       <div
         {...dropZoneProps}
         ref={composerRef}
         className={cn(
-          "relative min-w-0 flex-1 flex flex-col",
+          "relative min-w-0 flex-1 flex flex-col cursor-default",
           (!isEmpty || annotations.length > 0 || showsTriggerChips) && "pb-9",
         )}
       >
@@ -273,7 +279,7 @@ function ReplyInput({
         {lazy.active && (
         <div
           className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
+            "flex-1 min-h-0 overflow-y-auto cursor-text",
             submitting && "pointer-events-none opacity-60",
             !lazy.ready && "hidden",
           )}
@@ -345,7 +351,7 @@ function ReplyInput({
               size="sm"
               variant="destructive"
               // eslint-disable-next-line no-restricted-syntax -- composer send button, the one round button
-              className="rounded-full"
+              className="rounded-full cursor-pointer"
               onClick={submit}
               disabled={!canSend || submitting || gate.uploading}
             >
@@ -375,6 +381,7 @@ function ReplyInput({
           />}
         </div>
         {isDragOver && <FileDropOverlay />}
+      </div>
       </div>
     </div>
   </>);

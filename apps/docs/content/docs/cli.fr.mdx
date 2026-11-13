@@ -14,23 +14,13 @@ Le CLI Multica sert à la fois à connecter des runtimes locaux et à gérer, de
 <Tab value="macOS / Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-Si Homebrew est installé, vous pouvez aussi exécuter :
-
-```bash
-brew install multica-ai/tap/multica
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
 </Tab>
 <Tab value="Windows">
 
-Dans PowerShell, exécutez :
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+Téléchargez `multica-cli-<version>-windows-<arch>.zip` depuis la source de distribution interne `https://multica.outlune.com/downloads/cli/v<version>/` (version : `https://multica.outlune.com/downloads/latest.json`), puis placez `multica.exe` dans votre `PATH`.
 
 </Tab>
 </Tabs>
@@ -373,7 +363,7 @@ Les tableaux ci-dessous couvrent toutes les commandes de premier niveau actuelle
 | | `assign <id>` | Assigner ou désassigner | `--to` (correspondance approximative sur le nom parmi les membres, les agents et les squads), `--to-id`, `--unassign`, `--no-start` |
 | | `status <id> <status>` | Changer le statut | `--no-start`, `--duplicate-of` |
 | | `reorder <id>` | Déplacer au sein d'une colonne | |
-| | `search <query>` | Rechercher des tâches | `--limit`, `--include-closed`, `--project` |
+| | `search <query>` | Rechercher des tâches | `--limit`, `--offset`, `--project`, `--scope`, `--include-closed` |
 | | `children <id>` | Lister les sous-tâches regroupées par étape | |
 | | `pull-requests <id>` | Lister les PR associées | |
 | | `comment list/add/update/delete/resolve/unresolve` | Gérer les commentaires | `add` : `--content` / `--content-stdin` / `--content-file`, `--parent`, `--attachment` ; `update` : `--expected-revision` (obligatoire), `--content` / `--content-stdin` / `--content-file` ; `list` : `--since`, `--thread`, `--tail`, `--recent`, `--roots-only`, `--summary`, `--compact`, `--full` |

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -26,6 +26,7 @@ import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { Issue, ListIssuesResponse, Project } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { ProjectEngineeringMenuItems } from "../../projects/components/project-engineering-menu-item";
 import {
   PANEL_ROW_CLASS,
   PanelCount,
@@ -37,6 +38,8 @@ import {
 } from "../panel-nav";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useDragClickGuard } from "../use-drag-click-guard";
+import { useSpacePanelOpen } from "../space-panel-open-context";
+import { RowMenu } from "./row-menu";
 import { ProjectsSectionSettings } from "./sidebar-settings";
 import { SidebarIssueList, TreeRow } from "./sidebar-tree";
 
@@ -142,10 +145,12 @@ export function ProjectsSection({
 }: ProjectsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
+  const open = useSpacePanelOpen();
   const collapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
+  const prefsEnabled = open && !collapsed;
   const setCollapsed = useSidebarTreeStore((s) => s.setProjectsCollapsed);
-  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId);
-  const updatePrefs = useUpdateSidebarProjectPrefs(wsId);
+  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId, prefsEnabled);
+  const updatePrefs = useUpdateSidebarProjectPrefs(wsId, prefsEnabled);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
 
@@ -174,7 +179,11 @@ export function ProjectsSection({
       onCollapsedChange={setCollapsed}
       action={
         <>
-          <ProjectsSectionSettings wsId={wsId} className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100" />
+          <ProjectsSectionSettings
+            wsId={wsId}
+            enabled={prefsEnabled}
+            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          />
           <IconButton
             label={t(($) => $.panels.work.new_project)}
             size="icon-xs"
@@ -272,7 +281,9 @@ function ProjectTreeItem({
   const linkRef = useRef<HTMLAnchorElement>(null);
   const source = projectSidebarSource(project.id);
   const [expanded, setExpanded] = useExpanded(source);
-  const statusCatalog = useIssueStatuses(wsId);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const open = useSpacePanelOpen();
+  const statusCatalog = useIssueStatuses(wsId, open);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
   const params = catalogDependency.unresolved
     ? undefined
@@ -306,8 +317,12 @@ function ProjectTreeItem({
         listId={listId}
         toggleLabel={t(($) => $.panels.work.project_issues, { name: project.title })}
         onPrefetch={prefetch}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenuOpen(true);
+        }}
         trailing={
-          // The button takes the count's place on hover, so the row never reflows.
+          // The actions take the count's place on hover, so the row never reflows.
           <span className="relative flex h-5 min-w-5 items-center justify-end">
             {showCount && (
               <PanelCount
@@ -315,15 +330,24 @@ function ProjectTreeItem({
                 className="transition-opacity group-focus-within/row:opacity-0 group-hover/row:opacity-0 [@media(pointer:coarse)]:opacity-0"
               />
             )}
-            <IconButton
-              label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
-              size="icon-xs"
-              className="absolute -right-2 z-10 text-muted-foreground opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
-            >
-              <Plus />
-            </IconButton>
+            <span className="absolute -right-2 z-10 flex items-center opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
+              <RowMenu
+                label={t(($) => $.panels.work.project_actions, { name: project.title })}
+                open={menuOpen}
+                onOpenChange={setMenuOpen}
+              >
+                <ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={open && menuOpen} />
+              </RowMenu>
+              <IconButton
+                label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
+                size="icon-xs"
+                className="text-muted-foreground"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
+              >
+                <Plus />
+              </IconButton>
+            </span>
           </span>
         }
       />

@@ -17,6 +17,7 @@ import { IssueContextMenuProvider } from "../../issues/actions";
 import { useIssueViewActions } from "../../issue-views/use-view-actions";
 import { useT } from "../../i18n";
 import { PanelBody, PanelHeader, isPathWithin } from "../panel-nav";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 import { PinnedSection, usePanelPins } from "./pinned-section";
 import { useKeptActiveItem } from "./sidebar-tree";
 import { ProjectsSection, useIssueInTree } from "./work-tree";
@@ -69,11 +70,14 @@ export function WorkPanel() {
   const { pathname } = useNavigation();
   const wsId = useCurrentWorkspace()?.id;
   const userId = useAuthStore((s) => s.user?.id);
-  const viewActions = useIssueViewActions();
+  const open = useSpacePanelOpen();
+  const projectsCollapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
+  const viewsCollapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
+  const viewActions = useIssueViewActions({ enabled: open && !viewsCollapsed });
 
   const { data: projects = EMPTY_PROJECTS } = useQuery({
     ...projectListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: open && !projectsCollapsed && !!wsId,
   });
   // Cache read only: the detail page owns resolving the route's issue.
   const issueSegment = routeSegment(pathname, p.issues());
@@ -98,7 +102,7 @@ export function WorkPanel() {
       ? clickedIssue.list
       : undefined;
   const treeClaimsIssue = clickedList !== undefined && clickedList !== PINS_LIST;
-  const pins = usePanelPins(wsId, userId, pathname, treeClaimsIssue ? null : currentIssueId);
+  const pins = usePanelPins(wsId, userId, pathname, treeClaimsIssue ? null : currentIssueId, open);
   const requestLocate = useSidebarTreeStore((s) => s.requestLocate);
   const rememberClickedIssue = (event: React.MouseEvent) => {
     const link = (event.target as HTMLElement).closest("a[href]");
@@ -112,7 +116,7 @@ export function WorkPanel() {
     setClickedIssue(segment ? { segment, list } : null);
   };
 
-  const { projectSettings, projectOrder } = useSidebarProjectPrefs(wsId ?? "");
+  const { projectSettings, projectOrder } = useSidebarProjectPrefs(wsId ?? "", open && !projectsCollapsed);
   const filteredProjects = useMemo(
     () => sidebarProjects(projects, projectSettings, projectOrder, userId),
     [projects, projectSettings, projectOrder, userId],
@@ -123,7 +127,6 @@ export function WorkPanel() {
 
   // Opening an issue never opens its project: the tree changes only when the
   // user toggles a row or asks to show the issue there.
-  const projectsCollapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
   const issueProjectId = currentIssue?.project_id ?? null;
   const issueProject =
     !projectsCollapsed && issueProjectId ? shownProjects.find((project) => project.id === issueProjectId) : undefined;

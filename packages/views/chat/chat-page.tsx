@@ -23,6 +23,7 @@ import { ListColumn } from "../layout/list-column";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-list";
+import { ChatReplyActionsProvider } from "./chat-reply-actions-context";
 import { ChatInput } from "./components/chat-input";
 import { ChatQueue } from "./components/chat-queue";
 import { ChatThreadList } from "./components/chat-thread-list";
@@ -35,6 +36,8 @@ import { NoAgentBanner } from "./components/no-agent-banner";
 import { ArchivedAgentBanner } from "./components/archived-agent-banner";
 import { AgentAccessRevokedBanner } from "./components/agent-access-revoked-banner";
 import { RuntimeRequiredBanner } from "./components/runtime-required-banner";
+import { TipSideChatBanner } from "../you-should-know/side-chat/tip-side-chat-banner";
+import { TipSideChatStarters } from "../you-should-know/side-chat/tip-side-chat-starters";
 import { ChatAppRequests } from "../common/app-requests";
 import { useRegisterCommandBarContext } from "../search/register-context";
 
@@ -320,6 +323,12 @@ export function ChatPage() {
           onArchive={handleArchive}
         />
       )}
+      {c.currentSession?.tip_source && (
+        <TipSideChatBanner
+          source={c.currentSession.tip_source}
+          agentName={c.activeAgent?.name ?? null}
+        />
+      )}
       {c.showSkeleton ? (
         <ChatMessageSkeleton />
       ) : c.hasMessages ? (
@@ -328,11 +337,11 @@ export function ChatPage() {
           messages={c.messages}
           pendingTask={c.pendingTask}
           availability={c.availability}
-          firstItemIndex={c.firstItemIndex}
           hasOlderMessages={c.hasOlderMessages}
           isFetchingOlderMessages={c.isFetchingOlderMessages}
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
           onQuickAction={(action) => c.handleSend(action.prompt)}
+          resumeFollowNonce={c.resumeFollowNonce}
           quickActionsDisabled={
             !!c.pendingTaskId ||
             c.isSessionArchived ||
@@ -350,6 +359,17 @@ export function ChatPage() {
               : undefined
           }
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+        />
+      ) : c.currentSession?.tip_source ? (
+        <TipSideChatStarters
+          onPick={(prompt) => c.handleSend(prompt)}
+          disabled={
+            c.isSessionArchived ||
+            c.isAgentArchived ||
+            c.isAgentAccessRevoked ||
+            !c.isAgentRuntimeBound ||
+            c.noAgent
+          }
         />
       ) : (
         <EmptyState
@@ -440,7 +460,10 @@ export function ChatPage() {
               </Button>
             </div>
           )}
-          {conversation}
+          {/* Reply actions for HTML blocks in this conversation (OL-1301) */}
+          <ChatReplyActionsProvider handleSend={c.handleSend}>
+            {conversation}
+          </ChatReplyActionsProvider>
         </div>
       );
     }
@@ -470,7 +493,9 @@ export function ChatPage() {
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
         {listCollapsed && !c.currentSession && <PageHeader>{newChatButton}</PageHeader>}
         {hasTarget ? (
-          conversation
+          <ChatReplyActionsProvider handleSend={c.handleSend}>
+            {conversation}
+          </ChatReplyActionsProvider>
         ) : noAgentPage ? (
           noAgentState
         ) : (

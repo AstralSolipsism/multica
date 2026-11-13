@@ -15,9 +15,11 @@ import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { ModalRegistry } from "@multica/views/modals/registry";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { DragStrip, WindowTitleBarProvider } from "@multica/views/platform";
+import { YouShouldKnowProvider } from "@multica/views/you-should-know";
 import type { IssueWindowContext } from "../../../shared/issue-window";
 import { DesktopAuthRecoveryPage } from "../pages/auth-recovery";
 import { IssueDetailPage } from "../pages/issue-detail-page";
+import { useMainWindowChatOpener } from "../platform/chat-session-handoff";
 import { IssueWindowNavigationProvider } from "../platform/issue-window-navigation";
 import { TRAFFIC_LIGHT_CLEARANCE } from "./window-toolbar";
 
@@ -48,6 +50,8 @@ function IssueWindowRoute() {
       enabled: !!user && !!workspaceSlug,
     });
   const workspace = workspaces.find((item) => item.slug === workspaceSlug);
+  // "Ask about this" opens the side chat in the main window (OL-362).
+  const openSideChat = useMainWindowChatOpener(workspaceSlug ?? "");
 
   if (workspace && workspaceSlug) {
     setCurrentWorkspace(workspaceSlug, workspace.id);
@@ -83,7 +87,9 @@ function IssueWindowRoute() {
       <IssueWindowNavigationProvider>
         <WorkspacePresencePrefetch />
         <IssueWindowFrame pageOwnsTitleBar>
-          <IssueDetailPage onDelete={() => window.desktopAPI.closeWindow()} />
+          <YouShouldKnowProvider openSideChat={openSideChat}>
+            <IssueDetailPage onDelete={() => window.desktopAPI.closeWindow()} />
+          </YouShouldKnowProvider>
         </IssueWindowFrame>
         <ModalRegistry />
       </IssueWindowNavigationProvider>

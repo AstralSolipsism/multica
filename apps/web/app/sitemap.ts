@@ -1,8 +1,9 @@
+import { DEPLOYMENT_URL } from "@multica/core/deployment";
+import { isRetiredMarketingPath } from "../lib/labrastro-marketing";
 import type { MetadataRoute } from "next";
-import { landingAlternates } from "@/lib/landing-locale-path";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://www.multica.ai";
+  const baseUrl = DEPLOYMENT_URL;
 
   const pages: MetadataRoute.Sitemap = [
     {
@@ -43,8 +44,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 
-  return pages.map((page) => ({
-    ...page,
-    alternates: { languages: landingAlternates(page.url.slice(baseUrl.length) || "/", baseUrl) },
-  }));
+  return pages.filter((page) => !isRetiredMarketingPath(new URL(page.url).pathname));
 }

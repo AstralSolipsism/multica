@@ -24,7 +24,7 @@ import { PriorityIcon } from "@multica/views/issues/components/priority-icon";
 import { Avatar, BACKEND, LEO, MIA, QA, SAM, Working, ZoomCanvas, type Actor } from "./mock-kit";
 
 /*
- * Mockups for the Mobile page: the Multica iOS app on an iPhone, one screen
+ * Mockups for the Mobile page: the Labrastro iOS app on an iPhone, one screen
  * per tab plus an issue's agent runs. Phones are drawn at device size
  * (264 × 560) and are meant to run off the bottom of their frame. Strings
  * follow the app's own copy; data is fictional.
@@ -213,7 +213,7 @@ export function ChatScreen() {
         <Avatar actor={BACKEND} size={24} />
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-semibold">Backend Agent</span>
-          <span className="block text-[11px] text-muted-foreground">Claude Code · Mia’s MacBook Pro</span>
+          <span className="block text-[11px] text-muted-foreground">Claude Code · Mizuki’s MacBook Pro</span>
         </span>
       </div>
       <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden px-3 py-3 text-[13px] leading-snug">

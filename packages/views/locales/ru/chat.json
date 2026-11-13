@@ -8,10 +8,10 @@
     "no_agent_action": "Новый агент"
   },
   "fab": {
-    "running": "Multica работает...",
+    "running": "Labrastro работает...",
     "unread_one": "{{count}} непрочитанный чат",
     "unread_other": "{{count}} непрочитанных чата",
-    "default": "Спросить Multica",
+    "default": "Спросить Labrastro",
     "unread_few": "{{count}} непрочитанных чата",
     "unread_many": "{{count}} непрочитанных чатов"
   },
@@ -56,6 +56,10 @@
     "title_many": "{{count}} сообщений в очереди"
   },
   "message_list": {
+    "process_history": "Процесс выполнения",
+    "process_loading": "Загрузка процесса выполнения…",
+    "process_retry": "Не удалось загрузить процесс. Повторить",
+    "process_empty": "Нет записанных шагов выполнения.",
     "show_details": "Показать детали",
     "replied_in": "Ответ за {{elapsed}}",
     "failed_after": "Ошибка через {{elapsed}}",
@@ -162,7 +166,7 @@
     "first_time_pillars_suffix": ".",
     "first_time_actions": "Попросите сводку, спланируйте день или передайте быструю задачу.",
     "returning_title_named": "Привет, я {{name}}",
-    "returning_title_default": "Добро пожаловать в Multica",
+    "returning_title_default": "Добро пожаловать в Labrastro",
     "returning_subtitle": "Попробуйте спросить",
     "chat_with_named": "Чат с {{name}}"
   },

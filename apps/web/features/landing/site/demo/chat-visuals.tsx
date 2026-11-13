@@ -14,7 +14,7 @@ import { Avatar, BACKEND, FLOATING, LEAD, LEO, MIA, SAM, TRIAGE, ZoomCanvas, typ
 
 /*
  * Mockups for the Chat integrations page: a team chat where people talk to a
- * Multica agent through its Bot, and the Messaging settings where each Bot is
+ * Labrastro agent through its Bot, and the Messaging settings where each Bot is
  * bound to one agent. The chat client is drawn plain so it reads as any of the
  * supported platforms; the Bot's replies follow the product's own copy. Data
  * is fictional.
@@ -30,7 +30,7 @@ export const CHANNELS: { id: ChannelId; name: string; Mark: ComponentType<{ clas
   { id: "telegram", name: "Telegram", Mark: TelegramMark },
 ];
 
-const BOT = { name: "Multica", agent: BACKEND };
+const BOT = { name: "Labrastro", agent: BACKEND };
 
 function Message({ actor, bot, time, children }: { actor: Actor; bot?: boolean; time: string; children: ReactNode }) {
   return (
@@ -102,7 +102,7 @@ function ChannelConversation() {
         Export for the Northwind workspace failed again last night.
       </Message>
       <Message actor={MIA} time="9:41">
-        <Mention>@Multica</Mention> why did last night’s export job fail?
+        <Mention>@Labrastro</Mention> why did last night’s export job fail?
       </Message>
       <ThreadReplies count={2}>
         <Message actor={BOT.agent} bot time="9:42">
@@ -205,7 +205,7 @@ const PANEL = "h-[300px] w-[340px]";
 
 export function DirectMessageVisual() {
   return (
-    <ChatWindow title="Multica" icon={MessageSquare} composer="Message Multica" className={PANEL}>
+    <ChatWindow title="Labrastro" icon={MessageSquare} composer="Message Labrastro" className={PANEL}>
       <Message actor={LEO} time="10:02">
         What changed in the billing API this week?
       </Message>
@@ -221,7 +221,7 @@ export function MentionVisual() {
   return (
     <ChatWindow title="eng-support" icon={Hash} composer="Reply in thread" className={PANEL}>
       <Message actor={SAM} time="11:20">
-        <Mention>@Multica</Mention> why is the checkout test flaky?
+        <Mention>@Labrastro</Mention> why is the checkout test flaky?
       </Message>
       <ThreadReplies count={1}>
         <Message actor={BOT.agent} bot time="11:21">
@@ -234,7 +234,7 @@ export function MentionVisual() {
 
 export function IssueCommandVisual() {
   return (
-    <ChatWindow title="Multica" icon={MessageSquare} composer="Message Multica" className={PANEL}>
+    <ChatWindow title="Labrastro" icon={MessageSquare} composer="Message Labrastro" className={PANEL}>
       <Message actor={MIA} time="9:43">
         <Slash>/issue</Slash> Batch the nightly export job
       </Message>

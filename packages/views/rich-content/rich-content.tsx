@@ -50,6 +50,7 @@ import {
   isIssueIdentifier,
   markdownSanitizeSchema,
   markdownUrlTransform,
+  remarkSingleDollarMath,
 } from "@multica/ui/markdown";
 import {
   resolveClickIntent,
@@ -69,6 +70,10 @@ import {
 import { preprocessMarkdown } from "../editor/utils/preprocess";
 import { highlightToHtml } from "../editor/utils/highlight-markdown";
 import { AttachmentDownloadProvider } from "../editor/attachment-download-context";
+import {
+  EntityAttachmentsProvider,
+  type EntityAttachment,
+} from "./entity-attachments-context";
 import { useDownloadAttachment } from "../editor/use-download-attachment";
 import { Attachment as AttachmentRenderer } from "../editor/attachment";
 import { computeClosedFences, type ClosedFence } from "./streaming-fence";
@@ -408,6 +413,7 @@ function RichCode({ className, children, node, ...props }: RichCodeProps) {
           language={language}
           body={String(children).replace(/\n$/, "")}
           title={fence?.title}
+          src={fence?.src}
         />
       );
     }
@@ -521,6 +527,7 @@ const COMPONENTS: Partial<Components> = {
 // being silenced.
 const REMARK_PLUGINS = [
   [remarkMath, { singleDollarTextMath: false }],
+  remarkSingleDollarMath,
   remarkBreaks,
   [remarkGfm, { singleTilde: false }],
   remarkCjkFriendly,
@@ -541,12 +548,13 @@ export interface RichContentProps {
    * Attachments associated with the surrounding entity (comment / issue body /
    * chat message). Inline `<img>` and file-card URLs matching one of these get
    * their download URL re-signed at click time instead of using the possibly
-   * stale link embedded in the markdown.
+   * stale link embedded in the markdown. A closed ```html src="file.html"
+   * fence also resolves its filename against this same-record list.
    *
    * Callers SHOULD pass a stable reference; a fresh array on every parent
    * render busts the memo.
    */
-  attachments?: Attachment[];
+  attachments?: readonly EntityAttachment[];
   /** CSS density only — never changes the semantic DOM. */
   density?: RichContentDensity;
   /**
@@ -585,6 +593,10 @@ export const RichContent = memo(function RichContent({
   // it from the raw pre-preprocess text would mis-match every rewritten node.
   const closedFences = useMemo(() => computeClosedFences(processed), [processed]);
   const tableSource = useMemo(() => ({ source: content, rendered: processed }), [content, processed]);
+  const downloadAttachments = useMemo(
+    () => attachments?.filter((attachment): attachment is Attachment => "url" in attachment),
+    [attachments],
+  );
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hover = useLinkHover(wrapperRef);
@@ -615,22 +627,24 @@ export const RichContent = memo(function RichContent({
   );
 
   return (
-    <AttachmentDownloadProvider attachments={attachments}>
-      <div
-        ref={wrapperRef}
-        data-rich-content=""
-        data-mc="content"
-        data-density={density}
-        data-phase={phase}
-        className={cn(
-          "rich-text-editor readonly text-body",
-          density === "compact" && "rich-content-compact",
-          className,
-        )}
-      >
-        {markdown}
-        <LinkHoverCard {...hover} />
-      </div>
-    </AttachmentDownloadProvider>
+    <EntityAttachmentsProvider attachments={attachments} phase={phase}>
+      <AttachmentDownloadProvider attachments={downloadAttachments}>
+        <div
+          ref={wrapperRef}
+          data-rich-content=""
+          data-mc="content"
+          data-density={density}
+          data-phase={phase}
+          className={cn(
+            "rich-text-editor readonly text-body",
+            density === "compact" && "rich-content-compact",
+            className,
+          )}
+        >
+          {markdown}
+          <LinkHoverCard {...hover} />
+        </div>
+      </AttachmentDownloadProvider>
+    </EntityAttachmentsProvider>
   );
 });

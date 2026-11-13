@@ -76,7 +76,7 @@ export const jaDemoCopy: DemoDict = {
       statuses: { brief: "企画", research: "リサーチ", draft: "下書き", edit: "編集", published: "公開済み" },
       cards: {
         "ACM-213": "6 月のウェビナー招待メール",
-        "ACM-211": "比較ページ：Multica とスプレッドシート",
+        "ACM-211": "比較ページ：Labrastro とスプレッドシート",
         "ACM-210": "日本ローンチのランディングページ",
         "ACM-208": "パートナー向け共同マーケティングキット",
         "ACM-207": "最初の 1 週間のオンボーディングメール",
@@ -175,7 +175,7 @@ export const jaDemoCopy: DemoDict = {
       machines: "マシン",
       cloud: "クラウドサービス",
       server: "Linux · Leo Park",
-      laptop: "Mia の MacBook Pro",
+      laptop: "Mizuki の MacBook Pro",
       thisDevice: "このデバイス",
       sandboxes: "クラウドサンドボックス",
     },

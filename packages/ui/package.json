@@ -16,6 +16,7 @@
     "./markdown/*": "./markdown/*.tsx",
     "./markdown/linkify": "./markdown/linkify.ts",
     "./markdown/mentions": "./markdown/mentions.ts",
+    "./markdown/inline-math": "./markdown/inline-math.ts",
     "./hooks/*": "./hooks/*.ts",
     "./lib/utils": "./lib/utils.ts",
     "./lib/avatar-size": "./lib/avatar-size.ts",
@@ -59,7 +60,8 @@
     "remark-math": "catalog:",
     "shiki": "^3.21.0",
     "sonner": "catalog:",
-    "tailwind-merge": "catalog:"
+    "tailwind-merge": "catalog:",
+    "unist-util-visit": "catalog:"
   },
   "peerDependencies": {
     "i18next": "catalog:",
@@ -82,7 +84,11 @@
     "@vitejs/plugin-react": "catalog:",
     "esbuild": "^0.25.12",
     "jsdom": "catalog:",
+    "micromark-extension-math": "catalog:",
+    "micromark-util-types": "^2.0.2",
+    "remark-parse": "^11.0.0",
     "typescript": "catalog:",
+    "unified": "^11.0.5",
     "vitest": "catalog:"
   }
 }

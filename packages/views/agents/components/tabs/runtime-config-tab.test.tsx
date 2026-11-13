@@ -6,12 +6,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import { RESOURCES } from "../../../test/i18n";
+import { getTestResources } from "../../../test/i18n";
 import { RuntimeConfigTab } from "./runtime-config-tab";
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={RESOURCES}>
+    <I18nProvider locale="en" resources={getTestResources()}>
       {children}
     </I18nProvider>
   );

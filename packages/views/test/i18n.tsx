@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -8,7 +8,8 @@ import {
 } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ReactElement, ReactNode } from "react";
-import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
+import { mergeResources, type LocaleResources, type SupportedLocale } from "@multica/core/i18n";
+import { BRAND_OVERRIDES } from "../locales/brand-overrides";
 
 // Load the requested locale and its English fallback synchronously so render
 // keeps Testing Library's API without importing every language into each file.
@@ -21,10 +22,19 @@ const localeCache = new Map<SupportedLocale, LocaleResources>();
 function loadLocale(locale: SupportedLocale): LocaleResources {
   let resources = localeCache.get(locale);
   if (!resources) {
-    resources = Object.fromEntries(namespaces.map((filename) => [
-      filename.slice(0, -5),
-      JSON.parse(readFileSync(join(localesDir, locale, filename), "utf8")),
-    ]));
+    const localized = Object.fromEntries(namespaces.flatMap((filename) => {
+      const path = join(localesDir, locale, filename);
+      return existsSync(path)
+        ? [[filename.slice(0, -5), JSON.parse(readFileSync(path, "utf8"))]]
+        : [];
+    }));
+    const branded = mergeResources(localized, BRAND_OVERRIDES[locale]);
+    // Match production's materialized fork-locale fallbacks exactly.
+    resources = locale === "zh-Hant"
+      ? mergeResources(loadLocale("zh-Hans"), branded)
+      : locale === "es"
+        ? mergeResources(loadLocale("en"), branded)
+        : branded;
     localeCache.set(locale, resources);
   }
   return resources;

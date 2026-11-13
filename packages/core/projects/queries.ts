@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import { engineeringProjectKeys } from "./engineering-queries";
 
 export const projectKeys = {
   all: (wsId: string) => ["projects", wsId] as const,
@@ -7,6 +8,8 @@ export const projectKeys = {
   detail: (wsId: string, id: string) =>
     [...projectKeys.all(wsId), "detail", id] as const,
   members: (wsId: string, id: string) => [...projectKeys.detail(wsId, id), "members"] as const,
+  // Engineering keys are fork-owned; see engineering-queries.ts.
+  ...engineeringProjectKeys,
 };
 
 export function projectListOptions(wsId: string) {
@@ -30,3 +33,5 @@ export function projectMembersOptions(wsId: string, id: string) {
     queryFn: () => api.getProjectMembers(id),
   });
 }
+
+export * from "./engineering-queries";

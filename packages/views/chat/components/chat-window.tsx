@@ -71,6 +71,7 @@ import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatInputFocus } from "./use-chat-input-focus";
 import { useChatOpenReveal } from "./use-chat-open-reveal";
+import { ChatReplyActionsProvider } from "../chat-reply-actions-context";
 import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { ChatQueue } from "./chat-queue";
@@ -90,8 +91,12 @@ import {
   seedAcceptedPendingTask,
 } from "./use-chat-controller";
 import { useChatProjectContextSupport } from "./use-chat-project-context-support";
+import { useTipSideChatLookup } from "@multica/core/you-should-know";
+import { TipSideChatBanner } from "../../you-should-know/side-chat/tip-side-chat-banner";
+import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatSession, PendingChatTasksResponse, ChatSendAttempt } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
 import { useLocale, useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
@@ -122,7 +127,7 @@ export function ChatWindow() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
-  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery(
+  const { data: sessions = [], isSuccess: sessionsLoaded, dataUpdatedAt: sessionsDataUpdatedAt } = useQuery(
     chatSessionsOptions(wsId),
   );
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
@@ -167,6 +172,9 @@ export function ChatWindow() {
     id: number;
     content: string;
   } | null>(null);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const nextConversationStarterRequestIdRef = useRef(0);
   const sendConversationStarter = useCallback(
     (prompt: string) => {
@@ -187,9 +195,23 @@ export function ChatWindow() {
   // pre-existing rows with status='archived' may still exist) are excluded
   // from the history dropdown. If one is still the active session, ChatInput
   // is disabled and the server still rejects POST /messages for it.
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
+  // Labrastro (OL-362): a YSK side chat is left out of the list until its
+  // first message; the lookup resolves it from its own record.
+  const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
+  // A session created by a lost first send is reused by the retry. Keep its
+  // accepted record available until the sessions list next answers, so the
+  // dangling-id healer cannot clear the session activated by that retry.
+  const createdSessionRef = useRef<{
+    session: ChatSession;
+    sessionsDataUpdatedAt: number;
+  } | null>(null);
+  const created = createdSessionRef.current;
+  const currentSession =
+    sideChat.currentSession ??
+    (created?.session.id === activeSessionId &&
+    created.sessionsDataUpdatedAt === sessionsDataUpdatedAt
+      ? created.session
+      : null);
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -229,11 +251,14 @@ export function ChatWindow() {
 
   // Resolve selected agent: open session's agent → stored preference → first
   // available. New chats have no session, so they fall through to the picker.
+  // A side chat is only ever with the tip's agent: no fallback (OL-288 §5).
   const activeAgent =
     sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
+    (sideChat.pinsAgent
+      ? null
+      : availableAgents.find((a) => a.id === selectedAgentId) ??
+        availableAgents[0] ??
+        null);
   const activeAgentRuntimeBound =
     !!activeAgent && isAgentRuntimeBound(activeAgent);
 
@@ -304,10 +329,11 @@ export function ChatWindow() {
   useEffect(() => {
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
+    if (currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId (floating)", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
+  }, [activeSessionId, sessionsLoaded, sessions, currentSession, sideChat.pending, qc, setActiveSession]);
 
   // WS events are handled globally in useRealtimeSync — the query cache
   // stays current even when this window is closed. See packages/core/realtime/.
@@ -364,7 +390,7 @@ export function ChatWindow() {
       if (
         activeSessionId &&
         (!sessionsLoaded ||
-          sessions.some((s) => s.id === activeSessionId) ||
+          currentSession?.id === activeSessionId ||
           hasInFlightPendingTask(qc, activeSessionId))
       ) {
         return activeSessionId;
@@ -379,6 +405,7 @@ export function ChatWindow() {
             title: titleSeed.slice(0, 50),
             project_id: activeProjectId,
           });
+          createdSessionRef.current = { session, sessionsDataUpdatedAt };
           return session.id;
         } finally {
           sessionPromiseRef.current = null;
@@ -392,8 +419,9 @@ export function ChatWindow() {
       activeAgent,
       activeProjectId,
       createSession,
-      sessions,
+      currentSession,
       sessionsLoaded,
+      sessionsDataUpdatedAt,
       qc,
     ],
   );
@@ -409,6 +437,7 @@ export function ChatWindow() {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      attempt: ChatSendAttempt = { clientMessageId: createSafeId() },
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -459,7 +488,9 @@ export function ChatWindow() {
 
       let sessionId: string | null = null;
       try {
-        sessionId = await ensureSession(finalContent);
+        // A failed response after lazy creation must retry in the SAME session.
+        sessionId = attempt.sessionId ?? await ensureSession(finalContent);
+        if (sessionId) attempt.sessionId = sessionId;
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
         const reason = dispatchReasonCode(err);
@@ -487,7 +518,7 @@ export function ChatWindow() {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, attempt.clientMessageId);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         const reason = dispatchReasonCode(err);
@@ -549,9 +580,22 @@ export function ChatWindow() {
       const live = useChatStore.getState();
       const stillOnSourceSession = isStillOnComposeTarget(live.activeSessionId, activeSessionId);
       if (stillOnSourceSession) {
+        const created = createdSessionRef.current;
+        if (created?.session.id === sessionId) {
+          createdSessionRef.current = { ...created, sessionsDataUpdatedAt };
+        }
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold. Only when
+      // still on the source session, though: the nonce is window-level state
+      // while the list mounts per session, so a mid-send navigation must not
+      // let THIS send yank the session the reader is looking at now (OL-272
+      // review).
+      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -590,6 +634,7 @@ export function ChatWindow() {
       pendingTask,
       pendingTaskId,
       ensureSession,
+      sessionsDataUpdatedAt,
       cancelChatTask,
       qc,
       setActiveSession,
@@ -800,7 +845,7 @@ export function ChatWindow() {
       }
     : { width: renderWidth, height: renderHeight };
 
-  const contextItems = useChatContextItems(wsId);
+  const contextItems = useChatContextItems(wsId, isOpen);
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
   const showRestore = isExpanded || isAtMax;
@@ -812,7 +857,7 @@ export function ChatWindow() {
   const sizeTransition =
     isDragging || reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.3, bounce: 0 };
 
-  return (
+  const windowPanel = (
     <motion.div
       data-mc="chat-window"
       ref={windowRef}
@@ -853,6 +898,7 @@ export function ChatWindow() {
           </Tooltip>
           <SessionDropdown
             sessions={sessions}
+            currentSession={currentSession}
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
             agents={agents}
@@ -901,6 +947,13 @@ export function ChatWindow() {
         </div>
       </div>
 
+      {currentSession?.tip_source && (
+        <TipSideChatBanner
+          source={currentSession.tip_source}
+          agentName={sessionAgent?.name ?? null}
+        />
+      )}
+
       {/* Messages / skeleton / empty state */}
       <AnimatePresence initial={false}>
         {isOpen && (
@@ -909,6 +962,7 @@ export function ChatWindow() {
             pendingTask={pendingTask}
             pendingTaskLoading={pendingTaskLoading}
             availability={availability}
+            resumeFollowNonce={resumeFollowNonce}
             onQuickAction={(action) => handleSend(action.prompt)}
             quickActionsDisabled={
               !!pendingTaskId ||
@@ -921,12 +975,25 @@ export function ChatWindow() {
             quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
             onReady={markContentReady}
           >
-            <EmptyState
-              agent={activeAgent}
-              hasSessions={sessions.length > 0}
-              onPickPrompt={sendConversationStarter}
-              customizeHref={customizeConversationStartersHref}
-            />
+            {currentSession?.tip_source ? (
+              <TipSideChatStarters
+                onPick={(prompt) => handleSend(prompt)}
+                disabled={
+                  isSessionArchived ||
+                  isAgentArchived ||
+                  isAgentAccessRevoked ||
+                  !activeAgentRuntimeBound ||
+                  noAgent
+                }
+              />
+            ) : (
+              <EmptyState
+                agent={activeAgent}
+                hasSessions={sessions.length > 0}
+                onPickPrompt={sendConversationStarter}
+                customizeHref={customizeConversationStartersHref}
+              />
+            )}
           </ChatWindowMessages>
         )}
       </AnimatePresence>
@@ -1012,6 +1079,12 @@ export function ChatWindow() {
         focusRequest={focusRequest}
       />
     </motion.div>
+  );
+  // Reply actions for HTML blocks inside this conversation (OL-1301): the
+  // panel's own handleSend carries queueing/failure handling, and the
+  // composer below consumes the fill requests this context publishes.
+  return (
+    <ChatReplyActionsProvider handleSend={handleSend}>{windowPanel}</ChatReplyActionsProvider>
   );
 }
 
@@ -1176,11 +1249,14 @@ interface SessionRowAction extends RowActionItem {
  */
 function SessionDropdown({
   sessions,
+  currentSession,
   agents,
   activeSessionId,
   onSelectSession,
 }: {
   sessions: ChatSession[];
+  /** The open session, including a side chat the list does not carry yet. */
+  currentSession: ChatSession | null;
   agents: Agent[];
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
@@ -1188,7 +1264,7 @@ function SessionDropdown({
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? currentSession;
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
 

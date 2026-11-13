@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect, useMemo } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState, useEffect, useMemo } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useUploadGate, useComposerSubmit } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -15,6 +15,7 @@ import { annotationsWithPending, type AnnotationComposerSlot } from "./annotatio
 import { ReplyAnnotations } from "./reply-annotations";
 import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
+import { focusComposerOnSurfaceMouseDown } from "./composer-text-surface";
 import { commentTriggerPreviewSignature, useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useRecipientActions } from "../hooks/use-recipient-actions";
 import { SteerAttachmentNotice } from "./steer-attachment-notice";
@@ -35,17 +36,27 @@ interface CommentInputProps {
   annotationComposer?: AnnotationComposerSlot;
 }
 
+export interface CommentInputRef {
+  getMarkdown: () => string | undefined;
+  /** Explicit replacement only; ordinary draft writes keep editor sync guards. */
+  adoptContent: (content: string) => void;
+}
+
 // A top-level comment belongs to no thread, so it takes a running turn by
 // default only when that turn has no thread of its own (an assignment run).
 function steerTopLevelByDefault(task: AgentTask): boolean {
   return !task.trigger_comment_id;
 }
 
-function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotationComposer }: CommentInputProps) {
+const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotationComposer }, ref) {
   const { t } = useT("issues");
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
+  useImperativeHandle(ref, () => ({
+    getMarkdown: () => editorRef.current?.getMarkdown(),
+    adoptContent: (content) => editorRef.current?.adoptContent(content),
+  }), []);
   // Sending mid-upload would strip the pending image's blob URL out of the
   // markdown and bind no attachment id — the comment posts without the file.
   const uploadGate = useUploadGate(editorRef);
@@ -249,7 +260,9 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
       {lazy.active && (
       <div
         className={cn(
-          "flex-1 min-h-0 overflow-y-auto px-3 py-2",
+          // cursor-text covers the whole host — padding included — so the
+          // I-beam matches the static shell the user clicked to get here.
+          "flex-1 min-h-0 overflow-y-auto px-3 py-2 cursor-text",
           // Pinned to the viewport bottom the composer grows upward; cap it
           // so a long draft can't swallow the whole timeline (the editor
           // area scrolls internally instead).
@@ -258,6 +271,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
           !lazy.ready && "hidden",
         )}
         aria-busy={submitting || undefined}
+        onMouseDown={(e) => focusComposerOnSurfaceMouseDown(e, lazy.activate)}
       >
         <ContentEditor
           ref={editorRef}
@@ -311,7 +325,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
           </div>
         </div>
       )}
-      <div className="absolute bottom-1 left-2 right-28 min-w-0">
+      <div className="absolute bottom-1 left-2 right-28 min-w-0 cursor-default">
         <CommentTriggerChips
           recipients={recipients}
           blocked={triggerPreview.blocked}
@@ -320,7 +334,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
           onActionChange={setAction}
         />
       </div>
-      <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+      <div className="absolute bottom-1 right-1.5 flex items-center gap-1 cursor-default">
         <FileUploadButton
           size="sm"
           multiple
@@ -331,7 +345,7 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
             size="sm"
             variant="destructive"
             // eslint-disable-next-line no-restricted-syntax -- composer send button, the one round button
-            className="rounded-full"
+            className="rounded-full cursor-pointer"
             onClick={submit}
             disabled={!canSend || submitting || gate.uploading}
           >
@@ -363,6 +377,6 @@ function CommentInput({ issueId, onSubmit, onAccepted, onEditAnnotation, annotat
       {isDragOver && <FileDropOverlay />}
     </div>
   </>);
-}
+});
 
 export { CommentInput };

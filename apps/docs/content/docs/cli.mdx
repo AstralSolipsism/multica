@@ -14,23 +14,17 @@ The Multica CLI both connects local runtimes and manages workspaces, issues, age
 <Tab value="macOS / Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-With Homebrew installed, you can also run:
-
-```bash
-brew install multica-ai/tap/multica
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
 </Tab>
 <Tab value="Windows">
 
-Run in PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+Download the `multica-cli-<version>-windows-<arch>.zip` archive for the release
+you want from the internal release source at
+`https://multica.outlune.com/downloads/cli/v<version>/` (the version comes from
+`https://multica.outlune.com/downloads/latest.json`) and extract `multica.exe`
+onto your `PATH`.
 
 </Tab>
 </Tabs>
@@ -396,7 +390,7 @@ Migration from CSV parsing: replace `--attachment a,b` with `--attachment a --at
 | | `assign <id>` | Assign or unassign | `--to` (fuzzy name match against members, agents, and squads), `--to-id`, `--unassign`, `--no-start` |
 | | `status <id> <status>` | Change status | `--no-start`, `--duplicate-of` |
 | | `reorder <id>` | Move within a column | |
-| | `search <query>` | Search issues | `--limit`, `--include-closed`, `--project` |
+| | `search <query>` | Search issues | `--limit`, `--offset`, `--project`, `--scope`, `--include-closed` |
 | | `children <id>` | List sub-issues grouped by stage | |
 | | `pull-requests <id>` | List linked PRs | |
 | | `comment list/add/update/delete/resolve/unresolve` | Manage comments | `add`: `--content` / `--content-stdin` / `--content-file`, `--parent`, `--attachment`; `update`: `--expected-revision` (required), `--content` / `--content-stdin` / `--content-file`; `list`: `--since`, `--thread`, `--tail`, `--recent`, `--roots-only`, `--summary`, `--compact`, `--full` |
@@ -484,3 +478,15 @@ It runs entirely through your authenticated CLI and grants no access of its own 
 - [Authentication and tokens](/auth-tokens) — creating, renewing, and revoking PATs.
 - [Troubleshooting](/troubleshooting) — diagnosing command errors and runs that never start.
 - [Create and configure an agent](/agents-create) — the full semantics of every `agent create` field.
+
+## Managed evaluation inside a task
+
+An active agent task can ask the platform's decision service to score business input:
+
+```bash
+multica jev evaluate --input-file evaluation.json --output json
+```
+
+Use `--input-file -` for stdin. The JSON contains `state` (an object or string) and `questions`, a map of named questions with `type: "score"`, `instructions` and an ordered array of `criteria`. Scores run from zero to the last criterion's index. The daemon manages sources, models and credentials; the caller supplies no infrastructure configuration. The CLI and daemon must both support this command.
+
+Successful JSON includes `ok: true`, `answers`, `latency_ms` and `daemon_version`. Unavailable evaluations exit nonzero and are not passing scores. All supplied text goes to the daemon's configured decision providers.

@@ -14,23 +14,16 @@ Multica CLI는 로컬 런타임을 연결할 뿐 아니라 터미널에서 워�
 <Tab value="macOS / Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-Homebrew가 설치되어 있다면 다음 명령도 사용할 수 있습니다.
-
-```bash
-brew install multica-ai/tap/multica
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
 </Tab>
 <Tab value="Windows">
 
-PowerShell에서 실행합니다.
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+내부 릴리스 소스 `https://multica.outlune.com/downloads/cli/v<version>/`(버전은
+`https://multica.outlune.com/downloads/latest.json`에서 확인)에서 해당 릴리스의
+`multica-cli-<version>-windows-<arch>.zip` 아카이브를 받아 `multica.exe`를
+`PATH`에 놓습니다.
 
 </Tab>
 </Tabs>
@@ -365,7 +358,7 @@ CLI 설정 파일에는 사용자를 대신해 Multica에 접근할 수 있는 t
 | | `assign <id>` | 할당 또는 할당 해제 | `--to`(이름으로 멤버, 에이전트, 스쿼드 fuzzy match), `--to-id`, `--unassign`, `--no-start` |
 | | `status <id> <status>` | 상태 변경 | `--no-start`, `--duplicate-of` |
 | | `reorder <id>` | 열 안에서 이동 | |
-| | `search <query>` | 태스크 검색 | `--limit`, `--include-closed`, `--project` |
+| | `search <query>` | 태스크 검색 | `--limit`, `--offset`, `--project`, `--scope`, `--include-closed` |
 | | `children <id>` | 단계별로 묶은 하위 태스크 목록 | |
 | | `pull-requests <id>` | 연결된 PR 목록 | |
 | | `comment list/add/update/delete/resolve/unresolve` | 댓글 관리 | `add`: `--content` / `--content-stdin` / `--content-file`, `--parent`, `--attachment`. `update`: `--expected-revision`(필수), `--content` / `--content-stdin` / `--content-file`. `list`: `--since`, `--thread`, `--tail`, `--recent`, `--roots-only`, `--summary`, `--compact`, `--full` |

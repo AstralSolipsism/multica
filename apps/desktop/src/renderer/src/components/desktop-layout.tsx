@@ -24,7 +24,6 @@ import {
 } from "@multica/views/layout";
 import { SearchCommand } from "@multica/views/search";
 import { FloatingChat } from "@multica/views/chat";
-import { StarPrompt } from "@multica/views/star-prompt";
 import { WorkspaceSlugProvider, paths, useCurrentWorkspace } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
 import {
@@ -318,7 +317,6 @@ export function DesktopShell() {
                     <NavigationProgress />
                     <TabContent />
                     {slug && <FloatingChat />}
-                    {slug && <StarPrompt />}
                   </MainCanvas>
                 </div>
               </ShellRouteDataPrefetch>

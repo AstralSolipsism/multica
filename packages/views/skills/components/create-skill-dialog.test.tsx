@@ -12,12 +12,20 @@ import { skillDetailOptions } from "@multica/core/workspace/queries";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSkills from "../../locales/en/skills.json";
+import enForkUi from "../../locales/en/fork-ui.json";
+import enSkillPackages from "../../locales/en/skill-packages.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, skills: enSkills },
+  en: {
+    common: enCommon,
+    skills: enSkills,
+    "fork-ui": enForkUi,
+    "skill-packages": enSkillPackages,
+  },
 };
 
 const mockImportSkillArchive = vi.hoisted(() => vi.fn());
+const mockImportSkillParsed = vi.hoisted(() => vi.fn());
 const mockPrepareFromPicker = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
 const mockWorkspaceId = vi.hoisted(() => ({ value: "ws-1" }));
@@ -34,6 +42,7 @@ vi.mock("@multica/core/api", async () => {
       listSkills: (...args: unknown[]) => mockListSkills(...args),
       importSkillArchive: (...args: unknown[]) =>
         mockImportSkillArchive(...args),
+      importSkillParsed: (...args: unknown[]) => mockImportSkillParsed(...args),
     },
   };
 });
@@ -148,7 +157,7 @@ function renderDialog(
   };
 }
 
-describe("CreateSkillDialog local import", () => {
+describe("CreateSkillDialog imports", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockWorkspaceId.value = "ws-1";
@@ -177,6 +186,34 @@ describe("CreateSkillDialog local import", () => {
   afterEach(() => {
     setCurrentWorkspace(null, null);
     vi.unstubAllGlobals();
+  });
+
+  it("pins URL imports to the current workspace", async () => {
+    mockImportSkillParsed.mockResolvedValue({
+      id: "skill-1",
+      workspace_id: "ws-1",
+      name: "review-helper",
+      description: "Reviews code changes",
+      content: "# Review Helper",
+      config: {},
+      files: [],
+      created_by: "user-1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    const { onCreated } = renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: /Import from URL/i }));
+    fireEvent.change(screen.getByLabelText("Skill URL"), {
+      target: { value: "https://github.com/owner/repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Import$/i }));
+
+    await waitFor(() => {
+      expect(mockImportSkillParsed).toHaveBeenCalledWith("ws-1", {
+        url: "https://github.com/owner/repo",
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
   });
 
   it("waits for an explicit source choice before opening either picker", () => {

@@ -14,6 +14,7 @@ import {
   useBatchUpdateIssues,
   useCreateComment,
   useCreateCommentSubIssue,
+  useCreateIssue,
   useDeleteComment,
   useResolveComment,
   useUpdateComment,
@@ -1572,5 +1573,201 @@ describe("useUpdateIssue — star prompt moment", () => {
       makeIssue(2, { status: "done", assignee_type: "agent", assignee_id: "agent-1" }),
     );
     expect(useStarPromptStore.getState().moment).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compound dependency writes (OL-39/OL-41 endpoints, OL-44 wiring)
+// ---------------------------------------------------------------------------
+
+describe("compound dependency writes", () => {
+  const depView = {
+    blockedBy: [
+      {
+        issueId: "issue-9",
+        status: "in_progress",
+        statusCategory: "in_progress",
+        satisfied: false,
+        sourceEdges: ["edge-1"],
+        inheritedFrom: [],
+        title: "Upstream",
+        identifier: "MUL-9",
+        descendantCount: 0,
+      },
+    ],
+    inheritedBlockedBy: [],
+    blocking: [],
+    unsatisfied: [],
+    hasRestrictedBlockers: false,
+    dependencyVersion: "v2",
+  };
+
+  it("routes updates carrying dependency fields to the with-dependencies endpoint", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(issueKeys.detail(WS_ID, "issue-1"), makeIssue(1));
+    const updateIssue = vi.fn();
+    const updateIssueWithDependencies = vi.fn().mockResolvedValue({
+      ...makeIssue(1),
+      dependencies: depView,
+    });
+    setApiInstance({ updateIssue, updateIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        id: "issue-1",
+        blockedBy: ["issue-9"],
+        expectedDependencyVersion: "v1",
+      });
+    });
+
+    expect(updateIssueWithDependencies).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({
+        blockedBy: ["issue-9"],
+        expectedDependencyVersion: "v1",
+      }),
+    );
+    expect(updateIssue).not.toHaveBeenCalled();
+    // The compound response seeds the target's dependency projection.
+    expect(qc.getQueryData(issueKeys.dependencies(WS_ID, "issue-1"))).toEqual(depView);
+  });
+
+  it("keeps dependency fields out of the cached issue entity", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(issueKeys.detail(WS_ID, "issue-1"), makeIssue(1));
+    const updateIssueWithDependencies = vi.fn().mockResolvedValue({
+      ...makeIssue(1, { assignee_type: "agent", assignee_id: "agent-1" }),
+      dependencies: depView,
+    });
+    setApiInstance({ updateIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        id: "issue-1",
+        assignee_type: "agent",
+        assignee_id: "agent-1",
+        blockedBy: ["issue-9"], expectedDependencyVersion: "v1",
+      });
+    });
+
+    // The relation/control fields rode the wire but must never land on the
+    // cached Issue — they are not Issue columns.
+    expect(updateIssueWithDependencies).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({
+        assignee_type: "agent",
+        blockedBy: ["issue-9"], expectedDependencyVersion: "v1",
+      }),
+    );
+    const stored = qc.getQueryData(issueKeys.detail(WS_ID, "issue-1")) as Record<string, unknown>;
+    expect(stored).not.toHaveProperty("blockedBy");
+    expect(stored).not.toHaveProperty("expectedDependencyVersion");
+    expect(stored).not.toHaveProperty("dependencyOverride");
+    expect(stored.assignee_id).toBe("agent-1");
+  });
+
+  it("invalidates sibling dependency projections after a compound write", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(issueKeys.detail(WS_ID, "issue-1"), makeIssue(1));
+    qc.setQueryData(issueKeys.dependencies(WS_ID, "issue-2"), depView);
+    const updateIssueWithDependencies = vi.fn().mockResolvedValue({
+      ...makeIssue(1),
+      dependencies: depView,
+    });
+    setApiInstance({ updateIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "issue-1", blockedBy: [] });
+    });
+
+    // Another issue's inherited/unsatisfied sets may have moved with this
+    // write — the whole workspace prefix refreshes, not just the target.
+    expect(
+      qc.getQueryState(issueKeys.dependencies(WS_ID, "issue-2"))?.isInvalidated,
+    ).toBe(true);
+    const graphKey = JSON.stringify(issueKeys.graphAll(WS_ID));
+    expect(invalidate.mock.calls.filter(([filters]) => JSON.stringify(filters?.queryKey) === graphKey)).toHaveLength(1);
+  });
+
+  it("keeps plain field updates on the legacy endpoint", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(issueKeys.detail(WS_ID, "issue-1"), makeIssue(1));
+    const updateIssue = vi.fn().mockResolvedValue(makeIssue(1, { status: "done" }));
+    const updateIssueWithDependencies = vi.fn();
+    setApiInstance({ updateIssue, updateIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: "issue-1", status: "done" });
+    });
+
+    expect(updateIssue).toHaveBeenCalledWith("issue-1", { status: "done" });
+    expect(updateIssueWithDependencies).not.toHaveBeenCalled();
+  });
+
+  it("rolls the optimistic patch back when the compound write is refused", async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const original = makeIssue(1);
+    qc.setQueryData(issueKeys.detail(WS_ID, "issue-1"), original);
+    const updateIssueWithDependencies = vi
+      .fn()
+      .mockRejectedValue(new Error("dependency_version_conflict"));
+    setApiInstance({ updateIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useUpdateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({
+          id: "issue-1",
+          assignee_type: "agent",
+          assignee_id: "agent-1",
+          blockedBy: ["issue-9"], expectedDependencyVersion: "v1",
+        }),
+      ).rejects.toThrow("dependency_version_conflict");
+    });
+
+    // No half-assigned state: the optimistic assignee write is rolled back.
+    const stored = qc.getQueryData<Issue>(issueKeys.detail(WS_ID, "issue-1"))!;
+    expect(stored.assignee_type).toBeNull();
+    expect(stored.assignee_id).toBeNull();
+  });
+
+  it("routes creates with blockedBy through the compound endpoint", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const created = { ...makeIssue(3), dependencies: depView };
+    const createIssue = vi.fn();
+    const createIssueWithDependencies = vi.fn().mockResolvedValue(created);
+    setApiInstance({ createIssue, createIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useCreateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ title: "New issue", blockedBy: ["issue-9"] });
+    });
+
+    expect(createIssueWithDependencies).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "New issue", blockedBy: ["issue-9"] }),
+    );
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it("keeps creates without dependency fields on the legacy endpoint", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const createIssue = vi.fn().mockResolvedValue(makeIssue(3));
+    const createIssueWithDependencies = vi.fn();
+    setApiInstance({ createIssue, createIssueWithDependencies } as unknown as ApiClient);
+    const { result } = renderHook(() => useCreateIssue(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ title: "Plain issue" });
+    });
+
+    expect(createIssue).toHaveBeenCalledWith({ title: "Plain issue" });
+    expect(createIssueWithDependencies).not.toHaveBeenCalled();
   });
 });

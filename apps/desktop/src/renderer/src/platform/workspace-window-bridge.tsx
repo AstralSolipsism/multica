@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
-import { workspaceSlugForPath } from "@multica/core/paths";
+import { workspaceSlugForPath, paths } from "@multica/core/paths";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { useT } from "@multica/views/i18n";
 import { useTabStore } from "@/stores/tab-store";
+import { clearCommentHighlightMemento } from "./navigation";
 import {
   nextWorkspaceForNewWindow,
   openWorkspaceInNewWindow,
@@ -38,7 +39,15 @@ export function WorkspaceWindowBridge() {
         const slug = workspaceSlugForPath(path);
         if (!slug) return;
         useTabStore.getState().switchWorkspace(slug, path);
-        if (navigate) useTabStore.getState().navigateActiveSession(path);
+        // Ordinary handoffs restore the reused tab's view. Explicit deep links
+        // and issue-window chat handoffs must carry their requested URL.
+        const opensChatSession = path.startsWith(
+          `${paths.workspace(slug).chat()}?session=`,
+        );
+        if (navigate || opensChatSession) {
+          useTabStore.getState().navigateActiveSession(path);
+          clearCommentHighlightMemento(path);
+        }
       }),
     [],
   );

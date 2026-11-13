@@ -27,6 +27,7 @@ vi.mock("./workspace-presence-prefetch", () => ({
 vi.mock("../modals/registry", () => ({
   ModalRegistry: () => <div data-testid="modals" />,
 }));
+vi.mock("../onboarding", () => ({ SourceBackfillModal: () => null }));
 // The provider's own behavior is covered in you-should-know/; here it only
 // marks where the layout mounts it.
 vi.mock("../you-should-know", () => ({

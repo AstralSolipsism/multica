@@ -1,0 +1,251 @@
+{
+  "settings": {
+    "notifications": {
+      "system": {
+        "label": "Показывать системные уведомления, когда Labrastro работает в фоне"
+      }
+    },
+    "github": {
+      "disconnect_confirm_description": "Labrastro перестанет получать вебхуки для этой установки. Существующие зеркала PR и связи сохранятся; вы можете переподключиться в любой момент, чтобы возобновить обновления."
+    },
+    "lark": {
+      "install_error_bot_info": "Авторизация прошла, но Labrastro не удалось получить данные бота. Попробуйте снова."
+    },
+    "slack": {
+      "byo_docs_link": "Пошаговая инструкция: подключение агента Labrastro к Slack"
+    },
+    "dingtalk": {
+      "group_forget_description": "Это удаляет группу из инвентаря Labrastro, не удаляя беседы или сообщения. Она снова появится, как только кто-то упомянет бота через @.",
+      "byo_docs_link": "Пошаговая инструкция: подключение агента Labrastro к DingTalk"
+    },
+    "wecom": {
+      "byo_bot_name_placeholder": "например, Labrastro Bot",
+      "byo_conflict_other_workspace": "Этот бот уже подключён к другому рабочему пространству Labrastro. Отключите его там, прежде чем подключать здесь."
+    },
+    "telegram": {
+      "disconnect_confirm_description": "Бот перестанет получать сообщения Telegram для этого рабочего пространства. История чата в Labrastro сохраняется; вы можете переподключиться позже с того же агента.",
+      "connect_docs_link": "Пошаговая инструкция: подключение агента Labrastro к Telegram"
+    },
+    "mcp_sources": {
+      "apps": "Аккаунты команды или личные аккаунты, подключённые через Labrastro и добавленные каждому агенту."
+    },
+    "connected_apps": {
+      "catalog_description": "Избранные приложения содержат проверенные правила по умолчанию. Режим «Все приложения» включает всё, что можно подключить через Composio; действия, которые Labrastro не может классифицировать, всегда требуют подтверждения. Свой список разрешает только выбранные приложения."
+    }
+  },
+  "common": {
+    "lark_bind": {
+      "needs_auth_description": "Войдите в Labrastro, чтобы завершить привязку. Токен в ссылке привязывает ваш аккаунт Lark к этому пользователю Labrastro, поэтому сначала нужно войти в систему.",
+      "error_already_bound": "Этот аккаунт Lark уже привязан к другому пользователю Labrastro. Перенос аккаунта возможен только через явную отвязку.",
+      "error_not_member": "Вы вошли в аккаунт Labrastro, который не является участником этого рабочего пространства."
+    },
+    "slack_bind": {
+      "needs_auth_description": "Войдите в Labrastro, чтобы завершить привязку. Токен в ссылке привязывает ваш аккаунт Slack к этому пользователю Labrastro, поэтому сначала нужно войти в систему.",
+      "error_already_bound": "Этот аккаунт Slack уже привязан к другому пользователю Labrastro. Перенос аккаунта возможен только через явную отвязку.",
+      "error_not_member": "Вы вошли в аккаунт Labrastro, который не является участником этого рабочего пространства."
+    },
+    "dingtalk_bind": {
+      "needs_auth_description": "Войдите в Labrastro, чтобы завершить привязку. Токен в ссылке привязывает ваш аккаунт DingTalk к этому пользователю Labrastro, поэтому сначала нужно войти в систему.",
+      "error_already_bound": "Этот аккаунт DingTalk уже привязан к другому пользователю Labrastro. Перенос аккаунта возможен только через явную отвязку.",
+      "error_not_member": "Вы вошли в аккаунт Labrastro, который не является участником этого рабочего пространства."
+    },
+    "telegram_bind": {
+      "needs_auth_description": "Войдите в Labrastro, чтобы завершить привязку. Токен в ссылке привязывает ваш аккаунт Telegram к этому пользователю Labrastro, поэтому сначала нужно войти в систему.",
+      "error_already_bound": "Этот аккаунт Telegram уже привязан к другому пользователю Labrastro. Перенос аккаунта возможен только через явную отвязку.",
+      "error_not_member": "Вы вошли в аккаунт Labrastro, который не является участником этого рабочего пространства."
+    },
+    "wecom_bind": {
+      "page_title": "Привязка аккаунта Labrastro",
+      "needs_auth_description": "Войдите в Labrastro, чтобы завершить привязку. Токен в ссылке привязывает вашу учётную запись WeCom к этому пользователю Labrastro, поэтому сначала нужно войти в систему.",
+      "error_already_bound": "Эта учётная запись WeCom уже привязана к другому пользователю Labrastro. Перенос аккаунта возможен только через явную отвязку.",
+      "error_not_member": "Вы вошли в аккаунт Labrastro, который не является участником этого рабочего пространства."
+    },
+    "not_found": {
+      "back_to_multica": "Вернуться в Labrastro"
+    }
+  },
+  "layout": {
+    "star_prompt": {
+      "body": "Если Labrastro оказалась полезной, поставьте звезду на GitHub — так её найдут другие команды.",
+      "star_label": "Поставить звезду Labrastro на GitHub"
+    }
+  },
+  "runtimes": {
+    "page": {
+      "add_menu": {
+        "cloud_runtime_hint": "Создать облачный узел на серверах Labrastro"
+      }
+    },
+    "mika_setup": {
+      "title": "Среда выполнения готова. Начните с Mizuki.",
+      "description": "Позвольте Mizuki организовывать работу и координировать агентов.",
+      "action": "Начать с Mizuki",
+      "failed": "Не удалось запустить Mizuki",
+      "dialog_title": "Где должен работать Mizuki?"
+    },
+    "connect": {
+      "step1_label": "Установите Labrastro CLI"
+    },
+    "update": {
+      "managed_by_desktop_title": "CLI-бинарник управляется Labrastro Desktop — обновите Desktop, чтобы обновить CLI.",
+      "local_build_title": "Эта среда выполнения сообщает о нерелизной версии, поэтому Labrastro не может определить, доступно ли обновление. Обновите её на самой машине."
+    },
+    "profiles": {
+      "empty_description": "Выберите семейство базового протокола, затем укажите Labrastro команду для запуска."
+    },
+    "qoder": {
+      "description": "Подключите Qoder Cloud Agents. Labrastro управляет выполнением и хранит учётные данные в зашифрованном виде. Администраторы рабочего пространства могут изменять эту конфигурацию.",
+      "add_agent_description": "Создайте агента Labrastro, связанного с существующим агентом в Qoder Cloud Agents. Он будет использовать окружение и учётные данные, настроенные для Qoder Cloud.",
+      "data_disclosure_title": "Что Labrastro отправляет в Qoder",
+      "connect_description": "Labrastro выполняет задачи в изолированных окружениях Qoder."
+    },
+    "intro": {
+      "art": {
+        "connected": "{{name}} подключён к Labrastro"
+      },
+      "slides": {
+        "cloud": {
+          "description": "Не хотите обслуживать компьютеры? Создайте облачный узел на серверах Labrastro."
+        }
+      }
+    }
+  },
+  "workspace": {
+    "new_page": {
+      "title": "Добро пожаловать в Labrastro"
+    },
+    "creation_disabled": {
+      "description": "Этот экземпляр Labrastro не позволяет создавать новые рабочие пространства. Попросите администратора пригласить вас в существующее рабочее пространство."
+    }
+  },
+  "autopilots": {
+    "add_trigger_dialog": {
+      "webhook_help": "Labrastro сгенерирует URL вебхука после сохранения. Отправьте на него любой JSON через POST, чтобы запустить этот автопилот."
+    },
+    "dialog": {
+      "webhook_help_create": "Labrastro сгенерирует URL вебхука после создания этого автопилота. Отправьте на этот URL любой JSON через POST, чтобы запустить его."
+    },
+    "wakeups": {
+      "intro": {
+        "slides": {
+          "event": {
+            "description": "Агенту не нужно работать вхолостую в ожидании. Когда условие выполнено, Labrastro его пробудит."
+          }
+        }
+      }
+    },
+    "intro": {
+      "description": "Задайте расписание или вебхук. При каждом срабатывании Labrastro создаст задачу для агента или запустит его напрямую. Выберите шаблон и настройте его."
+    }
+  },
+  "issues": {
+    "desktop": {
+      "link_other_instance": "Приложение подключено к другому экземпляру Labrastro."
+    },
+    "pickers": {
+      "custom_property": {
+        "unknown_value_hint": "Это значение задано более новой версией Labrastro и не может быть изменено здесь — обновите приложение или очистите значение"
+      }
+    },
+    "pr_automation": {
+      "link_not_found": "Labrastro ещё не получила этот PR. Проверьте, что его репозиторий подключён."
+    }
+  },
+  "billing": {
+    "return_page": {
+      "go_to_app": "Перейти в Labrastro"
+    }
+  },
+  "auth": {
+    "signin": {
+      "title": "Вход в Labrastro"
+    },
+    "cli": {
+      "description": "Разрешить CLI доступ к Labrastro от имени {{email}}"
+    },
+    "web": {
+      "desktop_handoff": {
+        "opening_title": "Открывается Labrastro",
+        "opening_description": "Не открылось автоматически? Нажмите «Открыть Labrastro Desktop».",
+        "open_button": "Открыть Labrastro Desktop"
+      }
+    },
+    "desktop": {
+      "recovery": {
+        "title": "Переподключение к Labrastro"
+      }
+    }
+  },
+  "chat": {
+    "fab": {
+      "running": "Labrastro работает...",
+      "default": "Спросить Labrastro"
+    },
+    "empty_state": {
+      "returning_title_default": "Добро пожаловать в Labrastro"
+    }
+  },
+  "onboarding": {
+    "step_nav": {
+      "wordmark": "Labrastro",
+      "runtime": {
+        "label": "Знакомьтесь, Mizuki"
+      }
+    },
+    "welcome": {
+      "wordmark": "Добро пожаловать в Labrastro"
+    },
+    "source_backfill": {
+      "lede": "Помогите нам понять, как вы узнали о Labrastro."
+    },
+    "questions": {
+      "source": {
+        "question": "Как вы узнали о Labrastro?"
+      },
+      "use_case": {
+        "question": "Для чего вы хотите использовать Labrastro?"
+      }
+    },
+    "cli_install": {
+      "step1_label": "Установите CLI Labrastro"
+    },
+    "step_workspace": {
+      "creation_disabled_lede": "Этот экземпляр Labrastro не позволяет создавать новые рабочие пространства. Как только администратор пригласит вас в рабочее пространство, примите приглашение и обновите страницу, чтобы продолжить."
+    },
+    "step_runtime": {
+      "found_headline": "Где должна работать Mizuki?",
+      "hint_pick": "Выберите среду выполнения агента выше, чтобы начать с Mizuki.",
+      "continue": "Начать с Mizuki"
+    },
+    "step_platform": {
+      "lede": "Подключите компьютер, чтобы Mizuki могла приступить к работе."
+    },
+    "errors": {
+      "mika_setup_failed": "Не удалось запустить рабочее пространство Mizuki"
+    },
+    "mika_intro": {
+      "headline": "Знакомьтесь, Mizuki — ваш первый агент-напарник.",
+      "name": "Mizuki",
+      "blurb": "Скажите Mizuki, что нужно сделать. Это станет задачей с подходящим агентом на ней."
+    }
+  },
+  "projects": {
+    "resources": {
+      "mode_worktree_needs_server_upgrade": "Ваш сервер Labrastro слишком старый для параллельного выполнения запусков — он будет незаметно выполнять их в этой же папке. Обновите сервер, а затем включите эту функцию."
+    }
+  },
+  "agents": {
+    "tab_body": {
+      "instructions": {
+        "system_layer_label": "Поддерживается Labrastro",
+        "system_layer_hint": "Обновляется с каждым релизом Labrastro. Вы не можете это редактировать, а ваши заметки ниже никогда не перезаписываются.",
+        "workspace_notes_intro": "Добавьте ниже контекст и предпочтения вашей команды. Они применяются поверх инструкций, которые Labrastro поддерживает для этого агента. Поддерживается Markdown."
+      },
+      "mcp_config": {
+        "managed_title": "Управляется Labrastro",
+        "managed_empty": "Пока нет MCP-серверов, управляемых Labrastro.",
+        "runtime_overridden_badge": "Переопределён Labrastro"
+      }
+    }
+  }
+}

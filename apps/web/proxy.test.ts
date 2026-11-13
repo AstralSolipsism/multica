@@ -7,8 +7,10 @@ import { config, proxy } from "./proxy";
 describe("proxy retired marketing boundary", () => {
   it.each([
     "/about", "/homepage", "/changelog", "/contact-sales", "/usecases",
-    "/usecases/auto-data-analysis", "/usecases/auto-data-analysis.en",
-    "/%61bout", "/ABOUT",
+    "/blog", "/careers", "/customers", "/press", "/pricing", "/product",
+    "/security", "/solutions", "/usecases/auto-data-analysis",
+    "/usecases/auto-data-analysis.en", "/%61bout", "/ABOUT", "/zh", "/ja", "/ko",
+    "/zh/about", "/ja/pricing", "/ko/product/desktop",
   ])("returns a noindex 404 before %s can render, with or without a session", (path) => {
     expect(unstable_doesMiddlewareMatch({ config, url: path })).toBe(true);
     const sessions: Record<string, string>[] = [{}, { multica_logged_in: "1", last_workspace_slug: "acme" }];
@@ -139,7 +141,7 @@ describe("proxy legacy workspace route redirects", () => {
   });
 
   it.each(["multica.ai", "www.multica.ai"])(
-    "does not redirect public marketing root on %s",
+    "leaves root on %s to the internal page redirect",
     (host) => {
       expect(redirectLocation("/", sessionCookies, host)).toBeNull();
     },
@@ -308,19 +310,19 @@ describe("proxy root and locale handling", () => {
   });
 });
 
-describe("proxy marketing-site language URLs", () => {
+describe("proxy retained internal language URLs", () => {
   const localeOf = (res: Response) => res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`);
   const withAcceptLanguage = (path: string, acceptLanguage: string) =>
     new NextRequest(`https://www.multica.ai${path}`, { headers: { "accept-language": acceptLanguage } });
 
   it.each([
-    ["/zh", "/", "zh-Hans"],
     ["/zh/download", "/download", "zh-Hans"],
-    ["/ko/usecases/auto-data-analysis", "/usecases/auto-data-analysis", "ko"],
-    ["/ja/about?ref=x", "/about?ref=x", "ja"],
+    ["/ko/privacy", "/privacy", "ko"],
+    ["/ja/licensing?ref=x", "/licensing?ref=x", "ja"],
   ])("serves %s as %s in its language", (path, page, locale) => {
     const res = proxy(makeRequest(path, { "multica-locale": "en" }));
 
+    expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("x-middleware-rewrite")).toBe(`https://app.multica.test${page}`);
     expect(localeOf(res)).toBe(locale);
@@ -335,18 +337,25 @@ describe("proxy marketing-site language URLs", () => {
   });
 
   it("keeps locales without a translated site on the English URL", () => {
-    const res = proxy(makeRequest("/about", { "multica-locale": "fr" }));
+    const res = proxy(makeRequest("/privacy", { "multica-locale": "fr" }));
 
     expect(res.headers.get("location")).toBeNull();
     expect(localeOf(res)).toBe("fr");
   });
 
   it.each([
-    ["/", { "multica-locale": "zh-Hans" }, "/zh"],
     ["/download?started=mac", { "multica-locale": "ko" }, "/ko/download?started=mac"],
-    ["/about", { "multica-locale": "zh-Hant" }, "/zh/about"],
+    ["/privacy", { "multica-locale": "zh-Hant" }, "/zh/privacy"],
   ])("sends %s to the language the visitor picked", (path, cookies, location) => {
     expect(redirectLocation(path, cookies, "www.multica.ai")).toBe(`https://www.multica.ai${location}`);
+  });
+
+  it("leaves the root on the internal login redirect instead of a marketing locale", () => {
+    const res = proxy(makeRequest("/", { "multica-locale": "zh-Hans" }, "www.multica.ai"));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("x-middleware-rewrite")).toBeNull();
   });
 
   it("leaves app routes under a language-like slug to the app", () => {
@@ -359,12 +368,17 @@ describe("proxy marketing-site language URLs", () => {
   it("keeps the bare root of an existing workspace with a language slug", () => {
     const res = proxy(makeRequest("/ko", { multica_logged_in: "1", last_workspace_slug: "ko" }));
 
+    expect(res.status).toBe(200);
     expect(res.headers.get("x-middleware-rewrite")).toBeNull();
   });
 });
 
 
 describe("upload route bypasses the buffering proxy", () => {
+  it("does not register the retired public uploads rewrite", () => {
+    expect(config.matcher).not.toContain("/uploads/:path*");
+  });
+
   it.each(["/api/upload-file", "/api/upload-file/"])(
     "excludes %s from Proxy matching",
     (url) => expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false),

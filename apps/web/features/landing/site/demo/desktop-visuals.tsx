@@ -41,7 +41,7 @@ import {
 } from "./mock-kit";
 
 /*
- * Mockups for the Multica Desktop page: the app as a native window, with the
+ * Mockups for the Labrastro Desktop page: the app as a native window, with the
  * window controls and history over the rail, the workspace's tabs as pills in
  * the title bar, and the daemon it runs on the computer it is open on. Each
  * workspace opens in a window of its own. Strings follow the product's own
@@ -303,7 +303,7 @@ function MachineCard({ className }: { className: string }) {
           <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-success ring-2 ring-background" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-label font-semibold">Mia’s MacBook Pro</span>
+          <span className="block text-label font-semibold">Mizuki’s MacBook Pro</span>
           <span className="block text-caption text-muted-foreground">Local · this machine</span>
         </span>
         <span className="rounded-md bg-muted px-1.5 py-0.5 text-micro font-medium text-muted-foreground">Desktop</span>

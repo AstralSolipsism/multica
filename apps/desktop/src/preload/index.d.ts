@@ -15,8 +15,13 @@ import type {
   DaemonStatus,
   DaemonPrefs,
   LocalRuntimeProbe,
+  WorkspacesRootInfo,
 } from "../shared/daemon-types";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
+import type {
+  ChatSessionHandoff,
+  ChatSessionHandoffResult,
+} from "../shared/chat-session-handoff";
 import type {
   WorkspacePathOptions,
   WorkspacePathRequest,
@@ -126,6 +131,16 @@ interface DesktopAPI {
   openIssueWindow: (
     request: IssueWindowRequest,
   ) => Promise<{ ok: true } | { ok: false; reason: "invalid_request" }>;
+  /** From a dedicated issue window: bring the main window forward on a chat
+   *  session. Main accepts it only from issue windows of the current account. */
+  openChatSessionInMainWindow: (
+    handoff: ChatSessionHandoff,
+  ) => Promise<ChatSessionHandoffResult>;
+  /** Main window: listen for chat sessions handed over by issue windows.
+   *  Returns an unsubscribe function. */
+  onOpenChatSession: (
+    callback: (handoff: ChatSessionHandoff) => void,
+  ) => () => void;
   /** Tell main which workspace this main window shows (null while none). */
   reportWindowWorkspace: (workspaceSlug: string | null) => void;
   /** Workspaces shown by the other main windows (synchronous). */
@@ -170,6 +185,14 @@ interface DaemonAPI {
   isCliInstalled: () => Promise<boolean>;
   getPrefs: () => Promise<DaemonPrefs>;
   setPrefs: (prefs: Partial<DaemonPrefs>) => Promise<DaemonPrefs>;
+  /** Effective workspaces root of the Desktop-owned daemon profile, or null
+   *  until the profile is resolved (target API URL not reported yet). */
+  getWorkspacesRoot: () => Promise<WorkspacesRootInfo | null>;
+  /** Persist `workspaces_root` via the bundled CLI; "" restores the default.
+   *  Takes effect on the next daemon start — restart separately. */
+  setWorkspacesRoot: (
+    path: string,
+  ) => Promise<{ success: boolean; error?: string }>;
   autoStart: () => Promise<void>;
   retryInstall: () => Promise<void>;
   startLogStream: () => void;

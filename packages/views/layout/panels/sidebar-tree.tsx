@@ -29,6 +29,7 @@ import { useStatusLabel } from "../../issues/utils/status-label";
 import { DeferredPopup } from "../../common/deferred-popup";
 import { useT, useTimeAgo } from "../../i18n";
 import { PANEL_ROW_CLASS, panelRowAnchor, panelRowStateClass } from "../panel-nav";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 
 /** A working agent's issue title: dimmer at rest and a wider highlight than
  *  the default shimmer, so the sweep reads at sidebar size. */
@@ -235,12 +236,13 @@ export function SidebarIssueList({
 }) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
-  const statusCatalog = useIssueStatuses(wsId);
-  const statusLabel = useStatusLabel(wsId);
+  const open = useSpacePanelOpen();
+  const statusCatalog = useIssueStatuses(wsId, open);
+  const statusLabel = useStatusLabel(wsId, open);
   const [limit, setLimit] = useState(SIDEBAR_FIRST_PAGE);
   const query = useQuery({
     ...sidebarIssuesOptions(wsId, source, params ?? EMPTY_PARAMS, limit),
-    enabled: !!params,
+    enabled: open && !!params,
     placeholderData: keepPreviousData,
   });
   const listed = params ? (query.data?.issues ?? EMPTY_ISSUES) : EMPTY_ISSUES;
@@ -353,7 +355,7 @@ export function SidebarIssueList({
 type IssueAgentState = { running: boolean; agentIds: string[] } | null;
 
 /** The agents running on an issue, or queued for it when none is running yet. */
-export function useIssueAgentState(wsId: string, issueId: string): IssueAgentState {
+export function useIssueAgentState(wsId: string, issueId: string, enabled = true): IssueAgentState {
   const select = useCallback(
     (snapshot: AgentTask[]): IssueAgentState => {
       const { running, queued } = selectIssueTasks(snapshot, issueId);
@@ -363,7 +365,11 @@ export function useIssueAgentState(wsId: string, issueId: string): IssueAgentSta
     },
     [issueId],
   );
-  const { data = null } = useQuery({ ...agentTaskSnapshotOptions(wsId), select });
+  const { data = null } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    select,
+    enabled: enabled && !!issueId,
+  });
   return data;
 }
 
@@ -517,8 +523,9 @@ const SidebarIssueRow = memo(function SidebarIssueRow({
   statusLabel: string;
   onKeyDown: (event: React.KeyboardEvent) => void;
 }) {
-  const agents = useIssueAgentState(wsId, issue.id);
-  const unread = useIssueUnread(wsId, issue.id);
+  const open = useSpacePanelOpen();
+  const agents = useIssueAgentState(wsId, issue.id, open);
+  const unread = useIssueUnread(wsId, issue.id, open);
   const rowRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (!locating) return;

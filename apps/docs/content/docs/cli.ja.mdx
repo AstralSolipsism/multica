@@ -14,23 +14,16 @@ Multica CLI は、ローカルのランタイムを接続する役割と、タ�
 <Tab value="macOS / Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
-```
-
-Homebrew がインストールされていれば、次のコマンドでもインストールできます:
-
-```bash
-brew install multica-ai/tap/multica
+curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
 ```
 
 </Tab>
 <Tab value="Windows">
 
-PowerShell で実行します:
-
-```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
-```
+内部リリースソース `https://multica.outlune.com/downloads/cli/v<version>/`
+（バージョンは `https://multica.outlune.com/downloads/latest.json` を参照）から
+該当リリースの `multica-cli-<version>-windows-<arch>.zip` をダウンロードし、
+`multica.exe` を `PATH` の通った場所に展開してください。
 
 </Tab>
 </Tabs>
@@ -365,7 +358,7 @@ CLI の設定ファイルには、あなたとして Multica にアクセスで�
 | | `assign <id>` | 割り当てまたは割り当て解除 | `--to`（メンバー、エージェント、スクワッドを名前であいまいマッチ）、`--to-id`、`--unassign`、`--no-start` |
 | | `status <id> <status>` | ステータスを変更 | `--no-start`、`--duplicate-of` |
 | | `reorder <id>` | カラム内で移動 | |
-| | `search <query>` | タスクを検索 | `--limit`、`--include-closed`、`--project` |
+| | `search <query>` | タスクを検索 | `--limit`、`--offset`、`--project`、`--scope`、`--include-closed` |
 | | `children <id>` | サブタスクをステージごとに一覧 | |
 | | `pull-requests <id>` | 関連付けられた PR を一覧 | |
 | | `comment list/add/update/delete/resolve/unresolve` | コメントを管理 | `add`: `--content` / `--content-stdin` / `--content-file`、`--parent`、`--attachment`；`update`: `--expected-revision`（必須）、`--content` / `--content-stdin` / `--content-file`；`list`: `--since`、`--thread`、`--tail`、`--recent`、`--roots-only`、`--summary`、`--compact`、`--full` |

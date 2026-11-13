@@ -6,7 +6,7 @@ import { useSearchStore } from "@multica/core/command-bar";
 import { configStore } from "@multica/core/config";
 import { Command, Globe, Terminal } from "@multica/ui/icons";
 import type { User } from "@multica/core/types";
-import { RESOURCES } from "../test/i18n";
+import { getTestResources } from "../test/i18n";
 import { HelpLauncher } from "../layout/help-launcher";
 import type { WhatsNewRelease } from "./releases";
 
@@ -103,7 +103,7 @@ vi.mock("../i18n", () => ({
       });
       sel(recorder);
       const leaf = path.pop()!;
-      let node = RESOURCES.en[namespace] as unknown as Record<string, unknown>;
+      let node = getTestResources().en![namespace]! as unknown as Record<string, unknown>;
       for (const key of path) node = node[key] as Record<string, unknown>;
       const plural = vars?.count === undefined ? leaf : `${leaf}_${vars.count === 1 ? "one" : "other"}`;
       const template = String(node[leaf] ?? node[plural]);

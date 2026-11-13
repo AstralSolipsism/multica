@@ -28,7 +28,7 @@ import {
 } from "./mock-kit";
 
 /*
- * Mockups for the Multica Cloud page: agents that run on cloud agent services
+ * Mockups for the Labrastro Cloud page: agents that run on cloud agent services
  * connected as runtimes. The hero is the Runtimes page open at multica.ai,
  * with an issue a cloud agent is working floating over it. Strings follow the
  * product's own copy; data is fictional.
@@ -59,7 +59,7 @@ function BrowserWindow({ path, className, children }: { path: string; className:
 type Machine = { icon: IconComponent; name: string; detail: string; tools: string[]; agents: number; workload: string; tag?: string };
 
 const MACHINES: Machine[] = [
-  { icon: Laptop, name: "Mia’s MacBook Pro", detail: "macOS", tools: ["Claude Code", "Cursor"], agents: 2, workload: "1 running · 0 queued", tag: "This device" },
+  { icon: Laptop, name: "Mizuki’s MacBook Pro", detail: "macOS", tools: ["Claude Code", "Cursor"], agents: 2, workload: "1 running · 0 queued", tag: "This device" },
   { icon: Server, name: "build-01", detail: "Linux · Leo Park", tools: ["Claude Code", "Codex"], agents: 3, workload: "All idle" },
 ];
 
@@ -342,7 +342,7 @@ export function ConnectVisual() {
 export function LinkAgentVisual() {
   return (
     <div className={cn(FLOATING, "w-[288px] p-4")}>
-      <DialogHeader title="Add agent" subtitle="Link a Multica agent to an existing QCA Agent." />
+      <DialogHeader title="Add agent" subtitle="Link a Labrastro agent to an existing QCA Agent." />
       <Field label="Agent name">
         <Input>
           <Avatar actor={BACKEND} size={16} />

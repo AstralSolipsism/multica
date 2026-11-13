@@ -193,7 +193,7 @@ function buildWorkflows({ app, hero }: DemoDict, due: (month: number, day: numbe
     cards: columns(SHIP_CARDS, ship.cards, app.ago),
     focus: { id: "ACM-142", priority: "high", due: due(6, 12), ...ship.focus },
     timeline: [
-      { kind: "created", by: "Mia Chen", icon: <UserRound className="size-3.5" />, handoff: LEAD },
+      { kind: "created", by: "Mizuki Chen", icon: <UserRound className="size-3.5" />, handoff: LEAD },
       {
         kind: "comment",
         actor: LEAD,
