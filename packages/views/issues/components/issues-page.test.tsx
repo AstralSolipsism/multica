@@ -519,6 +519,7 @@ vi.mock("@dnd-kit/modifiers", () => ({
   restrictToHorizontalAxis: vi.fn(),
   restrictToVerticalAxis: vi.fn(),
   restrictToWindowEdges: vi.fn(),
+  restrictToParentElement: vi.fn(),
 }));
 
 vi.mock("@dnd-kit/sortable", () => ({

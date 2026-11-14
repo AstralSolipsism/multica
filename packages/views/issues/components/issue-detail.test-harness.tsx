@@ -360,6 +360,10 @@ vi.mock("@multica/core/issues/stores", async () => ({
   ...(await vi.importActual<
     typeof import("@multica/core/issues/stores/sub-issues-collapse-store")
   >("@multica/core/issues/stores/sub-issues-collapse-store")),
+  // Real store, in-memory: the sidebar reads its section order and visibility.
+  ...(await vi.importActual<
+    typeof import("@multica/core/issues/stores/issue-sidebar-sections-store")
+  >("@multica/core/issues/stores/issue-sidebar-sections-store")),
   useRecentIssuesStore: Object.assign(
     (selector?: any) => {
       const state = { byWorkspace: {}, recordVisit: mockRecordVisit, pruneWorkspaces: vi.fn() };
@@ -444,19 +448,44 @@ vi.mock("@multica/core/issues/stores", async () => ({
 
 // Mock react-virtuoso: jsdom has no real layout, so the real Virtuoso would
 // compute a 0-height viewport and render nothing. The mock renders every item
-// inline so id="comment-..." nodes are available to the exact-anchor effect.
+// inline so id="comment-..." nodes are available to the exact-anchor effect,
+// reports a measured list height through totalListHeightChanged (the landing
+// effect gates on it), and completes scrollIntoView/scrollToIndex jumps
+// synchronously — mirroring the richer mock in issue-detail.test.tsx, which
+// the platform deep-link suites share through this harness.
+interface MockVirtuosoHandle {
+  scrollIntoView: (location: { offset?: number; done?: () => void }) => void;
+  scrollToIndex: (location: { offset?: number; done?: () => void }) => void;
+}
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
-    { data, itemContent, computeItemKey }: {
+    { data, itemContent, computeItemKey, customScrollParent, totalListHeightChanged }: {
       data: unknown[];
       itemContent: (i: number, item: unknown) => unknown;
       computeItemKey: (i: number, item: unknown) => React.Key;
+      customScrollParent?: HTMLElement;
+      totalListHeightChanged?: (height: number) => void;
     },
-    ref: any,
+    ref: React.ForwardedRef<MockVirtuosoHandle>,
   ) {
+    const mounted = useRef(false);
+    useEffect(() => {
+      if (mounted.current) return;
+      mounted.current = true;
+      totalListHeightChanged?.(1000);
+    }, [totalListHeightChanged]);
+    const jump = (location: { offset?: number; done?: () => void }) => {
+      if (location.offset !== undefined && customScrollParent) {
+        customScrollParent.scrollTop = location.offset;
+      }
+      location.done?.();
+    };
     useImperativeHandle(ref, () => ({
-      scrollIntoView: vi.fn(),
-      scrollToIndex: scrollToIndexSpy,
+      scrollIntoView: (location) => jump(location),
+      scrollToIndex: (location) => {
+        scrollToIndexSpy(location);
+        jump(location);
+      },
     }));
     return (
       <div data-testid="virtuoso-mock">

@@ -56,7 +56,12 @@ const BASE_CLASS =
  *  the issue's own query. Undefined until it loads, or when it is gone. */
 export function useChipIssue(issueId: string) {
   const wsId = useWorkspaceId();
-  const { data: issues = [] } = useQuery(issueListOptions(wsId));
+  // Cache read only (fork): never fetch the full list from a chip; the detail
+  // fallback below loads the issue when the list cache does not have it.
+  const { data: issues = [] } = useQuery({
+    ...issueListOptions(wsId),
+    enabled: false,
+  });
   const listIssue = issues.find((i) => i.id === issueId);
 
   // Fallback fetch for issues outside the list's first page (the first

@@ -201,8 +201,8 @@ describe("CreateSkillDialog imports", () => {
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     });
-    const { onCreated } = renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Import from URL/i }));
+    const { onCreated } = renderDialog(vi.fn(), vi.fn(), "url");
+
     fireEvent.change(screen.getByLabelText("Skill URL"), {
       target: { value: "https://github.com/owner/repo" },
     });

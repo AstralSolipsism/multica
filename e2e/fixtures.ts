@@ -240,6 +240,22 @@ export class TestApiClient {
   }
 
   /**
+   * Generic authenticated POST against the current workspace, for specs whose
+   * domain has no dedicated fixture method yet (e.g. autopilots). Throws with
+   * the response body on a non-OK status so a seed failure names its cause.
+   */
+  async postJson<T = any>(path: string, body: unknown): Promise<T> {
+    const res = await this.authedFetch(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`POST ${path} failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  /**
    * Insert a large, deterministic issue fixture in one transaction.
    *
    * Browser E2E coverage for cursor-backed Table views needs 1,000+ rows,
@@ -348,6 +364,13 @@ export class TestApiClient {
 
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
+  }
+
+  async deleteIssueView(id: string) {
+    const res = await this.authedFetch(`/api/issue-views/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      throw new Error(`delete issue view failed: ${res.status} ${await res.text()}`);
+    }
   }
 
   async createComment(issueId: string, content: string, parentId?: string) {

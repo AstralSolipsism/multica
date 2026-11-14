@@ -27,6 +27,7 @@ import {
   Trash2,
   Unlink,
   UserMinus,
+  Workflow,
   Zap,
 } from "@multica/ui/icons";
 import { useIssueDeletion } from "@multica/core/issues/use-issue-deletion";
@@ -103,6 +104,7 @@ export function IssueActionsMenuItems({
   onShowInSidebar,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
+  const { t: tDependencies } = useT("dependencies");
   const locale = useLocale();
   const formatDate = (date: string) => formatDateOnly(date, { month: "short", day: "numeric" }, locale);
   const wsId = useWorkspaceId();
@@ -138,6 +140,7 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openMarkDuplicate,
+    openEditDependencies,
     openDeleteConfirm,
   } = actions;
 
@@ -487,6 +490,10 @@ export function IssueActionsMenuItems({
                   {t(($) => $.actions.mark_duplicate)}
                 </P.Item>
               )}
+              <P.Item onClick={openEditDependencies}>
+                <Workflow className="h-3.5 w-3.5" />
+                {tDependencies(($) => $.actions.edit_dependencies)}
+              </P.Item>
             </P.SubContent>
           </P.Sub>
 

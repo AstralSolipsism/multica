@@ -16,6 +16,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { AppLink, useBackOrReplace } from "../../navigation";
 import { IssueDuplicateBanner, IssueDuplicatesSection, isDuplicateIssue } from "./issue-duplicates";
+import { IssueDependenciesSection } from "./issue-dependencies-section";
 import {
   AlertTriangle,
   Archive,
@@ -111,13 +112,16 @@ import { EMPTY_COMMENT_RUNS, buildCommentRunView, orderTimelineWithRuns, type Co
 import { issueTasksOptions } from "@multica/core/issues/queries";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
-import { CommentInput } from "./comment-input";
+import { CommentInput, type CommentInputRef } from "./comment-input";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { CurrentIssueRenderContextProvider } from "../current-issue-render-context";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
+import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
+import { YouShouldKnowArchiveSection } from "../../you-should-know/archive/archive-section";
+import { commentTimeLookup } from "../../you-should-know/archive/comment-time-lookup";
 import { IssueWakeupHeaderChip } from "./issue-wakeup-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
@@ -166,6 +170,7 @@ import {
   selectExpandedResolved,
   useCommentCollapseStore,
   useCommentComposerStore,
+  useCommentDraftStore,
   useRecentIssuesStore,
   useResolvedExpandStore,
   useSubIssuesCollapseStore,
@@ -195,6 +200,7 @@ import {
   useRestoredViewState,
   useViewStateWriter,
 } from "../../platform";
+import { issueHighlightMementoKey } from "../comment-deep-link";
 import { cn } from "@multica/ui/lib/utils";
 import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { CollectionPageState } from "../../layout/collection-page";
@@ -224,16 +230,10 @@ import {
   useRightSidebarShortcut,
 } from "../../layout/animated-right-sidebar";
 
-/**
- * Memento entry recording that the comment-highlight deep link for this
- * issue already landed on the current route (value: the consumed comment
- * id). Lets a remount that merely restores the view (tab switch back) skip
- * the jump-and-highlight, while a fresh selection — which clears the entry
- * (see InboxPage.handleSelect) — runs it again.
- */
-export function issueHighlightMementoKey(issueId: string): string {
-  return `highlight:${issueId}`;
-}
+export {
+  issueHighlightMementoKey,
+  ISSUE_HIGHLIGHT_MEMENTO_PREFIX,
+} from "../comment-deep-link";
 
 // Shared by the subscribe button and the unsubscribe menu trigger so the two
 // stay one control visually — they occupy the same slot and only differ in
@@ -1025,7 +1025,7 @@ function SubIssueRow({
           <span className="text-caption text-muted-foreground tabular-nums shrink-0">
             {child.identifier}
           </span>
-          <IssueAgentActivityIndicator issueId={child.id} />
+          <IssueAgentActivityIndicator issueId={child.id} tipAnchor />
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span
               className={cn(
@@ -1475,7 +1475,7 @@ export function IssueDetailSkeleton({
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = ISSUE_DETAIL_LAYOUT_ID, highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightAppRequestId, leadingAction, variant = "page", trailingActions, readsInbox = true, skipInitialRefetch = false, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
-  const { t: tCommon } = useT("common");
+  const { t: tForkUi } = useT("fork-ui");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
@@ -1509,7 +1509,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const { data: allIssues = [] } = useQuery({
+    ...issueListOptions(wsId),
+    enabled: false,
+  });
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // Activity and issue visuals share the catalog's custom geometry and color;
@@ -1581,6 +1584,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Bottom comment composer. Measured when scrolling a freshly posted comment
   // into view so its bottom lands above the composer rather than behind it.
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const commentInputRef = useRef<CommentInputRef>(null);
   // Pull-based scroll restoration (MUL-4741): the platform serves the offset
   // captured when this route was last left. The ref-attach assignment covers
   // the flat render modes (real heights at commit); the virtualized browsing
@@ -1814,6 +1818,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     submitComment, submitReply,
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id, activeDeliverableJump?.commentId);
+
+  const submitHtmlComment = useCallback(async (content: string) => {
+    const commentId = await submitComment(content);
+    if (!commentId) return false;
+    scrollToTimelineBottom(commentId);
+    return true;
+  }, [submitComment, scrollToTimelineBottom]);
+
+  const fillHtmlCommentDraft = useCallback((content: string) => {
+    commentInputRef.current?.adoptContent(content);
+    useCommentDraftStore.getState().setDraft(`new:${id}`, content);
+    composerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // A cold composer activates and focuses through its draft subscription.
+    composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+  }, [id]);
   const newComments = useNewCommentsWhileAway(timeline, {
     ready: !timelineLoading,
     away: jumpToLatest.visible,
@@ -2272,6 +2291,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(align);
     return () => cancelAnimationFrame(rafId);
   }, [pendingReplyJump, scrollContainerEl, flashJumpTarget]);
+  const archiveCommentTime = useMemo(() => commentTimeLookup(timeline), [timeline]);
   const jumpToMinimapTarget = useCallback(
     (commentId: string) =>
       replyToRoot.has(commentId) ? jumpToReply(commentId) : jumpToThread(commentId),
@@ -2372,7 +2392,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const {
     reactions: issueReactions,
     toggleReaction: handleToggleIssueReaction,
-  } = useIssueReactions(id, user?.id);
+  } = useIssueReactions(wsId, id, user?.id);
 
   const {
     subscribers, isSubscribed, subscriptionReason, subscriptionKnown,
@@ -2423,6 +2443,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // this answer, so a defaulted or stale empty array must not count as "no
   // sub-issues" (MUL-5714).
   const childCountKnown = childIssuesLoaded && !childIssuesFetching;
+  const subIssuesTipAnchorScope = useMemo(
+    () => tipAnchorScopeFromIssues(childIssues),
+    [childIssues],
+  );
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
@@ -2957,16 +2981,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     overrideTop: restoredScrollTop,
   });
 
-  // Keep the identity value stable across unrelated issue-detail updates so
-  // context consumers only re-render when the owning issue changes identity.
+  // Keep the context stable across unrelated issue-detail updates.
   const resolvedIssueId = issue?.id;
   const resolvedIssueIdentifier = issue?.identifier;
   const currentIssueRenderContext = useMemo(
     () =>
       resolvedIssueId && resolvedIssueIdentifier
-        ? { id: resolvedIssueId, identifier: resolvedIssueIdentifier }
+        ? {
+            id: resolvedIssueId,
+            identifier: resolvedIssueIdentifier,
+            submitComment: submitHtmlComment,
+            fillCommentDraft: fillHtmlCommentDraft,
+          }
         : null,
-    [resolvedIssueId, resolvedIssueIdentifier],
+    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft],
   );
 
   if (issueReadState.loadFailed) {
@@ -3257,6 +3285,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <WakeupsSection
         issueId={issue.id}
         closed={["done", "closed"].includes(resolveStatusCategory(issue.status))}
+        visible={sidebarOpen}
         defaultAgentId={issue.assignee_type === "agent" ? (issue.assignee_id ?? undefined) : undefined}
       />
     ),
@@ -3364,14 +3393,25 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   };
 
   const sidebarContent = (
-    <IssueSidebarSections
-      sections={sidebarSections}
-      available={ISSUE_SIDEBAR_SECTIONS.filter(
-        (section) => (section !== "pull_requests" || githubSettings.prSidebar) && (section !== "plugins" || pluginsEnabled),
-      )}
-      revealed={revealedWakeupsFor === id ? REVEALED_WAKEUPS : undefined}
-      onRevealEnd={() => setRevealedWakeupsFor(null)}
-    />
+    <>
+      <IssueSidebarSections
+        sections={sidebarSections}
+        available={ISSUE_SIDEBAR_SECTIONS.filter(
+          (section) => (section !== "pull_requests" || githubSettings.prSidebar) && (section !== "plugins" || pluginsEnabled),
+        )}
+        revealed={revealedWakeupsFor === id ? REVEALED_WAKEUPS : undefined}
+        onRevealEnd={() => setRevealedWakeupsFor(null)}
+      />
+      {/* Fork sections outside the reorderable registry (upstream owns that
+          list): explicit dependencies and the YSK archive stay fixed. */}
+      <IssueDependenciesSection issue={issue} />
+      <YouShouldKnowArchiveSection
+        issueId={id}
+        identifier={issue.identifier}
+        onJumpToComment={jumpToMinimapTarget}
+        commentTime={archiveCommentTime}
+      />
+    </>
   );
 
   // Shared row renderer for both timeline render modes (flat / virtualized).
@@ -3573,7 +3613,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               rowMenu={pageMenu.rowMenu}
               trigger={
                 <IconButton
-                  label={tCommon(($) => $.more_actions)}
+                  label={tForkUi(($) => $.issues.detail.more_actions)}
                   tooltipSide="bottom"
                   className="text-muted-foreground"
                 >
@@ -3922,7 +3962,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   </div>
                   {/* issue.id, not the route param — the endpoint takes a
                       UUID and the route may carry a human-readable id. */}
-                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
+                  <SubIssuesAgentWorkingChip
+                    parentIssueId={issue.id}
+                    tipAnchorScope={subIssuesTipAnchorScope}
+                  />
                   <input
                     type="checkbox"
                     checked={allChildrenSelected}
@@ -4249,6 +4292,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             )}
             <CommentInput
               key={id}
+              ref={commentInputRef}
               issueId={id}
               onSubmit={submitComment}
               annotationComposer={descriptionAnnotations.composer}
