@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Labrastro platform actions the runtime brief does not fully cover: issue and PR contracts, sub-issues, prerequisites and complete graphs, charts and files in comments, mentions, agents, squads, autopilots, projects, runtimes, local environments, skill import. Not for the product code you are working on."
+description: "Use for Labrastro platform actions beyond the runtime brief: issue and PR contracts, sub-issues, prerequisites and complete graphs, charts and files in comments, mentions, agents, squads, autopilots, projects, runtimes, local environments, skill import. Not for the product code you are working on."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
