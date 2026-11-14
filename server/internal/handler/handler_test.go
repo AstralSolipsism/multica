@@ -51,7 +51,7 @@ func TestMain(m *testing.M) {
 
 	poolConfig, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		fmt.Printf("Invalid test database configuration: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Failed to configure handler test database from DATABASE_URL")
 		os.Exit(1)
 	}
 	// Lock-order tests hold an admission, two writers and a later reader while

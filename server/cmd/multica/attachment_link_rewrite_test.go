@@ -72,6 +72,18 @@ func TestRewriteAttachmentLinks(t *testing.T) {
 			want:  "![](" + rewriteURL + ")",
 		},
 		{
+			name:  "entity-encoded name",
+			paths: []string{"a&b.png"},
+			body:  "![](a&amp;b.png)",
+			want:  "![](" + rewriteURL + ")",
+		},
+		{
+			name:  "numeric-entity-encoded name",
+			paths: []string{"a&b.png"},
+			body:  "![](a&#38;b.png)",
+			want:  "![](" + rewriteURL + ")",
+		},
+		{
 			name:  "every occurrence",
 			paths: []string{"a.png"},
 			body:  "![1](./a.png) and ![2](a.png)",

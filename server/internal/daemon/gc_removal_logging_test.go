@@ -25,7 +25,7 @@ func TestGC_RemovalLogsLifecycleReason(t *testing.T) {
 	}{
 		{name: "terminal issue batch", kind: execenv.GCKindIssue, status: "done", reason: "terminal issue retention expired", retention: 24 * time.Hour},
 		{name: "terminal issue single", kind: execenv.GCKindIssue, singleIssue: true, status: "done", reason: "terminal issue retention expired", retention: 24 * time.Hour},
-		{name: "completed open issue", kind: execenv.GCKindIssue, status: "in_review", reason: "completed task retention expired", retention: DefaultGCCompletedTaskTTL},
+		{name: "completed open issue", kind: execenv.GCKindIssue, status: "in_review", reason: "completed task retention expired", retention: 14 * 24 * time.Hour},
 		{name: "orphan without metadata", missingMeta: true, reason: "no meta", retention: 72 * time.Hour},
 		{name: "inaccessible issue", kind: execenv.GCKindIssue, notFound: true, reason: "issue not accessible", retention: 72 * time.Hour},
 		{name: "archived chat", kind: execenv.GCKindChat, status: "archived", reason: "archived chat retention expired", retention: 24 * time.Hour},
@@ -45,7 +45,7 @@ func TestGC_RemovalLogsLifecycleReason(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": tc.status, "updated_at": time.Now().Add(-48 * time.Hour)})
 				}
 			}))
-			d.cfg.GCTTL, d.cfg.GCOrphanTTL, d.cfg.GCCompletedTaskTTL = 24*time.Hour, 72*time.Hour, DefaultGCCompletedTaskTTL
+			d.cfg.GCTTL, d.cfg.GCOrphanTTL, d.cfg.GCCompletedTaskTTL = 24*time.Hour, 72*time.Hour, 14*24*time.Hour
 			var logs bytes.Buffer
 			d.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 			meta := &execenv.GCMeta{Kind: tc.kind, WorkspaceID: "ws", IssueID: "issue", ChatSessionID: "chat", AutopilotRunID: "run", TaskID: "task",

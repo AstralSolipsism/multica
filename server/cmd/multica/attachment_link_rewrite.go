@@ -93,8 +93,11 @@ func (m *attachmentLinkMatcher) match(target string) (int, bool) {
 		return -1, false
 	}
 	candidates := []string{raw}
-	if unescaped := string(util.UnescapePunctuations([]byte(raw))); unescaped != raw {
-		candidates = append(candidates, unescaped)
+	unescaped := util.UnescapePunctuations([]byte(raw))
+	unescaped = util.ResolveNumericReferences(unescaped)
+	unescaped = util.ResolveEntityNames(unescaped)
+	if string(unescaped) != raw {
+		candidates = append(candidates, string(unescaped))
 	}
 	for _, c := range append([]string(nil), candidates...) {
 		if decoded, err := url.PathUnescape(c); err == nil && decoded != c {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,10 @@ type cancellationUploadStorage struct {
 }
 
 func (s *cancellationUploadStorage) Upload(context.Context, string, []byte, string, string) (string, error) {
+	return "", s.fail()
+}
+
+func (s *cancellationUploadStorage) UploadStream(context.Context, string, io.Reader, int64, string, string) (string, error) {
 	return "", s.fail()
 }
 

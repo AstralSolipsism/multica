@@ -102,7 +102,7 @@ func TestGC_LocalCodexHomePreservesJunctionTargets(t *testing.T) {
 	for _, name := range []string{"live store", "expired store", "store inside task root", "junctioned workspaces root"} {
 		t.Run(name, func(t *testing.T) {
 			d := newGCTestDaemon(t, chatGCMux("chat", "active"))
-			d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+			d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 			if name == "junctioned workspaces root" {
 				d.cfg.WorkspacesRoot, _ = junctionedWorkspacesRoot(t)
 			}

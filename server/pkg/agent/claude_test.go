@@ -90,10 +90,10 @@ func TestClaudeExecuteThinking(t *testing.T) {
 				{"type":"text","text":"The fixture matches."}
 			]`,
 			want: []Message{
-				{Type: MessageText, Content: "Checking the fixture."},
-				{Type: MessageThinking, Content: "Compare the fixture with the expected value."},
-				{Type: MessageToolUse, CallID: "tool_read", Tool: "Read", Input: map[string]any{"file_path": "fixture.txt"}},
-				{Type: MessageText, Content: "The fixture matches."},
+				{Type: MessageText, Content: "Checking the fixture.", ModelRequestID: "msg_thinking"},
+				{Type: MessageThinking, Content: "Compare the fixture with the expected value.", ModelRequestID: "msg_thinking"},
+				{Type: MessageToolUse, CallID: "tool_read", Tool: "Read", Input: map[string]any{"file_path": "fixture.txt"}, ModelRequestID: "msg_thinking"},
+				{Type: MessageText, Content: "The fixture matches.", ModelRequestID: "msg_thinking"},
 			},
 		},
 		{
@@ -103,7 +103,7 @@ func TestClaudeExecuteThinking(t *testing.T) {
 				{"type":"thinking","signature":"fixture-signature"},
 				{"type":"text","text":"The fixture matches."}
 			]`,
-			want: []Message{{Type: MessageText, Content: "The fixture matches."}},
+			want: []Message{{Type: MessageText, Content: "The fixture matches.", ModelRequestID: "msg_thinking"}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

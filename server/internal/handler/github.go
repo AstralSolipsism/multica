@@ -471,7 +471,8 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 		url.PathEscape(slug),
 		url.QueryEscape(state),
 	)
-	writeJSON(w, http.StatusOK, GitHubConnectResponse{URL: installURL, Configured: true, ConnectionID: strings.Split(state, ".")[len(strings.Split(state, "."))-2]})
+	parts := strings.Split(state, ".")
+	writeJSON(w, http.StatusOK, GitHubConnectResponse{URL: installURL, Configured: true, ConnectionID: parts[len(parts)-2]})
 }
 
 // GitHubSetupCallback (GET /api/github/setup) handles the redirect GitHub

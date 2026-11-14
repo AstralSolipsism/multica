@@ -20,7 +20,7 @@ func TestGC_LocalCodexHomeRetentionAndResume(t *testing.T) {
 	d := newGCTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"issues":[{"id":"issue","found":true,"status":"done","updated_at":"2026-01-01T00:00:00Z"}]}`))
 	}))
-	d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+	d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 	params := execenv.PrepareParams{
 		WorkspacesRoot: d.cfg.WorkspacesRoot, WorkspaceID: "ws", TaskID: "task-first",
 		Provider: "codex", LocalWorkDir: t.TempDir(),
@@ -72,10 +72,10 @@ func TestGC_LocalCodexHomeRetentionAndResume(t *testing.T) {
 }
 
 func TestGC_LocalCodexHomeRetentionGuards(t *testing.T) {
-	for _, name := range []string{"expired", "recent", "disabled", "no completion", "active", "unowned", "linked home", "local sessions", "archived sessions", "sessions inside root"} {
+	for _, name := range []string{"expired", "recent", "default", "disabled", "no completion", "active", "unowned", "linked home", "local sessions", "archived sessions", "sessions inside root"} {
 		t.Run(name, func(t *testing.T) {
 			d := newGCTestDaemon(t, chatGCMux("chat", "active"))
-			d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+			d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 			// Home retention is independent of the shorter artifact TTL.
 			d.cfg.GCArtifactTTL = 0
 			meta := execenv.GCMeta{Kind: execenv.GCKindChat, ChatSessionID: "chat", WorkspaceID: "ws",
@@ -88,6 +88,9 @@ func TestGC_LocalCodexHomeRetentionGuards(t *testing.T) {
 			}
 			if name == "disabled" {
 				d.cfg.GCCompletedTaskTTL = 0
+			}
+			if name == "default" {
+				d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
 			}
 			taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "local-task", &meta)
 			writeFile(t, filepath.Join(taskDir, "codex-home", "state_5.sqlite"), 32)
@@ -164,7 +167,7 @@ func TestGC_LocalCodexHomeRechecksActivity(t *testing.T) {
 	for _, name := range []string{"active after decision", "completed again", "cancelled"} {
 		t.Run(name, func(t *testing.T) {
 			d := newGCTestDaemon(t, chatGCMux("chat", "active"))
-			d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+			d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 			meta := execenv.GCMeta{Kind: execenv.GCKindChat, ChatSessionID: "chat", WorkspaceID: "ws",
 				LocalDirectory: true, CompletedAt: time.Now().Add(-15 * 24 * time.Hour)}
 			taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "local-task", &meta)
@@ -215,7 +218,7 @@ func TestGC_LocalCodexHomeAfterSessionStoreRemoval(t *testing.T) {
 	for _, sessionDir := range []string{"sessions", "archived_sessions"} {
 		t.Run(sessionDir, func(t *testing.T) {
 			d := newGCTestDaemon(t, chatGCMux("chat", "active"))
-			d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+			d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 			d.cfg.GCArtifactTTL = 0
 			taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "local-task", &execenv.GCMeta{
 				Kind: execenv.GCKindChat, ChatSessionID: "chat", WorkspaceID: "ws",
@@ -244,7 +247,7 @@ func TestGC_LocalCodexHomeAfterSessionStoreRemoval(t *testing.T) {
 func TestGC_LocalCodexHomeKeepsUnresolvableSessionLink(t *testing.T) {
 	t.Parallel()
 	d := newGCTestDaemon(t, chatGCMux("chat", "active"))
-	d.cfg.GCCompletedTaskTTL = DefaultGCCompletedTaskTTL
+	d.cfg.GCCompletedTaskTTL = 14 * 24 * time.Hour
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws", "local-task", &execenv.GCMeta{
 		Kind: execenv.GCKindChat, ChatSessionID: "chat", WorkspaceID: "ws",
 		LocalDirectory: true, CompletedAt: time.Now().Add(-15 * 24 * time.Hour),
