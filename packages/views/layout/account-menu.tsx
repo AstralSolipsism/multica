@@ -1,10 +1,6 @@
 "use client";
 
 import {
-  ArrowUpRight,
-  BookOpen,
-  Download,
-  History,
   Keyboard,
   Globe,
   LogOut,
@@ -39,14 +35,10 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { cn } from "@multica/ui/lib/utils";
 import { useLogout } from "../auth";
-import { docsLocalePrefix } from "../common/docs-locale";
 import { useLanguageSwitch } from "../common/use-language-switch";
 import { useT } from "../i18n";
-import { AppLink } from "../navigation";
-import { isDesktopShell } from "../platform/local-directory";
 import { ThemeSwatch, useAppliedMode, useColorThemes, useThemeLabel } from "../settings/components/theme-swatch";
-import { DISCORD_URL, DiscordIcon } from "./discord";
-import { CHANGELOG_URL, DOCS_URL, DOWNLOAD_URL } from "./help-links";
+import { AppLink } from "../navigation";
 import { RAIL_ICON_BUTTON_CLASS } from "./rail-styles";
 
 const THEMES = [
@@ -68,19 +60,10 @@ function SubmenuLabel({ label, value }: { label: string; value?: React.ReactNode
   );
 }
 
-function ExternalItem({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
-  return (
-    <DropdownMenuItem render={<a href={href} target="_blank" rel="noopener noreferrer" />}>
-      {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <ArrowUpRight className="size-3 text-faint-foreground" />
-    </DropdownMenuItem>
-  );
-}
 
 /** The signed-in user's menu at the foot of the rail. */
 export function AccountMenu() {
-  const { t, i18n } = useT("layout");
+  const { t } = useT("layout");
   const user = useAuthStore((s) => s.user);
   const p = useWorkspacePaths();
   const logout = useLogout();
@@ -200,23 +183,6 @@ export function AccountMenu() {
             <Keyboard />
             {t(($) => $.account.shortcuts)}
           </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <ExternalItem
-            href={`${DOCS_URL}${docsLocalePrefix(i18n.language)}`}
-            icon={<BookOpen />}
-            label={t(($) => $.help.docs)}
-          />
-          <ExternalItem href={CHANGELOG_URL} icon={<History />} label={t(($) => $.help.changelog)} />
-          <ExternalItem href={DISCORD_URL} icon={<DiscordIcon />} label={t(($) => $.help.discord)} />
-          {!isDesktopShell() && (
-            <ExternalItem
-              href={DOWNLOAD_URL}
-              icon={<Download />}
-              label={t(($) => $.help.download_desktop)}
-            />
-          )}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>

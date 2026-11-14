@@ -27,6 +27,7 @@ import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { Issue, ListIssuesResponse, Project } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { ProjectEngineeringMenuItems } from "../../projects/components/project-engineering-menu-item";
 import {
   PANEL_ROW_CLASS,
   PanelCount,
@@ -36,6 +37,7 @@ import {
   isPathWithin,
   panelRowStateClass,
 } from "../panel-nav";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ProjectMenu } from "../../projects/components/project-row-actions";
 import { shouldOpenRowMenu, useRowMenu } from "../../common/point-menu";
@@ -146,10 +148,12 @@ export function ProjectsSection({
 }: ProjectsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
+  const open = useSpacePanelOpen();
   const collapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
+  const prefsEnabled = open && !collapsed;
   const setCollapsed = useSidebarTreeStore((s) => s.setProjectsCollapsed);
-  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId);
-  const updatePrefs = useUpdateSidebarProjectPrefs(wsId);
+  const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId, prefsEnabled);
+  const updatePrefs = useUpdateSidebarProjectPrefs(wsId, prefsEnabled);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
 
@@ -178,7 +182,11 @@ export function ProjectsSection({
       onCollapsedChange={setCollapsed}
       action={
         <>
-          <ProjectsSectionSettings wsId={wsId} className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100" />
+          <ProjectsSectionSettings
+            wsId={wsId}
+            enabled={prefsEnabled}
+            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          />
           <IconButton
             label={t(($) => $.panels.work.new_project)}
             size="icon-xs"
@@ -276,7 +284,8 @@ function ProjectTreeItem({
   const linkRef = useRef<HTMLAnchorElement>(null);
   const source = projectSidebarSource(project.id);
   const [expanded, setExpanded] = useExpanded(source);
-  const statusCatalog = useIssueStatuses(wsId);
+  const open = useSpacePanelOpen();
+  const statusCatalog = useIssueStatuses(wsId, open);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
   const params = catalogDependency.unresolved
     ? undefined
@@ -352,6 +361,7 @@ function ProjectTreeItem({
                 {t(($) => $.panels.work.new_issue_here)}
               </DropdownMenuItem>
             }
+            trailing={<ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={rowMenu.menu.open} />}
           />
         </CollectionRowContext.Provider>
       )}

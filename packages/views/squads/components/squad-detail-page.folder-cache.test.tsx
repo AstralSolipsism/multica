@@ -24,6 +24,23 @@ vi.mock("../../layout/breadcrumb-header", () => ({ BreadcrumbHeader: ({ leaf, ac
 vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
 vi.mock("../../common/avatar-upload-control", () => ({ AvatarUploadControl: ({ onUploaded }: { onUploaded: (url: string) => void }) => <button onClick={() => onUploaded("emoji:🚀")}>Upload avatar</button> }));
 vi.mock("../../editor/content-editor", () => ({ ContentEditor: () => null }));
+vi.mock("../../editor/title-editor", () => ({
+  TitleEditor: ({
+    defaultValue,
+    placeholder,
+    onBlur,
+  }: {
+    defaultValue?: string;
+    placeholder?: string;
+    onBlur?: (value: string) => void;
+  }) => (
+    <input
+      aria-label={placeholder}
+      defaultValue={defaultValue}
+      onBlur={(event) => onBlur?.(event.target.value)}
+    />
+  ),
+}));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tanstack/react-query")>(),
   useQuery: ({ queryKey }: { queryKey: readonly string[] }) => {
@@ -60,11 +77,9 @@ describe("squad changes invalidate the agent directory", () => {
       await user.click(screen.getByRole("button", { name: "Upload avatar" }));
       await waitFor(() => expect(mocks.update).toHaveBeenCalledWith("sq-1", { avatar_url: "emoji:🚀" }));
     } else if (change === "rename") {
-      await user.click(screen.getByRole("button", { name: "Design" }));
-      const input = screen.getByPlaceholderText("Squad name");
-      await user.clear(input);
-      await user.type(input, "Research");
-      await user.click(screen.getByRole("button", { name: "Save" }));
+      const input = screen.getByRole("textbox", { name: "Squad name" });
+      fireEvent.change(input, { target: { value: "Research" } });
+      fireEvent.blur(input);
       await waitFor(() => expect(mocks.update).toHaveBeenCalledWith("sq-1", { name: "Research" }));
     } else if (change === "leader") {
       fireEvent.click(screen.getByRole("button", { name: "Actions for Candidate" }));

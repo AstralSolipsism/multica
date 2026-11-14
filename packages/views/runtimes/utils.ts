@@ -388,6 +388,9 @@ const MODEL_PRICING: Record<
   // `kimi-k3-1` stay unmapped.
   "kimi-k3.1-pro":      { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
   "kimi/k3.1-pro":      { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
+  // Fork addition: the omp harness also reports the bare `k3.1-pro`, so it
+  // prices under its own provider-qualified key.
+  "omp/k3.1-pro":       { input: 2.0,  output: 10.0,  cacheRead: 0.20,   cacheWrite: 2.0 },
   // `kimi-for-coding` is a Kimi Code subscription route alias, not an API
   // SKU with a published rate, so it stays unmapped.
 
@@ -923,7 +926,7 @@ function uncostedTokens(usage: Priceable): {
   cacheWrite: number;
 } {
   if (usage.uncosted_input_tokens === undefined) {
-    if ((usage.cost_usd_ticks ?? 0) > 0) {
+    if (usage.cost_usd_ticks !== undefined) {
       return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     }
     return {

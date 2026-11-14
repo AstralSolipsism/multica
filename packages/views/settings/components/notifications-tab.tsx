@@ -8,7 +8,7 @@ import type { NotificationGroupKey, NotificationPreferences } from "@multica/cor
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
-import { PersonalFeishuPushSection } from "../../message-delivery";
+import { PersonalFeishuPushSection, TeamSubscriptionsSection } from "../../message-delivery";
 import { YouShouldKnowPersonalRow } from "../../you-should-know/settings/personal-toggle";
 import { BrowserNotificationSetting } from "./browser-notification-setting";
 import {
@@ -101,6 +101,16 @@ export function NotificationsTab() {
         description={tMd(($) => $.personal.description)}
       >
         <PersonalFeishuPushSection />
+      </SettingsSection>
+
+      {/* OL-28: team event subscriptions (activity/comment → group/topic).
+          Self-gated on the member's role; a plain member sees an explanatory
+          note, never the admin-only configuration. */}
+      <SettingsSection
+        title={tMd(($) => $.team.title)}
+        description={tMd(($) => $.team.description)}
+      >
+        <TeamSubscriptionsSection />
       </SettingsSection>
 
       <SettingsSection

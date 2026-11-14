@@ -30,6 +30,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AppLink, currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
+import { ProjectEngineeringHeaderActions } from "./project-engineering-entry";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { ProjectStartDatePicker } from "./project-start-date-picker";
 import { ProjectDueDatePicker } from "./project-due-date-picker";
@@ -554,11 +555,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         <div ref={rightSidebarShortcutTargetRef} className="flex h-full flex-col">
           <IssueSurface
             scope={issueScope}
-            modes={["board", "list", "table", "swimlane", "gantt"]}
-            renderHeader={({ controller }) => (
+            modes={["board", "list", "table", "swimlane", "gantt", "dag"]}
+            renderHeader={({ controller, summaryScopeIssues }) => (
               <IssueViewHeader
                 controller={controller}
                 base={{ kind: "project", project }}
+                tipAnchorScopeIssues={summaryScopeIssues}
                 baseMenu={
                   <>
                     <DropdownMenuItem
@@ -614,6 +616,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                   </>
                 }
                 trailing={
+                  <>
+                  <ProjectEngineeringHeaderActions projectId={project.id} />
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -630,6 +634,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     />
                     <TooltipContent side="bottom">{t(($) => $.detail.sidebar_tooltip)}</TooltipContent>
                   </Tooltip>
+                  </>
                 }
               />
             )}

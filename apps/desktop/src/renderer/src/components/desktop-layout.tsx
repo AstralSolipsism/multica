@@ -25,7 +25,6 @@ import {
 } from "@multica/views/layout";
 import { SearchCommand } from "@multica/views/search";
 import { FloatingChat } from "@multica/views/chat";
-import { StarPrompt } from "@multica/views/star-prompt";
 import { WorkspaceSlugProvider, useCurrentWorkspace } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
 import {
@@ -39,6 +38,7 @@ import {
   DesktopNavigationProvider,
   routeContentLinkPath,
 } from "@/platform/navigation";
+import { DesktopChatSessionBridge } from "@/platform/chat-session-handoff";
 import { useRenderedRouteStore } from "@/stores/rendered-route-store";
 import { TabBar } from "./tab-bar";
 import { TabContent } from "./tab-content";
@@ -304,7 +304,6 @@ export function DesktopShell() {
                     <NavigationProgress />
                     <TabContent />
                     {slug && <FloatingChat />}
-                    {slug && <StarPrompt />}
                   </MainCanvas>
                   {slug && <AppBottomBar />}
                 </div>
@@ -314,6 +313,7 @@ export function DesktopShell() {
         </div>
         {slug && <ModalRegistry />}
         {slug && <SearchCommand />}
+        {slug && <DesktopChatSessionBridge />}
         <WindowOverlay />
       </WorkspaceSlugProvider>
     </DesktopNavigationProvider>

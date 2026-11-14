@@ -5,6 +5,7 @@ import { SidebarProvider } from "@multica/ui/components/ui/sidebar";
 import { AppearanceSync } from "../common/appearance-sync";
 import { ModalRegistry } from "../modals/registry";
 import { SourceBackfillModal } from "../onboarding";
+import { YouShouldKnowProvider } from "../you-should-know";
 import { AppRail } from "./app-rail";
 import { AppBottomBar } from "./bottom-bar";
 import { AppShellProvider } from "./app-shell-context";
@@ -64,7 +65,7 @@ export function DashboardLayout({
               <div className="flex min-w-0 flex-1 flex-col">
                 <AppShellCard>
                   <NavigationProgress />
-                  {children}
+                  <YouShouldKnowProvider>{children}</YouShouldKnowProvider>
                   <ModalRegistry />
                   <SourceBackfillModal />
                   {extra}

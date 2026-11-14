@@ -65,6 +65,7 @@ import { shouldOpenRowMenu, useRowMenu } from "../../common/point-menu";
 import { useT } from "../../i18n";
 import { PANEL_ROW_CLASS, PanelCount, PanelLink, PanelList, PanelSection, isPathWithin, panelRowAnchor, panelRowStateClass } from "../panel-nav";
 import { useDragClickGuard } from "../use-drag-click-guard";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 import { SidebarIssueList, TREE_ROW_BUTTON_CLASS, TreeRow } from "./sidebar-tree";
 
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
@@ -110,11 +111,15 @@ export function ViewsSection({
 }: ViewsSectionProps) {
   const { t } = useT("layout");
   const p = useWorkspacePaths();
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
   const { items, reorder } = actions.sidebar;
-  const { data: allViews = EMPTY_VIEWS } = useQuery(issueViewEverywhereOptions(wsId));
+  const { data: allViews = EMPTY_VIEWS } = useQuery({
+    ...issueViewEverywhereOptions(wsId),
+    enabled: open && !collapsed,
+  });
   const [deleteTarget, setDeleteTarget] = useState<IssueView | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
   const setCollapsed = useSidebarTreeStore((s) => s.setViewsCollapsed);
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
 
@@ -355,8 +360,10 @@ function BuiltinViewRow({
   const source = builtinSidebarSource(builtin);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const statusCatalog = useIssueStatuses(wsId);
-  const { issueSettings } = useSidebarProjectPrefs(wsId);
+  const open = useSpacePanelOpen();
+  const collapsed = useSidebarTreeStore((s) => s.viewsCollapsed);
+  const statusCatalog = useIssueStatuses(wsId, open && !collapsed);
+  const { issueSettings } = useSidebarProjectPrefs(wsId, open && !collapsed);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
   const request = catalogDependency.unresolved
     ? undefined
@@ -447,7 +454,9 @@ function UnreadViewRow({
   const source = viewSidebarSource(UNREAD_VIEW_ID);
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
-  const unread = useIssueUnreadIds(wsId);
+  // Collapsed, the panel stays mounted; unread changes re-read on expand.
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, panelOpen);
   const unreadDependency = filterDependencyState(true, [unread]);
   const count = unread.data?.length ?? 0;
   const request = unreadDependency.unresolved
@@ -558,7 +567,8 @@ function SavedViewRow({
   const expanded = useSidebarTreeStore((s) => s.expanded.includes(source));
   const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
   const needsUnread = viewSidebarNeedsUnread(view);
-  const unread = useIssueUnreadIds(wsId, needsUnread);
+  const panelOpen = useSpacePanelOpen();
+  const unread = useIssueUnreadIds(wsId, needsUnread && panelOpen);
   const unreadDependency = filterDependencyState(needsUnread, [unread]);
   const request = unreadDependency.unresolved
     ? undefined

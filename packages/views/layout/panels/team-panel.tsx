@@ -39,6 +39,7 @@ import {
   panelRowStateClass,
 } from "../panel-nav";
 import { useTeamAgentStatus } from "./team-status";
+import { useSpacePanelOpen } from "../space-panel-open-context";
 
 const EMPTY_TASKS: AgentTask[] = [];
 const MEMBER_AVATAR_LIMIT = 4;
@@ -114,7 +115,11 @@ function AgentAvatar({ agent, detail }: { agent: Agent; detail: AgentPresenceDet
 /** "MUL-8317 Redesign the sidebar" for the issue the agent is running, if any. */
 function useRunningIssue(wsId: string, task: AgentTask | undefined) {
   const issueId = task?.issue_id ?? "";
-  const { data: issue } = useQuery({ ...issueDetailOptions(wsId, issueId), enabled: !!issueId });
+  const open = useSpacePanelOpen();
+  const { data: issue } = useQuery({
+    ...issueDetailOptions(wsId, issueId),
+    enabled: open && !!issueId,
+  });
   return issue ?? null;
 }
 
@@ -250,7 +255,8 @@ export function TeamPanel() {
   const userId = useAuthStore((s) => s.user?.id);
   const agentsScope = useAgentsViewStore((s) => s.scope);
   const setAgentsScope = useAgentsViewStore((s) => s.setScope);
-  const { agents, stuck, working, byAgent } = useTeamAgentStatus(wsId || undefined);
+  const open = useSpacePanelOpen();
+  const { agents, stuck, working, byAgent } = useTeamAgentStatus(wsId || undefined, open);
   const workingCollapsed = useSidebarTreeStore((s) => s.workingCollapsed);
   const setWorkingCollapsed = useSidebarTreeStore((s) => s.setWorkingCollapsed);
   const needsAttentionCollapsed = useSidebarTreeStore((s) => s.needsAttentionCollapsed);
@@ -258,7 +264,7 @@ export function TeamPanel() {
 
   const { data: snapshot = EMPTY_TASKS } = useQuery({
     ...agentTaskSnapshotOptions(wsId),
-    enabled: !!wsId,
+    enabled: open && !!wsId,
   });
   const runningTaskByAgent = useMemo(() => {
     const map = new Map<string, AgentTask>();
@@ -268,11 +274,11 @@ export function TeamPanel() {
     return map;
   }, [snapshot]);
 
-  const { data: squads = [] } = useQuery({ ...squadListOptions(wsId), enabled: !!wsId });
+  const { data: squads = [] } = useQuery({ ...squadListOptions(wsId), enabled: open && !!wsId });
   const liveSquads = useMemo(() => squads.filter((squad) => !squad.archived_at), [squads]);
-  const { data: members = [] } = useQuery({ ...memberListOptions(wsId), enabled: !!wsId });
-  const { data: skills = [] } = useQuery({ ...skillListOptions(wsId), enabled: !!wsId });
-  const { data: runtimes = [] } = useQuery({ ...runtimeListOptions(wsId), enabled: !!wsId });
+  const { data: members = [] } = useQuery({ ...memberListOptions(wsId), enabled: open && !!wsId });
+  const { data: skills = [] } = useQuery({ ...skillListOptions(wsId), enabled: open && !!wsId });
+  const { data: runtimes = [] } = useQuery({ ...runtimeListOptions(wsId), enabled: open && !!wsId });
   const machineCounts = useMemo(() => {
     const machines = buildRuntimeMachines(runtimes, { now: Date.now() }).filter(
       (machine) => !machine.runtimes.every((runtime) => runtime.provider === "qoder_cloud"),

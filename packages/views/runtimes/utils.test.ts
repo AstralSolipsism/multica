@@ -1086,7 +1086,7 @@ describe("estimateCost", () => {
         expect(breakdown.cacheWrite, model).toBeCloseTo(c.cacheWrite, 5);
       }
     }
-    // A Hermes custom provider carries a `custom:` routing prefix.
+    // A Hermes custom provider carries a `custom:` routing prefix; omp reports the bare id.
     expect(collectUnmappedModels([
       { ...zeroUsage, model: "glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "hermes", model: "custom:glm-5.3", input_tokens: 1 },
@@ -1107,6 +1107,7 @@ describe("estimateCost", () => {
     // `cursor/auto`.
     const k311 = 2 + 10 + 0.2 + 2;
     for (const [model, provider] of [
+      ["k3.1-pro", "omp"],
       ["kimi-code/k3.1-pro", "kimi"],
       ["kimi-k3.1-pro", undefined],
       ["kimi-k3.1-pro", "kimi"],
@@ -1507,6 +1508,32 @@ describe("user-supplied custom pricing", () => {
         output_tokens: 1_000_000,
       }),
     ).toBeCloseTo(5, 5);
+  });
+
+  it("prices a fully uncosted group whose five cost-split fields are omitted", () => {
+    const row = {
+      ...zeroUsage,
+      provider: "acme",
+      model: "auto",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+    expect(summarizeTaskUsage([row])).toMatchObject({ tokens: 4_000_000, cost: 0 });
+    expect(summarizeTaskUsage([])).toBeNull();
+
+    useCustomPricingStore.getState().setCustomPricing("acme/auto", {
+      input: 2,
+      output: 8,
+      cacheRead: 0.2,
+      cacheWrite: 2,
+    });
+    expect(summarizeTaskUsage([row])?.cost).toBeCloseTo(12.2, 5);
+
+    // An authoritative zero is a real free row, not missing usage, and must
+    // not be estimated again through the custom rate table.
+    expect(summarizeTaskUsage([{ ...row, cost_usd_ticks: 0 }])?.cost).toBe(0);
   });
 
   it("does NOT shadow the maintained catalog when both define the same model", () => {
@@ -2218,6 +2245,13 @@ describe("formatTokens", () => {
     expect(formatTokens(999_949)).toBe("999.9K");
     expect(formatTokens(999_950)).toBe("1M");
     expect(formatTokens(999_999_999)).toBe("1B");
+  });
+});
+
+describe("provider-reported zero cost", () => {
+  it("does not estimate tokens for a raw run explicitly billed at zero", () => {
+    expect(summarizeTaskUsage([{ model: "gpt-5.4", input_tokens: 1_000_000, output_tokens: 100,
+      cache_read_tokens: 200, cache_write_tokens: 300, cost_usd_ticks: 0 }])?.cost).toBe(0);
   });
 });
 

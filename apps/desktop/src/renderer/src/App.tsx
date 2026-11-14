@@ -18,7 +18,7 @@ import { UpdateNotification } from "./components/update-notification";
 import { NativeContextMenu } from "./components/native-context-menu";
 import { IssueWindow } from "./components/issue-window";
 import { DesktopDevToolbar } from "./components/desktop-dev-toolbar";
-import { useTabStore } from "./stores/tab-store";
+import { getActiveTab, useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
 import { useTabSelectionShortcut } from "./hooks/use-tab-selection-shortcut";
@@ -44,6 +44,7 @@ import {
   tearDownOnSessionExpiry,
   type SessionTeardown,
 } from "./platform/session-teardown";
+import { clearPendingEngineeringDestination, engineeringReauthDestination, preserveEngineeringDestinationForReauth } from "./platform/engineering-deep-links";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -299,18 +300,20 @@ function AppContent() {
   // while a failed background refetch retains the last successful list.
   useLayoutEffect(() => {
     if (!workspaceListReady) return;
-    const slugs = workspaces.map((w) => w.slug);
-    useTabStore.getState().validateWorkspaceSlugs(new Set(slugs));
+    const validSlugs = new Set(workspaces.map((w) => w.slug));
+    useTabStore.getState().validateWorkspaceSlugs(validSlugs);
+    const engineeringReauth = engineeringReauthDestination(user?.id, validSlugs);
+    if (engineeringReauth) useTabStore.getState().switchWorkspace(engineeringReauth.slug, engineeringReauth.path);
     const { activeWorkspaceSlug, switchWorkspace } = useTabStore.getState();
-    if (slugs.length === 0) return;
+    if (validSlugs.size === 0) return;
     const target = resolveWindowWorkspace(
-      slugs,
+      [...validSlugs],
       activeWorkspaceSlug,
       launchWorkspaceSlug(),
       otherWindowWorkspaces(),
     );
     if (target && target !== activeWorkspaceSlug) switchWorkspace(target);
-  }, [workspaces, workspaceListReady]);
+  }, [user, workspaces, workspaceListReady]);
 
   // null = undecided (pre-login or list hasn't settled yet)
   // true  = session started with zero workspaces; next transition to >=1 triggers restart
@@ -363,7 +366,7 @@ function BlockingRuntimeConfigError({ message }: { message: string }) {
       <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
         <h1 className="text-title font-semibold">Desktop configuration error</h1>
         <p className="mt-3 text-body text-muted-foreground">
-          Multica Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
+          Labrastro Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
         </p>
         <pre className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-caption text-muted-foreground">
           {message}
@@ -386,10 +389,12 @@ const sessionTeardown: SessionTeardown = {
 };
 
 function handleDaemonLogout() {
+  clearPendingEngineeringDestination();
   return tearDownOnLogout(sessionTeardown);
 }
 
 function handleSessionExpired() {
+  preserveEngineeringDestinationForReauth(useAuthStore.getState().user?.id, getActiveTab(useTabStore.getState())?.url);
   tearDownOnSessionExpiry(sessionTeardown);
 }
 
