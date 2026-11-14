@@ -129,6 +129,43 @@ prefix that issue and project events invalidate;
 `packages/core/projects/queries.test.ts` pins the key shapes so an upstream
 key reshape fails tests instead of silently missing cache invalidation.
 
+
+## High-churn file thin-plug ledger (cmd_issue.go / daemon.go)
+
+`server/cmd/multica/cmd_issue.go` and `server/internal/daemon/daemon.go` are
+the two files upstream rewrites most often. Fork implementation code lives in
+separate fork-owned files; these two carry only minimal call sites ("thin
+plugs"). After every upstream sync, walk this table and confirm each anchor
+still compiles and still points at the fork symbol.
+
+### `server/cmd/multica/cmd_issue.go`
+
+| Anchor (function / symbol) | Fork file providing the implementation |
+| --- | --- |
+| `runIssueCreate` (~line 1716–1727): builds `uploadedRefs []uploadedIssueAttachment`, calls `resolveUploadedAttachmentReferences(desc, uploadedRefs)` | `cmd_labrastro_issue_attachment.go` |
+| `runIssueUpdate` (~line 1963–1975): same three-line shape as create | `cmd_labrastro_issue_attachment.go` |
+| `runIssueCommentAdd` (~line 2727–2738): same three-line shape for comment content | `cmd_labrastro_issue_attachment.go` |
+| `cmd_labrastro_issue_attachment.go` exports: `uploadedIssueAttachment`, `attachmentDestSpan`, `attachmentSpanParser`, `attachmentSpanEdit`, `resolveUploadedAttachmentReferences`, `matchUploadedAttachmentURL`, `normalizeRelativeAttachmentTarget`, `decodeMarkdownEscapes`, `isMarkdownASCIIPunctuation`, `uriSchemePrefixRe` | — (this file is 100% fork-owned; never touched by upstream) |
+
+### `server/internal/daemon/daemon.go`
+
+| Anchor (function / symbol) | Fork file providing the implementation |
+| --- | --- |
+| `runHeartbeatTick` (~line 4647) and `handlePendingWorkHint` (~line 4792): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
+| `runTask` OnPlanQuota callback (~line 9151) and terminal report (~line 9412): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
+| Terminal usage conversion (~line 9420): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
+| `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1526, 1596, 1606): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
+| `Daemon` struct fields `planQuotaCache`, `jevClient`, `jevSamples`, `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*` — field declarations stay in daemon.go; all methods live in fork files | `planquota_cache.go`, `jevprobe.go`, `hostmetrics.go`, `thinking_step.go`, `media.go` |
+| DSH reason consts `dshMissingProfileReason` etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
+
+`planquota_kimi.go`'s loopback same-UID peer-proof security boundary
+(`/proc/net/tcp` + `lsof`) is a hard red line: never move, weaken, or "clean
+it up" while reshuffling any daemon code.
+
+Line numbers drift with every sync — the symbol names are the stable anchors.
+When a file's plug grows beyond the shapes above, move the growth into the
+fork file before merging.
+
 ## Plugin-route re-evaluation triggers
 
 OL-1298 (Master, 2026-11-09) decided the engineering module stays in the fork
