@@ -239,6 +239,7 @@
     "@multica/tsconfig": "workspace:*",
     "@multica/vitest-setup": "workspace:*",
     "@testing-library/react": "catalog:",
+    "@types/mdast": "catalog:",
     "@types/react": "catalog:",
     "@typescript/native": "catalog:",
     "jsdom": "catalog:",

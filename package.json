@@ -21,7 +21,8 @@
     "ios:mobile:device:prod:release": "pnpm -C apps/mobile ios:device:prod:release",
     "build": "turbo build --filter=!@multica/mobile",
     "typecheck": "turbo typecheck --filter=!@multica/mobile",
-    "test": "turbo test --filter=!@multica/mobile",
+    "test": "pnpm test:brand && pnpm test:ysk && turbo test --filter=!@multica/mobile",
+    "test:brand": "node scripts/brand/sync.mjs --check && node --test scripts/brand/sync.test.mjs scripts/check-branding.test.mjs scripts/check-docs-distribution.test.mjs && node scripts/check-branding.mjs && node scripts/check-docs-distribution.mjs && pnpm --filter @multica/views exec vitest run locales/branding.test.ts",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "lint": "turbo lint --filter=!@multica/mobile",
     "knip": "knip",
@@ -34,7 +35,8 @@
     "ui:add": "cd packages/ui && npx shadcn@latest add",
     "generate:brand": "node scripts/brand/generate.mjs",
     "generate:attachment-text-preview": "node scripts/generate-attachment-text-preview.mjs",
-    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
+    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs",
+    "test:ysk": "vitest run --config server/internal/daemon/ysk/vitest.config.ts"
   },
   "engines": {
     "node": ">=22"
@@ -59,6 +61,7 @@
       "builder-util-runtime": "9.7.0"
     },
     "patchedDependencies": {
+      "electron-updater@6.8.3": "patches/electron-updater@6.8.3.patch",
       "expo-modules-core@57.0.21": "apps/mobile/patches/expo-modules-core@57.0.21.patch"
     }
   },
@@ -71,6 +74,9 @@
     "pg": "^8.20.0",
     "postcss": "catalog:",
     "turbo": "^2.5.4",
-    "typescript": "catalog:"
+    "pngjs": "^3.4.0",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

@@ -23,9 +23,11 @@
       "project": ["scripts/*.mjs", "scripts/brand/*.mjs"],
       // scripts/theme-preview.mjs drives Tailwind through the PostCSS API; the
       // root has no Tailwind stylesheets for the plugin to read.
-      "tailwind": false
+      "tailwind": false,
+      // server/internal/daemon/** TS tests import the claude-code CLI's
+      // testing SDK from the runtime environment, not from npm.
+      "ignoreDependencies": ["claude-code"]
     },
-
     "apps/web": {
       "entry": ["eslint.config.mjs"],
       // Referenced only by the `@type {import('postcss-load-config').Config}`
@@ -39,18 +41,25 @@
       // header) rather than by a package script, so nothing imports it.
       // bundle-cli.node-test.mjs is run the same way. test/electron-guard.ts
       // is the `electron` alias target in vitest.config.ts, a path string
-      // knip does not follow.
+      // knip does not follow; the glob still admits it as a project file.
       "entry": [
         "eslint.config.mjs",
         "src/main/*.node-test.mjs",
-        "scripts/*.node-test.mjs",
-        "test/electron-guard.ts"
+        "scripts/*.node-test.mjs"
       ],
       // Consumed by `extends` in tsconfig.node.json / tsconfig.web.json.
       // knip follows `extends` from the default tsconfig.json only.
-      "ignoreDependencies": ["@multica/tsconfig"]
+      "ignoreDependencies": [
+        "@multica/tsconfig",
+        // Resolved at run time through rootRequire()/binary paths inside
+        // scripts/package.mjs and scripts/stage-candidate.mjs — no static
+        // import for knip to follow.
+        "@electron/asar",
+        "app-builder-bin",
+        "js-yaml",
+        "yargs"
+      ]
     },
-
     "apps/docs": {},
 
     // The three shared packages export raw .ts/.tsx compiled by their
@@ -72,20 +81,19 @@
     // export and knip picks that directory back up; the script reads the same
     // manifest, so the two stay in step without overlapping.
     "packages/ui": {
-      // shimmer-text-bundle.mjs is imported by e2e/shimmer-text.spec.ts, which
-      // sits outside every workspace, and hands the fixture to esbuild as an
-      // entry-point path.
+      // test/shimmer-text-bundle.mjs wraps this fixture for e2e's esbuild
+      // entry (e2e/shimmer-text.spec.ts sits outside every workspace); as an
+      // .mjs outside the project globs below, knip does not scan it.
       "entry": [
         "eslint.config.mjs",
-        "test/shimmer-text-bundle.mjs",
         "test/shimmer-text-fixture.tsx"
       ],
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/views": {
-      // Passed to vitest as `--reporter=./test/timing-reporter.ts` when
-      // refreshing shard timings (packages/views/test/README.md).
-      "entry": ["test/timing-reporter.ts"],
+      // The timing reporter is passed to vitest as
+      // `--reporter=./test/timing-reporter.ts` when refreshing shard timings
+      // (packages/views/test/README.md); the glob below also admits it.
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/core": {
