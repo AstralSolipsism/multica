@@ -123,6 +123,8 @@ export function useIssueSurfaceData({
   assigneeFilters,
   includeNoAssignee,
   agentRunningFilter,
+  agentIdleFilter,
+  activeIssueIDs,
   unreadFilter,
   creatorFilters,
   projectFilters,
@@ -163,6 +165,8 @@ export function useIssueSurfaceData({
   assigneeFilters: IssueFilterState["assigneeFilters"];
   includeNoAssignee: boolean;
   agentRunningFilter: boolean;
+  agentIdleFilter: boolean;
+  activeIssueIDs: ReadonlySet<string> | undefined;
   unreadFilter: boolean;
   creatorFilters: IssueFilterState["creatorFilters"];
   projectFilters: string[];
@@ -171,8 +175,8 @@ export function useIssueSurfaceData({
   labelFilters: string[];
   relationFilters: IssueRelationFilter[];
   relationContext: IssueRelationContext | undefined;
-  /** What the active relation values read: the viewer's agents for
-   *  "my_agents", their subscriptions for "subscribed". */
+  /** What the active relation values read: the viewer's agents and squads
+   *  for "my_agents", their subscriptions for "subscribed". */
   relationSources: readonly (FilterDependencySource | false)[];
   dueDateFilters: DueDateFilter[];
   /** The scoped, pruned rule tree. */
@@ -229,12 +233,13 @@ export function useIssueSurfaceData({
   const workingFilterContext = useMemo(
     () => ({
       runningIssueIds: workingIssueIDs,
+      activeIssueIds: activeIssueIDs,
       unreadIssueIds: unreadIssueIDs,
       projectStatusById,
       relation: relationContext,
       today,
     }),
-    [projectStatusById, relationContext, today, unreadIssueIDs, workingIssueIDs],
+    [activeIssueIDs, projectStatusById, relationContext, today, unreadIssueIDs, workingIssueIDs],
   );
   const bucketedIssues = serverStatusBranches.enabled
     ? serverStatusBranches.issues
@@ -270,6 +275,7 @@ export function useIssueSurfaceData({
       negatedFilters,
       propertyFilters,
       workingOnly: agentRunningFilter,
+      idleOnly: agentIdleFilter,
       unreadOnly: unreadFilter,
       showSubIssues,
     }),
@@ -277,6 +283,7 @@ export function useIssueSurfaceData({
       advancedFilter,
       assigneeFilters,
       agentRunningFilter,
+      agentIdleFilter,
       unreadFilter,
       creatorFilters,
       dueDateFilters,
@@ -347,6 +354,7 @@ export function useIssueSurfaceData({
     () => ({
       ...baseFilterState,
       workingOnly: true,
+      idleOnly: false,
     }),
     [baseFilterState],
   );
@@ -458,6 +466,8 @@ export function useIssueSurfaceData({
       includeNoAssignee,
       agentRunningFilter,
       runningIssueIds: workingIssueIDs,
+      agentIdleFilter,
+      activeIssueIds: activeIssueIDs,
       unreadFilter,
       unreadIssueIds: unreadIssueIDs,
       creatorFilters,
@@ -480,6 +490,8 @@ export function useIssueSurfaceData({
       assigneeFilters,
       agentRunningFilter,
       creatorFilters,
+      agentIdleFilter,
+      activeIssueIDs,
       dueDateFilters,
       includeNoAssignee,
       includeNoProject,

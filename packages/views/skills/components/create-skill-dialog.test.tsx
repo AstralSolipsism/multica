@@ -132,7 +132,7 @@ function installLiveFileList(input: HTMLInputElement, files: File[]) {
 function renderDialog(
   onCreated = vi.fn(),
   onClose = vi.fn(),
-  initialMethod?: CreateSkillMethod,
+  method: CreateSkillMethod = "local",
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -150,7 +150,7 @@ function renderDialog(
       <CreateSkillDialog
         onClose={onClose}
         onCreated={onCreated}
-        initialMethod={initialMethod}
+        method={method}
       />,
       { wrapper },
     ),
@@ -228,7 +228,6 @@ describe("CreateSkillDialog imports", () => {
     const archiveClick = vi.fn();
     (document.querySelector("input[accept]") as HTMLInputElement).click =
       archiveClick;
-    fireEvent.click(screen.getByRole("button", { name: /Import from local/i }));
     expect(click).not.toHaveBeenCalled();
     expect(archiveClick).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Choose folder/i }));
@@ -241,7 +240,6 @@ describe("CreateSkillDialog imports", () => {
   // (MUL-6794). The pickers live in the panel body instead.
   it("offers both source pickers in the panel body", () => {
     renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Import from local/i }));
 
     const archiveInput = document.querySelector(
       'input[type="file"][accept]',
@@ -259,7 +257,6 @@ describe("CreateSkillDialog imports", () => {
 
   it("keeps Import disabled until a folder is prepared", async () => {
     renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Import from local/i }));
     expect(screen.getByRole("button", { name: /^Import$/i })).toBeDisabled();
 
     const input = document.querySelector(
@@ -353,7 +350,6 @@ describe("CreateSkillDialog imports", () => {
 
   it("uploads a chosen .skill archive without re-packing", async () => {
     renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Import from local/i }));
 
     const archiveInput = document.querySelector(
       'input[type="file"][accept]',
@@ -536,7 +532,6 @@ describe("CreateSkillDialog imports", () => {
       screen.getByRole("button", { name: /Choose folder/i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Close/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Back/i })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Stop after current" }));
@@ -613,7 +608,6 @@ describe("CreateSkillDialog imports", () => {
       }),
     );
     renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Import from local/i }));
     const folder = document.querySelector("input[multiple]")!;
     fireEvent.change(folder, { target: { files: [] } });
     expect(screen.getByRole("button", { name: /^Import$/ })).toBeDisabled();
@@ -914,7 +908,9 @@ describe("CreateSkillDialog imports", () => {
       mockWorkspaceId.value = "ws-2";
       await act(async () => {
         setCurrentWorkspace("workspace-b", "ws-2");
-        rerender(<CreateSkillDialog onClose={onClose} onCreated={onCreated} />);
+        rerender(
+          <CreateSkillDialog method="local" onClose={onClose} onCreated={onCreated} />,
+        );
       });
       if (phase === "preparing") {
         await act(async () => {
@@ -982,7 +978,9 @@ describe("CreateSkillDialog imports", () => {
       });
       mockWorkspaceId.value = "ws-2";
       setCurrentWorkspace("workspace-b", "ws-2");
-      rerender(<CreateSkillDialog onClose={onClose} onCreated={onCreated} />);
+      rerender(
+        <CreateSkillDialog method="local" onClose={onClose} onCreated={onCreated} />,
+      );
     });
     await act(async () => {
       resolve(discovery());
@@ -1124,38 +1122,17 @@ describe("CreateSkillDialog imports", () => {
   });
 });
 
-describe("CreateSkillDialog opened on a method", () => {
-  it("opens local source choices directly and Cancel leaves the dialog", () => {
-    const click = vi.spyOn(HTMLInputElement.prototype, "click");
-    try {
-      const { onClose } = renderDialog(vi.fn(), vi.fn(), "local");
-      expect(screen.getByRole("button", { name: /Choose folder/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Choose \.skill \/ \.zip/i })).toBeInTheDocument();
-      expect(click).not.toHaveBeenCalled();
-
-      fireEvent.click(screen.getByRole("button", { name: enSkills.create.local.cancel }));
-      expect(onClose).toHaveBeenCalledTimes(1);
-      expect(screen.queryByRole("button", { name: /Import from URL/i })).toBeNull();
-    } finally {
-      click.mockRestore();
-    }
+describe("CreateSkillDialog cancel", () => {
+  it("closes the dialog from the local form", () => {
+    const { onClose } = renderDialog(vi.fn(), vi.fn(), "local");
+    fireEvent.click(screen.getByRole("button", { name: enSkills.create.local.cancel }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("skips the chooser, and Cancel leaves the dialog", () => {
+  it("closes the dialog from the manual form", () => {
     const { onClose } = renderDialog(vi.fn(), vi.fn(), "manual");
     expect(screen.getByText(enSkills.create.manual.name_label)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Import from URL/i })).toBeNull();
-
     fireEvent.click(screen.getByRole("button", { name: enSkills.create.manual.cancel }));
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("still steps back to the chooser when the user came through it", () => {
-    const { onClose } = renderDialog();
-    fireEvent.click(screen.getByRole("button", { name: /Create manually/i }));
-    fireEvent.click(screen.getByRole("button", { name: enSkills.create.manual.cancel }));
-
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Import from URL/i })).toBeInTheDocument();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -46,14 +46,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { toast } from "sonner";
-import type { TFunction } from "i18next";
 import {
   useInfiniteQuery,
   useQuery,
@@ -76,8 +72,8 @@ import type {
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection } from "./settings-layout";
+import type { useConnectGitHub } from "./use-connect-github";
 import { GitHubMark } from "./github-mark";
-import { GitHubReuseMenuItems, useGitHubReuseConnect } from "./github-connect-reuse";
 
 const EMPTY_REPOSITORIES: WorkspaceRepo[] = [];
 
@@ -124,29 +120,6 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
-/** Copy for the install callback's `github_error`. Retrying cannot fix the
- * codes that refuse the binding, so they say what can; the suspended and
- * unverifiable ones also name the Configure-page dead end their retry hits:
- * the refused installation stays on GitHub, so reinstalling is the way back. */
-function githubCallbackErrorMessage(
-  code: string,
-  t: TFunction<"settings">,
-  tForkUi: TFunction<"fork-ui">,
-): string {
-  switch (code) {
-    case "not_authorized":
-      return tForkUi(($) => $.settings.repositories.github_error_not_authorized);
-    case "unknown_installation":
-      return tForkUi(($) => $.settings.repositories.github_error_unknown_installation);
-    case "installation_suspended":
-      return tForkUi(($) => $.settings.repositories.github_error_installation_suspended);
-    case "verification_unavailable":
-      return tForkUi(($) => $.settings.repositories.github_error_verification_unavailable);
-    default:
-      return t(($) => $.repositories.github_connect_failed);
-  }
-}
-
 interface RepositoryDraft {
   /** Index being edited, or null when adding. */
   index: number | null;
@@ -159,9 +132,8 @@ interface RepositoryDraft {
  * and editing happen in a dialog that saves on confirm, so a half-typed URL
  * is never persisted and every change is one deliberate request.
  */
-export function RepositoriesSection() {
+export function RepositoriesSection({ connection }: { connection: ReturnType<typeof useConnectGitHub> }) {
   const { t } = useT("settings");
-  const { t: tForkUi } = useT("fork-ui");
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -173,7 +145,15 @@ export function RepositoriesSection() {
   const [draft, setDraft] = useState<RepositoryDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingRemovalIndex, setPendingRemovalIndex] = useState<number | null>(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const {
+    connecting: connectingGitHub,
+    connect: connectGitHub,
+    connectedInstallationID,
+    reset: resetConnection,
+  } = connection;
+  const [preselectInstallationID, setPreselectInstallationID] = useState("");
+  const preselectedRepositoryIDs = useRef(new Set<number>());
+  const handledCallback = useRef("");
   const [githubPickerOpen, setGitHubPickerOpen] = useState(false);
   const [selectedInstallationID, setSelectedInstallationID] = useState("");
   const [selectedRepositories, setSelectedRepositories] = useState<
@@ -196,26 +176,6 @@ export function RepositoriesSection() {
   const githubConnectConfigured = githubData?.configured === true;
   const githubBrowseConfigured =
     githubData?.repository_browse_configured === true;
-  // Same connect decision as the Code tab's GitHub row: bind an account the
-  // caller manages elsewhere without leaving the page, else go to GitHub. A
-  // binding made here lands in the picker, like an install callback does.
-  const {
-    reusable: reusableGitHubAccounts,
-    binding: bindingGitHubAccount,
-    busy: gitHubConnectBusy,
-    menuOpen: gitHubAccountMenuOpen,
-    setMenuOpen: setGitHubAccountMenuOpen,
-    awaitReusableCandidates: awaitReusableGitHubAccounts,
-    openGitHubInstall,
-    bind: bindGitHubAccount,
-  } = useGitHubReuseConnect({
-    installationData: githubData,
-    returnTo: "repositories",
-    onBound: (installation) => {
-      setSelectedInstallationID(installation.id);
-      setGitHubPickerOpen(true);
-    },
-  });
   const githubRepositoriesQuery = useInfiniteQuery({
     ...githubInstallationRepositoriesOptions(wsId, selectedInstallationID),
     enabled:
@@ -231,17 +191,6 @@ export function RepositoriesSection() {
       ) ?? [],
     [githubRepositoriesQuery.data?.pages],
   );
-  // The plain item morphs into the submenu trigger when a wait finds reusable
-  // accounts; the focused element unmounts with it. Only a focus that actually
-  // got lost is restored — Base UI's own focus moves are left alone.
-  const accountMenuTriggerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!gitHubAccountMenuOpen) return;
-    const active = document.activeElement;
-    if (active === null || active === document.body) {
-      accountMenuTriggerRef.current?.focus();
-    }
-  }, [gitHubAccountMenuOpen]);
   const existingRepositoryIdentities = useMemo(
     () =>
       new Set(
@@ -275,6 +224,8 @@ export function RepositoriesSection() {
   // error). Open the picker once the installation list reflects the new
   // install, then drop the one-shot params so a refresh does not repeat it.
   useEffect(() => {
+    const callbackKey = navigation.searchParams.toString();
+    if (handledCallback.current === callbackKey) return;
     const connected = navigation.searchParams.get("github_connected") === "1";
     const githubError = navigation.searchParams.get("github_error");
     if ((!connected && !githubError) || !canManageWorkspace) return;
@@ -285,18 +236,17 @@ export function RepositoriesSection() {
       return;
     }
 
+    handledCallback.current = callbackKey;
     if (githubError) {
-      const message = githubCallbackErrorMessage(githubError, t, tForkUi);
-      // These two spell out a recovery path the user gets to see only once;
-      // sonner's default duration would dismiss them mid-read.
-      if (githubError === "installation_suspended" || githubError === "verification_unavailable") {
-        toast.error(message, { duration: Infinity, closeButton: true });
-      } else {
-        toast.error(message);
-      }
+      toast.error(t(($) => $.repositories.github_connect_failed));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
-      setSelectedInstallationID(githubInstallations[0]!.id);
-      setGitHubPickerOpen(true);
+      const installationID = navigation.searchParams.get("github_installation") ?? githubInstallations[0]!.id;
+      if (githubInstallations.some((installation) => installation.id === installationID)) {
+        setSelectedInstallationID(installationID);
+        setPreselectInstallationID(installationID);
+        preselectedRepositoryIDs.current.clear();
+        setGitHubPickerOpen(true);
+      }
     } else if (githubInstallations.length > 0) {
       toast.error(t(($) => $.repositories.github_browse_not_configured));
     }
@@ -304,6 +254,7 @@ export function RepositoriesSection() {
     const next = new URLSearchParams(navigation.searchParams);
     next.delete("github_connected");
     next.delete("github_error");
+    next.delete("github_installation");
     const search = next.toString();
     navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
   }, [
@@ -314,8 +265,56 @@ export function RepositoriesSection() {
     githubInstallationsPending,
     navigation,
     t,
-    tForkUi,
   ]);
+
+  useEffect(() => {
+    const installationID = connectedInstallationID;
+    if (!installationID || !canManageWorkspace || githubInstallationsPending || githubInstallationsFetching) return;
+    if (!githubInstallations.some((installation) => installation.id === installationID)) return;
+    if (githubBrowseConfigured) {
+      setSelectedInstallationID(installationID);
+      setPreselectInstallationID(installationID);
+      preselectedRepositoryIDs.current.clear();
+      setGitHubPickerOpen(true);
+    } else {
+      toast.error(t(($) => $.repositories.github_browse_not_configured));
+    }
+    resetConnection();
+  }, [connectedInstallationID, resetConnection, canManageWorkspace, githubInstallations, githubInstallationsPending, githubInstallationsFetching, githubBrowseConfigured, t]);
+
+  const preselectingRepositories = githubPickerOpen &&
+    selectedInstallationID === preselectInstallationID &&
+    githubRepositoriesQuery.data?.pages[0]?.repository_selection === "selected";
+
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isError: repositoriesError,
+    fetchNextPage,
+  } = githubRepositoriesQuery;
+  useEffect(() => {
+    if (preselectingRepositories && hasNextPage &&
+      !isFetchingNextPage && !repositoriesError) {
+      void fetchNextPage();
+    }
+  }, [preselectingRepositories, hasNextPage, isFetchingNextPage, repositoriesError, fetchNextPage]);
+
+  useEffect(() => {
+    if (!githubPickerOpen || selectedInstallationID !== preselectInstallationID ||
+      githubRepositoriesQuery.data?.pages[0]?.repository_selection !== "selected") return;
+    const additions = githubRepositories.filter((repository) => {
+      if (preselectedRepositoryIDs.current.has(repository.id)) return false;
+      preselectedRepositoryIDs.current.add(repository.id);
+      const identity = repositoryIdentity(repository.clone_url);
+      return !repository.archived && !!identity && !existingRepositoryIdentities.has(identity);
+    });
+    if (additions.length) {
+      setSelectedRepositories((current) => new Map([
+        ...current,
+        ...additions.map((repository) => [repository.id, repository] as const),
+      ]));
+    }
+  }, [githubPickerOpen, selectedInstallationID, preselectInstallationID, githubRepositoriesQuery.data, githubRepositories, existingRepositoryIdentities]);
 
   const persist = async (next: WorkspaceRepo[]) => {
     if (!workspace) return false;
@@ -378,60 +377,10 @@ export function RepositoriesSection() {
     setGitHubPickerOpen(true);
   };
 
-  // A first connection with nothing reusable stays one click to GitHub; the
-  // decision needs the menu to stay open only while it checks or turns into
-  // the account choice. If the menu was closed during the wait (Escape,
-  // outside press), the activation is stale and nothing happens.
-  const addMenuOpenRef = useRef(addMenuOpen);
-  useEffect(() => {
-    addMenuOpenRef.current = addMenuOpen;
-  }, [addMenuOpen]);
-  const connectGitHub = async () => {
-    if (gitHubConnectBusy) return;
-    const candidates = await awaitReusableGitHubAccounts();
-    if (!addMenuOpenRef.current) return;
-    if (candidates.length > 0) {
-      setGitHubAccountMenuOpen(true);
-    } else {
-      setAddMenuOpen(false);
-      await openGitHubInstall();
-    }
-  };
-
-  // The submenu's own open requests are refused, like the Code tab's connect
-  // button: opening must wait for a refresh in flight and follow its result
-  // instead of listing what the cache has. Only deliberate activations run
-  // the full decision, which can end at GitHub — Base UI reports a pointer
-  // rest as `trigger-hover`, and hovering is not confirming, so a hover only
-  // previews: it waits out the refresh and opens the submenu when it still
-  // has accounts. An empty or failed read changes nothing; the emptied list
-  // turns the trigger back into the plain item, and jumping stays the user's
-  // click to make.
-  const previewAccountMenu = async () => {
-    if (gitHubConnectBusy) return;
-    const candidates = await awaitReusableGitHubAccounts();
-    if (candidates.length > 0 && addMenuOpenRef.current) {
-      setGitHubAccountMenuOpen(true);
-    }
-  };
-  function handleAccountMenuOpenChange(
-    open: boolean,
-    details: { cancel: () => void; reason: string },
-  ) {
-    if (!open) {
-      setGitHubAccountMenuOpen(false);
-      return;
-    }
-    details.cancel();
-    if (details.reason === "trigger-press" || details.reason === "list-navigation") {
-      void connectGitHub();
-    } else {
-      void previewAccountMenu();
-    }
-  }
-
   const closeGitHubPicker = () => {
     setGitHubPickerOpen(false);
+    setPreselectInstallationID("");
+    preselectedRepositoryIDs.current.clear();
     setSelectedRepositories(new Map());
     setRepositorySearch("");
   };
@@ -472,7 +421,7 @@ export function RepositoriesSection() {
   if (!workspace) return null;
 
   const githubItemDisabled =
-    gitHubConnectBusy ||
+    connectingGitHub ||
     !githubBrowseConfigured ||
     (!githubConnectConfigured && githubInstallations.length === 0);
 
@@ -482,87 +431,39 @@ export function RepositoriesSection() {
       anchor="repositories"
       action={
         canManageWorkspace ? (
-          <DropdownMenu
-            open={addMenuOpen}
-            onOpenChange={(open) => {
-              setAddMenuOpen(open);
-              if (!open) setGitHubAccountMenuOpen(false);
-            }}
-          >
-            <DropdownMenuTrigger
-              render={<Button size="sm" aria-busy={gitHubConnectBusy || undefined} />}
-            >
-              {gitHubConnectBusy ? <LoaderCircle className="animate-spin" /> : <Plus />}
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button size="sm" />}>
+              <Plus />
               {t(($) => $.repositories.add)}
               <ChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-56">
-              {githubInstallations.length > 0 ? (
-                <DropdownMenuItem
-                  disabled={githubItemDisabled}
-                  onClick={openGitHubPicker}
-                >
+              <DropdownMenuItem
+                disabled={githubItemDisabled}
+                onClick={() =>
+                  githubInstallations.length > 0
+                    ? openGitHubPicker()
+                    : void connectGitHub()
+                }
+              >
+                {connectingGitHub ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
                   <GitHubMark className="size-4" />
-                  <span className="flex flex-col">
-                    <span>{t(($) => $.repositories.choose_from_github)}</span>
-                    {!githubBrowseConfigured ? (
-                      <span className="text-caption text-muted-foreground">
-                        {t(($) => $.repositories.github_browse_not_configured)}
-                      </span>
-                    ) : null}
+                )}
+                <span className="flex flex-col">
+                  <span>
+                    {githubInstallations.length > 0
+                      ? t(($) => $.repositories.choose_from_github)
+                      : t(($) => $.repositories.connect_github)}
                   </span>
-                </DropdownMenuItem>
-              ) : reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
-                // Accounts managed elsewhere are bound in place; GitHub's
-                // install page cannot do it. An emptied list keeps the open
-                // submenu mounted, mirroring the Code tab's connect button.
-                <DropdownMenuSub
-                  open={gitHubAccountMenuOpen}
-                  onOpenChange={handleAccountMenuOpenChange}
-                >
-                  <DropdownMenuSubTrigger
-                    ref={accountMenuTriggerRef}
-                    disabled={githubItemDisabled}
-                    aria-busy={gitHubConnectBusy || undefined}
-                  >
-                    {gitHubConnectBusy ? (
-                      <LoaderCircle className="animate-spin" />
-                    ) : (
-                      <GitHubMark className="size-4" />
-                    )}
-                    {t(($) => $.repositories.connect_github)}
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">
-                    <GitHubReuseMenuItems
-                      reusable={reusableGitHubAccounts}
-                      binding={bindingGitHubAccount}
-                      onBind={(item) => void bindGitHubAccount(item)}
-                      onInstall={() => void openGitHubInstall()}
-                    />
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ) : (
-                <DropdownMenuItem
-                  disabled={githubItemDisabled}
-                  closeOnClick={false}
-                  aria-busy={gitHubConnectBusy || undefined}
-                  onClick={() => void connectGitHub()}
-                >
-                  {gitHubConnectBusy ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : (
-                    <GitHubMark className="size-4" />
-                  )}
-                  <span className="flex flex-col">
-                    <span>{t(($) => $.repositories.connect_github)}</span>
-                    {!githubBrowseConfigured ? (
-                      <span className="text-caption text-muted-foreground">
-                        {t(($) => $.repositories.github_browse_not_configured)}
-                      </span>
-                    ) : null}
-                  </span>
-                </DropdownMenuItem>
-              )}
+                  {!githubBrowseConfigured ? (
+                    <span className="text-caption text-muted-foreground">
+                      {t(($) => $.repositories.github_browse_not_configured)}
+                    </span>
+                  ) : null}
+                </span>
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => setDraft({ index: null, url: "", description: "" })}
               >
@@ -910,10 +811,10 @@ export function RepositoriesSection() {
             </Button>
             <Button
               onClick={() => void importGitHubRepositories()}
-              disabled={selectedRepositories.size === 0 || saving}
+              disabled={selectedRepositories.size === 0 || saving || (preselectingRepositories && (githubRepositoriesQuery.hasNextPage || githubRepositoriesQuery.isFetchingNextPage))}
               aria-busy={saving || undefined}
             >
-              {t(($) => $.repositories.github_import)}
+              {t(($) => $.repositories.github_import, { count: selectedRepositories.size })}
             </Button>
           </DialogFooter>
         </DialogContent>

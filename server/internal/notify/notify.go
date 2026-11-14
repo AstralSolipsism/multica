@@ -16,6 +16,7 @@ package notify
 // its types. Types not in the catalog are always delivered (not
 // configurable) — see PreferenceGroupForType.
 const (
+	GroupNewIssues     = "new_issues"
 	GroupAssignments   = "assignments"
 	GroupStatusChanges = "status_changes"
 	GroupComments      = "comments"
@@ -39,6 +40,7 @@ type InboxType struct {
 // simply is not mute-configurable), but it cannot be filtered by a personal
 // route and its mute state cannot be re-checked before a send.
 var inboxTypes = []InboxType{
+	{Type: "issue_created", Group: GroupNewIssues, Label: "Issue created"},
 	{Type: "issue_assigned", Group: GroupAssignments, Label: "Issue assigned to you"},
 	{Type: "unassigned", Group: GroupAssignments, Label: "Unassigned from issue"},
 	{Type: "assignee_changed", Group: GroupAssignments, Label: "Assignee changed"},

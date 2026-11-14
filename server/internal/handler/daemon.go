@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -3755,6 +3756,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					delivery.ChannelThreadID.String != "" &&
 					delivery.ChannelThreadID.String != delivery.ChannelMessageID.String
 			}
+			resp.ChatFeishuSource = lark.TaskSource(delivery)
 		} else if !errors.Is(deliveryErr, pgx.ErrNoRows) {
 			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount,
 				h.rejectClaimSourceLoad(r.Context(), task, deliveryErr, "channel task delivery", uuidToString(task.ID))
@@ -6721,14 +6723,16 @@ func attachTaskUsage(resp []AgentTaskResponse, byTask map[string][]TaskUsageData
 	}
 }
 
-// ListTaskMessagesByUser returns task messages for a task.
-// Used by the frontend under regular user auth (not daemon auth).
-// Verifies the task belongs to the caller's workspace.
-func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
+// loadTaskForUser resolves {taskId} for a member request and enforces every
+// read rule a run's details are under: same workspace, chat-session owner for
+// chat tasks, and project visibility (MUL-8472). Any failure is written as the
+// response — a task the caller may not see reads as not found — and false is
+// returned.
+func (h *Handler) loadTaskForUser(w http.ResponseWriter, r *http.Request) (db.AgentTaskQueue, bool) {
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
 	if !ok {
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
@@ -6736,10 +6740,10 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		if !isNotFound(err) {
 			slog.Warn("get agent task failed", "task_id", taskID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to load task")
-			return
+			return db.AgentTaskQueue{}, false
 		}
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 
 	// Verify the task belongs to the caller's workspace. A failed lookup is a
@@ -6750,28 +6754,42 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		slog.Warn("resolve task workspace failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load task")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	// Mismatch stays a 404 rather than a 403: a task in another workspace must
 	// be indistinguishable from one that does not exist.
 	wsID := scope.WorkspaceID
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	// A chat task's transcript belongs to the chat session's creator alone;
 	// to anyone else it does not exist either.
 	if task.ChatSessionID.Valid && (scope.ChatSessionOwnerID == "" || scope.ChatSessionOwnerID != requestUserID(r)) {
 		writeError(w, http.StatusNotFound, "task not found")
-		return
+		return db.AgentTaskQueue{}, false
 	}
 	// A run's transcript is visible exactly where the projects it reads are
 	// (MUL-8472), including runs that have no issue. Task ids reach every
 	// member through task lifecycle events, so this cannot rely on the issue
 	// page being unreachable.
 	if !h.requireTaskVisible(w, r, wsID, task, http.StatusNotFound, "task not found") {
+		return db.AgentTaskQueue{}, false
+	}
+	return task, true
+}
+
+// ListTaskMessagesByUser returns task messages for a task.
+// Used by the frontend under regular user auth (not daemon auth).
+// Verifies the task belongs to the caller's workspace.
+func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
+	task, ok := h.loadTaskForUser(w, r)
+	if !ok {
 		return
 	}
+
+	taskID := chi.URLParam(r, "taskId")
+	taskUUID := task.ID
 
 	var (
 		messages []db.TaskMessage

@@ -1086,10 +1086,9 @@ describe("estimateCost", () => {
         expect(breakdown.cacheWrite, model).toBeCloseTo(c.cacheWrite, 5);
       }
     }
-    // A Hermes custom provider carries a `custom:` routing prefix; omp reports the bare id.
+    // A Hermes custom provider carries a `custom:` routing prefix.
     expect(collectUnmappedModels([
       { ...zeroUsage, model: "glm-5.3", input_tokens: 1 },
-      { ...zeroUsage, provider: "omp", model: "glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "hermes", model: "custom:glm-5.3", input_tokens: 1 },
       { ...zeroUsage, provider: "claude", model: "glm-5.3-flash", input_tokens: 1 },
     ])).toEqual([]);
@@ -1108,7 +1107,6 @@ describe("estimateCost", () => {
     // `cursor/auto`.
     const k311 = 2 + 10 + 0.2 + 2;
     for (const [model, provider] of [
-      ["k3.1-pro", "omp"],
       ["kimi-code/k3.1-pro", "kimi"],
       ["kimi-k3.1-pro", undefined],
       ["kimi-k3.1-pro", "kimi"],
@@ -1511,32 +1509,6 @@ describe("user-supplied custom pricing", () => {
     ).toBeCloseTo(5, 5);
   });
 
-  it("prices a fully uncosted group whose five cost-split fields are omitted", () => {
-    const row = {
-      ...zeroUsage,
-      provider: "acme",
-      model: "auto",
-      input_tokens: 1_000_000,
-      output_tokens: 1_000_000,
-      cache_read_tokens: 1_000_000,
-      cache_write_tokens: 1_000_000,
-    };
-    expect(summarizeTaskUsage([row])).toMatchObject({ tokens: 4_000_000, cost: 0 });
-    expect(summarizeTaskUsage([])).toBeNull();
-
-    useCustomPricingStore.getState().setCustomPricing("acme/auto", {
-      input: 2,
-      output: 8,
-      cacheRead: 0.2,
-      cacheWrite: 2,
-    });
-    expect(summarizeTaskUsage([row])?.cost).toBeCloseTo(12.2, 5);
-
-    // An authoritative zero is a real free row, not missing usage, and must
-    // not be estimated again through the custom rate table.
-    expect(summarizeTaskUsage([{ ...row, cost_usd_ticks: 0 }])?.cost).toBe(0);
-  });
-
   it("does NOT shadow the maintained catalog when both define the same model", () => {
     // Catalog wins so a user can't accidentally over-charge themselves for
     // a model we already track (and so a stale local override doesn't
@@ -1771,9 +1743,10 @@ describe("sliceWindow (timezone-aware)", () => {
       makeUsage("2026-05-19"),
       makeUsage("2026-05-20"),
     ];
+    // The Shanghai window is 05-14..05-20, so 05-13 falls out; a cutoff read
+    // from the host clock (today 05-19) would have kept it.
     const { filtered } = sliceWindow(usage, 7, "Asia/Shanghai");
     expect(filtered.map((u) => u.date)).toEqual([
-      "2026-05-13",
       "2026-05-19",
       "2026-05-20",
     ]);
@@ -1790,6 +1763,20 @@ describe("sliceWindow (timezone-aware)", () => {
     const { filtered, prevFiltered } = sliceWindow(usage, 7, "UTC");
     expect(filtered.map((u) => u.date)).toEqual(["2026-05-15", "2026-05-19"]);
     expect(prevFiltered.map((u) => u.date)).toEqual(["2026-05-08"]);
+  });
+
+  it("covers exactly `days` calendar days, today included, in both windows", () => {
+    vi.setSystemTime(new Date("2026-05-19T12:00:00Z"));
+    const usage = [
+      makeUsage("2026-05-05"),
+      makeUsage("2026-05-06"),
+      makeUsage("2026-05-12"),
+      makeUsage("2026-05-13"),
+      makeUsage("2026-05-19"),
+    ];
+    const { filtered, prevFiltered } = sliceWindow(usage, 7, "UTC");
+    expect(filtered.map((u) => u.date)).toEqual(["2026-05-13", "2026-05-19"]);
+    expect(prevFiltered.map((u) => u.date)).toEqual(["2026-05-06", "2026-05-12"]);
   });
 });
 
@@ -2231,13 +2218,6 @@ describe("formatTokens", () => {
     expect(formatTokens(999_949)).toBe("999.9K");
     expect(formatTokens(999_950)).toBe("1M");
     expect(formatTokens(999_999_999)).toBe("1B");
-  });
-});
-
-describe("provider-reported zero cost", () => {
-  it("does not estimate tokens for a raw run explicitly billed at zero", () => {
-    expect(summarizeTaskUsage([{ model: "gpt-5.4", input_tokens: 1_000_000, output_tokens: 100,
-      cache_read_tokens: 200, cache_write_tokens: 300, cost_usd_ticks: 0 }])?.cost).toBe(0);
   });
 });
 

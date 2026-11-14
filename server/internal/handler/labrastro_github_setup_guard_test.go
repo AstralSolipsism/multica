@@ -15,6 +15,9 @@ package handler
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -138,7 +141,7 @@ func TestSetupCallback_RefusesUnrelatedAdminBinding(t *testing.T) {
 
 	// Attacker mints a state for THEIR workspace, naming THEMSELVES as the
 	// operator (exactly what the admin-gated Connect endpoint would sign).
-	state, err := signGitHubSetupState(attackerWS, githubReturnToGitHub, attackerUser)
+	state, err := signGitHubSetupState(attackerWS, false, attackerUser)
 	if err != nil {
 		t.Fatalf("signGitHubSetupState: %v", err)
 	}
@@ -251,7 +254,7 @@ func TestSetupCallback_ManagerAllowlistMatrix(t *testing.T) {
 			targetWS := dbfx.Workspace(t, "Matrix target "+suffix, "setup-guard-target-"+suffix, testutil.Cols{"issue_prefix": fmt.Sprintf("MT%d", i)})
 			dbfx.Member(t, targetWS, operator, "owner")
 
-			state, err := signGitHubSetupState(targetWS, githubReturnToGitHub, operator)
+			state, err := signGitHubSetupState(targetWS, false, operator)
 			if err != nil {
 				t.Fatalf("signGitHubSetupState: %v", err)
 			}
@@ -395,7 +398,7 @@ func TestSetupCallback_AllowsManagerRebind(t *testing.T) {
 		"account_type":    "Organization",
 	})
 
-	state, err := signGitHubSetupState(secondWS, githubReturnToGitHub, manager)
+	state, err := signGitHubSetupState(secondWS, false, manager)
 	if err != nil {
 		t.Fatalf("signGitHubSetupState: %v", err)
 	}
@@ -445,7 +448,7 @@ func TestSetupCallback_MemberCannotRebind(t *testing.T) {
 		"account_type":    "Organization",
 	})
 
-	state, err := signGitHubSetupState(otherWS, githubReturnToGitHub, plainMember)
+	state, err := signGitHubSetupState(otherWS, false, plainMember)
 	if err != nil {
 		t.Fatalf("signGitHubSetupState: %v", err)
 	}
@@ -470,7 +473,7 @@ func TestSetupCallback_StateRoundTrip(t *testing.T) {
 	wsID := "11111111-2222-3333-4444-555555555555"
 	operator := "99999999-8888-7777-6666-555555555554"
 
-	tok, err := signGitHubSetupState(wsID, githubReturnToGitHub, operator)
+	tok, err := signGitHubSetupState(wsID, false, operator)
 	if err != nil {
 		t.Fatalf("signGitHubSetupState: %v", err)
 	}
@@ -478,9 +481,9 @@ func TestSetupCallback_StateRoundTrip(t *testing.T) {
 		t.Fatalf("operator state has %d parts, want 5", len(parts))
 	}
 	gotWS, gotReturn, gotOperator, ok := verifyGitHubSetupState(tok)
-	if !ok || gotWS != wsID || gotOperator.String() != operator || gotReturn != githubReturnToGitHub {
+	if !ok || gotWS != wsID || gotOperator.String() != operator || gotReturn == "" {
 		t.Fatalf("round trip = (%q, %q, %v, %v), want (%q, %q, %s, true)",
-			gotWS, gotReturn, gotOperator, ok, wsID, githubReturnToGitHub, operator)
+			gotWS, gotReturn, gotOperator, ok, wsID, "connection-id", operator)
 	}
 
 	// Swapping any segment breaks the signature.
@@ -488,7 +491,7 @@ func TestSetupCallback_StateRoundTrip(t *testing.T) {
 	if _, _, _, ok := verifyGitHubSetupState(tampered); ok {
 		t.Error("tampered operator must fail verification")
 	}
-	tampered = strings.Replace(tok, "."+githubReturnToGitHub+".", ".repositories.", 1)
+	tampered = strings.Replace(tok, ".github.", ".repositories.", 1)
 	if _, _, _, ok := verifyGitHubSetupState(tampered); ok {
 		t.Error("tampered return target must fail verification")
 	}
@@ -501,16 +504,16 @@ func TestSetupCallback_StateRoundTrip(t *testing.T) {
 	if _, _, gotOperator, ok := verifyGitHubSetupState(legacy3); !ok || gotOperator.Valid {
 		t.Fatalf("legacy 3-part state: ok=%v operator=%v, want ok=true operator invalid", ok, gotOperator)
 	}
-	legacy4, err := signStateForReturn(wsID, githubReturnToRepositories)
-	if err != nil {
-		t.Fatalf("signStateForReturn: %v", err)
-	}
-	if _, gotReturn, gotOperator, ok := verifyGitHubSetupState(legacy4); !ok || gotReturn != githubReturnToRepositories || gotOperator.Valid {
-		t.Fatalf("legacy 4-part state: ok=%v return=%q operator=%v", ok, gotReturn, gotOperator)
+	payload := wsID + ".repositories.legacy-nonce"
+	mac := hmac.New(sha256.New, []byte("state-roundtrip-secret"))
+	mac.Write([]byte(payload))
+	legacy4 := payload + "." + hex.EncodeToString(mac.Sum(nil))
+	if _, connectionID, gotOperator, ok := verifyGitHubSetupState(legacy4); !ok || connectionID != "legacy-nonce" || gotOperator.Valid {
+		t.Fatalf("legacy 4-part state: ok=%v connection=%q operator=%v", ok, connectionID, gotOperator)
 	}
 
 	// A non-UUID operator is refused at signing time.
-	if _, err := signGitHubSetupState(wsID, githubReturnToGitHub, "not-a-uuid"); err == nil {
+	if _, err := signGitHubSetupState(wsID, false, "not-a-uuid"); err == nil {
 		t.Error("non-UUID operator must fail signing")
 	}
 }
@@ -576,7 +579,7 @@ func TestSetupCallback_ManagerOfAnotherInstallationIsRefused(t *testing.T) {
 		"account_login": "attacker-own", "account_type": "User",
 	})
 
-	state, err := signGitHubSetupState(attackerWS, githubReturnToGitHub, attacker)
+	state, err := signGitHubSetupState(attackerWS, false, attacker)
 	if err != nil {
 		t.Fatalf("signGitHubSetupState: %v", err)
 	}
@@ -615,7 +618,7 @@ func TestSetupCallback_ManagerRebindKeepsAccountMetadata(t *testing.T) {
 	})
 
 	for _, ws := range []string{secondWS, homeWS} {
-		state, err := signGitHubSetupState(ws, githubReturnToGitHub, manager)
+		state, err := signGitHubSetupState(ws, false, manager)
 		if err != nil {
 			t.Fatalf("signGitHubSetupState: %v", err)
 		}

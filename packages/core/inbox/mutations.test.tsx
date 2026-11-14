@@ -3,13 +3,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
-import { useMarkInboxRead, useMarkInboxUnread, useMarkIssueInboxRead, useUnarchiveInbox, useArchiveInbox } from "./mutations";
+import { useDeleteInbox, useMarkInboxRead, useMarkInboxUnread, useMarkIssueInboxRead, useUnarchiveInbox } from "./mutations";
 import { inboxKeys, useInboxUnreadCount } from "./queries";
 import { onInboxSummaryInvalidate } from "./ws-updaters";
 import { createQueryClient } from "../query-client";
@@ -64,6 +64,39 @@ function summaryCount(qc: QueryClient) {
   );
   return summary?.find((e) => e.workspace_id === WORKSPACE_ID)?.count;
 }
+
+describe("useDeleteInbox", () => {
+  it("does not remove cached rows before confirmation and refreshes both views and unread summary on success", async () => {
+    const qc = createQueryClient();
+    let confirm!: () => void;
+    setApiInstance({ deleteInbox: vi.fn(() => new Promise<{ count: number }>((resolve) => {
+      confirm = () => resolve({ count: 1 });
+    })) } as unknown as ApiClient);
+    const keys = [inboxKeys.list(WORKSPACE_ID), inboxKeys.archived(WORKSPACE_ID), inboxKeys.unreadSummary()];
+    for (const key of keys) qc.setQueryData(key, [item()]);
+    const { result } = renderHook(() => useDeleteInbox(), { wrapper: createWrapper(qc) });
+    act(() => result.current.mutate("inbox-1"));
+    await waitFor(() => expect(result.current.isPending).toBe(true));
+    expect(archivedCache(qc)).toHaveLength(1);
+    expect(listCache(qc)).toHaveLength(1);
+    await act(async () => confirm());
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      for (const key of keys) expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("keeps caches untouched on failure", async () => {
+    const qc = createQueryClient();
+    setApiInstance({ deleteInbox: vi.fn().mockRejectedValue(new Error("offline")) } as unknown as ApiClient);
+    qc.setQueryData(inboxKeys.list(WORKSPACE_ID), [item()]);
+    const { result } = renderHook(() => useDeleteInbox(), { wrapper: createWrapper(qc) });
+    act(() => result.current.mutate("inbox-1"));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(listCache(qc)).toHaveLength(1);
+    expect(qc.getQueryState(inboxKeys.list(WORKSPACE_ID))?.isInvalidated).toBe(false);
+  });
+});
 
 describe("useMarkInboxRead", () => {
   let queryClient: QueryClient;
@@ -502,68 +535,4 @@ describe("unread summary is server-owned", () => {
       }
     },
   );
-});
-
-
-it.each([useMarkInboxRead, useMarkInboxUnread, useArchiveInbox])(
-  "restores a refresh interrupted by a single-item optimistic write (%s)", async (useWrite) => {
-    const qc = createQueryClient();
-    const old = item({ archived: false });
-    const added = item({ id: "new", issue_id: "new-issue", archived: false });
-    let release!: (rows: InboxItem[]) => void;
-    const listInbox = vi.fn<() => Promise<InboxItem[]>>()
-      .mockResolvedValueOnce([old])
-      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
-      .mockResolvedValue([added, old]);
-    const write = vi.fn(async () => old);
-    setApiInstance({ markInboxRead: write, markInboxUnread: write, archiveInbox: write } as unknown as ApiClient);
-    const { result, unmount } = renderHook(() => ({
-      list: useQuery({ queryKey: inboxKeys.list(WORKSPACE_ID), queryFn: listInbox }),
-      write: useWrite(),
-    }), { wrapper: createWrapper(qc) });
-    try {
-      await waitFor(() => expect(result.current.list.data).toEqual([old]));
-      let refetch!: Promise<void>;
-      act(() => { refetch = qc.refetchQueries({ queryKey: inboxKeys.list(WORKSPACE_ID) }); });
-      await act(async () => { await result.current.write.mutateAsync(old.id); });
-      await act(async () => { release([old]); await refetch; });
-      await waitFor(() => expect(result.current.list.data).toEqual([added, old]));
-      expect(listInbox).toHaveBeenCalledTimes(3);
-    } finally { unmount(); qc.clear(); }
-  },
-);
-
-
-it("reconciles a refresh started while a read mutation is pending, without requiring a WS echo", async () => {
-  const qc = createQueryClient();
-  const old = item({ archived: false, read: false });
-  let releaseWrite!: () => void;
-  let releaseRead!: (rows: InboxItem[]) => void;
-  let server = [old];
-  const listInbox = vi.fn<() => Promise<InboxItem[]>>()
-    .mockResolvedValueOnce([old])
-    .mockImplementationOnce(() => new Promise((resolve) => { releaseRead = resolve; }))
-    .mockImplementation(async () => server);
-  const markInboxRead = vi.fn(async () => {
-    await new Promise<void>((resolve) => { releaseWrite = resolve; });
-    server = [{ ...old, read: true }];
-    return server[0]!;
-  });
-  setApiInstance({ markInboxRead } as unknown as ApiClient);
-  const { result, unmount } = renderHook(() => ({
-    list: useQuery({ queryKey: inboxKeys.list(WORKSPACE_ID), queryFn: listInbox }),
-    write: useMarkInboxRead(),
-  }), { wrapper: createWrapper(qc) });
-  try {
-    await waitFor(() => expect(result.current.list.data).toEqual([old]));
-    act(() => result.current.write.mutate(old.id));
-    await waitFor(() => expect(markInboxRead).toHaveBeenCalledTimes(1));
-    let refetch!: Promise<void>;
-    act(() => { refetch = qc.invalidateQueries({ queryKey: inboxKeys.list(WORKSPACE_ID) }); });
-    await act(async () => { releaseWrite(); });
-    await waitFor(() => expect(result.current.write.isSuccess).toBe(true));
-    await act(async () => { releaseRead([old]); await refetch; });
-    await waitFor(() => expect(result.current.list.data).toEqual([{ ...old, read: true }]));
-    expect(listInbox).toHaveBeenCalledTimes(3);
-  } finally { unmount(); qc.clear(); }
 });

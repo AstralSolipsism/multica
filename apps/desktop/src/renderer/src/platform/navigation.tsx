@@ -22,6 +22,7 @@ import {
   openWorkspaceInNewWindow,
   otherWindowWorkspaces,
 } from "./workspace-windows";
+import { parseIssueWindowPath } from "../../../shared/issue-window";
 
 function requireRuntimeAppUrl(scope: string): string {
   const runtimeConfig = window.desktopAPI.runtimeConfig;
@@ -66,7 +67,7 @@ function tryRouteToOverlay(path: string): boolean {
       return true;
     }
     if (id) {
-      overlay.open({ type: "invite", invitationId: id });
+      overlay.open({ type: "invitations", invitationId: id });
       return true;
     }
   }
@@ -334,6 +335,10 @@ export function DesktopNavigationProvider({
         store.openTab(path, title ?? "", { activate: opts?.activate });
       },
       openWorkspaceInNewWindow,
+      openIssueInNewWindow: (path: string, title: string) => {
+        if (!parseIssueWindowPath(path)) return;
+        void window.desktopAPI.openIssueWindow({ path, title });
+      },
       workspacesInOtherWindows: () => [...otherWindowWorkspaces()],
       getShareableUrl: (path: string) => `${appUrl}${path}`,
     }),

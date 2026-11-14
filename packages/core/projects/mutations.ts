@@ -89,7 +89,6 @@ export function useDeleteProject() {
           : old,
       );
       qc.removeQueries({ queryKey: projectKeys.detail(wsId, id) });
-      qc.removeQueries({ queryKey: projectKeys.engineeringAll(wsId, id) });
       useRecentContextStore.getState().forgetContext(wsId, { type: "project", id });
       clearIssueSurfaceViewState(issueScopeKey({ type: "project", projectId: id }));
     },
@@ -104,4 +103,17 @@ export function useDeleteProject() {
   });
 }
 
-export * from "./engineering-mutations";
+export function useSetProjectSubscription() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: ({ id, subscribed }: { id: string; subscribed: boolean }) =>
+      api.setProjectSubscription(id, subscribed),
+    onSuccess: (subscribed, { id }) => {
+      qc.setQueryData(projectKeys.subscription(wsId, id), subscribed);
+      // Issue subscriber lists include project subscribers, so any open issue
+      // of this project may have just gained or lost the caller.
+      qc.invalidateQueries({ queryKey: issueKeys.subscribersAll() });
+    },
+  });
+}

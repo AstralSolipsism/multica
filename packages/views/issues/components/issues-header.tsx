@@ -1,30 +1,34 @@
 "use client";
 
 import { cloneElement, useEffect, useMemo, useRef, useState } from "react";
-import { VIEW_MODE_CAPABILITIES, availableViewModes, visibleViewMode } from "@multica/core/issues/surface/view-mode";
-import { VIEW_MODE_META, useViewModeLabels } from "./view-mode-meta";
 import {
   Activity,
+  BotOff,
   BellRing,
   Bot,
   CalendarClock,
   CalendarDays,
+  ChartGantt,
   ChevronDown,
   CircleDashed,
   CircleDot,
   CircleUser,
+  Columns3,
   Eye,
   Filter,
   FolderKanban,
   FolderMinus,
+  List,
   ListTree,
   Search,
   SignalHigh,
   SlidersHorizontal,
   Tag,
+  Table2,
   User,
   UserMinus,
   UserPen,
+  Waves,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
@@ -108,6 +112,7 @@ import {
   type IssueGrouping,
   type SwimlaneGrouping,
   type TableGrouping,
+  type ViewMode,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import {
@@ -126,8 +131,7 @@ import { useStatusOptions } from "../utils/status-options";
 import { useColumnStatuses } from "../surface/column-statuses-context";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import { preloadIssueView } from "../surface/issue-view-loaders";
-import { TableColumnPicker } from "./table-column-picker";
+import { TableColumnPicker } from "./table-view";
 import { DisplayChip, SortDirectionButton } from "./display-parts";
 import { AdvancedFilterPanel, stopMenuSearchKeys } from "./advanced-filter-panel";
 import { PropertyFilterOptions } from "./property-filter-options";
@@ -165,6 +169,7 @@ function getActiveFilterCount(
     advancedFilter?: AdvancedFilterGroup | null;
     dateFilter?: IssueDateFilter | null;
     agentRunningFilter?: boolean;
+    agentIdleFilter?: boolean;
     unreadFilter?: boolean;
   },
   // Inside a saved view only the user's additions on top of the view's own
@@ -213,6 +218,7 @@ function getActiveFilterCount(
   }
   if (state.dateFilter) count++;
   if (state.agentRunningFilter && !baseline?.agentRunning) count++;
+  if (state.agentIdleFilter && !baseline?.agentIdle) count++;
   if (state.unreadFilter && !baseline?.unread) count++;
   return count;
 }
@@ -1072,6 +1078,7 @@ export function IssueFilterMenu({
   const negatedFilters = useViewStore((s) => s.negatedFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
+  const agentIdleFilter = useViewStore((s) => s.agentIdleFilter);
   const unreadFilter = useViewStore((s) => s.unreadFilter);
   const viewStoreApi = useViewStoreApi();
   const act = viewStoreApi.getState();
@@ -1136,6 +1143,7 @@ export function IssueFilterMenu({
         advancedFilter,
         dateFilter: showDateFilter ? dateFilter : null,
         agentRunningFilter,
+        agentIdleFilter,
         unreadFilter,
       },
       viewBaseline,
@@ -1173,7 +1181,7 @@ export function IssueFilterMenu({
     key === "date"
       ? t(($) => $.filters.section_date)
       : key === "agentRunning"
-        ? `${t(($) => $.filters.section_agent_status)} ${t(($) => $.filters.agent_status_running)}`
+        ? `${t(($) => $.filters.section_agent_status)} ${t(($) => $.filters.agent_status_running)} ${t(($) => $.filters.agent_status_idle)}`
         : key === "unread"
           ? `${t(($) => $.filters.section_read_state)} ${t(($) => $.filters.read_state_unread)}`
         : key.startsWith("property:")
@@ -1249,14 +1257,25 @@ export function IssueFilterMenu({
               <DropdownMenuSubContent className="w-auto min-w-44">
                 <DropdownMenuCheckboxItem
                   checked={agentRunningFilter}
-                  disabled={viewBaseline?.agentRunning === true}
-                  title={viewBaseline?.agentRunning === true ? fixedTitle : undefined}
+                  disabled={viewBaseline?.agentRunning === true || viewBaseline?.agentIdle === true}
+                  title={viewBaseline?.agentRunning || viewBaseline?.agentIdle ? fixedTitle : undefined}
                   onCheckedChange={() => act.toggleAgentRunningFilter()}
                   className={FILTER_ITEM_CLASS}
                 >
                   <HoverCheck checked={agentRunningFilter} />
                   <Activity className="size-3.5 text-muted-foreground" />
                   {t(($) => $.filters.agent_status_running)}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={agentIdleFilter}
+                  disabled={viewBaseline?.agentRunning === true || viewBaseline?.agentIdle === true}
+                  title={viewBaseline?.agentRunning || viewBaseline?.agentIdle ? fixedTitle : undefined}
+                  onCheckedChange={() => act.toggleAgentIdleFilter()}
+                  className={FILTER_ITEM_CLASS}
+                >
+                  <HoverCheck checked={agentIdleFilter} />
+                  <BotOff className="size-3.5 text-muted-foreground" />
+                  {t(($) => $.filters.agent_status_idle)}
                 </DropdownMenuCheckboxItem>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
@@ -1811,11 +1830,18 @@ export function IssueFilterMenu({
   );
 }
 
+const LAYOUTS: { mode: ViewMode; Icon: typeof List }[] = [
+  { mode: "board", Icon: Columns3 },
+  { mode: "list", Icon: List },
+  { mode: "table", Icon: Table2 },
+  { mode: "swimlane", Icon: Waves },
+  { mode: "gantt", Icon: ChartGantt },
+];
+
 export function IssueDisplayControls({
   scopedIssues,
   hideViewToggle = false,
   allowGantt = false,
-  allowDag = false,
   dateFilter = null,
   onDateFilterChange,
   facetCountsExact = true,
@@ -1837,12 +1863,9 @@ export function IssueDisplayControls({
    *  the trigger count only counts additions on top. */
   viewBaseline?: IssueViewBaseline;
   // Only Project Detail renders <GanttView>; other surfaces (global /issues,
-  // /my-issues, actor panel) ignore a persisted Gantt mode and would silently
+  // /my-issues, actor panel) ignore viewMode === "gantt" and would silently
   // fall back to List if the option were exposed there. Keep Gantt opt-in.
   allowGantt?: boolean;
-  /** DAG mode is likewise opt-in per surface: only surfaces whose `modes`
-   *  include "dag" (issues page, project detail) offer it. */
-  allowDag?: boolean;
   /**
    * Whether `scopedIssues` covers the surface's full window. Table does not
    * use loaded rows for counts; server-paged List, Board, and Swimlane follow
@@ -1854,11 +1877,7 @@ export function IssueDisplayControls({
   onTableFacetChange?: (facet: IssueTableFacetSpec | null) => void;
 }) {
   const { t } = useT("issues");
-  const storedViewMode = useViewStore((s) => s.viewMode);
-  const viewMode = visibleViewMode(storedViewMode, { allowGantt, allowDag });
-  const viewModes = availableViewModes({ allowGantt, allowDag });
-  const { labelOf, tooltipOf } = useViewModeLabels();
-  const ViewIcon = VIEW_MODE_META[viewMode].icon;
+  const viewMode = useViewStore((s) => s.viewMode);
   const statusFilters = useViewStore((s) => s.statusFilters);
   const priorityFilters = useViewStore((s) => s.priorityFilters);
   const assigneeFilters = useViewStore((s) => s.assigneeFilters);
@@ -1874,6 +1893,7 @@ export function IssueDisplayControls({
   const advancedFilter = useViewStore((s) => s.advancedFilter);
   const negatedFilters = useViewStore((s) => s.negatedFilters);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
+  const agentIdleFilter = useViewStore((s) => s.agentIdleFilter);
   const unreadFilter = useViewStore((s) => s.unreadFilter);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const sortBy = useViewStore((s) => s.sortBy);
@@ -1956,6 +1976,7 @@ export function IssueDisplayControls({
       advancedFilter,
       dateFilter: showDateFilter ? dateFilter : null,
       agentRunningFilter,
+      agentIdleFilter,
       unreadFilter,
     },
     viewBaseline,
@@ -1982,7 +2003,7 @@ export function IssueDisplayControls({
     project: "group_project",
     assignee: "group_assignee",
   };
-  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_start_date" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress" | "card_cost"> = {
+  const CARD_PROPERTY_LABEL_KEY: Record<typeof CARD_PROPERTY_OPTIONS[number]["key"], "card_priority" | "card_description" | "card_assignee" | "card_start_date" | "card_due_date" | "card_project" | "card_labels" | "card_child_progress" | "card_pull_requests"> = {
     priority: "card_priority",
     description: "card_description",
     assignee: "card_assignee",
@@ -1991,7 +2012,7 @@ export function IssueDisplayControls({
     project: "card_project",
     labels: "card_labels",
     childProgress: "card_child_progress",
-    cost: "card_cost",
+    pullRequests: "card_pull_requests",
   };
   const availableCardPropertyOptions = cardPropertyOptionsForView(viewMode);
   const availableSortOptions = sortOptionsForView(viewMode, grouping);
@@ -2025,8 +2046,12 @@ export function IssueDisplayControls({
         : effectiveTableGrouping === "project"
           ? t(($) => $.table.columns.project)
           : t(($) => $.table.group_none);
-  const layout = viewMode;
-  const LayoutIcon = hideViewToggle ? SlidersHorizontal : ViewIcon;
+  // A Gantt layout persisted on a surface without Gantt renders as List.
+  const layout: ViewMode = viewMode === "gantt" && !allowGantt ? "list" : viewMode;
+  const layouts = LAYOUTS.filter(({ mode }) => mode !== "gantt" || allowGantt);
+  const LayoutIcon = hideViewToggle
+    ? SlidersHorizontal
+    : LAYOUTS.find(({ mode }) => mode === layout)!.Icon;
   const hasLayoutOptions =
     showColumnToggles || viewMode === "table" || availableCardPropertyOptions.length > 0;
   const controlButtonClass = "h-8 w-8 gap-1 px-0 text-muted-foreground md:h-7 md:w-auto md:px-2.5";
@@ -2107,30 +2132,21 @@ export function IssueDisplayControls({
                 aria-label={t(($) => $.view.section)}
                 className={cn(
                   "mb-3 grid gap-0.5 rounded-lg bg-muted p-0.5",
-                  viewModes.length === 6
-                    ? "grid-cols-6"
-                    : viewModes.length === 5
-                      ? "grid-cols-5"
-                      : "grid-cols-4",
+                  layouts.length === 5 ? "grid-cols-5" : "grid-cols-4",
                 )}
               >
-                {viewModes.map((mode) => {
-                  const Icon = VIEW_MODE_META[mode].icon;
-                  return (
-                    <Toggle
-                      key={mode}
-                      pressed={layout === mode}
-                      onPressedChange={() => act.setViewMode(mode)}
-                      onPointerEnter={() => preloadIssueView(mode)}
-                      onFocus={() => preloadIssueView(mode)}
-                      title={tooltipOf(mode)}
-                      className="h-auto min-w-0 flex-col gap-1 rounded-md px-0.5 py-1.5 text-caption font-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm aria-pressed:hover:bg-background"
-                    >
-                      <Icon className="size-4" />
-                      <span className="max-w-full truncate">{labelOf(mode)}</span>
-                    </Toggle>
-                  );
-                })}
+                {layouts.map(({ mode, Icon }) => (
+                  <Toggle
+                    key={mode}
+                    pressed={layout === mode}
+                    onPressedChange={() => act.setViewMode(mode)}
+                    title={t(($) => $.view[mode])}
+                    className="h-auto min-w-0 flex-col gap-1 rounded-md px-0.5 py-1.5 text-caption font-normal text-muted-foreground hover:bg-transparent hover:text-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm aria-pressed:hover:bg-background"
+                  >
+                    <Icon className="size-4" />
+                    <span className="max-w-full truncate">{t(($) => $.view[mode])}</span>
+                  </Toggle>
+                ))}
               </div>
             )}
             <div className="space-y-3">
@@ -2246,10 +2262,6 @@ export function IssueDisplayControls({
                   </Select>
                 </div>
               )}
-              {/* Sort is a list-shaped concept: the graph endpoint ignores it
-                  and ELK owns node order, so the control hides in DAG mode
-                  rather than pretending to apply. */}
-              {VIEW_MODE_CAPABILITIES[viewMode].ordering && (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-caption font-medium text-muted-foreground">
                   {t(($) => $.display.ordering_section)}
@@ -2297,7 +2309,6 @@ export function IssueDisplayControls({
                   </Select>
                 </div>
               </div>
-              )}
               <label className="flex cursor-pointer items-center justify-between gap-3">
                 <span className="text-caption font-medium text-muted-foreground">
                   {t(($) => $.display.show_sub_issues)}
@@ -2312,7 +2323,7 @@ export function IssueDisplayControls({
             {hasLayoutOptions && (
               <div className="mt-5 space-y-3">
                 <p className="text-label font-medium text-foreground">
-                  {t(($) => $.display.layout_options, { layout: labelOf(layout) })}
+                  {t(($) => $.display.layout_options, { layout: t(($) => $.view[layout]) })}
                 </p>
               {showColumnToggles && (
                 <div>
@@ -2404,7 +2415,7 @@ export function IssueDisplayControls({
                         {t(($) => $.display[CARD_PROPERTY_LABEL_KEY[opt.key]])}
                       </DisplayChip>
                     ))}
-                    {viewMode !== "dag" && workspaceProperties.map((property) => (
+                    {workspaceProperties.map((property) => (
                       <DisplayChip
                         key={property.id}
                         pressed={cardPropertyIds.includes(property.id)}

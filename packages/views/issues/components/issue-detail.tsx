@@ -16,7 +16,6 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { AppLink, useBackOrReplace } from "../../navigation";
 import { IssueDuplicateBanner, IssueDuplicatesSection, isDuplicateIssue } from "./issue-duplicates";
-import { IssueDependenciesSection } from "./issue-dependencies-section";
 import {
   AlertTriangle,
   Archive,
@@ -74,6 +73,8 @@ import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@multica/ui/components/ui/command";
 import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { MemberProfileCard } from "../../members/member-profile-card";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@multica/ui/components/ui/hover-card";
 import { ActionShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { PropRow } from "../../common/prop-row";
 import { TimelineHandoff } from "../../workflows/timeline-handoff";
@@ -97,7 +98,7 @@ import { AssigneePicker } from "./pickers/assignee-picker";
 import { LabelPicker } from "./pickers/label-picker";
 import { CustomPropertyValueEditor, CustomPropertyValueDisplay } from "./pickers/custom-property-picker";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { IssueActionsDropdown, useIssueActions, useArchivedInboxItemId, IssueActionsContextMenu, IssueContextMenuProvider } from "../actions";
+import { IssueActionsDropdown, useIssuePageMenu, useIssueActions, useArchivedInboxItemId, IssueActionsContextMenu, IssueContextMenuProvider } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
@@ -110,16 +111,13 @@ import { EMPTY_COMMENT_RUNS, buildCommentRunView, orderTimelineWithRuns, type Co
 import { issueTasksOptions } from "@multica/core/issues/queries";
 import { SourceContextBadge } from "./source-context-viewer";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
-import { CommentInput, type CommentInputRef } from "./comment-input";
+import { CommentInput } from "./comment-input";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { CurrentIssueRenderContextProvider } from "../current-issue-render-context";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
-import { tipAnchorScopeFromIssues } from "../../you-should-know/anchors/tip-anchor-scope";
-import { YouShouldKnowArchiveSection } from "../../you-should-know/archive/archive-section";
-import { commentTimeLookup } from "../../you-should-know/archive/comment-time-lookup";
 import { IssueWakeupHeaderChip } from "./issue-wakeup-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
@@ -128,6 +126,8 @@ import { PluginPanelSection } from "../../plugins";
 import { PullRequestsSection } from "./pull-requests-section";
 import { IssueEnvironmentsSection } from "./issue-environments-section";
 import { useGitHubSettings } from "@multica/core/github";
+import { useFeatureEnabled } from "@multica/core/config";
+import { PLUGINS_V1_FLAG } from "@multica/core/feature-flags";
 import { DeliverablesSection } from "./deliverables/deliverables-section";
 import { IssueAppsSection } from "./issue-apps-section";
 import { DeliverablesOverview } from "./deliverables/deliverables-overview";
@@ -165,14 +165,16 @@ import { memberListOptions, agentListOptions } from "@multica/core/workspace/que
 import {
   selectExpandedResolved,
   useCommentCollapseStore,
+  useCommentComposerStore,
   useRecentIssuesStore,
-  useCommentDraftStore,
   useResolvedExpandStore,
   useSubIssuesCollapseStore,
   useSubIssueDisplayStore,
   SUB_ISSUE_ROW_PROPERTY_KEYS,
   type SubIssueRowProperties,
   type SubIssueRowPropertyKey,
+  ISSUE_SIDEBAR_SECTIONS,
+  type IssueSidebarSection,
 } from "@multica/core/issues/stores";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import {
@@ -193,8 +195,6 @@ import {
   useRestoredViewState,
   useViewStateWriter,
 } from "../../platform";
-import { issueHighlightMementoKey } from "../comment-deep-link";
-import { decideCommentLanding } from "./comment-landing";
 import { cn } from "@multica/ui/lib/utils";
 import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { CollectionPageState } from "../../layout/collection-page";
@@ -205,12 +205,14 @@ import { useShowInSidebar } from "../../layout/panels/show-in-sidebar";
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { MetadataSection } from "./metadata-section";
-import { IssueSidebarSectionHeader, IssueSidebarStack, IssueSidebarPropertyGrid } from "./issue-sidebar-section";
+import { IssueSidebarSectionHeader, IssueSidebarPropertyGrid } from "./issue-sidebar-section";
+import { IssueSidebarSections, letSidebarSettingsDragKeysThrough } from "./issue-sidebar-settings";
 import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
 import { useIssueTimelineAnchor } from "../hooks/use-issue-timeline-anchor";
 import { scrollToTimelineComment } from "../utils/scroll-to-timeline-comment";
 import { useJumpToLatest } from "../hooks/use-jump-to-latest";
+import { useNewCommentsWhileAway } from "../hooks/use-new-comments-while-away";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { FindBar } from "./find-bar";
@@ -222,10 +224,16 @@ import {
   useRightSidebarShortcut,
 } from "../../layout/animated-right-sidebar";
 
-export {
-  issueHighlightMementoKey,
-  ISSUE_HIGHLIGHT_MEMENTO_PREFIX,
-} from "../comment-deep-link";
+/**
+ * Memento entry recording that the comment-highlight deep link for this
+ * issue already landed on the current route (value: the consumed comment
+ * id). Lets a remount that merely restores the view (tab switch back) skip
+ * the jump-and-highlight, while a fresh selection — which clears the entry
+ * (see InboxPage.handleSelect) — runs it again.
+ */
+export function issueHighlightMementoKey(issueId: string): string {
+  return `highlight:${issueId}`;
+}
 
 // Shared by the subscribe button and the unsubscribe menu trigger so the two
 // stay one control visually — they occupy the same slot and only differ in
@@ -359,10 +367,14 @@ function formatActivity(
   locale: string,
   resolveActorName?: (type: string, id: string) => string,
   resolveStatusLabel?: (statusKey: string) => string,
+  requesterName?: string,
 ): string {
   const details = (entry.details ?? {}) as Record<string, string>;
   switch (entry.action) {
     case "created":
+      if (requesterName && entry.actor_type === "agent") {
+        return t(($) => $.activity.created_on_behalf_of, { name: requesterName });
+      }
       return t(($) => $.activity.created);
     case "status_changed":
       // PR auto-complete (MUL-7429) says why the status moved.
@@ -461,6 +473,17 @@ function formatActivity(
             : t(($) => $.activity.squad_leader_failed);
         default:
           return t(($) => $.activity.squad_leader_evaluated);
+      }
+    }
+    case "environment_controlled": {
+      const name = details.label || details.name || "?";
+      switch (details.action) {
+        case "stop":
+          return t(($) => $.activity.environment_stopped, { name });
+        case "restart":
+          return t(($) => $.activity.environment_restarted, { name });
+        default:
+          return t(($) => $.activity.environment_started, { name });
       }
     }
     default:
@@ -597,7 +620,16 @@ function shallowEqualEntries(a: TimelineEntry[], b: TimelineEntry[]): boolean {
   return true;
 }
 
-function JumpToLatestButton({ onClick, label }: { onClick: () => void; label: string }) {
+function JumpToLatestButton({
+  onClick,
+  label,
+  hasNew = false,
+}: {
+  onClick: () => void;
+  label: string;
+  /** New comments arrived while the reader was away; `label` counts them. */
+  hasNew?: boolean;
+}) {
   return (
     <Button
       type="button"
@@ -606,8 +638,18 @@ function JumpToLatestButton({ onClick, label }: { onClick: () => void; label: st
       onClick={onClick}
       className="absolute bottom-full left-1/2 mb-6 -translate-x-1/2 bg-background shadow-md dark:bg-background dark:hover:bg-muted"
     >
-      <ArrowDown />
-      {label}
+      {hasNew ? (
+        <>
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />
+          {label}
+          <ArrowDown />
+        </>
+      ) : (
+        <>
+          <ArrowDown />
+          {label}
+        </>
+      )}
     </Button>
   );
 }
@@ -699,6 +741,7 @@ function ActivityBlock({
   t,
   timeAgo,
   locale,
+  requesterName,
 }: {
   entries: TimelineEntry[];
   expanded: boolean;
@@ -718,6 +761,7 @@ function ActivityBlock({
   t: ActivityT;
   timeAgo: (dateStr: string) => string;
   locale: string;
+  requesterName?: string;
 }) {
   const wakeupText = useWakeupText();
   if (!expanded) {
@@ -833,7 +877,7 @@ function ActivityBlock({
                     entry={entry}
                     text={isWakeup
                       ? formatWakeupActivity(entry, t, wakeupText, getActorName)
-                      : formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}
+                      : formatActivity(entry, t, locale, getActorName, resolveStatusLabel, requesterName)}
                   />
                 </span>
                 {chip && (
@@ -981,7 +1025,7 @@ function SubIssueRow({
           <span className="text-caption text-muted-foreground tabular-nums shrink-0">
             {child.identifier}
           </span>
-          <IssueAgentActivityIndicator issueId={child.id} tipAnchor />
+          <IssueAgentActivityIndicator issueId={child.id} />
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span
               className={cn(
@@ -1346,6 +1390,9 @@ export function IssueLoadError({
 
 // Loading skeleton
 
+const ISSUE_DETAIL_LAYOUT_ID = "multica_issue_detail_layout";
+const REVEALED_WAKEUPS: readonly IssueSidebarSection[] = ["wakeups"];
+
 /**
  * Exported so `IssueDetailRoute` can show the identical frame while it resolves
  * an identifier URL to its issue — the two waits are indistinguishable to the
@@ -1355,7 +1402,11 @@ export function IssueDetailSkeleton({
   leading,
   trailing,
   sidebar = true,
-}: { leading?: ReactNode; trailing?: ReactNode; sidebar?: boolean } = {}) {
+  layoutId = ISSUE_DETAIL_LAYOUT_ID,
+}: { leading?: ReactNode; trailing?: ReactNode; sidebar?: boolean; layoutId?: string } = {}) {
+  const { defaultLayout } = useDefaultLayout({ id: layoutId });
+  const sidebarOpen = sidebar && getAnimatedRightSidebarInitialOpen(true, defaultLayout);
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       {/* The way back is real from the first frame, not once the issue lands:
@@ -1397,7 +1448,7 @@ export function IssueDetailSkeleton({
             </div>
           </div>
         </div>
-        {sidebar && (
+        {sidebarOpen && (
           <div className="hidden md:block w-80 border-l p-4 space-y-5">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="flex items-center gap-2">
@@ -1421,10 +1472,10 @@ export function IssueDetailSkeleton({
 
 // IssueDetail
 
-export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightAppRequestId, leadingAction, variant = "page", trailingActions, readsInbox = true, skipInitialRefetch = false, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
+export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = ISSUE_DETAIL_LAYOUT_ID, highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightAppRequestId, leadingAction, variant = "page", trailingActions, readsInbox = true, skipInitialRefetch = false, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
-  const { t: tForkUi } = useT("fork-ui");
+  const { t: tCommon } = useT("common");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
@@ -1458,10 +1509,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery({
-    ...issueListOptions(wsId),
-    enabled: false,
-  });
+  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // Activity and issue visuals share the catalog's custom geometry and color;
@@ -1502,6 +1550,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
   const githubSettings = useGitHubSettings();
+  const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
 
   // Per-issue, per-session set of optional properties currently visible in
   // the sidebar Properties section. Seeded on issue switch with whichever
@@ -1532,7 +1581,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Bottom comment composer. Measured when scrolling a freshly posted comment
   // into view so its bottom lands above the composer rather than behind it.
   const composerRef = useRef<HTMLDivElement | null>(null);
-  const commentInputRef = useRef<CommentInputRef>(null);
   // Pull-based scroll restoration (MUL-4741): the platform serves the offset
   // captured when this route was last left. The ref-attach assignment covers
   // the flat render modes (real heights at commit); the virtualized browsing
@@ -1579,17 +1627,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const scrollToTimelineBottom = useCallback((commentId: string) => {
     setPendingPostedCommentId(commentId);
   }, []);
-  // A fresh object per request re-times the fade when the same comment is
-  // highlighted again.
-  const [highlight, setHighlight] = useState<{ id: string; ms: number } | null>(null);
-  const highlightedId = highlight?.id ?? null;
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   // User preference: pin the bottom comment bar to the scroll viewport. Off
   // below `md` regardless of the preference — see the hook.
   const stickyComposer = useStickyComposer();
-  // Mobile only: desktop already reaches the latest entry through the
-  // ThreadMinimap rail, which is not rendered below `md`. Passing null keeps
-  // the hook's scroll and resize listeners off on desktop.
-  const jumpToLatest = useJumpToLatest(isMobile ? scrollContainerEl : null);
+  // Read by the image rules in editor/styles/attachment.css.
+  const commentImageLayout = useCommentComposerStore((s) => s.imageLayout);
+  // Mobile shows it only near the top of the page, where it covers the text
+  // column the least; desktop shows it whenever the latest entry is more than
+  // a screen away.
+  const jumpToLatest = useJumpToLatest(scrollContainerEl, { nearTopOnly: isMobile });
 
   // Per-session: which resolved threads the user has temporarily expanded.
   // Not persisted (matches Linear) — reload collapses everything back to bars.
@@ -1663,18 +1710,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     });
   }, []);
   const didHighlightRef = useRef<string | null>(null);
+  // Highlight whose landing was cancelled after its anchor mounted but before
+  // it finished aligning; the landing effect resumes it.
+  const interruptedLandingRef = useRef<string | null>(null);
   // Last seen highlightRequestToken; a bump re-arms didHighlightRef so the
   // landing effect below replays on an already-mounted detail.
   const lastHighlightRequestTokenRef = useRef(highlightRequestToken);
-
-  // A different issue starts a fresh landing context even when this detail
-  // instance is reused by the desktop route.
-  const previousIssueIdRef = useRef(id);
-  useEffect(() => {
-    if (previousIssueIdRef.current === id) return;
-    previousIssueIdRef.current = id;
-    didHighlightRef.current = null;
-  }, [id]);
 
   // Issue data from TQ — uses detail query, seeded from list cache if available.
   // Only seed when description is present; the list API omits it, so a partial
@@ -1709,11 +1750,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     label: t(($) => $.reply.annotations.add_comment),
     onSelect: descriptionAnnotations.addSelection,
   } : undefined, [canAnnotateDescription, t, descriptionAnnotations.addSelection]);
-  const openCommentSubIssue = useCallback((commentId: string) => {
+  const openCommentSubIssue = useCallback((commentId: string, prompt?: string) => {
     if (!issue) return;
     openModal("quick-create-issue", {
       ...subIssueCreateDefaults(issue),
       anchor_comment_id: commentId,
+      ...(prompt ? { prompt } : {}),
     });
   }, [issue, openModal]);
 
@@ -1772,21 +1814,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     submitComment, submitReply,
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id, activeDeliverableJump?.commentId);
-
-  const submitHtmlComment = useCallback(async (content: string) => {
-    const commentId = await submitComment(content);
-    if (!commentId) return false;
-    scrollToTimelineBottom(commentId);
-    return true;
-  }, [submitComment, scrollToTimelineBottom]);
-
-  const fillHtmlCommentDraft = useCallback((content: string) => {
-    commentInputRef.current?.adoptContent(content);
-    useCommentDraftStore.getState().setDraft(`new:${id}`, content);
-    composerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    // A cold composer activates and focuses through its draft subscription.
-    composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
-  }, [id]);
+  const newComments = useNewCommentsWhileAway(timeline, {
+    ready: !timelineLoading,
+    away: jumpToLatest.visible,
+    userId: user?.id,
+    resetKey: id,
+  });
 
   const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
   const enteringRunIds = useNewRunIds(id, commentTasks);
@@ -1997,40 +2030,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return items.findIndex((it) => it.id === highlightRootId);
   }, [items, highlightCommentId, highlightRootId]);
 
-  // The issue/highlight pair present on the first ready frame owns exact-anchor
-  // landing. Later same-page highlight changes reuse the minimap jump path.
-  // Capture on readiness rather than mount because web's hash can trail route
-  // hydration by one commit; desktop can also reuse this detail across issues.
-  const detailReady = !!issue && !issueLoading && !timelineLoading && !commentTasksLoading;
-  const [arrival, setArrival] = useState<{
-    issueId: string;
-    captured: boolean;
-    highlightCommentId?: string;
-  }>(() => ({ issueId: id, captured: false }));
-  if (arrival.issueId !== id) {
-    setArrival({ issueId: id, captured: false });
-  } else if (!arrival.captured && detailReady) {
-    setArrival({ issueId: id, captured: true, highlightCommentId });
-  } else if (
-    arrival.captured &&
-    arrival.highlightCommentId &&
-    highlightCommentId !== arrival.highlightCommentId
-  ) {
-    setArrival({ issueId: id, captured: true, highlightCommentId: undefined });
-  }
-  const isArrivalHighlight =
-    !!highlightCommentId &&
-    arrival.captured &&
-    arrival.highlightCommentId === highlightCommentId;
-  const arrivalRootId = highlightCommentId
-    ? highlightRootId ?? highlightCommentId
-    : null;
-  const collapsedBarrierRootId = useCommentCollapseStore((state) =>
-    (isArrivalHighlight || activeDeliverableJump) && arrivalRootId && state.isCollapsed(id, arrivalRootId)
-      ? arrivalRootId
-      : null,
-  );
-
   // One entry per comment thread (folded resolved bars included), activity
   // groups skipped. Derived from the same flat `items` array Virtuoso renders
   // so the right-edge outline always matches the page order.
@@ -2163,17 +2162,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(alignBottom);
     return () => cancelAnimationFrame(rafId);
   }, [pendingPostedCommentId, items, replyToRoot, isFlatTimeline, scrollContainerEl]);
+  const jumpFlashTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
+    },
+    [],
+  );
   // Flash the landed comment the same way inbox deep-links do, so the eye has
   // an anchor after the instant jump. (Folded resolved bars don't take the
   // highlight prop — the scroll itself is the feedback there.)
-  const flashJumpTarget = useCallback((commentId: string) => {
-    setHighlight({ id: commentId, ms: 2000 });
+  const flashJumpTarget = useCallback((commentId: string, duration = 2000) => {
+    setHighlightedId(commentId);
+    if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
+    jumpFlashTimerRef.current = window.setTimeout(() => setHighlightedId(null), duration);
   }, []);
-  useEffect(() => {
-    if (highlight === null) return;
-    const fade = window.setTimeout(() => setHighlight(null), highlight.ms);
-    return () => window.clearTimeout(fade);
-  }, [highlight]);
   // Jump to a mounted comment: any row in flat mode, or a reply inside a
   // rendered thread. Drive the container's scrollTop directly — never native
   // scrollIntoView, which also scrolls the desktop shell (#3929).
@@ -2269,12 +2272,27 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     rafId = requestAnimationFrame(align);
     return () => cancelAnimationFrame(rafId);
   }, [pendingReplyJump, scrollContainerEl, flashJumpTarget]);
-  const archiveCommentTime = useMemo(() => commentTimeLookup(timeline), [timeline]);
   const jumpToMinimapTarget = useCallback(
     (commentId: string) =>
       replyToRoot.has(commentId) ? jumpToReply(commentId) : jumpToThread(commentId),
     [replyToRoot, jumpToReply, jumpToThread],
   );
+  // With comments that arrived while the reader was away, land on the first
+  // of them so they read in order; otherwise go to the very end.
+  const firstNewCommentId = newComments.ids[0];
+  const clearNewComments = newComments.clear;
+  const jumpLatest = jumpToLatest.jump;
+  const onJumpToLatest = useCallback(() => {
+    if (firstNewCommentId) {
+      clearNewComments();
+      jumpToMinimapTarget(firstNewCommentId);
+    } else {
+      jumpLatest();
+    }
+  }, [firstNewCommentId, clearNewComments, jumpToMinimapTarget, jumpLatest]);
+  const jumpToLatestLabel = newComments.ids.length > 0
+    ? t(($) => $.timeline.new_comments, { count: newComments.ids.length })
+    : t(($) => $.timeline.jump_to_latest);
   // Header chip jump to a run's block. A run is either its own top-level row
   // or a slot inside the thread it answers, so find that row, undo whatever
   // folds the thread, scroll the row into place, then let the effect below
@@ -2354,7 +2372,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const {
     reactions: issueReactions,
     toggleReaction: handleToggleIssueReaction,
-  } = useIssueReactions(wsId, id, user?.id);
+  } = useIssueReactions(id, user?.id);
 
   const {
     subscribers, isSubscribed, subscriptionReason, subscriptionKnown,
@@ -2405,10 +2423,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // this answer, so a defaulted or stale empty array must not count as "no
   // sub-issues" (MUL-5714).
   const childCountKnown = childIssuesLoaded && !childIssuesFetching;
-  const subIssuesTipAnchorScope = useMemo(
-    () => tipAnchorScopeFromIssues(childIssues),
-    [childIssues],
-  );
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
@@ -2494,115 +2508,112 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const loading = issueLoading;
 
-  // Arrival deep links mount and stabilize their exact virtualized row. A
-  // highlight changed on an already-mounted detail uses the minimap jump;
-  // deliverable origin jumps retain the measured-scroll path from #10298.
+  // Deep links keep the timeline virtualized. Mount the enclosing row by
+  // index, then center and highlight the exact comment once its anchor exists.
+  //
+  // For a reply or threaded run inside a folded resolved thread, the target
+  // is not in items (only the resolved-bar root is). Auto-expand the thread
+  // first; the effect re-runs once items re-flatten.
+  //
+  // `scrollContainerEl` is in deps because the component early-returns a
+  // loading skeleton while the issue query is pending. The scroll-container
+  // ref populates only on the post-loading render, so it's the signal that
+  // the timeline (and the deep-link target id) has actually rendered.
   useEffect(() => {
-    if (timelineLoading || commentTasksLoading) return;
-    let replayRequested = false;
+    if (!highlightCommentId || items.length === 0 || timelineLoading || commentTasksLoading) return;
     // An explicit replay request (re-click on the already-open notification
     // row): the host cleared the memento entry and bumped the token, so
     // re-arm the landing guard and fall through to the jump.
     if (lastHighlightRequestTokenRef.current !== highlightRequestToken) {
       lastHighlightRequestTokenRef.current = highlightRequestToken;
       didHighlightRef.current = null;
-      replayRequested = true;
+    }
+    // A landing this effect's cleanup cut short resumes (see the cleanup).
+    const resuming = interruptedLandingRef.current === highlightCommentId;
+    if (!resuming && didHighlightRef.current === highlightCommentId) return;
+    // The deep link already landed before this mount (memento entry — a tab
+    // switch back or an in-tab return). The restored scroll offset is the
+    // state the user left, and the jump must not fight it. A fresh selection
+    // clears the entry, so this only ever suppresses a *repeat* landing.
+    if (!resuming && !activeDeliverableJump && consumedHighlightRef.current === highlightCommentId) {
+      didHighlightRef.current = highlightCommentId;
+      return;
     }
 
-    const exactLanding = isArrivalHighlight || !!activeDeliverableJump;
-    let resolvedBarrierRootId: string | null = null;
-    if (exactLanding && highlightCommentId) {
-      const rootId = highlightRootId ?? highlightCommentId;
-      if (rootId && (rootId !== highlightCommentId || activeDeliverableJump)) {
-        const rootItem = items[targetIdx];
-        if (rootItem?.kind === "resolved-bar" || (rootItem?.kind === "run" && rootItem.entry?.resolved_at && !expandedResolved.has(rootId))) {
-          resolvedBarrierRootId = rootId;
-        } else if ((rootItem?.kind === "comment" || rootItem?.kind === "run") && rootItem.entry && !expandedResolved.has(rootId)) {
-          const resolution = deriveThreadResolution(
-            rootItem.entry,
-            timelineView.threadReplies.get(rootId) ?? EMPTY_REPLIES,
-          );
-          if (resolution.kind === "reply" && resolution.resolutionId !== highlightCommentId) {
-            resolvedBarrierRootId = rootId;
-          }
+    const rootId = highlightRootId ?? highlightCommentId;
+    const collapse = useCommentCollapseStore.getState();
+    if (collapse.isCollapsed(id, rootId)) collapse.toggle(id, rootId);
+    if (rootId) {
+      // Root resolved → the whole thread is a folded bar.
+      const rootItem = items[targetIdx];
+      if (rootItem?.kind === "resolved-bar" || (rootItem?.kind === "run" && rootItem.entry?.resolved_at && !expandedResolved.has(rootId))) {
+        toggleResolvedExpand(rootId, true);
+        return;
+      }
+      // A reply is the resolution → the other replies fold behind the
+      // "N comments" bar; expand if the target is one of those folded replies.
+      if ((rootItem?.kind === "comment" || rootItem?.kind === "run") && rootItem.entry && !expandedResolved.has(rootId)) {
+        const resolution = deriveThreadResolution(
+          rootItem.entry,
+          timelineView.threadReplies.get(rootId) ?? EMPTY_REPLIES,
+        );
+        if (resolution.kind === "reply" && resolution.resolutionId !== highlightCommentId) {
+          toggleResolvedExpand(rootId, true);
+          return;
         }
       }
     }
 
-    const decision = decideCommentLanding({
-      highlightCommentId,
-      hasItems: items.length > 0,
-      alreadyLandedFor: didHighlightRef.current,
-      consumedId: activeDeliverableJump || replayRequested ? undefined : consumedHighlightRef.current,
-      isArrival: exactLanding,
-      targetInItems: targetIdx >= 0,
-      scrollContainerReady: !!scrollContainerEl,
-      virtuosoMounted: !!virtuosoRef.current,
-      flat: isFlatTimeline,
-      collapsedBarrierRootId,
-      resolvedBarrierRootId,
-    });
-
-    switch (decision.kind) {
-      case "wait":
-      case "skip":
-        return;
-      case "skip-consumed":
-        didHighlightRef.current = highlightCommentId!;
-        return;
-      case "jump": {
-        const commentId = highlightCommentId!;
-        didHighlightRef.current = commentId;
-        writeViewState(issueHighlightMementoKey(id), commentId);
-        if (!arrival.captured) {
-          setArrival({ issueId: id, captured: true, highlightCommentId: undefined });
-        }
-        jumpToMinimapTarget(commentId);
-        return;
-      }
-      case "expand-collapsed": {
-        const collapse = useCommentCollapseStore.getState();
-        if (collapse.isCollapsed(id, decision.rootId)) collapse.toggle(id, decision.rootId);
-        return;
-      }
-      case "expand-resolved":
-        toggleResolvedExpand(decision.rootId, true);
-        return;
-      case "land":
-        break;
-    }
-
-    const commentId = highlightCommentId!;
-    const threadRootId = highlightRootId ?? commentId;
-    // A deleted reply has no anchor; land on the reply above where it was.
+    // A deleted reply renders nothing, so the id a notification or share link
+    // carries has no anchor to scroll to and no row to flash. Land on the
+    // comment above where it was; the id itself stays this landing's identity
+    // for the guards and the memento below.
+    const threadRootId = rootId ?? highlightCommentId;
     const landingId = commentLandingTarget(
-      commentId,
+      highlightCommentId,
       threadRootId,
       timelineView.threadReplies.get(threadRootId) ?? EMPTY_REPLIES,
     );
     const container = scrollContainerEl;
     if (!container) return;
-    if (!isFlatTimeline && measuredTimelineId !== id) {
-      // A long description can put the whole list below the scroll viewport.
-      // Bring its probe row into view so Virtuoso can measure before jumping.
-      // If the row is already mounted without producing another height callback,
-      // the next frame hands it to the scroll helper instead of waiting forever.
-      const list = virtualTimelineRef.current;
-      if (list) container.scrollTop += list.getBoundingClientRect().top - container.getBoundingClientRect().top;
-      const probe = requestAnimationFrame(() => {
-        if (container.querySelector(`[id="comment-${landingId}"]`)) setMeasuredTimelineId(id);
-      });
-      return () => cancelAnimationFrame(probe);
+    if (!isFlatTimeline) {
+      if (targetIdx < 0) return;
+      if (measuredTimelineId !== id) {
+        // A long description can put the whole list below the scroll viewport.
+        // Bring its probe row into view so Virtuoso can measure before jumping.
+        const list = virtualTimelineRef.current;
+        if (list) container.scrollTop += list.getBoundingClientRect().top - container.getBoundingClientRect().top;
+        return;
+      }
     }
 
-    didHighlightRef.current = commentId;
-    writeViewState(issueHighlightMementoKey(id), commentId);
-    setHighlight({ id: landingId, ms: 2500 });
-    return scrollToTimelineComment({
+    interruptedLandingRef.current = null;
+    let completed = false;
+    const cancel = scrollToTimelineComment({
       container, virtualizer: isFlatTimeline ? null : virtuosoRef.current,
       index: targetIdx, commentId: landingId,
+      onMounted: () => {
+        didHighlightRef.current = highlightCommentId;
+        writeViewState(issueHighlightMementoKey(id), highlightCommentId);
+        // Timer owned outside this effect, so a re-run cannot leave the
+        // highlight on.
+        flashJumpTarget(landingId, 2500);
+      },
+      onComplete: () => { completed = true; },
     });
-  }, [highlightCommentId, highlightRequestToken, activeDeliverableJump, isArrivalHighlight, arrival.captured, jumpToMinimapTarget, id, writeViewState, items, targetIdx, scrollContainerEl, highlightRootId, expandedResolved, timelineView, toggleResolvedExpand, collapsedBarrierRootId, isFlatTimeline, measuredTimelineId, timelineLoading, commentTasksLoading]);
+    return () => {
+      cancel();
+      // A commit while the landing is still aligning (a realtime comment, a
+      // run refresh, the refetch of a cached timeline) re-runs this effect and
+      // cancels the loop here. Once the anchor has mounted, the guards above
+      // count the landing as done, so mark it for the re-run to resume;
+      // otherwise the viewport stays wherever the loop stopped, often the top
+      // of the issue (MUL-9068).
+      if (!completed && didHighlightRef.current === highlightCommentId) {
+        interruptedLandingRef.current = highlightCommentId;
+      }
+    };
+  }, [highlightCommentId, highlightRequestToken, activeDeliverableJump, id, writeViewState, items, targetIdx, scrollContainerEl, highlightRootId, expandedResolved, timelineView, toggleResolvedExpand, isFlatTimeline, measuredTimelineId, timelineLoading, commentTasksLoading, flashJumpTarget]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
@@ -2789,6 +2800,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const showInSidebar = useShowInSidebar(issue);
   // The inbox passes `onDone` and owns archive and restore there.
   const archivedInboxItemId = useArchivedInboxItemId(id, !onDone);
+  const pageMenu = useIssuePageMenu();
 
   // Labels live in their own query (not on the issue body) — fetch the count
   // here so seeding can decide whether the "Labels" optional row should be
@@ -2914,8 +2926,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
 
   // The header's wakeup chip opens the sidebar and brings the Wakeups section
-  // into view with focus on its heading.
+  // into view with focus on its heading, showing it on this issue even when
+  // the reader hid it from the sidebar. The reveal lasts until the reader
+  // switches the section in settings or moves to another issue.
+  const [revealedWakeupsFor, setRevealedWakeupsFor] = useState<string | null>(null);
+  if (revealedWakeupsFor !== null && revealedWakeupsFor !== id) setRevealedWakeupsFor(null);
   const openWakeups = useCallback(() => {
+    setRevealedWakeupsFor(id);
     if (!sidebarOpen) handleToggleSidebar();
     window.requestAnimationFrame(() => {
       const heading = document.getElementById(`issue-wakeups-${id}`);
@@ -2940,20 +2957,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     overrideTop: restoredScrollTop,
   });
 
-  // Keep the context stable across unrelated issue-detail updates.
+  // Keep the identity value stable across unrelated issue-detail updates so
+  // context consumers only re-render when the owning issue changes identity.
   const resolvedIssueId = issue?.id;
   const resolvedIssueIdentifier = issue?.identifier;
   const currentIssueRenderContext = useMemo(
     () =>
       resolvedIssueId && resolvedIssueIdentifier
-        ? {
-            id: resolvedIssueId,
-            identifier: resolvedIssueIdentifier,
-            submitComment: submitHtmlComment,
-            fillCommentDraft: fillHtmlCommentDraft,
-          }
+        ? { id: resolvedIssueId, identifier: resolvedIssueIdentifier }
         : null,
-    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft],
+    [resolvedIssueId, resolvedIssueIdentifier],
   );
 
   if (issueReadState.loadFailed) {
@@ -2971,12 +2984,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   if (loading) {
     // The host's trailing controls hold the peek's only close button, so the
     // waiting and missing states carry them too.
-    return <IssueDetailSkeleton leading={leadingAction} trailing={trailingActions} sidebar={!isPeek} />;
+    return <IssueDetailSkeleton leading={leadingAction} trailing={trailingActions} sidebar={!isPeek && desktopSidebarOpen} layoutId={layoutId} />;
   }
 
   if (!issue) {
     return <IssueNotFound showBackLink={!onDelete} leading={leadingAction} trailing={trailingActions} />;
   }
+
+  const requesterName =
+    issue.creator_type === "agent" && issue.requester_id
+      ? getActorName("member", issue.requester_id)
+      : undefined;
 
   const persistDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
@@ -3119,9 +3137,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     </div>
   );
 
-  const sidebarContent = (
-    <IssueSidebarStack>
-      {/* Properties */}
+  const sidebarSections: Record<IssueSidebarSection, ReactNode> = {
+    properties: (
       <div>
         <IssueSidebarSectionHeader title={t(($) => $.detail.section_properties)} open={propertiesOpen} onOpenChange={setPropertiesOpen}  />
         {propertiesOpen && <IssueSidebarPropertyGrid>
@@ -3234,24 +3251,21 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {addPropertyRow}
         </IssueSidebarPropertyGrid>}
       </div>
-
-      <QuickActionsSection issueId={issue.id} />
-
+    ),
+    quick_actions: <QuickActionsSection issueId={issue.id} />,
+    wakeups: (
       <WakeupsSection
         issueId={issue.id}
         closed={["done", "closed"].includes(resolveStatusCategory(issue.status))}
-        visible={sidebarOpen}
         defaultAgentId={issue.assignee_type === "agent" ? (issue.assignee_id ?? undefined) : undefined}
       />
-
-      <PluginPanelSection issueId={issue.id} />
-      <IssueDependenciesSection issue={issue} />
-
-      {/* Parent issue — standalone section, only when the issue has a
-          parent. Setting a parent is reachable via the issue actions menu;
-          this card surfaces an existing parent without occupying sidebar
-          space for issues that don't have one. */}
-      {parentIssue && (
+    ),
+    plugins: <PluginPanelSection issueId={issue.id} />,
+    // Parent issue — standalone section, only when the issue has a
+    // parent. Setting a parent is reachable via the issue actions menu;
+    // this card surfaces an existing parent without occupying sidebar
+    // space for issues that don't have one.
+    parent: parentIssue && (
         <div>
           <IssueSidebarSectionHeader title={t(($) => $.detail.section_parent_issue)} open={parentIssueOpen} onOpenChange={setParentIssueOpen}
             actions={<IconButton size="icon-xs" label={t(($) => $.actions.remove_parent_issue)} onClick={() => actions.removeParent()}><Unlink /></IconButton>} />
@@ -3275,56 +3289,67 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
           </div>}
         </div>
-      )}
-
-      <IssueDuplicatesSection issueId={issue.id} />
-
-      {/* Pull requests — hidden when the workspace disables the PR sidebar
-          (or the GitHub master switch is off). Backend data is kept either
-          way so re-enabling restores the section instantly. */}
-      {githubSettings.prSidebar && (
-        <PullRequestsSection
-          issueId={id}
-          identifier={issue.identifier}
-          open={pullRequestsOpen}
-          onOpenChange={setPullRequestsOpen}
-        />
-      )}
-
-      {/* Environments the issue's runs left running. Hidden until one starts. */}
-      <IssueEnvironmentsSection issueId={id} />
-
-      {/* Deliverables — the files this issue's comments delivered. Hidden
-          while there are none. */}
+    ),
+    duplicates: <IssueDuplicatesSection issueId={issue.id} />,
+    // Pull requests — unavailable when the workspace disables the PR sidebar
+    // (or the GitHub master switch is off). Backend data is kept either
+    // way so re-enabling restores the section instantly.
+    pull_requests: (
+      <PullRequestsSection
+        issueId={id}
+        identifier={issue.identifier}
+        open={pullRequestsOpen}
+        onOpenChange={setPullRequestsOpen}
+      />
+    ),
+    // Environments the issue's runs left running, and the "+" that starts one.
+    environments: <IssueEnvironmentsSection issueId={id} assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} />,
+    // Deliverables — the files this issue's comments delivered. Hidden
+    // while there are none.
+    deliverables: (
       <DeliverablesSection
         files={deliverableFiles}
         onOpenOverview={openOverview}
         onCopyLink={copyDeliverableLink}
       />
-
-      {/* Apps the issue's runs used. Hidden until one makes a call. */}
-      <IssueAppsSection issueId={id} />
-
-      <YouShouldKnowArchiveSection
-        issueId={id}
-        identifier={issue.identifier}
-        onJumpToComment={jumpToMinimapTarget}
-        commentTime={archiveCommentTime}
-      />
-
-      {/* Execution summary owns its query, realtime updates and disclosure. */}
-      <ExecutionLogSection key={id} issueId={id} identifier={issue.identifier} issueTitle={issue.title} hasChildren={childIssues.length > 0} />
-
-      {/* Details — creator and timestamps. Sits below the execution log
-          because it is the least-read block in the sidebar: the values
-          never change once the issue exists, while the log above it is
-          what people actually come here to check. */}
+    ),
+    // Apps the issue's runs used. Hidden until one makes a call.
+    apps: <IssueAppsSection issueId={id} />,
+    // Execution summary owns its query, realtime updates and disclosure.
+    execution_log: <ExecutionLogSection key={id} issueId={id} identifier={issue.identifier} issueTitle={issue.title} hasChildren={childIssues.length > 0} />,
+    // Details — creator and timestamps. Defaults to below the execution
+    // log because it is the least-read block in the sidebar: the values
+    // never change once the issue exists, while the log above it is
+    // what people actually come here to check.
+    details: (
       <div>
         <IssueSidebarSectionHeader title={t(($) => $.detail.section_details)} open={detailsOpen} onOpenChange={setDetailsOpen} />
         {detailsOpen && <IssueSidebarPropertyGrid>
-          <PropRow interactive={false} label={t(($) => $.detail.prop_created_by)}>
-            <ActorAvatar actorType={issue.creator_type} actorId={issue.creator_id} size="sm" enableHoverCard />
-            <span className="cursor-pointer truncate">{getActorName(issue.creator_type, issue.creator_id)}</span>
+          <PropRow
+            interactive={false}
+            label={t(($) => $.detail.prop_created_by)}
+            className={requesterName ? "items-start py-1.5" : undefined}
+          >
+            <div className="flex min-w-0 flex-1 items-start gap-1.5">
+              <ActorAvatar actorType={issue.creator_type} actorId={issue.creator_id} size="sm" enableHoverCard />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="cursor-pointer truncate">{getActorName(issue.creator_type, issue.creator_id)}</span>
+                {requesterName && issue.requester_id && (
+                  <HoverCard>
+                    <HoverCardTrigger
+                      render={<AppLink href={paths.memberDetail(issue.requester_id)} />}
+                      className="block truncate text-caption text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={t(($) => $.execution_log.attribution.on_behalf_of, { name: requesterName })}
+                    >
+                      {t(($) => $.execution_log.attribution.on_behalf_of, { name: requesterName })}
+                    </HoverCardTrigger>
+                    <HoverCardContent align="start" className="w-72">
+                      <MemberProfileCard userId={issue.requester_id} />
+                    </HoverCardContent>
+                  </HoverCard>
+                )}
+              </div>
+            </div>
           </PropRow>
           <PropRow interactive={false} label={t(($) => $.detail.prop_created)}>
             <span className="text-muted-foreground">{shortDate(issue.created_at, locale)}</span>
@@ -3334,9 +3359,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           </PropRow>
         </IssueSidebarPropertyGrid>}
       </div>
+    ),
+    metadata: <MetadataSection metadata={issue.metadata ?? {}} />,
+  };
 
-      <MetadataSection metadata={issue.metadata ?? {}} />
-    </IssueSidebarStack>
+  const sidebarContent = (
+    <IssueSidebarSections
+      sections={sidebarSections}
+      available={ISSUE_SIDEBAR_SECTIONS.filter(
+        (section) => (section !== "pull_requests" || githubSettings.prSidebar) && (section !== "plugins" || pluginsEnabled),
+      )}
+      revealed={revealedWakeupsFor === id ? REVEALED_WAKEUPS : undefined}
+      onRevealEnd={() => setRevealedWakeupsFor(null)}
+    />
   );
 
   // Shared row renderer for both timeline render modes (flat / virtualized).
@@ -3430,6 +3465,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         t={t}
         timeAgo={timeAgo}
         locale={locale}
+        requesterName={requesterName}
       />
     );
   };
@@ -3534,9 +3570,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               onDeletedFallbackPath={onDelete ? undefined : paths.issues()}
               archivedInboxItemId={archivedInboxItemId}
               onShowInSidebar={isPeek ? undefined : (showInSidebar ?? undefined)}
+              rowMenu={pageMenu.rowMenu}
               trigger={
                 <IconButton
-                  label={tForkUi(($) => $.issues.detail.more_actions)}
+                  label={tCommon(($) => $.more_actions)}
                   tooltipSide="bottom"
                   className="text-muted-foreground"
                 >
@@ -3572,6 +3609,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           ref={attachScrollContainer}
           data-tab-scroll-root={isPeek ? undefined : scrollContainerKey}
           className="@container relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
+          onContextMenu={pageMenu.onContextMenu}
         >
         {/* Gutters: 32px is a comfortable reading margin on a desktop column
             but eats 16% of a 393px phone, so below `md` they drop to 12px.
@@ -3884,10 +3922,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   </div>
                   {/* issue.id, not the route param — the endpoint takes a
                       UUID and the route may carry a human-readable id. */}
-                  <SubIssuesAgentWorkingChip
-                    parentIssueId={issue.id}
-                    tipAnchorScope={subIssuesTipAnchorScope}
-                  />
+                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
                   <input
                     type="checkbox"
                     checked={allChildrenSelected}
@@ -3969,7 +4004,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <div className="my-8 border-t" />
 
           {/* Activity / Comments */}
-          <div>
+          <div data-comment-images={commentImageLayout}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <h2 className="text-title-sm font-semibold">{t(($) => $.detail.activity_section)}</h2>
@@ -3990,6 +4025,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-64">
                       {t(($) => $.detail.delegated_subscription_hint)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* Inherited from the project: say so, and that leaving
+                    here only covers this issue, so Unsubscribe is not read as
+                    leaving the whole project. */}
+                {isSubscribed && subscriptionReason === "project" && (
+                  <Tooltip>
+                    <TooltipTrigger className="cursor-default rounded-full bg-muted px-2 py-0.5 text-caption text-muted-foreground">
+                      {t(($) => $.detail.project_subscription_badge)}
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-64">
+                      {t(($) => $.detail.project_subscription_hint)}
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -4172,18 +4220,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               page background and is invisible), and pb-4 so the card floats
               off the viewport edge — with -mb-4 giving the padding back to
               the column's py-8 so the at-rest layout doesn't shift. */}
-          {/* "Jump to latest" (MUL-8324, mobile only) floats centered just above the
+          {/* "Jump to latest" (MUL-8324, MUL-8951) floats centered just above the
               composer's top edge. With the sticky composer it rides the
               composer itself; without it, a zero-height sticky anchor pins
               it to the viewport bottom until the composer scrolls in. */}
           {!stickyComposer && jumpToLatest.visible && (
             <div className="sticky bottom-0 z-10 h-0">
-              <JumpToLatestButton onClick={jumpToLatest.jump} label={t(($) => $.timeline.jump_to_latest)} />
+              <JumpToLatestButton onClick={onJumpToLatest} label={jumpToLatestLabel} hasNew={!!firstNewCommentId} />
             </div>
           )}
           <IssueAppRequests issueId={id} highlightId={highlightAppRequestId} highlightToken={highlightRequestToken} />
           <div
             ref={composerRef}
+            data-comment-images={commentImageLayout}
             className={cn(
               "mt-4",
               stickyComposer &&
@@ -4196,11 +4245,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 next keystroke would flush it into the new issue's
                 draft key. */}
             {stickyComposer && jumpToLatest.visible && (
-              <JumpToLatestButton onClick={jumpToLatest.jump} label={t(($) => $.timeline.jump_to_latest)} />
+              <JumpToLatestButton onClick={onJumpToLatest} label={jumpToLatestLabel} hasNew={!!firstNewCommentId} />
             )}
             <CommentInput
               key={id}
-              ref={commentInputRef}
               issueId={id}
               onSubmit={submitComment}
               annotationComposer={descriptionAnnotations.composer}
@@ -4293,7 +4341,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <div className="flex flex-1 min-h-0">
         {detailContent}
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-          <SheetContent side="right" showCloseButton={false} className="w-[320px] overflow-y-auto [scrollbar-gutter:stable] px-2 py-4">
+          <SheetContent
+            side="right"
+            showCloseButton={false}
+            className="w-[320px] overflow-y-auto [scrollbar-gutter:stable] px-2 py-4"
+            onKeyDown={letSidebarSettingsDragKeysThrough}
+          >
             {sidebarContent}
           </SheetContent>
         </Sheet>

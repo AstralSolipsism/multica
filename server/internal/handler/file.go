@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -586,6 +588,9 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		link, err := h.uploadAttachmentStream(r.Context(), key, file, header.Size, contentType, header.Filename)
 		if err != nil {
+			if writeRequestCancellation(w, r, err) {
+				return
+			}
 			slog.Error("file upload failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "upload failed")
 			return
@@ -613,6 +618,11 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if err != nil {
+			if writeRequestCancellation(w, r, err) {
+				// The record write may have committed. Deleting uploaded bytes
+				// could leave a committed attachment pointing at a missing object.
+				return
+			}
 			slog.Error("failed to create attachment record", "error", err)
 			// S3 upload succeeded but DB record failed — still return the link
 			// so the file is usable. Log the error for investigation.
@@ -651,6 +661,9 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	// No workspace context (e.g. avatar upload) — upload directly.
 	link, err := h.uploadAttachmentStream(r.Context(), key, file, header.Size, contentType, header.Filename)
 	if err != nil {
+		if writeRequestCancellation(w, r, err) {
+			return
+		}
 		slog.Error("file upload failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "upload failed")
 		return
@@ -1051,11 +1064,17 @@ func shouldProxyAttachmentURL(rawURL string) bool {
 func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request, att db.Attachment, key string, forceAttachment bool) {
 	reader, err := h.Storage.GetReader(r.Context(), key)
 	if err != nil {
+		if writeRequestCancellation(w, r, err) {
+			return
+		}
 		slog.Error("failed to open attachment for download", "id", uuidToString(att.ID), "key", key, "error", err)
 		writeError(w, http.StatusNotFound, "attachment object not found")
 		return
 	}
 	defer reader.Close()
+	if writeRequestCancellation(w, r, r.Context().Err()) {
+		return
+	}
 
 	if att.ContentType != "" {
 		w.Header().Set("Content-Type", att.ContentType)
@@ -1086,6 +1105,22 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 
 	// Non-seekable backend: single-range fallback.
 	h.serveProxyRange(w, r, att, reader)
+}
+
+// A socket write can report a closed connection instead of context.Canceled.
+// Preserve unrelated write errors and distinguish them from storage reads.
+type attachmentStreamWriter struct {
+	http.ResponseWriter
+	request *http.Request
+}
+
+func (w attachmentStreamWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	if errors.Is(w.request.Context().Err(), context.Canceled) &&
+		(errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)) {
+		err = errors.Join(context.Canceled, err)
+	}
+	return n, err
 }
 
 // serveProxyRange streams a (possibly partial) attachment body from a
@@ -1132,10 +1167,18 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 	}
 
 	if serveFull {
+		if writeRequestCancellation(w, r, r.Context().Err()) {
+			return
+		}
 		if total >= 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(total, 10))
 		}
-		if _, err := io.Copy(w, reader); err != nil {
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(attachmentStreamWriter{ResponseWriter: w, request: r}, reader); err != nil {
+			if isRequestCancellation(r, err) {
+				slog.Info("attachment download cancelled", "id", uuidToString(att.ID))
+				return
+			}
 			slog.Error("failed to stream attachment download", "id", uuidToString(att.ID), "error", err)
 		}
 		return
@@ -1147,6 +1190,9 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 	// ServeContent path above).
 	if start > 0 {
 		if _, err := io.CopyN(io.Discard, reader, start); err != nil {
+			if writeRequestCancellation(w, r, err) {
+				return
+			}
 			// The skip failed BEFORE any response header was written. We must send
 			// an explicit error status here: a bare `return` would let net/http
 			// emit its default 200 OK + empty body, which a resuming client reads
@@ -1163,7 +1209,11 @@ func (h *Handler) serveProxyRange(w http.ResponseWriter, r *http.Request, att db
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, total))
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.CopyN(w, reader, length); err != nil {
+	if _, err := io.CopyN(attachmentStreamWriter{ResponseWriter: w, request: r}, reader, length); err != nil {
+		if isRequestCancellation(r, err) {
+			slog.Info("attachment range download cancelled", "id", uuidToString(att.ID))
+			return
+		}
 		slog.Error("failed to stream attachment range", "id", uuidToString(att.ID), "error", err)
 	}
 }
@@ -1510,18 +1560,6 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 // Attachment linking
-
-// linkAttachmentsByIssueIDs links unbound attachments to an issue. A caller
-// that did not already advance the issue revision can ask this visible change
-// to advance it exactly once.
-func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, workspaceID pgtype.UUID, ids []pgtype.UUID, bumpRevision bool) (db.LinkAttachmentsToIssueRow, error) {
-	return h.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
-		IssueID:       issueID,
-		WorkspaceID:   workspaceID,
-		AttachmentIds: ids,
-		BumpRevision:  bumpRevision,
-	})
-}
 
 // attachmentOwnerLockAttempts bounds the re-read below. An attachment gains an
 // owner once, when the issue or comment it was uploaded for links it, so one

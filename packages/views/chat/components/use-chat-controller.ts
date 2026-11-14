@@ -17,7 +17,6 @@ import { api, dispatchReasonCode } from "@multica/core/api";
 import {
   isAgentRuntimeBound as hasAgentRuntime,
   useAgentPresenceDetail,
-  useCustomizeConversationStartersHref,
   useWorkspaceAgentAvailability,
 } from "@multica/core/agents";
 import {
@@ -36,6 +35,7 @@ import {
 } from "@multica/core/chat/mutations";
 import { useChatStore } from "@multica/core/chat";
 import { upsertChatMessageToCaches } from "@multica/core/chat/message-cache";
+import { refetchChatSessionsAfterCommit } from "@multica/core/chat/session-list";
 import {
   enqueuePendingChatTask,
   hideQueuedChatMessages,
@@ -43,38 +43,18 @@ import {
 import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatProjectContextSupport } from "./use-chat-project-context-support";
-import { useTipSideChatLookup } from "@multica/core/you-should-know";
 import { createLogger } from "@multica/core/logger";
 import type {
   Agent,
   Attachment,
   ChatMessage,
   ChatPendingTask,
-  ChatSendAttempt,
 } from "@multica/core/types";
-import { createSafeId } from "@multica/core/utils";
 import { useT } from "../../i18n";
 import { useAppForeground } from "../../common/use-app-foreground";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
-
-// Derive a concise session title from the first user message: first line,
-// markdown stripped, whitespace collapsed, capped. A deterministic title
-// (no LLM) — the server has no summarization model, so this is the sensible
-// default until a runtime-generated title is wired up.
-const CHAT_TITLE_MAX = 30;
-export function deriveChatTitle(content: string): string {
-  const firstLine = (content.split("\n").find((l) => l.trim()) ?? content).trim();
-  const cleaned = firstLine
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/[#*`>~_]/g, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // markdown links/images → their text
-    .replace(/\s+/g, " ")
-    .trim();
-  if (cleaned.length <= CHAT_TITLE_MAX) return cleaned;
-  return cleaned.slice(0, CHAT_TITLE_MAX - 1).trimEnd() + "…";
-}
 
 /**
  * After a send resolves: is the user still composing to the target they sent
@@ -87,9 +67,6 @@ export function deriveChatTitle(content: string): string {
  * the draft slot — that is not "navigating away" (MUL-4864). Counting it as
  * such would leave a completed send's text sitting in the composer, primed to
  * be sent a second time to the agent just picked.
- *
- * Shared by both send chains — the chat tab's controller and the floating
- * ChatWindow — so the rule cannot drift between the two surfaces.
  */
 export function isStillOnComposeTarget(
   liveActiveSessionId: string | null,
@@ -114,9 +91,6 @@ export function isStillOnComposeTarget(
  *    different agent, sending the lazily-created session to the wrong agent.
  *  - `setDraftProject`: no open session, so this only adjusts the new-chat
  *    draft's project.
- *
- * Shared by both send chains — the chat tab's controller and the floating
- * ChatWindow — so the stale-agent rule cannot drift between the two surfaces.
  */
 export type ProjectContextChange =
   | { kind: "awaitSession" }
@@ -190,6 +164,9 @@ export function seedAcceptedPendingTask(
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
+const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+
+
 /**
  * Layout-agnostic chat controller. Holds every piece of chat conversation
  * state and behavior — agent resolution, session lookup, the await-then-render
@@ -232,7 +209,12 @@ export function useChatController(opts?: { isActive?: boolean }) {
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery(chatMessagesPageOptions(activeSessionId ?? ""));
+  } = useInfiniteQuery({
+    ...chatMessagesPageOptions(activeSessionId ?? ""),
+    // The floating window stays mounted while closed; it must not load a
+    // persisted session's transcript nobody is looking at.
+    enabled: !!activeSessionId && isActive,
+  });
 
   const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
   const allMessages = [...messagePages].reverse().flatMap((page) => page.messages);
@@ -243,6 +225,13 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
+  const olderMessageCount = messagePages
+    .slice(1)
+    .reduce((sum, page) => sum + page.messages.length, 0);
+  const firstItemIndex =
+    messages.length > 0
+      ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
+      : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // Durable deferred-cancellation draft restores (#5219). The whole lifecycle —
@@ -265,12 +254,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleSendQueuedTaskNow,
   } = useChatTaskActions(activeSessionId, enqueueLocalRestore);
   // Nonce handed to ChatInput to pull focus into the compose box when a new
-  // chat starts. Bumped by handleNewChat / handleStartNewChat only, so
-  // selecting an existing chat or a deep link never steals focus.
+  // chat starts (new chat, agent switch, project change, conversation
+  // starter), so selecting an existing chat or a deep link never steals focus.
   const [focusInputRequest, setFocusInputRequest] = useState(0);
-  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
-  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
-  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const requestInputFocus = useCallback(
     () => setFocusInputRequest((n) => n + 1),
     [],
@@ -295,10 +281,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
     [],
   );
 
-  // Labrastro (OL-362): a YSK side chat is left out of the list until its
-  // first message; the lookup resolves it from its own record.
-  const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
-  const currentSession = sideChat.currentSession;
+  const currentSession = activeSessionId
+    ? sessions.find((s) => s.id === activeSessionId)
+    : null;
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -354,14 +339,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   // Resolve selected agent: open session's agent → stored preference → first
   // available. New chats have no session, so they fall through to the picker.
-  // A side chat is only ever with the tip's agent: no fallback (OL-288 §5).
   const activeAgent =
     sessionAgent ??
-    (sideChat.pinsAgent
-      ? null
-      : availableAgents.find((a) => a.id === selectedAgentId) ??
-        availableAgents[0] ??
-        null);
+    availableAgents.find((a) => a.id === selectedAgentId) ??
+    availableAgents[0] ??
+    null;
   const isAgentRuntimeBound = !!activeAgent && hasAgentRuntime(activeAgent);
 
   // A session outlives the permission that created it. The agent can be flipped
@@ -373,14 +355,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // (MUL-6380). Same rule the server enforces, via the shared predicate.
   const isAgentAccessRevoked =
     !!activeAgent && !canAssignAgent(activeAgent, user?.id, memberRole);
-
-  // "Customize" under the starter buttons in the empty state — the only place
-  // that admits those buttons are configuration. Resolved here so the full
-  // page and the floating window cannot disagree about who sees it.
-  const customizeConversationStartersHref = useCustomizeConversationStartersHref(
-    activeAgent,
-    wsId,
-  );
 
   const agentAvailability = useWorkspaceAgentAvailability();
   const noAgent = agentAvailability === "none";
@@ -427,7 +401,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
-    async (titleSeed: string): Promise<string | null> => {
+    async (): Promise<string | null> => {
       // Trust the current session id only when it's real: present in the
       // loaded list, or a just-created one still awaiting the list refetch
       // (has an optimistic write). A dangling id (deleted / no access) must not
@@ -436,7 +410,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       if (
         activeSessionId &&
         (!sessionsLoaded ||
-          currentSession?.id === activeSessionId ||
+          sessions.some((s) => s.id === activeSessionId) ||
           hasInFlightPendingTask(qc, activeSessionId))
       ) {
         return activeSessionId;
@@ -446,9 +420,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
       const promise = (async () => {
         try {
+          // Untitled on purpose: the server derives the title from the first
+          // message it accepts, the same rule for every client and channel.
           const session = await createSession.mutateAsync({
             agent_id: activeAgent.id,
-            title: deriveChatTitle(titleSeed),
             project_id: activeProjectId,
           });
           return session.id;
@@ -464,7 +439,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       activeAgent,
       activeProjectId,
       createSession,
-      currentSession,
+      sessions,
       sessionsLoaded,
       qc,
     ],
@@ -481,20 +456,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
     if (getCurrentWsId() !== wsId) return;
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
-    if (sideChat.currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [
-    wsId,
-    activeSessionId,
-    sessionsLoaded,
-    sessions,
-    sideChat.currentSession,
-    sideChat.pending,
-    qc,
-    setActiveSession,
-  ]);
+  }, [wsId, activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
 
   // Upload transport moved into the coordinated-upload engine inside ChatInput
   // (MUL-5181 L2); surfaces only forward whether the affordance exists.
@@ -506,7 +471,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
-      attempt: ChatSendAttempt = { clientMessageId: createSafeId() },
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -557,9 +521,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
       let sessionId: string | null = null;
       try {
-        // A failed response after lazy creation must retry in the SAME session.
-        sessionId = attempt.sessionId ?? await ensureSession(finalContent);
-        if (sessionId) attempt.sessionId = sessionId;
+        sessionId = await ensureSession();
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
         // A revoked invoke permission blocks session create with a structured
@@ -589,7 +551,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, attempt.clientMessageId);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         // Invoke permission can be revoked mid-session; the send is refused with
@@ -643,6 +605,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
         supports_queue: result.supports_queue,
         queued: result.queued,
       });
+      // This send just committed the new session's server-derived title.
+      if (sessionId !== activeSessionId) {
+        void refetchChatSessionsAfterCommit(qc, chatKeys.sessions(wsId));
+      }
       // Cache primed → publish the new active session, but only if the user
       // hasn't navigated away mid-send. See isStillOnComposeTarget. commitInput
       // clears the sent draft, and scrubs the shared editor only when the user
@@ -653,15 +619,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
-      // An accepted send re-engages the live-end follow: the follow now
-      // releases after one line of upward scrolling (OL-272), so a reader who
-      // peeked up slightly before sending would otherwise have their own
-      // bubble and the streaming reply grow silently below the fold. Only when
-      // still on the source session, though: the nonce is controller-level
-      // state while the list mounts per session, so a mid-send navigation
-      // must not let THIS send yank the session the reader is looking at now
-      // (OL-272 review).
-      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -688,6 +645,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       return true;
     },
     [
+      wsId,
       activeSessionId,
       activeAgent,
       isAgentArchived,
@@ -758,6 +716,40 @@ export function useChatController(opts?: { isActive?: boolean }) {
     },
     [
       activeSessionId,
+      setSelectedAgentId,
+      setSelectedProjectId,
+      setActiveSession,
+      requestInputFocus,
+    ],
+  );
+
+  // Switch the composer to another agent (the floating window's agent picker).
+  const handleSelectAgent = useCallback(
+    (agent: Agent) => {
+      // No-op when clicking the already-active agent — don't clobber the
+      // current session just because the user closed the menu this way.
+      // Compare against activeAgent (what the UI shows), not selectedAgentId
+      // (which may be null / point to an archived agent on first load).
+      if (activeAgent && agent.id === activeAgent.id) return;
+      uiLogger.info("selectAgent", {
+        from: selectedAgentId,
+        to: agent.id,
+        previousSessionId: activeSessionId,
+      });
+      setSelectedAgentId(agent.id);
+      // Preserve an explicitly chosen project while composing an unsent chat,
+      // but never inherit project context from the historical session being
+      // left behind.
+      setSelectedProjectId(currentSession ? null : activeProjectId);
+      setActiveSession(null);
+      requestInputFocus();
+    },
+    [
+      activeAgent,
+      selectedAgentId,
+      activeSessionId,
+      activeProjectId,
+      currentSession,
       setSelectedAgentId,
       setSelectedProjectId,
       setActiveSession,
@@ -873,15 +865,16 @@ export function useChatController(opts?: { isActive?: boolean }) {
     isAgentAccessRevoked,
     isAgentRuntimeBound,
     activeAgent,
-    customizeConversationStartersHref,
     noAgent,
     availability,
     // messages
     messages,
     pendingTask,
+    pendingTaskLoading,
     pendingTaskId,
     showSkeleton,
     hasMessages,
+    firstItemIndex,
     hasOlderMessages: !!hasOlderMessages,
     isFetchingOlderMessages,
     fetchOlderMessages,
@@ -890,8 +883,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
     handleRestoreDraftApplied,
     // compose-box focus nonce (bumped on new chat)
     focusInputRequest,
-    // live-end follow resume nonce (bumped on accepted send)
-    resumeFollowNonce,
     conversationStarterRequest,
     handleConversationStarterApplied,
     sendConversationStarter,
@@ -905,6 +896,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     uploadEnabled,
     handleNewChat,
     handleStartNewChat,
+    handleSelectAgent,
     handleSelectSession,
     handleProjectChange,
     advanceSelectionAfterArchive,

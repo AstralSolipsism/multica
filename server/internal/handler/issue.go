@@ -69,6 +69,7 @@ type IssueResponse struct {
 	AssigneeID    *string `json:"assignee_id"`
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
+	RequesterID   *string `json:"requester_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	// DuplicateOf is the original this issue duplicates (MUL-7349), set only
 	// while the mark counts: the issue is cancelled and the original still
@@ -490,6 +491,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		AssigneeID:         uuidToPtr(i.AssigneeID),
 		CreatorType:        i.CreatorType,
 		CreatorID:          uuidToString(i.CreatorID),
+		RequesterID:        uuidToPtr(i.RequesterUserID),
 		ParentIssueID:      uuidToPtr(i.ParentIssueID),
 		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
 		ProjectID:          uuidToPtr(i.ProjectID),
@@ -528,6 +530,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		AssigneeID:         uuidToPtr(i.AssigneeID),
 		CreatorType:        i.CreatorType,
 		CreatorID:          uuidToString(i.CreatorID),
+		RequesterID:        uuidToPtr(i.RequesterUserID),
 		ParentIssueID:      uuidToPtr(i.ParentIssueID),
 		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
 		ProjectID:          uuidToPtr(i.ProjectID),
@@ -598,6 +601,7 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		AssigneeID:         uuidToPtr(i.AssigneeID),
 		CreatorType:        i.CreatorType,
 		CreatorID:          uuidToString(i.CreatorID),
+		RequesterID:        uuidToPtr(i.RequesterUserID),
 		ParentIssueID:      uuidToPtr(i.ParentIssueID),
 		duplicateOfIssueID: duplicateOfPointer(i.Status, i.DuplicateOfIssueID),
 		ProjectID:          uuidToPtr(i.ProjectID),
@@ -623,7 +627,8 @@ type IssueAssigneeGroupResponse struct {
 }
 
 type GroupedIssuesResponse struct {
-	Groups []IssueAssigneeGroupResponse `json:"groups"`
+	CreatedByUserID string                       `json:"created_by_user_id,omitempty"`
+	Groups          []IssueAssigneeGroupResponse `json:"groups"`
 }
 
 type groupedIssueRow struct {
@@ -1156,7 +1161,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 
 	query := fmt.Sprintf(`WITH %s
 	SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.requester_user_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
 		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
 		i.revision, i.duplicate_of_issue_id,
@@ -1227,7 +1232,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	if !includeClosed {
 		resolvedKeys, err := h.terminalIssueStatusKeys(ctx, wsUUID)
 		if err != nil {
-			if writeSearchCancellation(w, r, err) {
+			if writeQueryCancellation(w, r, err) {
 				return
 			}
 			slog.Warn("expand terminal status categories failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -1264,6 +1269,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.AssigneeID,
 				&sr.issue.CreatorType,
 				&sr.issue.CreatorID,
+				&sr.issue.RequesterUserID,
 				&sr.issue.ParentIssueID,
 				&sr.issue.AcceptanceCriteria,
 				&sr.issue.ContextRefs,
@@ -1287,7 +1293,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		return rows.Err()
 	})
 	if err != nil {
-		if writeSearchCancellation(w, r, err) {
+		if writeQueryCancellation(w, r, err) {
 			return
 		}
 		// Statement-timeout surfaces as SQLSTATE 57014. Return a 503
@@ -1307,7 +1313,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to search issues")
 		return
 	}
-	if writeSearchCancellation(w, r, ctx.Err()) {
+	if writeQueryCancellation(w, r, ctx.Err()) {
 		return
 	}
 
@@ -1349,7 +1355,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		resp[i] = sir
 	}
 
-	if writeSearchCancellation(w, r, ctx.Err()) {
+	if writeQueryCancellation(w, r, ctx.Err()) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1413,6 +1419,14 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 				assigneeIdsFilter = append(assigneeIdsFilter, id)
 			}
 		}
+	}
+	var createdByUserFilter pgtype.UUID
+	if raw := r.URL.Query().Get("created_by_user_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "created_by_user_id")
+		if !ok {
+			return
+		}
+		createdByUserFilter = id
 	}
 	var creatorFilter pgtype.UUID
 	if c := r.URL.Query().Get("creator_id"); c != "" {
@@ -1486,6 +1500,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			AssigneeID:         assigneeFilter,
 			AssigneeIds:        assigneeIdsFilter,
 			CreatorID:          creatorFilter,
+			CreatedByUserID:    createdByUserFilter,
 			ProjectID:          projectFilter,
 			InvolvesUserID:     involvesUserFilter,
 			MetadataFilter:     metadataFilter,
@@ -1518,8 +1533,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"issues": resp,
-			"total":  len(resp),
+			"created_by_user_id": r.URL.Query().Get("created_by_user_id"),
+			"issues":             resp,
+			"total":              len(resp),
 		})
 		return
 	}
@@ -1682,6 +1698,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(assigneeTypesFilter) > 0 {
 		where = append(where, fmt.Sprintf("i.assignee_type = ANY(%s::text[])", addArg(assigneeTypesFilter)))
+	}
+	if createdByUserFilter.Valid {
+		where = append(where, issueCreatedByUserPredicate(addArg(createdByUserFilter)))
 	}
 	if creatorFilter.Valid {
 		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(creatorFilter)))
@@ -1856,7 +1875,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	limitRef := addArg(int64(limit))
 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.requester_user_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
 	   i.revision, i.duplicate_of_issue_id
 FROM issue i
@@ -1886,6 +1905,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.AssigneeID,
 			&row.CreatorType,
 			&row.CreatorID,
+			&row.RequesterUserID,
 			&row.ParentIssueID,
 			&row.Position,
 			&row.StartDate,
@@ -1942,8 +1962,9 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	h.fillStatusCategories(ctx, wsUUID, hidden, resp)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issues": resp,
-		"total":  total,
+		"created_by_user_id": r.URL.Query().Get("created_by_user_id"),
+		"issues":             resp,
+		"total":              total,
 	})
 }
 
@@ -2214,6 +2235,13 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
 		}
 	}
+	if raw := r.URL.Query().Get("created_by_user_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "created_by_user_id")
+		if !ok {
+			return
+		}
+		where = append(where, issueCreatedByUserPredicate(addArg(id)))
+	}
 	if raw := r.URL.Query().Get("creator_id"); raw != "" {
 		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
 		if !ok {
@@ -2463,7 +2491,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 WITH ranked AS (
 	SELECT
 		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.requester_user_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
 		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.duplicate_of_issue_id,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
@@ -2476,7 +2504,7 @@ WITH ranked AS (
 )
 SELECT
 	id, workspace_id, title, description, status, priority,
-	assignee_type, assignee_id, creator_type, creator_id,
+	assignee_type, assignee_id, creator_type, creator_id, requester_user_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
 	number, project_id, metadata, stage, properties, revision, duplicate_of_issue_id, group_total
 FROM ranked
@@ -2514,6 +2542,7 @@ ORDER BY
 			&row.AssigneeID,
 			&row.CreatorType,
 			&row.CreatorID,
+			&row.RequesterUserID,
 			&row.ParentIssueID,
 			&row.Position,
 			&row.StartDate,
@@ -2581,7 +2610,7 @@ ORDER BY
 		groups[idx].Issues = append(groups[idx].Issues, issue)
 	}
 
-	writeJSON(w, http.StatusOK, GroupedIssuesResponse{Groups: groups})
+	writeJSON(w, http.StatusOK, GroupedIssuesResponse{Groups: groups, CreatedByUserID: r.URL.Query().Get("created_by_user_id")})
 }
 
 func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
@@ -2605,6 +2634,9 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch issue reactions.
 	reactions, err := h.Queries.ListIssueReactions(r.Context(), issue.ID)
+	if writeQueryCancellation(w, r, err) {
+		return
+	}
 	if err == nil && len(reactions) > 0 {
 		resp.Reactions = make([]IssueReactionResponse, len(reactions))
 		for i, rx := range reactions {
@@ -2617,6 +2649,9 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
+	if writeQueryCancellation(w, r, err) {
+		return
+	}
 	if err == nil && len(attachments) > 0 {
 		mode := attachmentURLModeFromRequest(r)
 		resp.Attachments = make([]AttachmentResponse, len(attachments))
@@ -2628,6 +2663,9 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	if sourceContext, err := h.issueSourceContextDetail(r.Context(), issue, hidden); err == nil {
 		resp.SourceContext = sourceContext
 	} else if !errors.Is(err, pgx.ErrNoRows) {
+		if writeQueryCancellation(w, r, err) {
+			return
+		}
 		slog.Warn("load issue source context failed", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "error", err)...)
 		// The frozen context is part of the issue's execution contract, not an
 		// optional decoration. Returning a successful detail response without it
@@ -2636,6 +2674,9 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if writeQueryCancellation(w, r, r.Context().Err()) {
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -4549,21 +4590,6 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 	}
 }
 
-// shouldEnqueueAgentTask returns true when an issue creation or assignment
-// should trigger the assigned agent. Backlog issues are skipped — backlog
-// acts as a parking lot where issues can be pre-assigned without immediately
-// triggering execution. Moving out of backlog is handled separately in
-// UpdateIssue.
-func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	// Only the fixed backlog key parks work; custom unstarted statuses do not.
-	// An issue in Triage is not parked but refused: it produces no run from any
-	// entry point until it is accepted (MUL-7189 §2.3).
-	if issue.TriageState.Valid || issuestatus.Effective(ctx, h.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
-		return false
-	}
-	return h.isAgentAssigneeReady(ctx, issue)
-}
-
 // shouldEnqueueAssigneeFallback returns true when comment routing can fall back
 // to the issue's assigned agent. Fires for any status — comments are
 // conversational and can happen at any stage, including after completion
@@ -4634,34 +4660,6 @@ func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue
 		return false
 	}
 	return uuidToString(task.IssueID) == uuidToString(issue.ID)
-}
-
-// isAgentAssigneeReady checks if an issue is assigned to an active agent
-// with a valid runtime.
-func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
-		return false
-	}
-
-	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil {
-		return false
-	}
-	// The shared verdict, not a local re-check (service.AgentReadiness). Only a
-	// BLOCKED verdict stops the enqueue: an offline machine still queues,
-	// because that work runs when the machine comes back.
-	verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceIssue), agent)
-	if err != nil || !verdict.Blocked() {
-		return err == nil
-	}
-	// Assignment has no response the assigner reads for this outcome, so a
-	// refusal that needs human repair leaves the explanation on the issue
-	// (MUL-6164). An unbound agent keeps its silent skip: the agent list
-	// already shows it has no runtime, and nothing about it is new here.
-	if service.RuntimeBlockedNeedsNotice(verdict.Reason) {
-		h.noteRuntimeUnusable(ctx, issue, agent, verdict)
-	}
-	return false
 }
 
 func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {

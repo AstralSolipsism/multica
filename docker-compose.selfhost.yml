@@ -201,6 +201,11 @@ services:
       # credentials (GLM Coding Plan, ZenMux). Unset = the management
       # endpoints answer 503 and polling is skipped.
       MULTICA_QUOTA_SOURCE_SECRET_KEY: ${MULTICA_QUOTA_SOURCE_SECRET_KEY:-}
+      # Online community theme store is opt-in; local imports remain available.
+      MULTICA_THEME_STORE: ${MULTICA_THEME_STORE:-off}
+      # Daemons retain completed task directories unless explicitly enabled.
+      MULTICA_GC_COMPLETED_TASK_TTL: ${MULTICA_GC_COMPLETED_TASK_TTL:-0}
+      MULTICA_THEME_REGISTRY_URL: ${MULTICA_THEME_REGISTRY_URL:-}
       # WeCom smart-bot integration. MULTICA_WECOM_SECRET_KEY is the
       # opt-in: unset = integration disabled. It encrypts each installation's
       # smart-bot secret at rest. The server needs it to unseal a bot's
@@ -235,6 +240,9 @@ services:
       # (bot_token_encrypted), so this single deployment-wide key is all
       # the operator needs to set here.
       MULTICA_TELEGRAM_SECRET_KEY: ${MULTICA_TELEGRAM_SECRET_KEY:-}
+      # Tool steps shown in the streamed reply: auto (default; details in
+      # private chats, kind of work in groups), off, summary or detail.
+      MULTICA_TELEGRAM_TOOL_PROGRESS: ${MULTICA_TELEGRAM_TOOL_PROGRESS:-}
     restart: unless-stopped
 
   frontend:

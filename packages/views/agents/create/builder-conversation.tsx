@@ -1,22 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { Loader2, MessageSquare, X } from "@multica/ui/icons";
-import {
-  applyDraftModelChange,
-  applyDraftRuntimeChange,
-  stripBuilderDraft,
-  type AgentDraft,
-  type BuilderRestore,
-} from "@multica/core/agents";
-import { isRuntimeUsableForUser } from "@multica/core/runtimes";
-import type {
-  ChatMessage,
-  ChatSendAttempt,
-  MemberWithUser,
-  RuntimeDevice,
-} from "@multica/core/types";
-import { Button } from "@multica/ui/components/ui/button";
+import { X } from "@multica/ui/icons";
+import { stripBuilderDraft, type BuilderRestore } from "@multica/core/agents";
+import type { ChatMessage } from "@multica/core/types";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { cn } from "@multica/ui/lib/utils";
 import { ChatInput } from "../../chat/components/chat-input";
@@ -26,115 +12,6 @@ import {
   ChatMessageSkeleton,
 } from "../../chat/components/chat-message-list";
 import { useT } from "../../i18n";
-import { AppLink } from "../../navigation";
-import { ModelDropdown } from "../components/model-dropdown";
-import { RuntimePicker } from "../components/runtime-picker";
-
-/**
- * Pre-conversation card: the builder runs on a real runtime, so the runtime and
- * model have to be chosen before the first message — they are frozen onto the
- * hidden carrier agent when the session is created.
- */
-export function BuilderSetup({
-  draft,
-  onChange,
-  runtimes,
-  runtimesLoading,
-  members,
-  currentUserId,
-  selectedRuntime,
-  starting,
-  error,
-  onStart,
-  connectRuntimeHref,
-  banner,
-}: {
-  draft: AgentDraft;
-  onChange: (draft: AgentDraft) => void;
-  runtimes: RuntimeDevice[];
-  runtimesLoading: boolean;
-  members: MemberWithUser[];
-  currentUserId: string | null;
-  selectedRuntime: RuntimeDevice | null;
-  starting: boolean;
-  error: string | null;
-  onStart: () => void;
-  connectRuntimeHref: string;
-  /** Rendered above the card: the way back to an unfinished conversation, so
-   *  this screen cannot silently start yet another one. */
-  banner?: ReactNode;
-}) {
-  const { t } = useT("agents");
-  const hasOnline = runtimes.some(
-    (runtime) =>
-      runtime.status === "online" &&
-      isRuntimeUsableForUser(runtime, currentUserId),
-  );
-  return (
-    <main className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-10">
-      <div className="w-full max-w-xl">
-        {banner}
-        <div className="rounded-xl border bg-card p-6 shadow-sm">
-        <span className="flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <MessageSquare className="size-5" />
-        </span>
-        <h2 className="mt-5 text-title-lg font-semibold">
-          {t(($) => $.creation_studio.builder.setup_title)}
-        </h2>
-        <p className="mt-2 text-body leading-6 text-muted-foreground">
-          {t(($) => $.creation_studio.builder.setup_description)}
-        </p>
-        <div className="mt-6 space-y-4">
-          <RuntimePicker
-            runtimes={runtimes}
-            runtimesLoading={runtimesLoading}
-            members={members}
-            currentUserId={currentUserId}
-            selectedRuntimeId={draft.runtimeId}
-            onSelect={(runtimeId) => {
-              if (runtimeId !== draft.runtimeId) {
-                onChange(applyDraftRuntimeChange(draft, runtimeId));
-              }
-            }}
-          />
-          <ModelDropdown
-            runtimeId={selectedRuntime?.id ?? null}
-            runtimeOnline={selectedRuntime?.status === "online"}
-            value={draft.model}
-            onChange={(model, levels) =>
-              onChange(applyDraftModelChange(draft, model, levels))
-            }
-            disabled={!selectedRuntime}
-          />
-        </div>
-        {error && (
-          <div role="alert" className="mt-4 text-body text-destructive">
-            {error}
-          </div>
-        )}
-        <div className="mt-6 flex justify-end">
-          {hasOnline ? (
-            <Button
-              onClick={onStart}
-              disabled={starting || selectedRuntime?.status !== "online"}
-            >
-              {starting && <Loader2 className="size-4 animate-spin" />}
-              {t(($) => $.creation_studio.builder.start)}
-            </Button>
-          ) : (
-            <Button
-              render={<AppLink href={connectRuntimeHref} />}
-              nativeButton={false}
-            >
-              {t(($) => $.creation_studio.builder.connect_runtime)}
-            </Button>
-          )}
-        </div>
-        </div>
-      </div>
-    </main>
-  );
-}
 
 export function BuilderConversation({
   sessionId,
@@ -158,7 +35,7 @@ export function BuilderConversation({
   runtimeOnline: boolean;
   /** `commitInput` is the composer's clear; the owner runs it as soon as the
    *  server accepts the message. The prompt buttons below send without one. */
-  onSend: (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => Promise<boolean>;
+  onSend: (content: string, commitInput?: () => void) => Promise<boolean>;
   onStop: () => void;
   restoreDraftRequest: BuilderRestore | null;
   onRestoreDraftApplied: () => void;
@@ -169,22 +46,6 @@ export function BuilderConversation({
   const { t: tModals } = useT("modals");
   const pending = !!pendingTask?.task_id;
   const draftKey = `agent-builder:${sessionId}`;
-  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
-  // the live-end follow and jumps to the reader's own bubble — the follow now
-  // releases after one line of upward scrolling (OL-272), so a reader who
-  // peeked up before sending would otherwise watch their message and the
-  // streaming reply grow silently below the fold. Unlike the chat surfaces
-  // (use-chat-controller.ts), no stillOnSourceSession guard is needed here:
-  // the page remounts this whole subtree per conversation (`key={sessionId}`
-  // in ai-builder-session-page.tsx), so a mid-send navigation drops this state
-  // with the unmounted instance, and the conversation opened instead mounts
-  // its own list at the live end.
-  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
-  const handleSend = async (content: string, commitInput?: () => void, attempt?: ChatSendAttempt) => {
-    const sent = await onSend(content, commitInput, attempt);
-    if (sent) setResumeFollowNonce((n) => n + 1);
-    return sent;
-  };
   const prompts = [
     t(($) => $.creation_studio.builder.prompt_review),
     t(($) => $.creation_studio.builder.prompt_research),
@@ -225,7 +86,6 @@ export function BuilderConversation({
           // Applies to the live stream as well as history, which is what keeps
           // the half-written JSON block off the screen mid-reply.
           transformContent={stripBuilderDraft}
-          resumeFollowNonce={resumeFollowNonce}
         />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-8">
@@ -241,7 +101,7 @@ export function BuilderConversation({
                 <button
                   key={prompt}
                   type="button"
-                  onClick={() => void handleSend(prompt)}
+                  onClick={() => void onSend(prompt)}
                   className="rounded-md border bg-background px-3 py-1.5 text-caption transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {prompt}
@@ -280,8 +140,8 @@ export function BuilderConversation({
       ) : null}
 
       <ChatInput
-        onSend={(content, _attachmentIds, commitInput, _attachments, attempt) =>
-          handleSend(content, commitInput, attempt)
+        onSend={(content, _attachmentIds, commitInput) =>
+          onSend(content, commitInput)
         }
         onStop={onStop}
         isRunning={pending}

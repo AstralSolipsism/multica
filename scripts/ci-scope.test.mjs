@@ -58,12 +58,12 @@ for (const [name, files, selected] of [
   ["cross-module runtime contract", ["packages/core/runtimes/cli-version.ts"], ["frontend", "backend", "runtime", "quality", "e2e"]],
   ["lockfile", ["pnpm-lock.yaml"], ["frontend", "quality", "e2e"]],
   ["package patch", ["patches/example.patch"], ["frontend", "quality", "e2e"]],
-  ["brand source", ["packages/ui/lib/multica-brand.ts"], ["frontend", "quality", "scripts", "e2e"]],
-  ["CLI brand copy", ["server/cmd/multica/cmd_auth.go"], ["backend", "runtime", "scripts", "e2e"]],
-  ["mobile brand copy", ["apps/mobile/components/brand/multica-logo.tsx"], ["quality", "scripts"]],
-  ["README logo", ["docs/assets/logo-dark.svg"], ["scripts"]],
-  ["brand generator", ["scripts/brand/sync.mjs"], ["quality", "scripts"]],
-  ["retained brand manifest", ["scripts/brand/labrastro-assets.json"], ["quality", "scripts"]],
+  ["brand source", ["packages/ui/lib/multica-brand.ts"], ["frontend", "quality", "e2e"]],
+  ["CLI brand copy", ["server/cmd/multica/cmd_auth.go"], ["backend", "runtime", "quality", "e2e"]],
+  ["mobile brand copy", ["apps/mobile/components/brand/multica-logo.tsx"], ["quality"]],
+  ["README logo", ["docs/assets/logo-dark.svg"], ["quality"]],
+  ["brand generator", ["scripts/brand/sync.mjs"], ["quality"]],
+  ["retained brand manifest", ["scripts/brand/labrastro-assets.json"], ["quality"]],
   ["shared quick action body contract", ["server/internal/handler/testdata/quick_action_bodies.json"], ["frontend", "backend", "runtime", "e2e"]],
   ["mobile package patch", ["apps/mobile/patches/example.patch"], ["quality"]],
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
@@ -193,10 +193,12 @@ for (const gate of ["frontend", "backend"]) {
   });
 }
 
-test("the backend gate owns the three-platform installer matrix", () => {
-  assert.equal(productionMapping("backend").installer, "installer");
-  assert.match(jobs.installer, /^        os: \[ubuntu-latest, macos-latest, windows-latest\]$/m);
-  assert.doesNotMatch(jobs.installer, /continue-on-error:/);
+// The gates trust job results, and continue-on-error reports a failed step as
+// a success, so a gate cannot see a failure behind it.
+test("no gated job or shared quality step continues past a failure", () => {
+  const action = readFileSync(new URL("../.github/actions/frontend-quality/action.yml", import.meta.url), "utf8");
+  assert.doesNotMatch(workflow, /continue-on-error:/);
+  assert.doesNotMatch(action, /continue-on-error:/);
 });
 
 test("required aggregates own the format and isolated browser gates", () => {
@@ -239,7 +241,6 @@ test("quality checks have exactly one runner and reuse the product build install
   const owners = Object.entries(jobs).filter(([, source]) => source.includes(invocation)).map(([job]) => job);
   assert.deepEqual(owners.sort(), ["frontend-build", "frontend-quality"]);
   assert.equal(productionMapping("frontend")["frontend-quality"], "quality_only");
-  assert.match(jobs["frontend-build"], /      - name: Check frontend quality\n        uses: \.\/\.github\/actions\/frontend-quality\n/);
   for (const frontend of ["true", "false"]) {
     for (const quality of ["true", "false"]) {
       const outputs = decideScopes("pull_request", { ...filterFiles([]), frontend, quality });
@@ -251,7 +252,7 @@ test("quality checks have exactly one runner and reuse the product build install
   const action = readFileSync(new URL("../.github/actions/frontend-quality/action.yml", import.meta.url), "utf8");
   assert.match(action, /node --test scripts\/check-branding\.test\.mjs\n\s+node scripts\/check-branding\.mjs/);
   assert.match(action, /run: pnpm knip/);
-  assert.match(action, /continue-on-error: true/);
+  assert.doesNotMatch(action, /continue-on-error:/);
   assert.doesNotMatch(action, /pnpm install/);
 });
 

@@ -138,14 +138,8 @@ separate fork-owned files; these two carry only minimal call sites ("thin
 plugs"). After every upstream sync, walk this table and confirm each anchor
 still compiles and still points at the fork symbol.
 
-### `server/cmd/multica/cmd_issue.go`
-
-| Anchor (function / symbol) | Fork file providing the implementation |
-| --- | --- |
-| `runIssueCreate` (~line 1716–1727): builds `uploadedRefs []uploadedIssueAttachment`, calls `resolveUploadedAttachmentReferences(desc, uploadedRefs)` | `cmd_labrastro_issue_attachment.go` |
-| `runIssueUpdate` (~line 1963–1975): same three-line shape as create | `cmd_labrastro_issue_attachment.go` |
-| `runIssueCommentAdd` (~line 2727–2738): same three-line shape for comment content | `cmd_labrastro_issue_attachment.go` |
-| `cmd_labrastro_issue_attachment.go` exports: `uploadedIssueAttachment`, `attachmentDestSpan`, `attachmentSpanParser`, `attachmentSpanEdit`, `resolveUploadedAttachmentReferences`, `matchUploadedAttachmentURL`, `normalizeRelativeAttachmentTarget`, `decodeMarkdownEscapes`, `isMarkdownASCIIPunctuation`, `uriSchemePrefixRe` | — (this file is 100% fork-owned; never touched by upstream) |
+The CLI attachment rewrite now uses upstream `applyAttachmentLinks`; its
+three fork plugs and dedicated implementation have been retired.
 
 ### `server/internal/daemon/daemon.go`
 

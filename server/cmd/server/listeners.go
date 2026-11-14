@@ -118,6 +118,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster, audience ...priv
 		protocol.EventInboxUnread:        true,
 		protocol.EventInboxArchived:      true,
 		protocol.EventInboxUnarchived:    true,
+		protocol.EventInboxDeleted:       true,
 		protocol.EventInboxBatchRead:     true,
 		protocol.EventInboxBatchArchived: true,
 		protocol.EventInvitationCreated:  true,
@@ -160,6 +161,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster, audience ...priv
 	// top-level payload
 	for _, eventType := range []string{
 		protocol.EventInboxRead, protocol.EventInboxUnread, protocol.EventInboxArchived, protocol.EventInboxUnarchived,
+		protocol.EventInboxDeleted,
 		protocol.EventInboxBatchRead, protocol.EventInboxBatchArchived,
 		protocol.EventIssueUnreadChanged,
 	} {

@@ -92,6 +92,14 @@ func TestPrivateProjectIssuelessRunsNeedVisibility(t *testing.T) {
 			if got := transcript(f.insider); got != http.StatusOK {
 				t.Errorf("insider transcript = %d, want 200", got)
 			}
+			dbfx.Cleanup(t, `DELETE FROM task_context_receipt WHERE task_id = $1`, taskID)
+			reportContextReceipt(t, taskID, sampleContextReceipt()).Want(http.StatusNoContent)
+			getContextReceipt(t, taskID, f.outsider).Want(http.StatusNotFound)
+			var receipt contextReceiptResponse
+			getContextReceipt(t, taskID, f.insider).Want(http.StatusOK).JSON(&receipt)
+			if receipt.Receipt == nil {
+				t.Fatal("visible issueless run lost its context receipt")
+			}
 
 			history := func(userID string) AgentTaskResponse {
 				req := withURLParam(asUser(newRequest(http.MethodGet, "/api/agents/"+agentID+"/tasks", nil), userID), "id", agentID)

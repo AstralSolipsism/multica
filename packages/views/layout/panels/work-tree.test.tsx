@@ -16,12 +16,7 @@ import type { Project } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { ProjectsSection } from "./work-tree";
 
-const apiMock = vi.hoisted(() => ({
-  putIssueViewPreference: vi.fn(),
-  getProjectEngineeringConfig: vi.fn(),
-  listMembers: vi.fn(),
-}));
-const navigationMock = vi.hoisted(() => ({ push: vi.fn() }));
+const apiMock = vi.hoisted(() => ({ putIssueViewPreference: vi.fn() }));
 vi.mock("@multica/core/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@multica/core/api")>()),
   api: apiMock,
@@ -47,7 +42,19 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("@multica/core/issue-statuses/hooks", () => ({
   useIssueStatuses: () => buildIssueStatusCatalog([]),
 }));
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/auth", () => {
+  const state = { user: { id: "u1" } };
+  return {
+    useAuthStore: Object.assign(
+      (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+      { getState: () => state },
+    ),
+  };
+});
 vi.mock("../../navigation", () => ({
+  useIntentNavigate: () => vi.fn(),
+  useNavigation: () => ({ getShareableUrl: (path: string) => `https://app.example${path}` }),
   AppLink: ({
     children,
     href,
@@ -58,7 +65,6 @@ vi.mock("../../navigation", () => ({
       {children}
     </a>
   ),
-  useNavigation: () => navigationMock,
 }));
 vi.mock("../../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("@multica/ui/components/common/tooltip-hint", () => ({
@@ -78,12 +84,6 @@ beforeEach(() => {
   apiMock.putIssueViewPreference
     .mockReset()
     .mockImplementation(async ({ prefs }: { prefs: Record<string, unknown> }) => savedPrefs(prefs));
-  apiMock.getProjectEngineeringConfig.mockReset().mockResolvedValue({
-    engineering: { enabled: true },
-    chapters: [],
-  });
-  apiMock.listMembers.mockReset().mockResolvedValue([{ user_id: "u1", role: "member" }]);
-  navigationMock.push.mockReset();
 });
 
 const savedPrefs = (prefs: Record<string, unknown>): IssueViewPreference => ({
@@ -179,48 +179,16 @@ describe("ProjectsSection", () => {
     expect(openCreateIssue).toHaveBeenCalledWith({ project_id: "p2" });
   });
 
-  it("loads engineering only for an open project menu and opens its baseline", async () => {
+  it("opens the project's menu on right-click, led by a new issue in it", async () => {
     renderSection();
-    expect(apiMock.getProjectEngineeringConfig).not.toHaveBeenCalled();
+    fireEvent.contextMenu(screen.getByText("Mobile"), { clientX: 20, clientY: 40 });
 
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
-    const item = await screen.findByRole("menuitem", { name: "Open engineering baseline" });
-    expect(apiMock.getProjectEngineeringConfig).toHaveBeenCalledWith("ws-1", "p2");
+    const menu = await screen.findByRole("menu");
+    const items = Array.from(menu.querySelectorAll('[role="menuitem"]'), (el) => el.textContent?.trim());
+    expect(items).toEqual(["New issue in this project", "Rename", "Open in new tab", "Pin to sidebar", "Copy link"]);
 
-    fireEvent.click(item);
-    expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
-  });
-
-  it("shows a disabled explanation instead of an empty menu while engineering loads", async () => {
-    apiMock.getProjectEngineeringConfig.mockReturnValue(new Promise(() => {}));
-    apiMock.listMembers.mockReturnValue(new Promise(() => {}));
-    renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
-
-    const item = await screen.findByRole("menuitem", { name: "Loading..." });
-    expect(item).toHaveAttribute("aria-disabled", "true");
-  });
-
-  it("hides engineering actions from a member when the project has not enabled them", async () => {
-    apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
-    renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
-
-    const item = await screen.findByRole("menuitem", { name: "Engineering overview is not enabled" });
-    expect(item).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByRole("menuitem", { name: "Enable overview" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Open engineering baseline" })).not.toBeInTheDocument();
-  });
-
-  it("offers the enable entry to an administrator when engineering is disabled", async () => {
-    apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
-    apiMock.listMembers.mockResolvedValue([{ user_id: "u1", role: "admin" }]);
-    renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
-
-    const item = await screen.findByRole("menuitem", { name: "Enable overview" });
-    fireEvent.click(item);
-    expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
+    fireEvent.click(screen.getByRole("menuitem", { name: "New issue in this project" }));
+    expect(openCreateIssue).toHaveBeenCalledWith({ project_id: "p2" });
   });
 
   it("collapses from the section label", () => {
