@@ -15,31 +15,23 @@ import type {
   MessageContentMode,
   MessageRoute,
   MessageRouteCondition,
-  MessageTargetType,
   SaveMessageRouteRequest,
 } from "@multica/core/types";
-import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@multica/ui/components/ui/select";
 import { Alert, AlertDescription } from "@multica/ui/components/ui/alert";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
-import { useActorName } from "@multica/core/workspace/hooks";
-import { LarkAnchorPicker, LarkChatPicker } from "../../lark";
-import { messageDeliveryErrorKey, messageTargetKey } from "../copy";
-import { anchorAfterChatChange, anchorAfterMessageEdit } from "../target-selection";
+import {
+  RouteEditorActions,
+  RouteEditorDialogFrame,
+  RouteEditorError,
+  RouteSelectField,
+  RouteInstallationField,
+  RouteTargetFields,
+  routeSubmissionState,
+  useRouteConflict,
+  useRouteTarget,
+} from "./route-editor-common";
 
 const TARGET_TYPES = ["member", "group", "topic"] as const;
 const CONDITIONS = ["success", "failure", "all"] as const;
@@ -79,86 +71,36 @@ export function MessageRouteEditorDialog({
   isAdmin: boolean;
 }) {
   const { t } = useT("message-delivery");
-  const { getActorName } = useActorName();
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const createRoute = useCreateMessageRoute();
   const updateRoute = useUpdateMessageRoute();
   const approveTarget = useApproveMessageTarget();
-  // The route being edited. On a 409 the latest committed version is
-  // refetched and adopted HERE, so the next save carries the newest
-  // expected_revision — the conflict copy's promise is real, not advice.
-  const [currentRoute, setCurrentRoute] = useState<MessageRoute | null>(route);
-  // Post-409 reload outcome (R2): only "adopted" may claim freshness.
-  // "reload_failed" and "gone" keep the real error and block saving the
-  // stale draft; "reloading" disables saving while the refetch is in flight.
-  const [conflict, setConflict] = useState<
-    "reloading" | "adopted" | "reload_failed" | "gone" | null
-  >(null);
-
-  const activeInstallations = installations.filter((inst) => inst.status === "active");
-
-  const [installationId, setInstallationId] = useState(
-    route?.installation_id ?? activeInstallations[0]?.id ?? "",
-  );
-  const [targetType, setTargetType] = useState<MessageTargetType>(
-    route?.target_type ?? "member",
-  );
-  const [targetUserId, setTargetUserId] = useState(route?.target_user_id ?? "");
-  const [targetChatId, setTargetChatId] = useState(route?.target_chat_id ?? "");
-  const [targetMessageId, setTargetMessageId] = useState(route?.target_message_id ?? "");
-  // Display-only snapshots of the picked group/anchor names, plus the
-  // optional topic thread the anchor belongs to. Persisted identity stays
-  // the raw IDs; a restored saved target starts with empty snapshots and
-  // shows its ID instead.
-  const [targetChatName, setTargetChatName] = useState("");
-  const [targetAnchorSummary, setTargetAnchorSummary] = useState("");
-  const [targetThreadId, setTargetThreadId] = useState(route?.target_thread_id ?? "");
+  const target = useRouteTarget(route, "member", installations);
+  const { installationId, targetType } = target;
   const [conditions, setConditions] = useState<MessageRouteCondition>(
     route?.conditions ?? "success",
   );
   const [contentMode, setContentMode] = useState<MessageContentMode>(
     route?.content_mode ?? "summary",
   );
+  // On a 409 the latest committed version is adopted here, including every
+  // route-specific field, so the next save carries the newest revision.
+  const { currentRoute, conflict, setConflict, reloadAfterConflict } = useRouteConflict(
+    route,
+    // fetchQuery returns the raw envelope (select is observer-only).
+    () => qc.fetchQuery(messageRoutesOptions(wsId, autopilotId)),
+    (found) => {
+      target.adopt(found);
+      setConditions(found.conditions);
+      setContentMode(found.content_mode);
+    },
+  );
   const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [error, setError] = useState<unknown>(null);
 
-  // One rule for both entry paths (picker pick and manual fallback typing):
-  // the anchor triple only survives edits that leave its parent untouched.
-  // See target-selection.ts for the canonical matrix.
-  const applyTargetChatId = (nextChatId: string, name = "") => {
-    const anchor = anchorAfterChatChange(targetChatId, nextChatId, {
-      messageId: targetMessageId,
-      threadId: targetThreadId,
-      summary: targetAnchorSummary,
-    });
-    setTargetChatId(nextChatId);
-    setTargetChatName(name);
-    setTargetMessageId(anchor.messageId);
-    setTargetThreadId(anchor.threadId);
-    setTargetAnchorSummary(anchor.summary);
-  };
-  const applyTargetMessageId = (nextMessageId: string) => {
-    const anchor = anchorAfterMessageEdit(targetMessageId, nextMessageId, {
-      messageId: targetMessageId,
-      threadId: targetThreadId,
-      summary: targetAnchorSummary,
-    });
-    setTargetMessageId(anchor.messageId);
-    setTargetThreadId(anchor.threadId);
-    setTargetAnchorSummary(anchor.summary);
-  };
-
   const isExternal = targetType === "group" || targetType === "topic";
-  const typedKey = useMemo(
-    () =>
-      messageTargetKey(targetType, {
-        userId: targetUserId.trim(),
-        chatId: targetChatId.trim(),
-        messageId: targetMessageId.trim(),
-      }),
-    [targetType, targetUserId, targetChatId, targetMessageId],
-  );
+  const typedKey = target.typedKey;
   const isApproved = useMemo(
     () =>
       approvals.some(
@@ -173,52 +115,14 @@ export function MessageRouteEditorDialog({
   // submit; the button label says so. Collaborators get the server error.
   const willApprove = isExternal && isAdmin && !isApproved;
 
-  const valid =
-    installationId !== "" &&
-    (targetType === "member"
-      ? targetUserId.trim() !== ""
-      : targetType === "group"
-        ? targetChatId.trim() !== ""
-        : targetChatId.trim() !== "" && targetMessageId.trim() !== "");
+  const valid = installationId !== "" && target.targetValid;
 
-  const saving =
-    createRoute.isPending || updateRoute.isPending || approveTarget.isPending ||
-    conflict === "reloading";
-  // After a conflict, a stale draft may only be saved once the latest
-  // committed version was actually adopted.
-  const saveBlockedByConflict =
-    conflict === "reloading" || conflict === "reload_failed" || conflict === "gone";
-
-  // Adopt the other writer's committed version in full — every form field,
-  // not just the revision lock — so a re-save never silently overwrites
-  // changes the user never saw. Any outcome other than a found-and-adopted
-  // route leaves the conflict in a honest state.
-  const reloadAfterConflict = async (routeId: string) => {
-    setConflict("reloading");
-    try {
-      // fetchQuery returns the raw envelope (select is observer-only).
-      const fresh = await qc.fetchQuery(messageRoutesOptions(wsId, autopilotId));
-      const found = fresh.routes.find((r: MessageRoute) => r.id === routeId);
-      if (!found) {
-        setConflict("gone");
-        return;
-      }
-      setCurrentRoute(found);
-      setInstallationId(found.installation_id);
-      setTargetType(found.target_type);
-      setTargetUserId(found.target_user_id ?? "");
-      setTargetChatId(found.target_chat_id ?? "");
-      setTargetMessageId(found.target_message_id ?? "");
-      setTargetThreadId(found.target_thread_id ?? "");
-      setTargetChatName("");
-      setTargetAnchorSummary("");
-      setConditions(found.conditions);
-      setContentMode(found.content_mode);
-      setConflict("adopted");
-    } catch {
-      setConflict("reload_failed");
-    }
-  };
+  const { saving, saveBlockedByConflict } = routeSubmissionState(
+    conflict,
+    createRoute.isPending,
+    updateRoute.isPending,
+    approveTarget.isPending,
+  );
 
   const handleSave = async () => {
     setError(null);
@@ -230,21 +134,7 @@ export function MessageRouteEditorDialog({
       target_type: targetType,
       conditions,
       content_mode: contentMode,
-      ...(targetType === "member"
-        ? { target_user_id: targetUserId.trim() }
-        : {
-            target_chat_id: targetChatId.trim(),
-            ...(targetType === "topic"
-              ? {
-                  target_message_id: targetMessageId.trim(),
-                  // Optional thread of the picked anchor; manual ID entry
-                  // (discovery fallback) never carries one.
-                  ...(targetThreadId.trim() !== ""
-                    ? { target_thread_id: targetThreadId.trim() }
-                    : {}),
-                }
-              : {}),
-          }),
+      ...target.payload,
     };
     try {
       if (willApprove) {
@@ -252,10 +142,7 @@ export function MessageRouteEditorDialog({
           autopilotId,
           installation_id: installationId,
           target_type: targetType,
-          target_chat_id: targetChatId.trim(),
-          ...(targetType === "topic"
-            ? { target_message_id: targetMessageId.trim() }
-            : {}),
+          ...target.approvalPayload,
         });
       }
       if (currentRoute) {
@@ -280,270 +167,72 @@ export function MessageRouteEditorDialog({
     }
   };
 
-  const errCode = errorCode(error);
-  let errorMessage: string | null = null;
-  if (conflict === "adopted") {
-    errorMessage = t(($) => $.editor.conflict);
-  } else if (conflict === "gone") {
-    errorMessage = t(($) => $.editor.conflict_gone);
-  } else if (conflict === "reload_failed" || conflict === "reloading") {
-    errorMessage = t(($) => $.editor.conflict_reload_failed);
-  } else if (error != null) {
-    errorMessage =
-      errCode === "route_revision_conflict"
-        ? t(($) => $.editor.conflict)
-        : t(($) => $.error[messageDeliveryErrorKey(errCode)]);
-  }
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogTitle>
-          {currentRoute ? t(($) => $.editor.title_edit) : t(($) => $.editor.title_add)}
-        </DialogTitle>
-        <div className="space-y-4 pt-1">
-          <div className="space-y-1.5">
-            <label className="text-caption text-muted-foreground">
-              {t(($) => $.editor.bot)}
-            </label>
-            <Select
-              items={activeInstallations.map((inst) => ({
-                value: inst.id,
-                label: getActorName("agent", inst.agent_id),
-              }))}
-              value={installationId}
-              onValueChange={(v) => setInstallationId(v as string)}
-            >
-              <SelectTrigger className="w-full" aria-label={t(($) => $.editor.bot)}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {activeInstallations.map((inst) => (
-                  <SelectItem key={inst.id} value={inst.id}>
-                    {getActorName("agent", inst.agent_id)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+    <RouteEditorDialogFrame
+      open={open}
+      onOpenChange={onOpenChange}
+      title={currentRoute ? t(($) => $.editor.title_edit) : t(($) => $.editor.title_add)}
+      contentClassName="max-w-lg max-h-[85vh] overflow-y-auto"
+    >
+      <RouteInstallationField target={target} />
+      <RouteTargetFields
+        target={target}
+        targetTypes={TARGET_TYPES}
+        members={members}
+        saving={saving}
+      />
 
-          <div className="space-y-1.5">
-            <label className="text-caption text-muted-foreground">
-              {t(($) => $.editor.target)}
-            </label>
-            <Select
-              items={TARGET_TYPES.map((v) => ({ value: v, label: t(($) => $.target_type[v]) }))}
-              value={targetType}
-              onValueChange={(v) => setTargetType(v as MessageTargetType)}
-            >
-              <SelectTrigger className="w-full" aria-label={t(($) => $.editor.target)}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TARGET_TYPES.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {t(($) => $.target_type[v])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      {isExternal && !isApproved && (
+        <Alert>
+          <AlertDescription>
+            {isAdmin
+              ? t(($) => $.editor.approval_admin)
+              : t(($) => $.editor.approval_member)}
+          </AlertDescription>
+        </Alert>
+      )}
 
-          {targetType === "member" && (
-            <div className="space-y-1.5">
-              <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.member)}
-              </label>
-              <Select
-                items={members.map((m) => ({
-                  value: m.user_id,
-                  label: m.name || m.email,
-                }))}
-                value={targetUserId}
-                onValueChange={(v) => setTargetUserId(v as string)}
-              >
-                <SelectTrigger className="w-full" aria-label={t(($) => $.editor.member)}>
-                  <SelectValue placeholder={t(($) => $.editor.member_placeholder)} />
-                </SelectTrigger>
-                <SelectContent>
-                  {members.map((m) => (
-                    <SelectItem key={m.user_id} value={m.user_id}>
-                      {m.name || m.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+      <RouteSelectField
+        label={t(($) => $.editor.when)}
+        options={CONDITIONS.map((v) => ({ value: v, label: t(($) => $.condition[v]) }))}
+        value={conditions}
+        onChange={(v) => setConditions(v as MessageRouteCondition)}
+      />
 
-          {isExternal && (
-            <div className="space-y-1.5">
-              <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.group)}
-              </label>
-              <LarkChatPicker
-                wsId={wsId}
-                installationId={installationId}
-                value={
-                  targetChatId.trim() !== ""
-                    ? { chatId: targetChatId.trim(), name: targetChatName }
-                    : null
-                }
-                onChange={(sel) => applyTargetChatId(sel?.chatId ?? "", sel?.name ?? "")}
-                disabled={saving}
-                fallback={
-                  <Input
-                    value={targetChatId}
-                    onChange={(e) => applyTargetChatId(e.target.value)}
-                    placeholder={t(($) => $.editor.chat_id_placeholder)}
-                    className="font-mono"
-                    aria-label={t(($) => $.editor.chat_id)}
-                  />
-                }
-              />
-            </div>
-          )}
+      <RouteSelectField
+        label={t(($) => $.editor.content)}
+        options={CONTENT_MODES.map((v) => ({ value: v, label: t(($) => $.content_mode[v]) }))}
+        value={contentMode}
+        onChange={(v) => setContentMode(v as MessageContentMode)}
+        disabled={executionMode === "create_issue"}
+        hint={
+          executionMode === "create_issue"
+            ? t(($) => $.content_mode.hint_create_issue)
+            : t(($) => $.content_mode.hint_empty_output)
+        }
+      />
 
-          {targetType === "topic" && (
-            <div className="space-y-1.5">
-              <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.anchor)}
-              </label>
-              <LarkAnchorPicker
-                wsId={wsId}
-                installationId={installationId}
-                chatId={targetChatId.trim()}
-                value={
-                  targetMessageId.trim() !== ""
-                    ? { messageId: targetMessageId.trim(), summary: targetAnchorSummary }
-                    : null
-                }
-                onChange={(sel) => {
-                  // A picked anchor carries its discovered thread; clearing
-                  // drops the triple.
-                  setTargetMessageId(sel?.messageId ?? "");
-                  setTargetAnchorSummary(sel?.summary ?? "");
-                  setTargetThreadId(sel?.threadId ?? "");
-                }}
-                disabled={saving}
-                fallback={
-                  <>
-                    <Input
-                      value={targetMessageId}
-                      onChange={(e) => applyTargetMessageId(e.target.value)}
-                      placeholder={t(($) => $.editor.message_id_placeholder)}
-                      className="font-mono"
-                      aria-label={t(($) => $.editor.message_id)}
-                    />
-                    <p className="text-caption text-muted-foreground">
-                      {t(($) => $.editor.message_id_hint)}
-                    </p>
-                  </>
-                }
-              />
-            </div>
-          )}
-
-          {isExternal && !isApproved && (
-            <Alert>
-              <AlertDescription>
-                {isAdmin
-                  ? t(($) => $.editor.approval_admin)
-                  : t(($) => $.editor.approval_member)}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-caption text-muted-foreground">
-              {t(($) => $.editor.when)}
-            </label>
-            <Select
-              items={CONDITIONS.map((v) => ({ value: v, label: t(($) => $.condition[v]) }))}
-              value={conditions}
-              onValueChange={(v) => setConditions(v as MessageRouteCondition)}
-            >
-              <SelectTrigger className="w-full" aria-label={t(($) => $.editor.when)}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CONDITIONS.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {t(($) => $.condition[v])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-caption text-muted-foreground">
-              {t(($) => $.editor.content)}
-            </label>
-            <Select
-              items={CONTENT_MODES.map((v) => ({ value: v, label: t(($) => $.content_mode[v]) }))}
-              value={contentMode}
-              onValueChange={(v) => setContentMode(v as MessageContentMode)}
-              disabled={executionMode === "create_issue"}
-            >
-              <SelectTrigger className="w-full" aria-label={t(($) => $.editor.content)}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CONTENT_MODES.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {t(($) => $.content_mode[v])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-caption text-muted-foreground">
-              {executionMode === "create_issue"
-                ? t(($) => $.content_mode.hint_create_issue)
-                : t(($) => $.content_mode.hint_empty_output)}
-            </p>
-          </div>
-
-          {currentRoute == null && (
-            <div className="flex items-center justify-between">
-              <label className="text-caption text-muted-foreground">
-                {t(($) => $.editor.enabled)}
-              </label>
-              <Switch size="sm" checked={enabled} onCheckedChange={setEnabled} />
-            </div>
-          )}
-
-          {errorMessage && (
-            <Alert variant="destructive">
-              <AlertDescription className="flex items-center justify-between gap-2">
-                <span>{errorMessage}</span>
-                {conflict === "reload_failed" && currentRoute && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => reloadAfterConflict(currentRoute.id)}
-                  >
-                    {t(($) => $.editor.retry_reload)}
-                  </Button>
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-              {t(($) => $.editor.cancel)}
-            </Button>
-            <Button onClick={handleSave} disabled={!valid || saving || saveBlockedByConflict}>
-              {saving
-                ? t(($) => $.editor.saving)
-                : willApprove
-                  ? t(($) => $.editor.save_approve)
-                  : t(($) => $.editor.save)}
-            </Button>
-          </div>
+      {currentRoute == null && (
+        <div className="flex items-center justify-between">
+          <label className="text-caption text-muted-foreground">
+            {t(($) => $.editor.enabled)}
+          </label>
+          <Switch size="sm" checked={enabled} onCheckedChange={setEnabled} />
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+
+      <RouteEditorError
+        error={error}
+        conflict={conflict}
+        onRetry={currentRoute ? () => reloadAfterConflict(currentRoute.id) : undefined}
+      />
+      <RouteEditorActions
+        saving={saving}
+        willApprove={willApprove}
+        disabled={!valid || saving || saveBlockedByConflict}
+        onSave={handleSave}
+        onCancel={() => onOpenChange(false)}
+      />
+    </RouteEditorDialogFrame>
   );
 }

@@ -9,8 +9,6 @@ import {
   AlertTriangle,
   ShieldOff,
   RotateCw,
-  Copy,
-  Check,
   Webhook,
 } from "@multica/ui/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -21,19 +19,12 @@ import {
 } from "@multica/core/autopilots";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
 import { cn } from "@multica/ui/lib/utils";
-import { copyText } from "@multica/ui/lib/clipboard";
-import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { toast } from "sonner";
 import { useLocale, useT } from "../../i18n";
 import { ObjectSection, ObjectSectionCard, ObjectSectionEmpty } from "../../layout/object-page";
+import { DeliveryDetailDialog as SharedDeliveryDetailDialog } from "../../message-delivery/components/delivery-detail-dialog";
 import type {
   WebhookDelivery,
   WebhookDeliveryStatus,
@@ -236,156 +227,115 @@ function DeliveryDetailDialog({
   const { t } = useT("autopilots");
   const locale = useLocale();
   const wsId = useWorkspaceId();
+  const replay = useReplayAutopilotDelivery();
   const { data: detail, isLoading } = useQuery(
     autopilotDeliveryOptions(wsId, autopilotId, delivery.id, { enabled: open }),
   );
-  // Use the detail row when loaded, otherwise the slim row from the list.
-  // The slim row is missing raw_body / response_body / selected_headers; the
-  // dialog renders skeleton placeholders for those sections while detail is
-  // still loading.
   const full = detail ?? delivery;
   const visual = visualForStatus(full.status);
-  const StatusIcon = visual.icon;
+
+  const handleReplay = async () => {
+    try {
+      await replay.mutateAsync({ autopilotId, deliveryId: full.id });
+      toast.success(t(($) => $.deliveries.replay.toast_success));
+      onOpenChange(false);
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : t(($) => $.deliveries.replay.toast_failed);
+      toast.error(message);
+    }
+  };
+
+  const replayHint = full.signature_status === "invalid"
+    ? t(($) => $.deliveries.replay.disabled_invalid_signature)
+    : full.status === "rejected"
+      ? t(($) => $.deliveries.replay.disabled_rejected)
+      : full.status === "queued"
+        ? t(($) => $.deliveries.replay.disabled_queued)
+        : undefined;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* max-h + overflow-y-auto: webhook bodies + headers + response can
-          easily exceed viewport height. Without a cap the dialog grows past
-          the screen edge and the bottom (e.g. Replay button) becomes
-          unreachable. 85vh leaves breathing room around the dialog. */}
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogTitle className="flex items-center gap-2">
-          <Webhook className="h-4 w-4 text-muted-foreground" />
-          {t(($) => $.deliveries.detail.title)}
-        </DialogTitle>
-        <div className="space-y-4 pt-1">
-          {/* Header row — status / provider / event */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <StatusIcon
-                className={cn(
-                  "h-4 w-4 shrink-0",
-                  visual.color,
-                  visual.spin && "animate-spin",
-                )}
-              />
-              <span className={cn("text-body font-medium", visual.color)}>
-                {t(($) => $.deliveries.status[full.status as WebhookDeliveryStatus]) ??
-                  full.status}
-              </span>
-            </div>
-            <Badge variant="outline">{full.provider || "—"}</Badge>
-            <code className="rounded-xs bg-muted px-2 py-0.5 text-caption font-mono">
-              {full.event || t(($) => $.webhook_payload.unknown_event)}
-            </code>
-            <SignatureBadge status={full.signature_status as WebhookSignatureStatus} />
-          </div>
-
-          {/* Meta grid */}
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-caption">
-            <MetaRow
-              label={t(($) => $.deliveries.detail.received_at)}
-              value={formatDate(full.received_at, locale)}
-            />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.last_attempt_at)}
-              value={formatDate(full.last_attempt_at, locale)}
-            />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.attempt_count)}
-              value={String(full.attempt_count)}
-            />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.dispatch_attempts)}
-              value={String(full.dispatch_attempts)}
-            />
-            {full.status === "queued" && (
-              <MetaRow
-                label={t(($) => $.deliveries.detail.available_at)}
-                value={formatDate(full.available_at, locale)}
-              />
-            )}
-            <MetaRow
-              label={t(($) => $.deliveries.detail.response_status)}
-              value={full.response_status != null ? String(full.response_status) : "—"}
-            />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.dedupe_key)}
-              value={full.dedupe_key ?? "—"}
-              mono
-            />
-            <MetaRow
-              label={t(($) => $.deliveries.detail.dedupe_source)}
-              value={full.dedupe_source ?? "—"}
-            />
-            {full.content_type && (
-              <MetaRow
-                label={t(($) => $.deliveries.detail.content_type)}
-                value={full.content_type}
-                mono
-              />
-            )}
-            {full.replayed_from_delivery_id && (
-              <MetaRow
-                label={t(($) => $.deliveries.detail.replayed_from)}
-                value={full.replayed_from_delivery_id}
-                mono
-              />
-            )}
-          </dl>
-
-          {full.error && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-caption text-destructive">
-              <div className="font-medium">
-                {t(($) => $.deliveries.detail.error_label)}
-              </div>
-              <div className="mt-0.5 font-mono break-all">{full.error}</div>
-            </div>
-          )}
-
-          {/* Raw body + response body + headers, all loaded lazily */}
-          <DetailSections detail={detail} isLoading={isLoading} />
-
-          {/* Replay button */}
-          <div className="flex items-center justify-between pt-2">
-            <ReplayHint delivery={full} />
-            <ReplayButton
-              autopilotId={autopilotId}
-              delivery={full}
-              onSuccess={() => onOpenChange(false)}
-            />
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <SharedDeliveryDetailDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="max-w-2xl max-h-[85vh] overflow-y-auto"
+      variant="webhook"
+      title={t(($) => $.deliveries.detail.title)}
+      status={{
+        icon: visual.icon,
+        color: visual.color,
+        spin: visual.spin,
+        label: t(($) => $.deliveries.status[full.status as WebhookDeliveryStatus]) ?? full.status,
+        labelClassName: visual.color,
+      }}
+      badge={full.provider || "—"}
+      headerExtras={<>
+        <code className="rounded-xs bg-muted px-2 py-0.5 text-caption font-mono">
+          {full.event || t(($) => $.webhook_payload.unknown_event)}
+        </code>
+        <SignatureBadge status={full.signature_status as WebhookSignatureStatus} />
+      </>}
+      metaTooltips
+      meta={[
+        { label: t(($) => $.deliveries.detail.received_at), value: formatDate(full.received_at, locale) },
+        { label: t(($) => $.deliveries.detail.last_attempt_at), value: formatDate(full.last_attempt_at, locale) },
+        { label: t(($) => $.deliveries.detail.attempt_count), value: String(full.attempt_count) },
+        { label: t(($) => $.deliveries.detail.dispatch_attempts), value: String(full.dispatch_attempts) },
+        ...(full.status === "queued" ? [{
+          label: t(($) => $.deliveries.detail.available_at),
+          value: formatDate(full.available_at, locale),
+        }] : []),
+        {
+          label: t(($) => $.deliveries.detail.response_status),
+          value: full.response_status != null ? String(full.response_status) : "—",
+        },
+        { label: t(($) => $.deliveries.detail.dedupe_key), value: full.dedupe_key ?? "—", mono: true },
+        { label: t(($) => $.deliveries.detail.dedupe_source), value: full.dedupe_source ?? "—" },
+        ...(full.content_type ? [{
+          label: t(($) => $.deliveries.detail.content_type),
+          value: full.content_type,
+          mono: true,
+        }] : []),
+        ...(full.replayed_from_delivery_id ? [{
+          label: t(($) => $.deliveries.detail.replayed_from),
+          value: full.replayed_from_delivery_id,
+          mono: true,
+        }] : []),
+      ]}
+      error={full.error ? {
+        label: t(($) => $.deliveries.detail.error_label),
+        message: full.error,
+      } : undefined}
+      codeBlocksLoading={isLoading && !detail}
+      codeBlocks={detail ? [
+        ...(detail.raw_body ? [{
+          label: t(($) => $.deliveries.detail.raw_body),
+          value: detail.raw_body,
+        }] : []),
+        ...(detail.selected_headers && Object.keys(detail.selected_headers).length > 0 ? [{
+          label: t(($) => $.deliveries.detail.selected_headers),
+          value: JSON.stringify(detail.selected_headers, null, 2),
+        }] : []),
+        ...(detail.response_body ? [{
+          label: t(($) => $.deliveries.detail.response_body),
+          value: detail.response_body,
+        }] : []),
+      ] : undefined}
+      action={{
+        hint: replayHint,
+        label: t(($) => $.deliveries.replay.action),
+        pendingLabel: t(($) => $.deliveries.replay.in_progress),
+        pending: replay.isPending,
+        disabled: !canReplay(full) || replay.isPending,
+        onClick: handleReplay,
+      }}
+    />
   );
 }
 
-function MetaRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-muted-foreground">{label}</dt>
-      <TruncatedTooltip content={value} focusable>
-        <dd
-          className={cn(
-            "truncate text-foreground",
-            mono && "font-mono",
-          )}
-        >
-          {value}
-        </dd>
-      </TruncatedTooltip>
-    </div>
-  );
-}
+
 
 function SignatureBadge({ status }: { status: WebhookSignatureStatus | string }) {
   const { t } = useT("autopilots");
@@ -397,177 +347,5 @@ function SignatureBadge({ status }: { status: WebhookSignatureStatus | string })
     <Badge variant={variant}>
       {t(($) => $.deliveries.signature[status as WebhookSignatureStatus]) ?? status}
     </Badge>
-  );
-}
-
-function DetailSections({
-  detail,
-  isLoading,
-}: {
-  detail: WebhookDelivery | undefined;
-  isLoading: boolean;
-}) {
-  const { t } = useT("autopilots");
-  if (isLoading && !detail) {
-    return (
-      <div className="space-y-2">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-16 w-full" />
-      </div>
-    );
-  }
-  if (!detail) return null;
-  return (
-    <div className="space-y-3">
-      {detail.raw_body && (
-        <CodeBlock
-          label={t(($) => $.deliveries.detail.raw_body)}
-          value={detail.raw_body}
-        />
-      )}
-      {detail.selected_headers && Object.keys(detail.selected_headers).length > 0 && (
-        <CodeBlock
-          label={t(($) => $.deliveries.detail.selected_headers)}
-          value={JSON.stringify(detail.selected_headers, null, 2)}
-        />
-      )}
-      {detail.response_body && (
-        <CodeBlock
-          label={t(($) => $.deliveries.detail.response_body)}
-          value={detail.response_body}
-        />
-      )}
-    </div>
-  );
-}
-
-function CodeBlock({ label, value }: { label: string; value: string }) {
-  const { t } = useT("autopilots");
-  const [copied, setCopied] = useState(false);
-  // Truncate in-DOM display for very large bodies; the Copy button still
-  // yields the full string. 4 KiB is large enough for typical webhook
-  // payloads while keeping the dialog responsive.
-  const TRUNCATE_AT = 4096;
-  const isTruncated = value.length > TRUNCATE_AT;
-  const display = isTruncated ? value.slice(0, TRUNCATE_AT) : value;
-
-  const handleCopy = async () => {
-    if (await copyText(value)) {
-      setCopied(true);
-      toast.success(t(($) => $.webhook_payload.copied));
-      setTimeout(() => setCopied(false), 1500);
-    } else {
-      toast.error(t(($) => $.webhook_payload.copy_failed));
-    }
-  };
-
-  return (
-    // min-w-0 lets this card shrink below the <pre>'s intrinsic min-content
-    // width — without it, a minified single-line JSON body would push the
-    // surrounding grid/flex cell (and the whole DialogContent) past the
-    // viewport edge.
-    <div className="min-w-0 rounded-md border bg-background">
-      <div className="flex items-center justify-between border-b px-3 py-1.5 text-micro">
-        <span className="font-medium text-muted-foreground">{label}</span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex items-center gap-1 rounded-xs px-2 py-0.5 hover:bg-accent transition-colors"
-        >
-          {copied ? (
-            <Check className="h-3 w-3 text-emerald-500" />
-          ) : (
-            <Copy className="h-3 w-3" />
-          )}
-          {copied
-            ? t(($) => $.webhook_payload.copied_short)
-            : t(($) => $.webhook_payload.copy)}
-        </button>
-      </div>
-      {/* whitespace-pre-wrap keeps pretty-printed indentation but lets
-          long lines wrap; break-all is the only thing that breaks mid-token
-          (necessary for minified JSON, which has no whitespace to break at). */}
-      <pre className="max-h-48 overflow-auto bg-muted/40 px-3 py-2 text-caption font-mono leading-relaxed whitespace-pre-wrap break-all">
-        {display}
-        {isTruncated && (
-          <span className="block pt-2 text-muted-foreground">
-            {t(($) => $.webhook_payload.truncated_marker)}
-          </span>
-        )}
-      </pre>
-    </div>
-  );
-}
-
-function ReplayHint({ delivery }: { delivery: WebhookDelivery }) {
-  const { t } = useT("autopilots");
-  if (delivery.signature_status === "invalid") {
-    return (
-      <span className="text-caption text-muted-foreground">
-        {t(($) => $.deliveries.replay.disabled_invalid_signature)}
-      </span>
-    );
-  }
-  if (delivery.status === "rejected") {
-    return (
-      <span className="text-caption text-muted-foreground">
-        {t(($) => $.deliveries.replay.disabled_rejected)}
-      </span>
-    );
-  }
-  if (delivery.status === "queued") {
-    return (
-      <span className="text-caption text-muted-foreground">
-        {t(($) => $.deliveries.replay.disabled_queued)}
-      </span>
-    );
-  }
-  return null;
-}
-
-function ReplayButton({
-  autopilotId,
-  delivery,
-  onSuccess,
-}: {
-  autopilotId: string;
-  delivery: WebhookDelivery;
-  onSuccess: () => void;
-}) {
-  const { t } = useT("autopilots");
-  const replay = useReplayAutopilotDelivery();
-  const enabled = canReplay(delivery) && !replay.isPending;
-
-  const handleClick = async () => {
-    try {
-      await replay.mutateAsync({ autopilotId, deliveryId: delivery.id });
-      toast.success(t(($) => $.deliveries.replay.toast_success));
-      onSuccess();
-    } catch (e: unknown) {
-      const message =
-        e instanceof Error
-          ? e.message
-          : t(($) => $.deliveries.replay.toast_failed);
-      toast.error(message);
-    }
-  };
-
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={handleClick}
-      disabled={!enabled}
-    >
-      <RotateCw
-        className={cn(
-          "h-3.5 w-3.5 mr-1",
-          replay.isPending && "animate-spin",
-        )}
-      />
-      {replay.isPending
-        ? t(($) => $.deliveries.replay.in_progress)
-        : t(($) => $.deliveries.replay.action)}
-    </Button>
   );
 }
