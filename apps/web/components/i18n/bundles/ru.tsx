@@ -1,6 +1,6 @@
 "use client";
 
-import localeResources from "@multica/views/locales/ru";
+import localeResources from "@multica/views/locales/effective/ru";
 import type { LocaleBundleProps } from "../locale-bundle";
 
 const resources = { "ru": localeResources };

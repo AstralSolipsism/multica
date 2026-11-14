@@ -63,6 +63,10 @@
     "action_failed_toast": "대기 중인 메시지를 업데이트하지 못했습니다"
   },
   "message_list": {
+    "process_history": "실행 과정",
+    "process_loading": "실행 과정을 불러오는 중…",
+    "process_retry": "불러오지 못했습니다. 다시 시도",
+    "process_empty": "기록된 실행 단계가 없습니다.",
     "jump_to_latest": "최신으로 이동",
     "new_reply": "새 답장",
     "show_details": "세부 정보 보기",

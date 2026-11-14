@@ -1,6 +1,6 @@
 "use client";
 
-import localeResources from "@multica/views/locales/zh-Hans";
+import localeResources from "@multica/views/locales/effective/zh-Hans";
 import type { LocaleBundleProps } from "../locale-bundle";
 
 const resources = { "zh-Hans": localeResources };

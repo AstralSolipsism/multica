@@ -31,6 +31,16 @@
     },
     "connected_apps": {
       "catalog_description": "精選應用附有審核過的預設規則。「全部應用」包含 Composio 能連線的所有應用；Labrastro 無法辨識的操作一律先徵得同意。「指定名單」只允許你選中的應用。"
+    },
+    "shortcuts": {
+      "actions": {
+        "newChat": {
+          "label": "問 Labrastro"
+        }
+      }
+    },
+    "chat": {
+      "ask_agent_label": "「問 Labrastro」的 AI 代理"
     }
   },
   "common": {
@@ -137,6 +147,12 @@
     },
     "pr_automation": {
       "link_not_found": "Labrastro 還沒有收到這個 PR。請確認它所在的倉庫已連線。"
+    },
+    "environments": {
+      "outdated_hint": "這台機器上的 Labrastro 更新後，才能在這裡操作。",
+      "app_desktop_hint": "桌面 App。在執行它的那台機器上，用 Labrastro Desktop 切到它的視窗。",
+      "app_remote_hint": "在 {{machine}} 上執行。在那台機器上用 Labrastro Desktop 切到它的視窗。",
+      "focus_unsupported": "這台機器的 daemon 暫時無法切換 App 視窗。更新 Labrastro 後再試。"
     }
   },
   "billing": {
@@ -219,7 +235,7 @@
   },
   "projects": {
     "resources": {
-      "mode_worktree_needs_server_upgrade": "當前 Labrastro 服務端版本過舊，無法支援並行執行——它會直接在這個資料夾裡執行。升級服務端後即可開啟。"
+      "mode_worktree_needs_server_upgrade": "Labrastro 服務端版本過舊，並行執行會退回到直接修改這個資料夾。請先升級服務端。"
     }
   },
   "agents": {

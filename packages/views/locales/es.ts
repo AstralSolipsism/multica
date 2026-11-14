@@ -24,6 +24,7 @@ import esUsage from "./es/usage.json";
 import esUi from "./es/ui.json";
 import esSquads from "./es/squads.json";
 import esBilling from "./es/billing.json";
+import esEngineering from "./es/engineering.json";
 
 const resources: LocaleResources = {
   common: esCommon,
@@ -51,6 +52,7 @@ const resources: LocaleResources = {
   ui: esUi,
   squads: esSquads,
   billing: esBilling,
+  engineering: esEngineering,
 };
 
 export default resources;

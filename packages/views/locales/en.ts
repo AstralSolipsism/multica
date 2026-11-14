@@ -1,5 +1,12 @@
 import type { LocaleResources } from "@multica/core/i18n";
 import enCommon from "./en/common.json";
+import enQuota from "./en/quota.json";
+import enThinking from "./en/thinking.json";
+import enLark from "./en/lark.json";
+import enForkUi from "./en/fork-ui.json";
+import enDependencies from "./en/dependencies.json";
+import enDag from "./en/dag.json";
+import enAgentConfig from "./en/agent-config.json";
 import enAuth from "./en/auth.json";
 import enSettings from "./en/settings.json";
 import enIssues from "./en/issues.json";
@@ -16,6 +23,8 @@ import enWorkspace from "./en/workspace.json";
 import enProjects from "./en/projects.json";
 import enAutopilots from "./en/autopilots.json";
 import enSkills from "./en/skills.json";
+import enSkillPackages from "./en/skill-packages.json";
+import enAgentFolders from "./en/agent-folders.json";
 import enChat from "./en/chat.json";
 import enModals from "./en/modals.json";
 import enRuntimes from "./en/runtimes.json";
@@ -24,9 +33,19 @@ import enUsage from "./en/usage.json";
 import enUi from "./en/ui.json";
 import enSquads from "./en/squads.json";
 import enBilling from "./en/billing.json";
+import enMessageDelivery from "./en/message-delivery.json";
+import enYouShouldKnow from "./en/you-should-know.json";
+import enEngineering from "./en/engineering.json";
 
 const resources: LocaleResources = {
   common: enCommon,
+  quota: enQuota,
+  thinking: enThinking,
+  lark: enLark,
+  "fork-ui": enForkUi,
+  dependencies: enDependencies,
+  dag: enDag,
+  "agent-config": enAgentConfig,
   auth: enAuth,
   settings: enSettings,
   issues: enIssues,
@@ -43,6 +62,8 @@ const resources: LocaleResources = {
   projects: enProjects,
   autopilots: enAutopilots,
   skills: enSkills,
+  "skill-packages": enSkillPackages,
+  "agent-folders": enAgentFolders,
   chat: enChat,
   modals: enModals,
   runtimes: enRuntimes,
@@ -51,6 +72,9 @@ const resources: LocaleResources = {
   ui: enUi,
   squads: enSquads,
   billing: enBilling,
+  "message-delivery": enMessageDelivery,
+  "you-should-know": enYouShouldKnow,
+  engineering: enEngineering,
 };
 
 export default resources;

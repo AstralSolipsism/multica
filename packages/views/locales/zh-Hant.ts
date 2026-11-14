@@ -24,6 +24,7 @@ import zhHantUsage from "./zh-Hant/usage.json";
 import zhHantUi from "./zh-Hant/ui.json";
 import zhHantSquads from "./zh-Hant/squads.json";
 import zhHantBilling from "./zh-Hant/billing.json";
+import zhHantEngineering from "./zh-Hant/engineering.json";
 
 const resources: LocaleResources = {
   common: zhHantCommon,
@@ -51,6 +52,7 @@ const resources: LocaleResources = {
   ui: zhHantUi,
   squads: zhHantSquads,
   billing: zhHantBilling,
+  engineering: zhHantEngineering,
 };
 
 export default resources;

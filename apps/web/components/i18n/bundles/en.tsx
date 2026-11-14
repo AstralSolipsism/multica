@@ -1,6 +1,6 @@
 "use client";
 
-import localeResources from "@multica/views/locales/en";
+import localeResources from "@multica/views/locales/effective/en";
 import type { LocaleBundleProps } from "../locale-bundle";
 
 const resources = { "en": localeResources };

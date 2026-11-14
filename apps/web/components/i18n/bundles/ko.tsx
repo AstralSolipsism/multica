@@ -1,6 +1,6 @@
 "use client";
 
-import localeResources from "@multica/views/locales/ko";
+import localeResources from "@multica/views/locales/effective/ko";
 import type { LocaleBundleProps } from "../locale-bundle";
 
 const resources = { "ko": localeResources };
