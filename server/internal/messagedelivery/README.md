@@ -118,8 +118,7 @@ failure rolls back the revoke instead of claiming success. Member targets stay o
 the approval table: their binding proves address ownership and the route
 authorizer's source permission covers the sharing decision.
 
-The current repair contract (round-2 review response, four boundaries,
-acceptance matrix A1–E1) ships as `REPAIR-CONTRACT-v1.md` in this directory.
+The current repair contract ships as `REPAIR-CONTRACT.md` in this directory.
 
 ### Target verification (save-time AND send-time)
 
