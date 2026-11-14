@@ -44,6 +44,7 @@ import {
   type RendererRecoveryWindow,
 } from "./renderer-recovery";
 import { createBestEffortDevLog } from "./dev-log";
+import { ignoreBrokenStdio } from "./stdio-guard";
 import { appendMissingPathDirs } from "./path-fallback";
 import {
   writeFreezeBreadcrumb,
@@ -156,6 +157,9 @@ if (process.platform !== "win32") {
     join(homedir(), ".local/bin"),
   ]);
 }
+
+// Before anything can log: release builds write to stdout/stderr too.
+ignoreBrokenStdio();
 
 const PROTOCOL = "multica";
 const devLog = is.dev ? createBestEffortDevLog() : undefined;
