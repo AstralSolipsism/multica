@@ -35,6 +35,10 @@ import {
 import { useT } from "../../i18n";
 import { AppLink, useIntentNavigate } from "../../navigation";
 import { CollectionRowMenu } from "../../layout/collection-list";
+import {
+  AgentTreeRowMenuItems,
+  type AgentTreeActions,
+} from "./agent-tree-actions";
 
 interface AgentRowActionsProps {
   agent: Agent;
@@ -52,6 +56,10 @@ interface AgentRowActionsProps {
   leading?: ReactNode;
   /** For rows that open the menu only on right-click. */
   triggerHidden?: boolean;
+  /** Labrastro fork (OL-1030): folder move/place actions when the folder
+   *  tree loaded. */
+  treeActions?: AgentTreeActions;
+  parentFolderId?: string | null;
 }
 
 /**
@@ -67,6 +75,8 @@ export function AgentRowActions({
   duplicateHref,
   leading,
   triggerHidden,
+  treeActions,
+  parentFolderId,
 }: AgentRowActionsProps) {
   const { t } = useT("agents");
   const { t: tCommon } = useT("common");
@@ -185,6 +195,12 @@ export function AgentRowActions({
             {t(($) => $.row_actions.duplicate)}
           </DropdownMenuItem>
         )}
+        <AgentTreeRowMenuItems
+          agent={agent}
+          canManage={canManage}
+          treeActions={treeActions}
+          parentFolderId={parentFolderId}
+        />
         {showRestore && (
           <DropdownMenuItem onClick={handleRestore}>
             <RotateCcw className="h-3.5 w-3.5" />

@@ -29,6 +29,7 @@
 
 import {
   Download,
+  ImageIcon,
   Eye,
   Loader2,
   Link as LinkIcon,
@@ -545,25 +546,37 @@ function ImageAttachmentView({
   // selection / cursor placement and route preview through the explicit
   // Maximize button. The CSS rule `.image-figure[data-clickable="true"] {
   // cursor: zoom-in }` keys off this same flag for the cursor affordance.
-  const clickable = !editable && !uploading;
 
   // An image that has not loaded has no size of its own (the figure shrinks
   // to it), so its box is reserved up front: from its pixel size when known,
   // otherwise as a fixed-ratio placeholder. Once anything has painted the box
-  // follows the image.
+  // follows the image. When loading fails, drop the reserved box and hover
+  // actions so a broken image does not stay expanded at 16:10.
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const loaded = !!src && loadedSrc === src;
+  const failed = !uploading && (!src || failedSrc === src);
+  const clickable = !editable && !uploading && !failed;
   const imgRef = useCallback((img: HTMLImageElement | null) => {
-    if (img?.complete && img.naturalWidth > 0) setLoadedSrc(src);
-  }, [src]);
-  const sized = !!width && !!height;
-  const pending = !loaded && !sized && !uploading;
+    if (!img?.complete || !src || uploading) return;
+    if (img.naturalWidth > 0) {
+      setLoadedSrc(src);
+      setFailedSrc((prev) => (prev === src ? null : prev));
+    } else {
+      setFailedSrc(src);
+    }
+  }, [src, uploading]);
+  const sized = !!width && !!height && !failed;
+  const pending = !loaded && !failed && !sized && !uploading;
   const sizeStyle = sized
     ? ({
         "--image-width": `${width}px`,
         "--image-aspect": `${width! / height!}`,
       } as CSSProperties)
     : undefined;
+  const showActions = !uploading && !failed && Boolean(src);
+  const showDelete = !uploading && Boolean(editable && onDelete);
+  const errorLabel = alt || linkUrl;
 
   // DOM mirrors the original ReadonlyImage (span-only chain so it stays
   // valid HTML5 when rendered inside a markdown <p>). In editor surfaces
@@ -580,6 +593,7 @@ function ImageAttachmentView({
         data-clickable={clickable || undefined}
         data-sized={sized || undefined}
         data-pending={pending || undefined}
+        data-error={failed || undefined}
         style={sizeStyle}
         contentEditable={false}
         onClick={clickable ? onView : undefined}
@@ -588,58 +602,71 @@ function ImageAttachmentView({
           ref={imgRef}
           src={src || undefined}
           alt={alt}
-          width={width}
-          height={height}
+          width={failed ? undefined : width}
+          height={failed ? undefined : height}
           loading="lazy"
           decoding="async"
           data-loaded={loaded || undefined}
           className={cn("image-content", uploading && "image-uploading")}
           draggable={false}
-          onLoad={() => setLoadedSrc(src)}
-          onError={() => setLoadedSrc(src)}
+          onLoad={() => {
+            setLoadedSrc(src);
+            if (failedSrc === src) setFailedSrc(null);
+          }}
+          onError={() => setFailedSrc(src)}
         />
-        {!uploading && src && (
+        {failed && (
+          <span className="image-error-fallback">
+            <ImageIcon className="size-3.5 shrink-0" aria-hidden="true" />
+            {errorLabel && <span className="image-error-label">{errorLabel}</span>}
+          </span>
+        )}
+        {(showActions || showDelete) && (
           <span
             className="image-toolbar"
             style={downloading ? { opacity: 1 } : undefined}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <DeferredTooltip
-              content={t(($) => $.image.view)}
-              trigger={
-                <button type="button" onClick={onView} aria-label={t(($) => $.image.view)}>
-                  <Maximize2 className="size-3.5" />
-                </button>
-              }
-            />
-            <DeferredTooltip
-              content={t(($) => $.image.download)}
-              trigger={
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={downloading}
-                  aria-busy={downloading}
-                  aria-label={t(($) => $.image.download)}
-                >
-                  {downloading ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Download className="size-3.5" />
-                  )}
-                </button>
-              }
-            />
-            <DeferredTooltip
-              content={t(($) => $.image.copy_link)}
-              trigger={
-                <button type="button" onClick={handleCopyLink} aria-label={t(($) => $.image.copy_link)}>
-                  <LinkIcon className="size-3.5" />
-                </button>
-              }
-            />
-            {editable && onDelete && (
+            {showActions && (
+              <>
+                <DeferredTooltip
+                  content={t(($) => $.image.view)}
+                  trigger={
+                    <button type="button" onClick={onView} aria-label={t(($) => $.image.view)}>
+                      <Maximize2 className="size-3.5" />
+                    </button>
+                  }
+                />
+                <DeferredTooltip
+                  content={t(($) => $.image.download)}
+                  trigger={
+                    <button
+                      type="button"
+                      onClick={handleDownload}
+                      disabled={downloading}
+                      aria-busy={downloading}
+                      aria-label={t(($) => $.image.download)}
+                    >
+                      {downloading ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Download className="size-3.5" />
+                      )}
+                    </button>
+                  }
+                />
+                <DeferredTooltip
+                  content={t(($) => $.image.copy_link)}
+                  trigger={
+                    <button type="button" onClick={handleCopyLink} aria-label={t(($) => $.image.copy_link)}>
+                      <LinkIcon className="size-3.5" />
+                    </button>
+                  }
+                />
+              </>
+            )}
+            {showDelete && (
               <DeferredTooltip
                 content={t(($) => $.image.delete)}
                 trigger={

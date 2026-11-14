@@ -10,6 +10,8 @@ import {
   runWithSyncCauses,
   type SyncCauses,
 } from "../api/realtime-observer";
+import { parseWithFallback } from "../api/schema";
+import { TaskMessagePayloadSchema } from "../api/schemas";
 import type { WSMessage } from "../types/events";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
@@ -17,6 +19,11 @@ import { createLogger } from "../logger";
 import { clearWorkspaceStorage } from "../platform/storage-cleanup";
 import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
+import { invalidateAgentFolderQueries } from "../agents/folder-queries";
+import { skillPackageKeys } from "../skills/package-queries";
+
+import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
+import { subscribeLabrastroEngineeringEvents } from "./labrastro-engineering-realtime";
 import { issueKeys } from "../issues/queries";
 import type { SidebarIssuesRequest } from "../issues/sidebar-list";
 import { refreshIssueUnread } from "../issues/unread";
@@ -60,7 +67,7 @@ import {
   invalidateLastActivitySortedIssueLists,
   invalidateUpdatedAtSortedIssueLists,
 } from "../issues/cache-coordinator";
-import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
+import { onInboxNew, onInboxReadState, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted, onInboxSummaryInvalidate } from "../inbox/ws-updaters";
 import {
   notificationPreferenceOptions,
   notificationPreferenceKeys,
@@ -140,6 +147,8 @@ import type {
   ChatSession,
   ChatSessionCreatedPayload,
   InvitationCreatedPayload,
+  Agent,
+  AgentStatusPayload,
 } from "../types";
 
 const chatWsLogger = createLogger("chat.ws");
@@ -526,7 +535,7 @@ export function applyWorkspaceUpdatedToCache(
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list());
     const cached = list?.find((w) => w.id === next.id) ?? null;
     if (cached && cached.issue_prefix !== next.issue_prefix) {
-      qc.invalidateQueries({ queryKey: issueKeys.all(next.id) });
+      invalidateIssueQueries(qc, next.id);
     }
     if (cached && list) {
       qc.setQueryData<Workspace[]>(
@@ -537,7 +546,7 @@ export function applyWorkspaceUpdatedToCache(
     }
     // Do not seed an absent list with one workspace: staleTime is Infinity,
     // so doing so would hide every other membership until a hard refresh.
-    qc.invalidateQueries({ queryKey: issueKeys.all(next.id) });
+    invalidateIssueQueries(qc, next.id);
   }
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
@@ -681,7 +690,12 @@ export function createChatReplyNotifier(
 function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   const wsId = getCurrentWsId();
   if (wsId) {
-    qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+    invalidateIssueQueries(qc, wsId);
+    // Dependency first reads share the graph's first-load race: a projection
+    // GET that was in flight across the disconnect would otherwise complete
+    // with a pre-reconnect snapshot and stay "fresh" under staleTime:
+    // Infinity. Cancel-then-invalidate, same as the live-event path.
+    void invalidateDependencyQueries(qc, wsId);
     void refreshIssueUnread(qc, wsId);
     qc.invalidateQueries({ queryKey: subscribedIssueKeys.all(wsId) });
     // Through the inbox's own entry point, not a plain invalidate: a reconnect
@@ -689,11 +703,13 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
     // answered by the request already on the wire (see refreshInboxQuery).
     void onInboxInvalidate(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+    void invalidateAgentFolderQueries(qc, wsId);
     qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
     qc.invalidateQueries({ queryKey: workspaceKeys.invitations(wsId) });
     qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+    qc.invalidateQueries({ queryKey: projectKeys.engineeringRoot(wsId) });
     qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: autopilotKeys.all(wsId) });
     qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.all(wsId) });
@@ -829,6 +845,37 @@ function replayableSubscriptions(ws: WSClient) {
   };
 }
 
+function applyAgentStatusPatch(
+  qc: QueryClient,
+  wsId: string,
+  payload: unknown,
+): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const event = payload as Partial<AgentStatusPayload> & {
+    agent_id?: string;
+    status?: Agent["status"];
+  };
+  const agentId = event.agent?.id ?? event.agent_id;
+  const status = event.agent?.status ?? event.status;
+  if (!agentId || !status) return false;
+
+  if (event.agent) {
+    // TaskService status broadcasts omit runtime_bound; handler configuration
+    // updates always include it and must refresh the authoritative list.
+    if ("runtime_bound" in event.agent) return false;
+  } else if (!Object.keys(event).every((key) => key === "agent_id" || key === "status")) {
+    return false;
+  }
+
+  qc.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current) =>
+    current?.map((agent) => agent.id === agentId ? { ...agent, status } : agent),
+  );
+  qc.setQueryData<Agent>(workspaceKeys.agent(wsId, agentId), (current) =>
+    current ? { ...current, status } : current,
+  );
+  return true;
+}
+
 function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void {
   qc.invalidateQueries({
     predicate: (query) => {
@@ -904,6 +951,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // Squad members status is derived per agent, so any agent
           // change (status flip, archive, runtime swap) needs to refresh the
           // per-squad members-status cache without refetching the static squad
@@ -913,7 +961,10 @@ export function useRealtimeSync(
       },
       member: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+          invalidateIssueQueries(qc, wsId, "graph");
+        }
       },
       // workspace:updated is handled by the specific handler below
       // (compares prefixes to decide whether to also invalidate issues).
@@ -935,11 +986,17 @@ export function useRealtimeSync(
       },
       skill: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+          // Labrastro fork: package writes create, adopt and delete skills
+          // without a folder event; keep the folder tree in step.
+          qc.invalidateQueries({ queryKey: skillPackageKeys.tree(wsId) });
+        }
       },
       project: () => {
         const wsId = getCurrentWsId();
         if (wsId) {
+          void invalidateIssueQueries(qc, wsId, "graph");
           qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
           // Workflow responses include the projects using them. Creating,
           // deleting or changing a project also changes that usage list.
@@ -958,8 +1015,9 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+          void invalidateAgentFolderQueries(qc, wsId);
           // squad:deleted triggers assignee transfer — refresh issues too.
-          qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+          invalidateIssueQueries(qc, wsId);
         }
       },
       label: () => {
@@ -971,7 +1029,7 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: ["labels", wsId] });
-          qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+          invalidateIssueQueries(qc, wsId);
           qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
           qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
         }
@@ -990,6 +1048,8 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) {
           qc.invalidateQueries({ queryKey: issueStatusKeys.all(wsId) });
+          void invalidateIssueQueries(qc, wsId, "graph");
+          void invalidateDependencyQueries(qc, wsId);
           // Creating or archiving a status also adds it to, or drops it from,
           // the stored Default workflow.
           qc.invalidateQueries({ queryKey: issueWorkflowKeys.all(wsId) });
@@ -1045,13 +1105,28 @@ export function useRealtimeSync(
           invalidateSquadMemberStatusQueries(qc, wsId);
         }
       },
+      // runtime:telemetry_updated (today: a runtime's plan-quota snapshot
+      // changed) refetches runtime state only — it must NOT go through the
+      // daemon prefix, because daemon:register doubles as the
+      // connect-remote dialog's "a new daemon just connected" signal, and
+      // daemon:heartbeat is deliberately skipped to avoid a refetch storm.
+      // The server publishes it only on real content changes, so the
+      // per-prefix debounce keeps this cheap.
+      runtime: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+      },
       autopilot: () => {
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: autopilotKeys.all(wsId) });
       },
       github_installation: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+        if (!wsId) return;
+        qc.invalidateQueries({ queryKey: githubKeys.installations(wsId) });
+        // Another manager connecting or disconnecting here flips `connected`
+        // on the installations offered for reuse.
+        qc.invalidateQueries({ queryKey: githubKeys.appInstallations(wsId) });
       },
       lark_installation: () => {
         const wsId = getCurrentWsId();
@@ -1158,6 +1233,25 @@ export function useRealtimeSync(
       }, 1_000));
     };
 
+    const taskGraphTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const taskGraphInFlight = new Set<string>();
+    const taskGraphDirty = new Set<string>();
+    const scheduleTaskGraphRefresh = (wsId: string) => {
+      taskGraphDirty.add(wsId);
+      if (taskGraphTimers.has(wsId) || taskGraphInFlight.has(wsId)) return;
+      taskGraphTimers.set(wsId, setTimeout(async () => {
+        taskGraphTimers.delete(wsId);
+        taskGraphDirty.delete(wsId);
+        taskGraphInFlight.add(wsId);
+        try {
+          await invalidateIssueQueries(qc, wsId, "graph");
+        } finally {
+          taskGraphInFlight.delete(wsId);
+          if (!disposed && taskGraphDirty.has(wsId)) scheduleTaskGraphRefresh(wsId);
+        }
+      }, 100));
+    };
+
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const timerCauses = new Map<string, SyncCauses>();
     const debouncedRefresh = (prefix: string, fn: () => void) => {
@@ -1189,17 +1283,39 @@ export function useRealtimeSync(
       // Chat events are handled explicitly below; do not double-invalidate.
       "chat:message", "chat:done", "chat:reply_notification", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
       "chat:session_created", "chat:session_deleted", "chat:session_updated",
-      // task:message stays out of the prefix path because it fires per
-      // streamed message during a long run — invalidating the snapshot on
-      // every message would flood the network. Specific chat handlers below
-      // still receive it via ws.on() (a separate subscription channel).
-      "task:message",
+      // Streamed messages and high-frequency progress frames stay out of the
+      // prefix path. Specific task/chat subscriptions still receive them via
+      // ws.on(), which is independent of this onAny dispatch.
+      "task:message", "task:progress",
       // task:completed / task:failed deliberately NOT here. They reach both
       // onAny (task-prefix invalidation and bounded activity refresh) and the
       // chat-specific ws.on() handlers below through independent subscriptions.
     ]);
 
     const unsubAny = ws.onAny((msg) => {
+      if (msg.type === "inbox:read" || msg.type === "inbox:unread") {
+        const payload = msg.payload as {
+          item_id?: string; workspace_id?: string;
+        };
+        const wsId = payload.workspace_id ?? getCurrentWsId();
+        if (wsId && payload.item_id) {
+          void onInboxReadState(qc, wsId, payload.item_id, msg.type === "inbox:read");
+        } else if (wsId) {
+          void onInboxInvalidate(qc, wsId);
+        }
+        void onInboxSummaryInvalidate(qc);
+        return;
+      }
+      if (msg.type === "agent:status") {
+        const wsId = getCurrentWsId();
+        if (wsId && applyAgentStatusPatch(qc, wsId, msg.payload)) {
+          scheduleWorkingAgentRefresh(wsId);
+          debouncedRefresh("agent:status", () => {
+            invalidateSquadMemberStatusQueries(qc, wsId);
+          });
+          return;
+        }
+      }
       if (specificEvents.has(msg.type)) return;
       const prefix = msg.type.split(":")[0] ?? "";
       if (prefix === "task" && msg.type !== "task:progress") {
@@ -1216,6 +1332,10 @@ export function useRealtimeSync(
       if (prefix === "agent" || (prefix === "task" && msg.type !== "task:progress")) {
         const wsId = getCurrentWsId();
         if (wsId) scheduleWorkingAgentRefresh(wsId);
+      }
+      if (prefix === "task" && msg.type !== "task:usage" && msg.type !== "task:coalesced") {
+        const wsId = getCurrentWsId();
+        if (wsId) scheduleTaskGraphRefresh(wsId);
       }
       if (msg.type === "skill:deleted") {
         const wsId = getCurrentWsId();
@@ -1343,6 +1463,7 @@ export function useRealtimeSync(
           // Group order, supported group types, and unavailable option values
           // are derived from the property definition, not just issue rows.
           qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+          invalidateIssueQueries(qc, wsId, "graph");
         }
       }),
     );
@@ -1500,6 +1621,8 @@ export function useRealtimeSync(
     const unsubSubscriberRemoved = ws.on("subscriber:removed", (p) =>
       onSubscriberChanged(p as SubscriberRemovedPayload),
     );
+
+    const unsubLabrastroEngineeringEvents = subscribeLabrastroEngineeringEvents(client, qc);
 
     // --- Side-effect handlers (toast, navigation) ---
 
@@ -1691,10 +1814,14 @@ export function useRealtimeSync(
     };
 
     const unsubTaskMessage = ws.on("task:message", (p) => {
-      const payload = p as TaskMessagePayload;
+      const message = p as TaskMessagePayload;
       // Cheap Map lookup, and it runs before anything allocates — this is the
       // hot path for every run in the workspace, not just the visible ones.
-      if (!isTaskMessageTimelineHeld(qc, payload.task_id)) return;
+      if (!isTaskMessageTimelineHeld(qc, message.task_id)) return;
+      const payload = parseWithFallback<TaskMessagePayload | null>(
+        p, TaskMessagePayloadSchema, null, { endpoint: "WS task:message" },
+      );
+      if (!payload) return;
 
       // Leading edge: render the first frame after an idle window now. The
       // timer is still armed so the remainder of a burst is coalesced and a
@@ -2048,6 +2175,7 @@ export function useRealtimeSync(
       unsubIssueReactionRemoved();
       unsubSubscriberAdded();
       unsubSubscriberRemoved();
+      unsubLabrastroEngineeringEvents();
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();
@@ -2082,6 +2210,9 @@ export function useRealtimeSync(
       workingAgentTimers.clear();
       workingAgentDirty.clear();
       workingAgentCauses.clear();
+      taskGraphTimers.forEach(clearTimeout);
+      taskGraphTimers.clear();
+      taskGraphDirty.clear();
     };
   }, [client, qc, authStore, onToast]);
 

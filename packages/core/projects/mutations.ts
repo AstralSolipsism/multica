@@ -89,6 +89,7 @@ export function useDeleteProject() {
           : old,
       );
       qc.removeQueries({ queryKey: projectKeys.detail(wsId, id) });
+      qc.removeQueries({ queryKey: projectKeys.engineeringAll(wsId, id) });
       useRecentContextStore.getState().forgetContext(wsId, { type: "project", id });
       clearIssueSurfaceViewState(issueScopeKey({ type: "project", projectId: id }));
     },
@@ -117,3 +118,5 @@ export function useSetProjectSubscription() {
     },
   });
 }
+
+export * from "./engineering-mutations";

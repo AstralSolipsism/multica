@@ -2394,6 +2394,80 @@ describe("ApiClient explicit workspace targeting", () => {
     });
     expect(slugHeaderOf(fetchMock)).toBeUndefined();
   });
+
+  // Boundary parsing of the additive system_stats field: a malformed sample
+  // degrades to null for that row only — every other field and row must
+  // survive untouched. A wholly malformed response yields the empty list.
+  it("degrades a malformed system_stats row without losing the others", async () => {
+    stubOk([
+      { id: "rt-1", name: "Kimi (box)", system_stats: { cpu_percent: 42, memory_percent: 68, captured_at: 1000, stale: false } },
+      { id: "rt-2", name: "Claude (box)", system_stats: "not-a-sample" },
+      { id: "rt-3", name: "Codex (box)" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes.map((r) => r.id)).toEqual(["rt-1", "rt-2", "rt-3"]);
+    expect(runtimes[0]?.system_stats).toMatchObject({ cpu_percent: 42, captured_at: 1000 });
+    expect(runtimes[1]?.system_stats).toBeNull();
+    expect(runtimes[2]?.system_stats).toBeNull();
+  });
+
+  it("falls back to an empty list for a wholly malformed response", async () => {
+    stubOk({ not: "a list" });
+    await expect(new ApiClient("https://api.example.test").listRuntimes()).resolves.toEqual([]);
+  });
+
+  it("keeps member sharing alongside quota and adaptive thinking snapshots", async () => {
+    const member = "123e4567-e89b-42d3-a456-426614174000";
+    const quota = { provider: "codex", windows: [{ used_percent: 25 }], observed_at: 1000 };
+    stubOk([
+      { id: "rt-1", shared_with: [member], plan_quota: quota, thinking_adapt: { status: "available" } },
+      { id: "rt-2", shared_with: "invalid", plan_quota: quota },
+      { id: "rt-3" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes[0]).toMatchObject({ shared_with: [member], plan_quota: quota, thinking_adapt: { status: "available" } });
+    expect(runtimes[1]).toMatchObject({ shared_with: [], plan_quota: quota });
+    expect(runtimes[2]?.shared_with).toEqual([]);
+  });
+
+  // Boundary parsing of the additive thinking_adapt field (OL-1006): valid
+  // snapshots parse, absent fields degrade to null, an unknown status from
+  // a newer daemon passes through untouched, and a wholly malformed
+  // snapshot degrades to null without losing the row.
+  it("parses thinking_adapt snapshots tolerantly", async () => {
+    stubOk([
+      {
+        id: "rt-1",
+        name: "Claude (box)",
+        thinking_adapt: {
+          status: "available",
+          active_source: "opencode-free",
+          last_latency_ms: 290,
+          decisions_ok: 8,
+          decisions_fallback: 1,
+          since: "2026-10-21T00:00:00Z",
+          updated_at: "2026-10-21T00:10:00Z",
+        },
+      },
+      { id: "rt-2", name: "Codex (box)" },
+      {
+        id: "rt-3",
+        name: "Kimi (box)",
+        thinking_adapt: { status: "some-new-status", decisions_ok: 3 },
+      },
+      { id: "rt-4", name: "Pi (box)", thinking_adapt: "not-a-snapshot" },
+    ]);
+    const runtimes = await new ApiClient("https://api.example.test").listRuntimes();
+    expect(runtimes.map((r) => r.id)).toEqual(["rt-1", "rt-2", "rt-3", "rt-4"]);
+    expect(runtimes[0]?.thinking_adapt).toMatchObject({
+      status: "available",
+      active_source: "opencode-free",
+      decisions_ok: 8,
+    });
+    expect(runtimes[1]?.thinking_adapt).toBeNull();
+    expect(runtimes[2]?.thinking_adapt).toMatchObject({ status: "some-new-status", decisions_ok: 3 });
+    expect(runtimes[3]?.thinking_adapt).toBeNull();
+  });
 });
 
 describe("ApiClient model discovery response schema", () => {

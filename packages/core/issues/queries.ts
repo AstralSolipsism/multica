@@ -5,6 +5,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { api, ApiError } from "../api";
+import type { IssueGraphRequest } from "../api/issue-graph-schemas";
 import type {
   Issue,
   IssueAssigneeType,
@@ -141,6 +142,21 @@ export const issueKeys = {
     [...issueKeys.sidebarAll(wsId), source, request, limit] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
+  graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
+  graph: (wsId: string, request: IssueGraphRequest) =>
+    [...issueKeys.graphAll(wsId), request] as const,
+  /** Prefix for every per-issue dependency projection in a workspace — a
+   *  relation or status write on one issue can change another issue's
+   *  inherited/unsatisfied sets, so mutations invalidate the whole prefix. */
+  dependenciesAll: (wsId: string) =>
+    [...issueKeys.all(wsId), "dependencies"] as const,
+  dependencies: (wsId: string, id: string) =>
+    [...issueKeys.dependenciesAll(wsId), id] as const,
+  /** Workspace-wide issue search used by pickers and the
+   *  dependency editor — a server read, so it lives in Query like every
+   *  other one, keyed with wsId per the workspace-scoping rule. */
+  search: (wsId: string, q: string, limit = 20) =>
+    [...issueKeys.all(wsId), "search", q, limit] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
@@ -201,6 +217,7 @@ export const issueKeys = {
     [...issueKeys.subscribersAll(), issueId] as const,
   usageAll: () => ["issues", "usage"] as const,
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
+  workspaceUsage: (wsId: string) => [...issueKeys.all(wsId), "usage-summary"] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
   /** Issue-level attachments — used by the description editor so its
    *  inline file-card / image NodeViews can re-sign download URLs at
@@ -504,10 +521,61 @@ export function sidebarIssuesOptions(
   });
 }
 
+const issueDetailReads = new WeakMap<QueryClient, Map<string, Promise<Issue>>>();
+
+function readIssueDetail(qc: QueryClient, wsId: string, id: string): Promise<Issue> {
+  let reads = issueDetailReads.get(qc);
+  if (!reads) {
+    reads = new Map();
+    issueDetailReads.set(qc, reads);
+  }
+  const key = `${wsId}:${id}`;
+  const existing = reads.get(key);
+  if (existing) return existing;
+  const request = api.getIssue(id).finally(() => {
+    reads.delete(key);
+    if (reads.size === 0) issueDetailReads.delete(qc);
+  });
+  reads.set(key, request);
+  return request;
+}
+
 export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
-    queryFn: () => api.getIssue(id),
+    queryFn: ({ client }) => readIssueDetail(client, wsId, id),
+  });
+}
+
+/**
+ * The dependency projection for one issue (`GET /api/issues/:id/dependencies`):
+ * direct/inherited prerequisites, direct successors, the unsatisfied subset
+ * and the opaque `dependencyVersion` a replacing write must echo back.
+ *
+ * A malformed payload parses to `null` ("unknown"), never to an empty — and
+ * therefore falsely "ready" — view; callers render that as needing a refresh.
+ * Dependency state rides the same WS invalidation as the rest of the issue
+ * (`issueKeys.all(wsId)` covers this prefix), so no custom staleTime here.
+ */
+export function issueDependenciesOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: issueKeys.dependencies(wsId, id),
+    queryFn: () => api.getIssueDependencies(id),
+  });
+}
+
+/**
+ * Workspace-wide issue search (`GET /api/issues/search`) for picker-style UI.
+ * Cross-project within the workspace; closed issues included so a completed
+ * prerequisite can still be referenced. The query key carries the wsId and
+ * the trimmed query and page size; callers debounce the input and gate with `enabled`.
+ */
+export function issueSearchOptions(wsId: string, query: string, limit = 20) {
+  return queryOptions({
+    queryKey: issueKeys.search(wsId, query, limit),
+    queryFn: ({ signal }) =>
+      api.searchIssues({ q: query, limit, include_closed: true, signal }),
+    staleTime: 30_000,
   });
 }
 
@@ -687,11 +755,11 @@ export function issueCommentThreadOptions(issueId: string, commentId: string) {
   });
 }
 
-export function issueReactionsOptions(issueId: string) {
+export function issueReactionsOptions(wsId: string, issueId: string) {
   return queryOptions({
     queryKey: issueKeys.reactions(issueId),
-    queryFn: async () => {
-      const issue = await api.getIssue(issueId);
+    queryFn: async ({ client }) => {
+      const issue = await readIssueDetail(client, wsId, issueId);
       return issue.reactions ?? [];
     },
   });
@@ -727,6 +795,15 @@ export function issueUsageOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.usage(issueId),
     queryFn: () => api.getIssueUsage(issueId),
+  });
+}
+
+export function workspaceIssueUsageOptions(wsId: string) {
+  return queryOptions({
+    queryKey: issueKeys.workspaceUsage(wsId),
+    queryFn: async () => Object.groupBy(await api.listWorkspaceIssueUsage(), (row) => row.issue_id),
+    staleTime: 30_000,
+    enabled: !!wsId,
   });
 }
 

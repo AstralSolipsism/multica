@@ -51,6 +51,9 @@ import { useChatOpenReveal } from "./use-chat-open-reveal";
 import { ChatWindowMessages } from "./chat-window-messages";
 import { ChatInput } from "./chat-input";
 import { useChatAnnotations } from "./use-chat-annotations";
+import { ChatReplyActionsProvider } from "../chat-reply-actions-context";
+import { TipSideChatBanner } from "../../you-should-know/side-chat/tip-side-chat-banner";
+import { TipSideChatStarters } from "../../you-should-know/side-chat/tip-side-chat-starters";
 import { ChatQueue } from "./chat-queue";
 import { ChatAppRequests } from "../../common/app-requests";
 import { EmptyState } from "./chat-empty-state";
@@ -219,7 +222,7 @@ export function ChatWindow() {
       }
     : { width: renderWidth, height: renderHeight };
 
-  const contextItems = useChatContextItems(wsId);
+  const contextItems = useChatContextItems(wsId, isOpen);
   const pageContext = contextItems.find((item) => item.group === "current") ?? null;
   const queuedTasks = pendingTask?.queued_tasks ?? [];
 
@@ -234,6 +237,10 @@ export function ChatWindow() {
     isDragging || reduceMotion ? { duration: 0 } : { type: "spring" as const, duration: 0.3, bounce: 0 };
 
   return (
+    // Reply actions for HTML blocks inside this conversation (OL-1301): the
+    // window's own send path carries queueing/failure handling, and the
+    // composer below consumes the fill requests this context publishes.
+    <ChatReplyActionsProvider handleSend={c.handleSend}>
     <motion.div
       data-mc="chat-window"
       ref={windowRef}
@@ -274,6 +281,7 @@ export function ChatWindow() {
           </Tooltip>
           <SessionDropdown
             sessions={c.sessions}
+            currentSession={currentSession}
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
             agents={c.agents}
@@ -341,6 +349,13 @@ export function ChatWindow() {
         </div>
       </div>
 
+      {currentSession?.tip_source && (
+        <TipSideChatBanner
+          source={currentSession.tip_source}
+          agentName={activeAgent?.name ?? null}
+        />
+      )}
+
       {/* Messages / skeleton / empty state */}
       <AnimatePresence initial={false}>
         {isOpen && (
@@ -359,14 +374,28 @@ export function ChatWindow() {
               c.noAgent
             }
             quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
+            resumeFollowNonce={c.resumeFollowNonce}
             onReady={markContentReady}
             annotations={annotations}
           >
-            <EmptyState
-              agent={activeAgent}
-              hasSessions={c.sessions.length > 0}
-              onPickPrompt={c.sendConversationStarter}
-            />
+            {currentSession?.tip_source ? (
+              <TipSideChatStarters
+                onPick={(prompt) => c.handleSend(prompt)}
+                disabled={
+                  c.isSessionArchived ||
+                  c.isAgentArchived ||
+                  c.isAgentAccessRevoked ||
+                  !c.isAgentRuntimeBound ||
+                  c.noAgent
+                }
+              />
+            ) : (
+              <EmptyState
+                agent={activeAgent}
+                hasSessions={c.sessions.length > 0}
+                onPickPrompt={c.sendConversationStarter}
+              />
+            )}
           </ChatWindowMessages>
         )}
       </AnimatePresence>
@@ -452,6 +481,7 @@ export function ChatWindow() {
         annotations={annotations}
       />
     </motion.div>
+    </ChatReplyActionsProvider>
   );
 }
 
@@ -616,12 +646,15 @@ interface SessionRowAction extends RowActionItem {
  */
 function SessionDropdown({
   sessions,
+  currentSession,
   agents,
   activeSessionId,
   onSelectSession,
   onArchiveSession,
 }: {
   sessions: ChatSession[];
+  /** The open session, including a side chat the list does not carry yet. */
+  currentSession: ChatSession | null;
   agents: Agent[];
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
@@ -630,7 +663,7 @@ function SessionDropdown({
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? currentSession;
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
 

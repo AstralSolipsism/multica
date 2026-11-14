@@ -1,3 +1,6 @@
+import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, type IssueBatchUpdateResult, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
+export { ApiError, dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-api";
+import { IssueUsageListSchema } from "./schemas";
 import type { ZodType } from "zod";
 import { AgentRuntimeSchema, EMPTY_RUNTIME } from "../runtimes/schema";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
@@ -80,6 +83,7 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
+  IssueUsageRow,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
@@ -629,22 +633,6 @@ function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: st
   return parsed;
 }
 
-export class ApiError extends Error {
-  readonly status: number;
-  readonly statusText: string;
-  // Raw decoded JSON body (when the server returned one). Carries structured
-  // error fields like `code` so callers can branch on machine-readable
-  // identifiers instead of pattern-matching the human-readable message.
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.statusText = statusText;
-    this.body = body;
-  }
-}
 
 function assertAgentConversationStartersWriteSupported(data: {
   conversation_starters?: unknown;
@@ -1400,11 +1388,13 @@ export class ApiClient {
     );
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; project_id?: string; scope?: "all" | "title_desc"; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
+    if (params.project_id) search.set("project_id", params.project_id);
+    if (params.scope && params.scope !== "all") search.set("scope", params.scope);
     const raw = await this.fetch<unknown>(
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
@@ -1797,11 +1787,12 @@ export class ApiClient {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
-    return this.fetch("/api/issues/batch-update", {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<IssueBatchUpdateResult> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
+    return parseRequiredResponse(raw, IssueBatchUpdateSchema, "POST /api/issues/batch-update");
   }
 
   async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
@@ -2223,7 +2214,9 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/runtimes?${search}`, {
       headers: workspaceHeader(workspaceSlug),
     });
-    return parseWithFallback(raw, AgentRuntimeSchema.array(), [], { endpoint: "listRuntimes" });
+    return parseWithFallback(raw, RuntimeListSchema, EMPTY_RUNTIME_LIST, {
+      endpoint: "GET /api/runtimes",
+    });
   }
 
   async listCloudRuntimeNodes(
@@ -3066,6 +3059,14 @@ export class ApiClient {
     return this.fetch(`/api/issues/${issueId}/usage`);
   }
 
+  async listWorkspaceIssueUsage(): Promise<IssueUsageRow[]> {
+    const raw = await this.fetch<unknown>("/api/issues/usage-summary");
+    return parseWithFallback<IssueUsageRow[]>(raw, IssueUsageListSchema, [], {
+      endpoint: "GET /api/issues/usage-summary",
+    });
+  }
+
+
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -3129,8 +3130,9 @@ export class ApiClient {
   }
 
   // Inbox
-  async listInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox");
+  async listInbox(options: { view?: "grouped"; signal?: AbortSignal } = {}): Promise<InboxItem[]> {
+    const path = options.view === "grouped" ? "/api/inbox?view=grouped" : "/api/inbox";
+    const raw = await this.fetch<unknown>(path, { signal: options.signal });
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox",
     });
@@ -5337,10 +5339,14 @@ export class ApiClient {
   // GitHub integration
   async getGitHubConnectURL(
     workspaceId: string,
-    options?: { desktop?: boolean },
+    options?: { desktop?: boolean } | "github" | "repositories",
   ): Promise<GitHubConnectResponse> {
+    const search = new URLSearchParams();
+    if (typeof options === "string") search.set("return_to", options);
+    else if (options?.desktop) search.set("desktop", "1");
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/github/connect${options?.desktop ? "?desktop=1" : ""}`,
+      `/api/workspaces/${workspaceId}/github/connect${suffix}`,
     );
     return parseWithFallback(
       raw,
@@ -6057,3 +6063,6 @@ export class ApiClient {
     );
   }
 }
+
+// Labrastro fork methods retain the upstream transport and reject name collisions.
+installLabrastroApi(ApiClient);

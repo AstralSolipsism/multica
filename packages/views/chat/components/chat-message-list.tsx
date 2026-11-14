@@ -50,6 +50,8 @@ import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
 import { FOLLOW_EDGE_THRESHOLD } from "../../common/task-transcript/transcript-follow";
 import { LIVE_END_ROW_ATTR, useStickToBottom } from "./stick-to-bottom";
+import { useReadingAnchor } from "./use-reading-anchor";
+import { useChatMessageWindowIndex } from "./chat-message-window";
 import { JumpToLiveEndButton, useJumpToLiveEnd } from "./jump-to-live-end";
 import { formatElapsedMs } from "../lib/format";
 import {
@@ -82,7 +84,6 @@ interface ChatMessageListProps {
   pendingTask: ChatPendingTask | null | undefined;
   /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
   availability: AgentAvailability | undefined;
-  firstItemIndex?: number;
   hasOlderMessages?: boolean;
   isFetchingOlderMessages?: boolean;
   onLoadOlderMessages?: () => void;
@@ -104,6 +105,14 @@ interface ChatMessageListProps {
    * that reply until chat:quick_actions resolves it.
    */
   quickActionsPendingMessageId?: string | null;
+  /**
+   * Bump-on-send nonce: the reader sent a message from this surface, so the
+   * live-end follow re-engages and the list jumps to their bubble. Without
+   * it, a reader who had scrolled up even one notch (the follow releases
+   * after one line now, OL-272) would have their own message and the
+   * streaming reply growing silently below the fold.
+   */
+  resumeFollowNonce?: number;
   /** Lets the reader annotate settled assistant replies into the next message. */
   annotations?: Pick<ChatAnnotations, "cardRef" | "captureProps" | "popup" | "revealSourceRef">;
 }
@@ -152,13 +161,21 @@ function messageRowKey(message: ChatMessage): string {
 
 function ChatListHeader({ context }: { context?: ChatListContext }) {
   const { t } = useT("chat");
+  // The caption slot keeps its height whether or not the caption is showing:
+  // it sits ABOVE every row, so appearing/disappearing would push the content
+  // the reader is looking at — exactly the jump OL-272 calls out when an
+  // older page starts/finishes loading. `invisible` keeps the layout box and
+  // drops the text from hit-testing and the a11y tree while idle.
   return (
     <div className={cn(CHAT_COLUMN, "pt-4")}>
-      {context?.isFetchingOlderMessages && (
-        <div className="text-center text-caption text-muted-foreground">
-          {t(($) => $.message_list.loading_older)}
-        </div>
-      )}
+      <div
+        className={cn(
+          "text-center text-caption text-muted-foreground",
+          !context?.isFetchingOlderMessages && "invisible",
+        )}
+      >
+        {t(($) => $.message_list.loading_older)}
+      </div>
     </div>
   );
 }
@@ -196,7 +213,7 @@ export function ChatMessageList({
   messages,
   pendingTask,
   availability,
-  firstItemIndex = 0,
+  resumeFollowNonce = 0,
   hasOlderMessages = false,
   isFetchingOlderMessages = false,
   onLoadOlderMessages,
@@ -220,12 +237,21 @@ export function ChatMessageList({
   const pinToLiveEnd = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
   }, []);
-  const { isFollowing, onContentHeightChanged, disengage, hasReachedLiveEnd } = useStickToBottom(
+  const { isFollowing, onContentHeightChanged, resumeLiveEnd, disengage, hasReachedLiveEnd } =
+    useStickToBottom(scrollContainerEl, pinToLiveEnd, active, revealKey);
+  const restoreReadingAnchor = useReadingAnchor(
     scrollContainerEl,
-    pinToLiveEnd,
+    isFollowing,
+    (top) => virtuosoRef.current?.scrollBy({ top, behavior: "auto" }),
     active,
-    revealKey,
   );
+  // Own-send follow resume: fires only when the nonce moves past whatever the
+  // list mounted with, so a remount on session switch never double-jumps (the
+  // fresh instance already opens at the live end).
+  const mountNonceRef = useRef(resumeFollowNonce);
+  useEffect(() => {
+    if (resumeFollowNonce !== mountNonceRef.current) resumeLiveEnd();
+  }, [resumeFollowNonce, resumeLiveEnd]);
   useEffect(() => {
     if (active && hasReachedLiveEnd) onRevealed?.();
   }, [active, hasReachedLiveEnd, onRevealed]);
@@ -313,7 +339,13 @@ export function ChatMessageList({
     return () => { revealSourceRef.current = null; };
   }, [revealSourceRef, renderItems, disengage]);
 
-  const firstIndex = renderItems.length > 0 ? firstItemIndex : 0;
+  // Virtuoso's scroll compensation anchors to indices, so `firstItemIndex`
+  // must track where the FIRST RENDERED row moved between renders — computed
+  // here from the row keys themselves, not from page arithmetic upstream (a
+  // refetch can slide page boundaries without touching the top row, and the
+  // kickoff filter above makes raw counts lie; see chat-message-window.ts).
+  const renderKeys = useMemo(() => renderItems.map((item) => item.key), [renderItems]);
+  const firstIndex = useChatMessageWindowIndex(renderKeys);
   const tailItem = renderItems[renderItems.length - 1];
   const liveEndKey = tailItem?.key ?? null;
   // Changes when the last row is new or a live reply streamed more output.
@@ -370,7 +402,7 @@ export function ChatMessageList({
       // container paints nothing for that whole window anyway — the rows are
       // not measured yet — so this costs no visible time and spares the
       // reader a frame of the wrong messages (see stick-to-bottom.ts).
-      className={cn("flex-1 overflow-y-auto", CHAT_GUTTER, !hasReachedLiveEnd && "invisible")}
+      className={cn("flex-1 overflow-y-auto [overflow-anchor:none]", CHAT_GUTTER, !hasReachedLiveEnd && "invisible")}
     >
       {/* Already inside the gutter + column, so this pre-mount frame renders the
        *  skeleton BODY rather than <ChatMessageSkeleton>, which brings its own
@@ -399,7 +431,14 @@ export function ChatMessageList({
         // the bottom. `align: "end"` bottom-aligns even a last message taller
         // than the viewport, so switching sessions always shows the latest reply.
         initialTopMostItemIndex={{ index: "LAST", align: "end" }}
-        increaseViewportBy={{ top: 400, bottom: 600 }}
+        defaultItemHeight={160}
+        increaseViewportBy={{ top: 600, bottom: 600 }}
+        atTopThreshold={400}
+        atTopStateChange={(atTop) => {
+          if (active && hasReachedLiveEnd && atTop && hasOlderMessages && !isFetchingOlderMessages) {
+            onLoadOlderMessages?.();
+          }
+        }}
         atBottomThreshold={FOLLOW_EDGE_THRESHOLD}
         // Follow rapid streamed output only while Virtuoso says the reader is
         // at the live end. An in-flight smooth animation temporarily reports
@@ -413,17 +452,16 @@ export function ChatMessageList({
         // `followOutput` never fires for a single row growing mid-stream, so
         // content resizes route to the bottom-stick through Virtuoso's own
         // height signal instead.
-        totalListHeightChanged={onContentHeightChanged}
-        startReached={() => {
-          if (hasOlderMessages && !isFetchingOlderMessages) {
-            onLoadOlderMessages?.();
-          }
+        totalListHeightChanged={() => {
+          onContentHeightChanged();
+          restoreReadingAnchor();
         }}
         computeItemKey={(_, item) => item.key}
         context={listContext}
         components={LIST_COMPONENTS}
         itemContent={(_, item) => (
           <div
+            data-chat-message-row=""
             className={cn(CHAT_COLUMN, "py-2")}
             data-mc="chat-message"
             data-role={item.kind === "live" ? "assistant" : item.message.role}
@@ -634,10 +672,25 @@ function AssistantMessage({
   // Use the shared taskMessagesOptions so this cache entry is the same one
   // seeded by useRealtimeSync during task execution — zero refetch when the
   // task finishes, since WS already populated it.
-  const { data: taskMessages } = useQuery({
+  const [processOpen, setProcessOpen] = useState(false);
+
+  // Use the shared taskMessagesOptions so this cache entry is the same one
+  // seeded by useRealtimeSync during task execution — zero refetch when the
+  // task finishes, since WS already populated it. History only fetches the
+  // transcript when the reader opens the 「执行过程」 fold (OL-1166).
+  const taskQuery = useQuery({
     ...taskMessagesOptions(taskId ?? ""),
-    enabled: canFetchTaskMessages,
+    enabled: canFetchTaskMessages && (!message || processOpen),
   });
+  const taskMessages = taskQuery.data;
+  const historyProcess: HistoryProcess | undefined = message && canFetchTaskMessages
+    ? {
+        onOpenChange: setProcessOpen,
+        loading: taskQuery.isPending,
+        failed: taskQuery.isError,
+        retry: () => { void taskQuery.refetch(); },
+      }
+    : undefined;
 
   // Memoized on the cache array identity: mergeTaskMessagesBySeq preserves the
   // array reference when a duplicate event arrives, so this recomputes only
@@ -662,6 +715,7 @@ function AssistantMessage({
         rawError={message.content}
         timeline={timeline}
         elapsedMs={message.elapsed_ms}
+        historyProcess={historyProcess}
       />
     );
   }
@@ -673,27 +727,26 @@ function AssistantMessage({
   const settledContent = message
     ? canonicalAnswerText(message, transformContent)
     : undefined;
-  // Empty persisted content is valid for attachment-only/no-response turns and
-  // for legacy rows whose transcript is the only remaining text source. Only
-  // a non-empty canonical answer replaces timeline text after settlement.
-  const canonicalAnswer =
-    !isNoResponse && settledContent?.trim() ? settledContent : undefined;
+  // History always renders the saved answer, even while the transcript cache
+  // fills. Empty/legacy transcript-only turns remain inspectable in the fold.
+  const canonicalAnswer = message ? (isNoResponse ? "" : settledContent ?? "") : undefined;
 
   return (
     <div className="w-full space-y-1.5">
-      {timeline.length > 0 && (
+      {(timeline.length > 0 || historyProcess) && (
         <TimelineView
           items={timeline}
           attachments={message?.attachments}
           phase={phase}
           isStreaming={!message}
           settledContent={canonicalAnswer}
+          historyProcess={historyProcess}
           sourceId={sourceId}
         />
       )}
       {isNoResponse ? (
         <NoResponseNotice />
-      ) : message && timeline.length === 0 ? (
+      ) : message && timeline.length === 0 && !historyProcess ? (
         <div data-comment-content={sourceId}>
           <RichContent
             content={settledContent ?? message.content}
@@ -712,7 +765,7 @@ function AssistantMessage({
           />
           <MessageFooter
             message={message}
-            timeline={timeline}
+            timeline={processOpen ? timeline : []}
             isPending={isPending}
             transformContent={transformContent}
           />
@@ -1034,11 +1087,13 @@ function FailureBubble({
   rawError,
   timeline,
   elapsedMs,
+  historyProcess,
 }: {
   reason: string;
   rawError: string;
   timeline: ChatTimelineItem[];
   elapsedMs?: number | null;
+  historyProcess?: HistoryProcess;
 }) {
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
@@ -1122,7 +1177,9 @@ function FailureBubble({
           )}
         </div>
       </div>
-      {timeline.length > 0 && <TimelineView items={timeline} />}
+      {(timeline.length > 0 || historyProcess) && (
+        <TimelineView items={timeline} settledContent="" historyProcess={historyProcess} />
+      )}
       {elapsedMs != null && (
         <ElapsedCaption variant="failed" elapsedMs={elapsedMs} />
       )}
@@ -1143,12 +1200,21 @@ function FailureBubble({
 // process/answer keys preserve the trailing RichContent subtree when a live row
 // becomes its persisted row (MUL-4922).
 
+interface HistoryProcess {
+  onOpenChange: (open: boolean) => void;
+  loading: boolean;
+  failed: boolean;
+  retry: () => void;
+}
+
+
 function TimelineView({
   items,
   isStreaming,
   attachments,
   phase = "settled",
   settledContent,
+  historyProcess,
   sourceId,
 }: {
   items: ChatTimelineItem[];
@@ -1156,14 +1222,15 @@ function TimelineView({
   attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   settledContent?: string;
+  historyProcess?: HistoryProcess;
   sourceId?: string;
 }) {
   if (phase === "settled" && settledContent !== undefined) {
     const { preface, middle } = splitTimeline(items);
-    const processItems = [...preface, ...middle];
+    const processItems = settledContent ? [...preface, ...middle] : items;
     return (
       <>
-        {processItems.length > 0 && (
+        {(processItems.length > 0 || historyProcess) && (
           <OuterProcessFold
             key="process"
             items={processItems}
@@ -1171,6 +1238,7 @@ function TimelineView({
             attachments={attachments}
             phase="settled"
             stepCount={middle.length}
+            historyProcess={historyProcess}
           />
         )}
         <div key="answer" data-comment-content={sourceId}>
@@ -1231,12 +1299,14 @@ function OuterProcessFold({
   attachments,
   phase = "settled",
   stepCount,
+  historyProcess,
 }: {
   items: ChatTimelineItem[];
   isStreaming?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   stepCount?: number;
+  historyProcess?: HistoryProcess;
 }) {
   const { t } = useT("chat");
   // Open while the task streams (so the user watches progress), collapsed once
@@ -1246,21 +1316,38 @@ function OuterProcessFold({
   // HTML blocks alive — so the collapse has to be expressed directly.
   const [open, setOpen] = useState(!!isStreaming);
   const wasStreaming = useRef(!!isStreaming);
+  const onHistoryOpenChange = historyProcess?.onOpenChange;
   useEffect(() => {
-    if (wasStreaming.current && !isStreaming) setOpen(false);
+    if (wasStreaming.current && !isStreaming) {
+      setOpen(false);
+      onHistoryOpenChange?.(false);
+    }
     wasStreaming.current = !!isStreaming;
-  }, [isStreaming]);
+  }, [isStreaming, onHistoryOpenChange]);
   const displayedStepCount = stepCount ?? items.length;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors">
+    <Collapsible open={open} onOpenChange={(next) => {
+      setOpen(next);
+      historyProcess?.onOpenChange(next);
+    }}>
+      <CollapsibleTrigger className="flex h-5 items-center gap-1 whitespace-nowrap text-caption text-muted-foreground hover:text-foreground transition-colors">
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <span>{t(($) => $.message_list.process_steps, { count: displayedStepCount })}</span>
+        <span>{historyProcess
+          ? t(($) => $.message_list.process_history)
+          : t(($) => $.message_list.process_steps, { count: displayedStepCount })}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="mt-1 rounded-lg border bg-muted/20 p-2 space-y-0.5">
-          {items.map((item) =>
+          {historyProcess?.loading ? (
+            <div role="status">{t(($) => $.message_list.process_loading)}</div>
+          ) : historyProcess?.failed ? (
+            <Button variant="ghost" size="sm" onClick={historyProcess.retry}>
+              {t(($) => $.message_list.process_retry)}
+            </Button>
+          ) : historyProcess && items.length === 0 ? (
+            <div>{t(($) => $.message_list.process_empty)}</div>
+          ) : items.map((item) =>
             item.type === "text" ? (
               <MiddleTextRow
                 key={item.seq}

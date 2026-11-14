@@ -31,10 +31,10 @@ vi.mock("../editor/code-block-static", () => ({
   ),
 }));
 
-// --- The server: records sends keyed by clientMessageId, replays on dedup ----
+// --- The server: records every send (dedup is the server's own concern) -----
 const server = vi.hoisted(() => {
   let seq = 0;
-  const sent: { clientMessageId: string; messageId: string; taskId: string; content: string }[] = [];
+  const sent: { messageId: string; taskId: string; content: string }[] = [];
   let loseNext = false;
   return {
     sent,
@@ -45,21 +45,9 @@ const server = vi.hoisted(() => {
       sent.length = 0;
       loseNext = false;
     },
-    send: vi.fn(async (_sessionId: string, content: string, _atts: unknown, clientMessageId: string) => {
-      const existing = sent.find((m) => m.clientMessageId === clientMessageId);
-      if (existing) {
-        // Dedup window hit: replay the first result, no second message/task.
-        return {
-          message_id: existing.messageId,
-          task_id: existing.taskId,
-          created_at: "2026-11-09T00:00:00Z",
-          supports_queue: false,
-          queued: false,
-          attachment_ids: [],
-        };
-      }
+    send: vi.fn(async (_sessionId: string, content: string, _atts: unknown, _submissionId: unknown) => {
       seq += 1;
-      const row = { clientMessageId, messageId: `msg-${seq}`, taskId: `task-${seq}`, content };
+      const row = { messageId: `msg-${seq}`, taskId: `task-${seq}`, content };
       sent.push(row);
       const accepted = {
         message_id: row.messageId,
@@ -215,6 +203,7 @@ vi.mock("@multica/core/agents", () => ({
 }));
 vi.mock("@multica/core/chat/queries", () => ({
   chatKeys: {
+    sessions: (id: string) => ["chat", "sessions", id],
     messages: (id: string) => ["chat", "messages", id],
     messagesPage: (id: string) => ["chat", "messages-page", id],
     pendingTask: (id: string) => ["chat", "pending-task", id],
@@ -303,7 +292,7 @@ vi.mock("./components/use-chat-project-context-support", () => ({
   useChatProjectContextSupport: () => true,
 }));
 vi.mock("./components/use-chat-context-items", () => ({
-  useChatContextItems: () => null,
+  useChatContextItems: () => [],
 }));
 vi.mock("./components/use-chat-resize", () => ({
   useChatResize: () => ({
@@ -483,24 +472,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The retry contract, driven end to end through one surface. */
-async function lostResponseRetryScenario() {
-  // 1. The server persists the send, then the response is lost.
-  server.loseResponseOnce();
-  await submitFromCard("拍板：方案 B", false);
-  // 2. Unchanged retry: same clientMessageId → the server replays the first
-  //    result instead of recording a second message/task.
-  await submitFromCard("拍板：方案 B", true);
-  expect(server.sent).toHaveLength(1);
-  expect(new Set(server.sent.map((m) => m.taskId)).size).toBe(1);
-  // 3. A changed answer is a new attempt.
-  await submitFromCard("拍板：方案 C", true);
-  expect(server.sent).toHaveLength(2);
-  // 4. After a success the record is gone: same content is a fresh attempt.
-  await submitFromCard("拍板：方案 C", true);
-  expect(server.sent).toHaveLength(3);
-}
-
 describe("ChatPage (full-page Chat)", () => {
   function renderChatPage() {
     // replace() must keep the adapter's searchParams in sync, or the URL→store
@@ -527,13 +498,6 @@ describe("ChatPage (full-page Chat)", () => {
       </I18nProvider>,
     );
   }
-
-  it("keeps a lost-response retry to one message and one task", async () => {
-    resetStore({ activeSessionId: "s1" });
-    renderChatPage();
-    await waitFor(() => expect(inlineFrame()).not.toBeNull());
-    await lostResponseRetryScenario();
-  });
 
   it("fills the conversation's compose draft from the card", async () => {
     resetStore({ activeSessionId: "s1" });
@@ -577,12 +541,6 @@ describe("ChatWindow (floating window)", () => {
       </I18nProvider>,
     );
   }
-
-  it("keeps a lost-response retry to one message and one task", async () => {
-    renderChatWindow();
-    await waitFor(() => expect(inlineFrame()).not.toBeNull());
-    await lostResponseRetryScenario();
-  });
 
   it("sends the card as the user in a session and wakes the agent", async () => {
     renderChatWindow();

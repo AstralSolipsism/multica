@@ -61,6 +61,68 @@ describe("ApiClient schema fallback", () => {
       });
     });
 
+    it("falls back to nothing reusable when the reusable installation list is malformed", async () => {
+      const client = new ApiClient("https://api.example.test");
+      for (const body of [
+        { installations: "not-an-array", configured: true },
+        { installations: [{ installation_id: "101", account_login: "acme" }], configured: true },
+        null,
+      ]) {
+        stubFetchJson(body);
+        await expect(client.listGitHubAppInstallations("ws-1")).resolves.toEqual({
+          installations: [],
+          configured: false,
+        });
+      }
+    });
+
+    it("defaults reusable installation fields an older or newer server omits", async () => {
+      stubFetchJson({
+        installations: [{ installation_id: 101, account_login: "acme", account_type: "Enterprise" }],
+        configured: true,
+      });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listGitHubAppInstallations("ws-1")).resolves.toEqual({
+        installations: [
+          {
+            installation_id: 101,
+            account_login: "acme",
+            account_type: "Enterprise",
+            account_avatar_url: null,
+            connected: false,
+          },
+        ],
+        configured: true,
+      });
+      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        "https://api.example.test/api/workspaces/ws-1/github/app-installations",
+        expect.any(Object),
+      );
+    });
+
+    it("binds an installation by its numeric id and tolerates a malformed row", async () => {
+      const client = new ApiClient("https://api.example.test");
+      stubFetchJson({ id: 7 }, 201);
+
+      await expect(client.connectGitHubInstallation("ws-1", 101)).resolves.toMatchObject({
+        id: "",
+        account_login: "",
+      });
+      const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+      expect(url).toBe("https://api.example.test/api/workspaces/ws-1/github/installations");
+      expect(init).toMatchObject({ method: "POST", body: JSON.stringify({ installation_id: 101 }) });
+    });
+
+    it("keeps the status of a refused binding for the caller to explain", async () => {
+      stubFetchJson({ error: "github installation is suspended" }, 422);
+      const client = new ApiClient("https://api.example.test");
+
+      const error = await client.connectGitHubInstallation("ws-1", 101).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 422 });
+    });
+
     it.each([undefined, "all", "selected", "future-selection", 42])("handles repository selection metadata safely (%s)", async (selection) => {
       stubFetchJson({ repositories: [], total_count: 0, next_page: null, repository_selection: selection });
       const client = new ApiClient("https://api.example.test");
@@ -576,6 +638,20 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const res = await client.searchIssues({ q: "bug" });
       expect(res).toEqual({ issues: [] });
+    });
+
+    it("parses has_more when the server reports another page", async () => {
+      stubFetchJson({ issues: [], has_more: true });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchIssues({ q: "bug" });
+      expect(res.has_more).toBe(true);
+    });
+
+    it("keeps has_more optional and undefined when absent", async () => {
+      stubFetchJson({ issues: [] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchIssues({ q: "bug" });
+      expect(res.has_more).toBeUndefined();
     });
   });
 
@@ -1821,4 +1897,27 @@ describe("workspace subscription contract", () => {
       }),
     );
   });
+});
+
+
+describe("workspace issue usage schema", () => {
+  it("keeps the accounting split, including an authoritative zero", async () => {
+    const row = { issue_id: "issue-1", provider: "openai", model: "gpt-5.4", input_tokens: 100,
+      output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 40, cost_usd_ticks: 0,
+      uncosted_input_tokens: 0, uncosted_output_tokens: 0, uncosted_cache_read_tokens: 0, uncosted_cache_write_tokens: 0 };
+    stubFetchJson([row]);
+    await expect(new ApiClient("https://api.example.test").listWorkspaceIssueUsage()).resolves.toEqual([row]);
+  });
+  it("defaults omitted counters without inventing a split for old responses", async () => {
+    stubFetchJson([{ issue_id: "issue-1" }]);
+    const rows = await new ApiClient("https://api.example.test").listWorkspaceIssueUsage();
+    expect(rows[0]).toMatchObject({ issue_id: "issue-1", input_tokens: 0, provider: "" });
+    expect(rows[0]).not.toHaveProperty("uncosted_input_tokens");
+  });
+  it.each([null, {}, [{ model: "missing-issue" }], [{ issue_id: "issue-1", cost_usd_ticks: "bad" }]])(
+    "degrades malformed responses to an empty list: %j", async (body) => {
+      stubFetchJson(body);
+      await expect(new ApiClient("https://api.example.test").listWorkspaceIssueUsage()).resolves.toEqual([]);
+    },
+  );
 });

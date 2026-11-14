@@ -43,6 +43,7 @@ import {
 import { useChatDraftRestore } from "./use-chat-draft-restore";
 import { useChatTaskActions } from "./use-chat-task-actions";
 import { useChatProjectContextSupport } from "./use-chat-project-context-support";
+import { useTipSideChatLookup } from "@multica/core/you-should-know";
 import { createLogger } from "@multica/core/logger";
 import type {
   Agent,
@@ -164,9 +165,6 @@ export function seedAcceptedPendingTask(
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
 }
 
-const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
-
-
 /**
  * Layout-agnostic chat controller. Holds every piece of chat conversation
  * state and behavior — agent resolution, session lookup, the await-then-render
@@ -225,13 +223,6 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
-  const olderMessageCount = messagePages
-    .slice(1)
-    .reduce((sum, page) => sum + page.messages.length, 0);
-  const firstItemIndex =
-    messages.length > 0
-      ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
-      : 0;
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   // Durable deferred-cancellation draft restores (#5219). The whole lifecycle —
@@ -257,6 +248,9 @@ export function useChatController(opts?: { isActive?: boolean }) {
   // chat starts (new chat, agent switch, project change, conversation
   // starter), so selecting an existing chat or a deep link never steals focus.
   const [focusInputRequest, setFocusInputRequest] = useState(0);
+  // Bump-on-send nonce handed to ChatMessageList: an accepted send re-engages
+  // the live-end follow and jumps to the reader's own bubble (OL-272 review).
+  const [resumeFollowNonce, setResumeFollowNonce] = useState(0);
   const requestInputFocus = useCallback(
     () => setFocusInputRequest((n) => n + 1),
     [],
@@ -281,9 +275,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
     [],
   );
 
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
+  // Labrastro (OL-362): a YSK side chat is left out of the list until its
+  // first message; the lookup resolves it from its own record.
+  const sideChat = useTipSideChatLookup(wsId, activeSessionId, sessions, sessionsLoaded);
+  const currentSession = sideChat.currentSession;
   const isSessionArchived = currentSession?.status === "archived";
   const candidateProjectId = currentSession
     ? currentSession.project_id ?? null
@@ -339,11 +334,14 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
   // Resolve selected agent: open session's agent → stored preference → first
   // available. New chats have no session, so they fall through to the picker.
+  // A side chat is only ever with the tip's agent: no fallback (OL-288 §5).
   const activeAgent =
     sessionAgent ??
-    availableAgents.find((a) => a.id === selectedAgentId) ??
-    availableAgents[0] ??
-    null;
+    (sideChat.pinsAgent
+      ? null
+      : availableAgents.find((a) => a.id === selectedAgentId) ??
+        availableAgents[0] ??
+        null);
   const isAgentRuntimeBound = !!activeAgent && hasAgentRuntime(activeAgent);
 
   // A session outlives the permission that created it. The agent can be flipped
@@ -410,7 +408,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       if (
         activeSessionId &&
         (!sessionsLoaded ||
-          sessions.some((s) => s.id === activeSessionId) ||
+          currentSession?.id === activeSessionId ||
           hasInFlightPendingTask(qc, activeSessionId))
       ) {
         return activeSessionId;
@@ -439,7 +437,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       activeAgent,
       activeProjectId,
       createSession,
-      sessions,
+      currentSession,
       sessionsLoaded,
       qc,
     ],
@@ -456,10 +454,20 @@ export function useChatController(opts?: { isActive?: boolean }) {
     if (getCurrentWsId() !== wsId) return;
     if (!activeSessionId || !sessionsLoaded) return;
     if (sessions.some((s) => s.id === activeSessionId)) return;
+    if (sideChat.currentSession || sideChat.pending) return;
     if (hasInFlightPendingTask(qc, activeSessionId)) return;
     uiLogger.info("clearing dangling activeSessionId", { sessionId: activeSessionId });
     setActiveSession(null);
-  }, [wsId, activeSessionId, sessionsLoaded, sessions, qc, setActiveSession]);
+  }, [
+    wsId,
+    activeSessionId,
+    sessionsLoaded,
+    sessions,
+    sideChat.currentSession,
+    sideChat.pending,
+    qc,
+    setActiveSession,
+  ]);
 
   // Upload transport moved into the coordinated-upload engine inside ChatInput
   // (MUL-5181 L2); surfaces only forward whether the affordance exists.
@@ -619,6 +627,15 @@ export function useChatController(opts?: { isActive?: boolean }) {
         setActiveSession(sessionId);
       }
       commitInput?.({ extraDraftKeys: [sessionId], clearEditor: stillOnSourceSession });
+      // An accepted send re-engages the live-end follow: the follow now
+      // releases after one line of upward scrolling (OL-272), so a reader who
+      // peeked up slightly before sending would otherwise have their own
+      // bubble and the streaming reply grow silently below the fold. Only when
+      // still on the source session, though: the nonce is controller-level
+      // state while the list mounts per session, so a mid-send navigation
+      // must not let THIS send yank the session the reader is looking at now
+      // (OL-272 review).
+      if (stillOnSourceSession) setResumeFollowNonce((n) => n + 1);
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
@@ -874,7 +891,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
     pendingTaskId,
     showSkeleton,
     hasMessages,
-    firstItemIndex,
+    // live-end follow resume nonce (bumped on accepted send)
+    resumeFollowNonce,
     hasOlderMessages: !!hasOlderMessages,
     isFetchingOlderMessages,
     fetchOlderMessages,
