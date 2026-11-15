@@ -1,6 +1,77 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 
+test("Wiki comments start at visible KaTeX glyphs and survive a text revision", async ({ page, context }, testInfo) => {
+  test.setTimeout(180000);
+  const api = new TestApiClient();
+  const nonce = Date.now();
+  await api.login(`wiki-math-${nonce}@multica.ai`, "Wiki reviewer");
+  const workspace = await api.ensureWorkspace("Formula comments", `wiki-math-${nonce}`);
+  await api.markUserOnboarded();
+  const project = await api.createProject("Formula review");
+  const headers = { Authorization: `Bearer ${api.getToken()}`, "X-Workspace-ID": workspace.id };
+  const base = `${process.env.NEXT_PUBLIC_API_URL}/api/projects/${project.id}`;
+  const request = async (path: string, method = "GET", data?: unknown) => {
+    const response = await page.request.fetch(base + path, { method, headers, data });
+    expect(response.ok(), await response.text()).toBe(true);
+    return response.json();
+  };
+  const formula = String.raw`$x^2 + \{y\}$`;
+  const markdown = `## Rules\n\n成本 $10，公式 ${formula} 后续文字。\n\n参考 [接口 A](https://example.com/$id) 或 [接口 B](https://example.com/end$) 说明。`;
+  try {
+    await request("/engineering", "PATCH", { enabled: true });
+    await request("/baseline/pages", "POST", { slug: "math", title: "Formula review", content_markdown: markdown });
+    await context.addInitScript((token) => {
+      localStorage.setItem("multica_token", token!);
+      localStorage.setItem("multica:chat:isOpen", "false");
+    }, api.getToken());
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.goto(`/${workspace.slug}/projects/${project.id}/engineering?page=math`);
+    const visual = page.locator('.katex-html[aria-hidden="true"]');
+    await expect(visual).toBeVisible({ timeout: 60000 });
+    for (const includeProse of [false, true]) {
+      const points = await visual.evaluate((el, includeProse) => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const first = walker.nextNode()!;
+        let last = first;
+        while (walker.nextNode()) last = walker.currentNode;
+        const end = includeProse ? el.closest("p")!.lastChild! : last;
+        const startRange = document.createRange(); startRange.selectNodeContents(first);
+        const endRange = document.createRange(); endRange.selectNodeContents(end);
+        const a = startRange.getBoundingClientRect(), b = endRange.getBoundingClientRect();
+        return { start: { x: a.left + 1, y: a.top + a.height / 2 }, end: { x: b.right - 1, y: b.top + b.height / 2 } };
+      }, includeProse);
+      await page.mouse.move(points.start.x, points.start.y);
+      await page.mouse.down(); await page.mouse.move(points.end.x, points.end.y, { steps: 15 }); await page.mouse.up();
+      await page.getByRole("button", { name: "Add comment", exact: true }).click();
+      const panel = page.locator("[data-wiki-comments]");
+      const message = includeProse ? "Formula and following prose." : "Formula alone.";
+      await panel.locator('[contenteditable="true"]').fill(message);
+      await panel.getByRole("button", { name: "Send", exact: true }).click();
+      await expect(panel.locator('[contenteditable="true"]')).toHaveText("");
+      await expect(panel.getByText(message, { exact: true })).toBeVisible();
+      const threads = (await request("/baseline/pages/math/threads?state=all")).threads;
+      const exact = formula + (includeProse ? " 后续文字。" : "");
+      expect(threads.some((thread: { anchor: { exact: string }; location: { state: string } }) => thread.anchor.exact === exact && thread.location.state === "anchored")).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(includeProse ? "wiki-math-to-prose.png" : "wiki-math-only.png") });
+      await page.keyboard.press("Escape");
+    }
+    await page.getByTestId("wiki-edit-page").click();
+    await page.getByTestId("wiki-editor-source").fill(markdown.replace("## Rules\n\n", "## Rules\n\n新增的前言。\n\n"));
+    await page.getByTestId("wiki-editor-save").click();
+    await expect(page.getByTestId("wiki-editor-source")).toHaveCount(0);
+    const revised = (await request("/baseline/pages/math/threads?state=all")).threads;
+    expect(revised).toHaveLength(2);
+    for (const thread of revised) {
+      expect(thread.location.state).toBe("anchored");
+      expect(thread.location.start).toBeGreaterThan(thread.anchor.start);
+    }
+  } finally {
+    await api.cleanup();
+    await api.deleteWorkspace();
+  }
+});
+
 test("Wiki rich text, source issue saves and nested issue navigation", async ({ page, context }, testInfo) => {
   test.setTimeout(240000);
   const api = new TestApiClient();

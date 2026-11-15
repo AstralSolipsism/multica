@@ -61,7 +61,13 @@ export function wikiSelectionAnchor(root: HTMLElement, selection: Selection | nu
   const selected = selection.getRangeAt(0);
   const element = selected.startContainer.nodeType === Node.ELEMENT_NODE ? selected.startContainer as Element : selected.startContainer.parentElement;
   const section = element?.closest<HTMLElement>("[data-wiki-comment-section]");
-  if (!section || !root.contains(section) || element?.closest(`${noise}, [data-wiki-comment-source]`)) return null;
+  if (!section || !root.contains(section)) return null;
+  const ignored = `${noise}, [data-wiki-comment-source]`;
+  for (let node = element?.closest(ignored); node; node = node.parentElement?.closest(ignored)) {
+    // KaTeX hides its visual glyphs from screen readers, not from selection.
+    // Only that subtree is exempt; outer hidden regions and UI stay excluded.
+    if (!node.matches('.katex-html[aria-hidden="true"]') || !node.closest("[data-math-source]")) return null;
+  }
   const textRoot = section.querySelector<HTMLElement>("[data-wiki-markdown]");
   if (!textRoot) return null;
   const index = indexWikiCommentText(textRoot);

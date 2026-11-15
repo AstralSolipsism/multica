@@ -219,11 +219,11 @@ export function findMarkdownLinkRanges(text: string): CodeRange[] {
   const ranges: CodeRange[] = []
   // Reference destinations are already links. Wrapping their URLs again
   // corrupts the definition before the Markdown renderer resolves images.
-  // Even multiline labels and definitions in containers must contain `]:`.
-  const pending: Nodes[] = text.includes(']:') ? [fromMarkdown(text)] : []
+  // Angle autolinks also already own their URL; wrapping it leaves literal <>.
+  const pending: Nodes[] = text.includes(']:') || text.includes('<') ? [fromMarkdown(text)] : []
   while (pending.length > 0) {
     const node = pending.pop()!
-    if (node.type === 'definition') {
+    if (node.type === 'definition' || (node.type === 'link' && text[node.position?.start.offset ?? -1] === '<')) {
       const start = node.position?.start.offset
       const end = node.position?.end.offset
       if (start !== undefined && end !== undefined) ranges.push({ start, end })

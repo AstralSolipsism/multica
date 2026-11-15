@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	internalutil "github.com/multica-ai/multica/server/internal/util"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -60,7 +61,7 @@ func LinkReferences(content string, resolve func(kind, reference string) string)
 func referenceEdits(content string) []referenceEdit {
 	inlines := parser.DefaultInlineParsers()
 	for i := range inlines {
-		inlines[i].Value = referenceSourceParser{inlines[i].Value.(parser.InlineParser)}
+		inlines[i].Value = referenceSourceParser{internalutil.MarkdownSourceParser{InlineParser: inlines[i].Value.(parser.InlineParser)}}
 	}
 	p := parser.NewParser(parser.WithBlockParsers(parser.DefaultBlockParsers()...), parser.WithInlineParsers(inlines...), parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...))
 	source := []byte(content)
@@ -175,55 +176,43 @@ func referenceURLRanges(source []byte, doc ast.Node) []text.Segment {
 	return urls
 }
 
-// Capture source boundaries through Goldmark so nested and reference labels
-// retain their original Markdown rather than being reconstructed.
-type referenceSourceParser struct{ parser.InlineParser }
+// Source positions are shared with the Wiki index; channel rewriting also
+// needs the destination boundary to preserve the original label and title.
+type referenceSourceParser struct {
+	internalutil.MarkdownSourceParser
+}
 
 func (p referenceSourceParser) Parse(parent ast.Node, reader text.Reader, pc parser.Context) ast.Node {
 	beforeLine, before := reader.Position()
-	n := p.InlineParser.Parse(parent, reader, pc)
-	switch n.(type) {
-	case *ast.Link, *ast.Image, *ast.CodeSpan, *ast.AutoLink, *ast.RawHTML:
-		endLine, end := reader.Position()
-		start := before.Start
-		switch n.(type) {
-		case *ast.Link:
-			n.SetAttributeString("reference_label_end", before.Start)
-			start = n.Pos()
-			link := n.(*ast.Link)
-			if link.Reference == nil {
-				// Reuse the block reader's container-aware whitespace handling;
-				// raw source scanning would stop at a continuation line's '>'.
-				reader.SetPosition(beforeLine, before)
-				reader.Advance(1) // closing label bracket
-				if reader.Peek() == '(' {
-					reader.Advance(1)
-					reader.SkipSpaces()
-					if reader.Peek() == '<' {
-						reader.Advance(1)
-					}
-					_, destination := reader.Position()
-					stop := destination.Start + len(link.Destination)
-					if destination.Start >= 0 && stop <= end.Start && bytes.HasPrefix(reader.Source()[destination.Start:], link.Destination) {
-						n.SetAttributeString("reference_destination_start", destination.Start)
-						n.SetAttributeString("reference_destination_end", stop)
-					}
-				}
-				reader.SetPosition(endLine, end)
-			}
-		case *ast.Image:
-			start = n.Pos()
+	n := p.MarkdownSourceParser.Parse(parent, reader, pc)
+	link, ok := n.(*ast.Link)
+	if !ok {
+		return n
+	}
+	n.SetAttributeString("reference_label_end", before.Start)
+	if link.Reference != nil {
+		return n
+	}
+	endLine, end := reader.Position()
+	// Reuse the block reader's container-aware whitespace handling;
+	// raw source scanning would stop at a continuation line's '>'.
+	reader.SetPosition(beforeLine, before)
+	reader.Advance(1) // closing label bracket
+	if reader.Peek() == '(' {
+		reader.Advance(1)
+		reader.SkipSpaces()
+		if reader.Peek() == '<' {
+			reader.Advance(1)
 		}
-		n.SetAttributeString("source_start", start)
-		n.SetAttributeString("source_end", end.Start)
+		_, destination := reader.Position()
+		stop := destination.Start + len(link.Destination)
+		if destination.Start >= 0 && stop <= end.Start && bytes.HasPrefix(reader.Source()[destination.Start:], link.Destination) {
+			n.SetAttributeString("reference_destination_start", destination.Start)
+			n.SetAttributeString("reference_destination_end", stop)
+		}
 	}
+	reader.SetPosition(endLine, end)
 	return n
-}
-
-func (p referenceSourceParser) CloseBlock(parent ast.Node, reader text.Reader, pc parser.Context) {
-	if closer, ok := p.InlineParser.(parser.CloseBlocker); ok {
-		closer.CloseBlock(parent, reader, pc)
-	}
 }
 
 func inlineReferenceTitle(title []byte) string {

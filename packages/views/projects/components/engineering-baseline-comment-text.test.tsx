@@ -91,3 +91,50 @@ it("keeps an exact end offset and UTF-16 offsets through inline markup", () => {
   expect(wikiSelectionAnchor(container, selection, 1)?.anchor).toMatchObject({ exact: "need", start: 8, prefix: "😀 lead ", suffix: "le trailing" });
   selection.removeAllRanges();
 });
+
+it.each([false, true])("extracts a selection starting inside visible KaTeX (include following prose: %s)", (includeProse) => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { container, unmount } = renderWithI18n(
+    <QueryClientProvider client={queryClient}>
+      <section data-wiki-comment-section="Rules" data-section-title="Rules">
+        <WikiMarkdown markdown={"## Rules\n\n$x^2 + y^2$ 后续文字。"} links={[]} />
+      </section>
+    </QueryClientProvider>,
+  );
+  const visual = container.querySelector('.katex-html[aria-hidden="true"]')!;
+  const walker = document.createTreeWalker(visual, NodeFilter.SHOW_TEXT);
+  const first = walker.nextNode()!;
+  let last = first;
+  while (walker.nextNode()) last = walker.currentNode;
+  const end = includeProse ? container.querySelector("p")!.lastChild! : last;
+  const range = document.createRange(); range.setStart(first, 0); range.setEnd(end, end.textContent!.length);
+  const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  const exact = includeProse ? "$x^2 + y^2$ 后续文字。" : "$x^2 + y^2$";
+  const result = wikiSelectionAnchor(container, selection, 3);
+  expect(result?.anchor).toMatchObject({ exact, start: 6, sectionAnchor: "Rules", revisionNumber: 3 });
+  const index = indexWikiCommentText(container.querySelector("[data-wiki-markdown]")!);
+  expect(locateComment([{ anchor: "Rules", title: "Rules", text: index.text }], result!.anchor)).toMatchObject({ state: "anchored", start: 6 });
+  selection.removeAllRanges(); unmount();
+});
+
+it.each(["hidden", "aria-hidden", "button", "input", "source", "math-in-hidden-region", "fake-katex"])("still rejects selection noise: %s", (kind) => {
+  const { container, unmount } = render(<section data-wiki-comment-section="Rules"><div data-wiki-markdown /></section>);
+  const root = container.querySelector("[data-wiki-markdown]")!;
+  const node = document.createElement(kind === "button" ? "button" : kind === "input" ? "textarea" : "span");
+  node.textContent = "noise text";
+  if (kind === "hidden") node.hidden = true;
+  if (kind === "aria-hidden" || kind === "fake-katex") node.setAttribute("aria-hidden", "true");
+  if (kind === "fake-katex") node.className = "katex-html";
+  if (kind === "source") node.setAttribute("data-wiki-comment-source", "source text");
+  if (kind === "math-in-hidden-region") {
+    root.setAttribute("aria-hidden", "true");
+    node.setAttribute("data-math-source", "$x$");
+    node.innerHTML = '<span class="katex-html" aria-hidden="true">noise text</span>';
+  }
+  root.append(node);
+  const first = document.createTreeWalker(node, NodeFilter.SHOW_TEXT).nextNode()!;
+  const range = document.createRange(); range.selectNodeContents(first);
+  const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  expect(wikiSelectionAnchor(container, selection, 1)).toBeNull();
+  selection.removeAllRanges(); unmount();
+});

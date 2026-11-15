@@ -1227,5 +1227,455 @@
       "section_anchor": "_preamble",
       "start": 0
     }
+  },
+  {
+    "name": "escaped price before formula",
+    "markdown": "## Rules\n\n价格 \\$10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 价格 $10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "价格 $10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "price before formula",
+    "markdown": "## Rules\n\n成本 $10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 成本 $10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "成本 $10，公式 $\\frac{x_1}{y} + \\{z\\}$ 后续。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "environment variable before formula",
+    "markdown": "## Rules\n\n配置 $HOME 后计算 $\\{x\\} + \\{y\\}$ 结束。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 配置 $HOME 后计算 $\\{x\\} + \\{y\\}$ 结束。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "配置 $HOME 后计算 $\\{x\\} + \\{y\\}$ 结束。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in link destinations",
+    "markdown": "## Rules\n\n参考 [接口 A](https://example.com/$id) 或 [接口 B](https://example.com/end$) 说明。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 接口 A 或 接口 B 说明。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 接口 A 或 接口 B 说明。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in link labels",
+    "markdown": "## Rules\n\n参考 [$x$](https://example.com/a) 或 [$y$](https://example.com/b) 后算 $\\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 $x$ 或 $y$ 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 $x$ 或 $y$ 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in autolinks",
+    "markdown": "## Rules\n\n参考 <https://example.com/$id> 或 <https://example.com/end$> 后算 $\\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 https://example.com/$id 或 https://example.com/end$ 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 https://example.com/$id 或 https://example.com/end$ 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in images",
+    "markdown": "## Rules\n\n参考 ![示意 $x$](https://example.com/$id.png) 或 ![图 B](https://example.com/end$.png) 后算 $\\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 或 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 或 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in reference links",
+    "markdown": "## Rules\n\n参考 [接口 A][a] 或 [接口 B][b] 后算 $\\{z\\}$。\n\n[a]: https://example.com/$id\n[b]: https://example.com/end$",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 接口 A 或 接口 B 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 接口 A 或 接口 B 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in inline html attributes",
+    "markdown": "## Rules\n\n参考 <span title=\"$id\">接口 A</span> 或 <span title=\"end$\">接口 B</span> 后算 $\\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 接口 A 或 接口 B 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 接口 A 或 接口 B 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "rejected dollars preserve markdown processing",
+    "markdown": "## Rules\n\n$ ==**重点**== 和 \\{普通\\} $",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules $ ==重点== 和 {普通} $"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "$ ==重点== 和 {普通} $",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "ascii strong with inner spaces stays literal",
+    "markdown": "## Rules\n\n** foo **",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules ** foo **"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "** foo **",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "cjk strong with leading tab",
+    "markdown": "## Rules\n\n**\t中文**",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 中文"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "中文",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "math before markdown hard break",
+    "markdown": "## Rules\n\n$\\{x\\}$\\\n后续。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules $\\{x\\}$ 后续。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "$\\{x\\}$ 后续。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "dollars in bare autolinks",
+    "markdown": "## Rules\n\n参考 https://example.com/$id 或 https://example.com/end$ 后算 $\\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 参考 https://example.com/$id 或 https://example.com/end$ 后算 $\\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "参考 https://example.com/$id 或 https://example.com/end$ 后算 $\\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "escaped dollar inside formula",
+    "markdown": "## Rules\n\n计算 $\\text{cost \\$10}+\\{x\\}$ 后续。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 计算 $\\text{cost \\$10}+\\{x\\}$ 后续。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "计算 $\\text{cost \\$10}+\\{x\\}$ 后续。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "math candidate cannot cross a link",
+    "markdown": "## Rules\n\n$\\{x\\} [接口](https://example.com) \\{y\\}$",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules ${x} 接口 {y}$"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "${x} 接口 {y}$",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "highlight skips inline code inside link labels",
+    "markdown": "## Rules\n\n==a [b `c==d`](https://example.com) e==",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules a b c==d e"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "a b c==d e",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
+  },
+  {
+    "name": "rejected opener must not absorb formatted prose",
+    "markdown": "## Rules\n\n成本 $10，**说明** \\{字面\\} 后算 $\\frac{x_1}{y} + \\{z\\}$。",
+    "texts": [
+      {
+        "anchor": "Rules",
+        "title": "Rules",
+        "text": "Rules 成本 $10，说明 {字面} 后算 $\\frac{x_1}{y} + \\{z\\}$。"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Rules",
+      "section_title": "Rules",
+      "exact": "成本 $10，说明 {字面} 后算 $\\frac{x_1}{y} + \\{z\\}$。",
+      "prefix": "Rules ",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Rules",
+      "start": 6
+    }
   }
 ]
