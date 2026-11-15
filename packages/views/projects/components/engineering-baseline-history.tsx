@@ -127,6 +127,8 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
               )}
               onClick={() => setSelected(revision.revisionNumber)}
               onKeyDown={(event) => {
+                // A focused inner chip (issue link) owns its own Enter key.
+                if (event.target !== event.currentTarget) return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   setSelected(revision.revisionNumber);

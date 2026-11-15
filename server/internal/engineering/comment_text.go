@@ -87,11 +87,11 @@ func containsCJK(s string) bool {
 // cjkStrongCandidate mirrors repairSpan in packages/views/rich-content/cjk-emphasis.ts:
 // a literal `**inner**` inside ONE text run that CommonMark left unrepaired.
 //
-//   (a1) `**中文。 **` — trailing whitespace inside: a closer preceded by
-//        whitespace can never close, whatever follows the span.
-//   (a2) `** 中文。**` — leading whitespace inside (the opener can never open).
-//   (b1) `采用**「…」**的` — a CJK letter glued before the opener.
-//   (b2) `**加粗**的` — a CJK letter glued after the closer.
+//	(a1) `**中文。 **` — trailing whitespace inside: a closer preceded by
+//	     whitespace can never close, whatever follows the span.
+//	(a2) `** 中文。**` — leading whitespace inside (the opener can never open).
+//	(b1) `采用**「…」**的` — a CJK letter glued before the opener.
+//	(b2) `**加粗**的` — a CJK letter glued after the closer.
 //
 // Text-wise every rule is equivalent to deleting the two `**` runs, which is
 // what the web renderer produces through its remark repair plugin; keep the

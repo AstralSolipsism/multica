@@ -1,19 +1,45 @@
 import { describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { WikiCommentAnchorSchema, WikiCommentLocationSchema } from "@multica/core/api";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { setApiInstance, WikiCommentAnchorSchema, WikiCommentLocationSchema } from "@multica/core/api";
+import type { ApiClient } from "@multica/core/api/client";
+import { issueKeys } from "@multica/core/issues/queries";
 import { locateComment, splitCommentSections } from "@multica/core/projects/queries";
 import fixtures from "../../../../server/internal/engineering/testdata/anchors.json";
 import { WikiMarkdown } from "./engineering-baseline-markdown";
 import { indexWikiCommentText, wikiSelectionAnchor } from "./engineering-baseline-comment-text";
+import { IssueChip } from "../../issues/components/issue-chip";
 import { renderWithI18n } from "../../test/i18n";
+
+const WS = "11111111-1111-4111-8111-111111111111";
+const ISSUE_ID = "99999999-9999-4999-8999-999999999999";
+
+const ISSUE = { id: ISSUE_ID, identifier: "OL-9", title: "噪音标题不进索引", status: "todo", status_category: "unstarted" };
+
+setApiInstance({ getIssue: async () => ISSUE } as unknown as ApiClient);
 
 // Keep real Markdown and code chrome; diagram rendering is unrelated here.
 vi.mock("../../rich-content/rich-code-block", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../rich-content/rich-code-block")>();
   return { ...actual, RichFenceBlock: ({ body }: { body: string }) => <pre><code>{body}</code></pre> };
 });
-// Bare issue identifiers render their plain-text fallback (no QueryClient here).
-vi.mock("../../issues/hooks", () => ({ useResolveIssueIdentifier: () => null }));
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => WS }));
+// OL-9 resolves to a real issue so the fixture exercises the RESOLVED chip
+// (identifier text + [data-issue-chip-title] noise), not just the plain-text
+// fallback.
+vi.mock("../../issues/hooks", () => ({
+  useResolveIssueIdentifier: (identifier: string) =>
+    identifier === "OL-9"
+      ? { id: ISSUE_ID, identifier: "OL-9", title: "噪音标题不进索引", status: "todo", status_category: "unstarted" }
+      : null,
+}));
+// The card shell (AppLink + hover/menu) needs router contexts the anchor
+// harness does not provide; the chip itself is the text-index surface.
+vi.mock("../../issues/components/issue-mention-card", () => ({
+  IssueMentionCard: ({ issueId, fallbackLabel }: { issueId: string; fallbackLabel?: string }) => (
+    <IssueChip issueId={issueId} fallbackLabel={fallbackLabel} />
+  ),
+}));
 
 type Fixture = (typeof fixtures)[number] & { links?: { raw: string; display: string; target: string; section?: string; state?: string; target_slug?: string | null }[] };
 
@@ -26,7 +52,16 @@ describe("shared anchors.json: real WikiMarkdown DOM", () => {
     ];
     const links = rawLinks.map((l) => ({ raw: l.raw, display: l.display, target: l.target, section: l.section ?? "", kind: "page" as const, state: "resolved" as const, targetSlug: l.target_slug ?? "target", sectionAnchor: l.section || null, candidates: [] }));
     const meta = new Map([["target", { title: "Preview noise", path: "Path noise", snippet: "Snippet noise", version: 99, updatedAt: "Yesterday" }]]);
-    const { container, unmount } = renderWithI18n(<>{segments.map((s) => <div key={s.anchor} data-wiki-comment-section={s.anchor}><WikiMarkdown markdown={s.markdown} links={links} pageMeta={meta} /></div>)}</>);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(issueKeys.detail(WS, ISSUE_ID), ISSUE);
+    const { container, unmount } = renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <>{segments.map((s) => <div key={s.anchor} data-wiki-comment-section={s.anchor}><WikiMarkdown markdown={s.markdown} links={links} pageMeta={meta} /></div>)}</>
+      </QueryClientProvider>,
+    );
+    if (fixture.name === "bare issue identifier keeps plain text") {
+      expect(container.querySelector("[data-issue-chip-title]")?.textContent).toBe("噪音标题不进索引");
+    }
     const sections = [...container.querySelectorAll<HTMLElement>("[data-wiki-markdown]")].map((el, i) => ({ ...segments[i]!, ...indexWikiCommentText(el) }));
     expect(sections.map(({ anchor, title, text }) => ({ anchor, title, text }))).toEqual(fixture.texts);
     expect(locateComment(sections, WikiCommentAnchorSchema.parse(fixture.selector))).toEqual(WikiCommentLocationSchema.parse(fixture.expected));

@@ -42,6 +42,7 @@ import { RichTableSourceContext } from "../../rich-content/rich-table";
 import { getTextContent } from "../../rich-content/rich-table-model";
 import { preprocessMarkdown } from "../../editor/utils/preprocess";
 import { highlightToHtml } from "../../editor/utils/highlight-markdown";
+import { useLinkHover, LinkHoverCard } from "../../editor/link-hover-card";
 import { useT } from "../../i18n";
 
 export interface WikiLinkTarget {
@@ -184,6 +185,8 @@ function withWikiLinks(
 }
 
 export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, onCreateMissing, className }: WikiMarkdownProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const hover = useLinkHover(wrapperRef);
   const { t } = useT("engineering");
   const cdnDomain = useConfigStore((s) => s.cdnDomain);
   const linkMap = useMemo(() => new Map((links ?? []).map((link) => [link.raw, link])), [links]);
@@ -241,8 +244,10 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
   if (!markdown.trim()) return null;
   return (
     <div
+      ref={wrapperRef}
       className={cn("rich-text-editor readonly text-body leading-7 [&_li]:my-1 [&_p]:my-2 [&_strong]:font-medium", className)}
       data-wiki-markdown
+      data-mc="content"
       aria-label={t(($) => $.wiki.bodyLabel)}
     >
       <ClosedFenceContext.Provider value={closedFences}>
@@ -257,6 +262,7 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
           </ReactMarkdown>
         </RichTableSourceContext.Provider>
       </ClosedFenceContext.Provider>
+      <LinkHoverCard {...hover} />
     </div>
   );
 }

@@ -141,11 +141,21 @@ export function WikiEditor(props: WikiEditorProps) {
   });
   const initialIssueIdentifier = props.initialSourceIssueId ? initialIssueQuery.data?.identifier ?? "" : "";
   const sourceIssueField = sourceIssueInput ?? initialIssueIdentifier;
-  const sourceIssueChange: WikiEditorSourceIssue = sourceIssueInput === null
-    ? { action: "keep" }
-    : sourceIssueInput.trim() === ""
-      ? { action: "clear" }
-      : { action: "set", identifier: sourceIssueInput.trim() };
+  // No-op edits collapse back to "keep" so dirty/save stay honest: typing and
+  // deleting into an empty binding, or retyping the echoed identifier
+  // (whitespace/case ignored), is not a change.
+  let sourceIssueChange: WikiEditorSourceIssue = { action: "keep" };
+  if (sourceIssueInput !== null) {
+    const trimmed = sourceIssueInput.trim();
+    const matchesEcho = trimmed !== "" && trimmed.toLowerCase() === initialIssueIdentifier.trim().toLowerCase();
+    if (matchesEcho || (trimmed === "" && !props.initialSourceIssueId)) {
+      sourceIssueChange = { action: "keep" };
+    } else if (trimmed === "") {
+      sourceIssueChange = { action: "clear" };
+    } else {
+      sourceIssueChange = { action: "set", identifier: trimmed };
+    }
+  }
   const dirty = value !== props.initialMarkdown || sourceIssueChange.action !== "keep";
   const draftLinks = useMemo(
     () => resolveWikiLinks(props.linkIndex, props.pageSlug, value),

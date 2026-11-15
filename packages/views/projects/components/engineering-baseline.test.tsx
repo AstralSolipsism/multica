@@ -476,4 +476,33 @@ describe("EngineeringBaselineWiki", () => {
       expect.objectContaining({ sourceIssueId: null }),
     ));
   });
+
+  it("treats typing-then-clearing an empty source issue or retyping the echoed identifier as not dirty", async () => {
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const emptyInput = await screen.findByTestId("wiki-editor-source-issue");
+    fireEvent.change(emptyInput, { target: { value: "OL-1" } });
+    fireEvent.change(emptyInput, { target: { value: "  " } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    expect(writeProjectWikiPage).not.toHaveBeenCalled();
+    // Cancel closes cleanly without the discard confirmation because dirty is false.
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByTestId("wiki-editor-source")).not.toBeInTheDocument();
+
+    const read = pageRead();
+    read.revision.sourceIssueId = SOURCE_ISSUE_ID;
+    getProjectWikiPage.mockResolvedValue(read);
+    const getIssue = vi.fn(async (id: string) =>
+      id === SOURCE_ISSUE_ID ? { id: SOURCE_ISSUE_ID, identifier: "OL-1304", title: "Refund policy" } : undefined);
+    setApiInstance({ getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage, getIssue } as unknown as ApiClient);
+    renderWiki();
+    const editButtons = await screen.findAllByTestId("wiki-edit-page");
+    fireEvent.click(editButtons.at(-1)!);
+    const boundInput = await screen.findByTestId("wiki-editor-source-issue");
+    await waitFor(() => expect(boundInput).toHaveValue("OL-1304"));
+    fireEvent.change(boundInput, { target: { value: " ol-1304 " } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    expect(writeProjectWikiPage).not.toHaveBeenCalled();
+  });
 });

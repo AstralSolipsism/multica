@@ -80,6 +80,8 @@ function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
             navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
           }}
           onKeyDown={(event) => {
+            // A focused inner chip (issue link) owns its own Enter key.
+            if (event.target !== event.currentTarget) return;
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
               onOpenWiki();
@@ -101,9 +103,12 @@ function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
             <span className="block truncate text-caption text-muted-foreground">
               {item.changeSummary || t(($) => $.wiki.activityNoSummary)}
               {item.sourceIssueId ? (
-                <span onClick={(event) => event.stopPropagation()}>
-                  <IssueMentionCard issueId={item.sourceIssueId} />
-                </span>
+                <>
+                  {" · "}
+                  <span onClick={(event) => event.stopPropagation()}>
+                    <IssueMentionCard issueId={item.sourceIssueId} />
+                  </span>
+                </>
               ) : null}
               {" · v"}{item.number} · <time dateTime={item.createdAt}>{formatRelativeDate(item.createdAt)}</time>
             </span>
