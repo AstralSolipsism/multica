@@ -20,29 +20,25 @@ import { useT } from "../../i18n";
 import { useQuotaTimeFormatter } from "./quota-time";
 import { ProviderLogo } from "./provider-logo";
 import {
-  accountPoolLogoProvider,
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
 } from "./account-pool-filter";
 import { runtimeRowLabel } from "./runtime-machines";
 import {
+  accountPoolRecoveryText,
   displayRemainingPercent,
+  evaluateRuntimeAccountPools,
   formatQuotaWindowLabel,
   MUTED_BAR_CLASS,
   quotaGroupLabel,
   quotaInterruptedText,
   quotaValueClass,
+  quotaWindowResetText,
   quotaWindowValueText,
   type QuotaT,
 } from "./runtime-quota-utils";
 import { MiniMeterBar, QuotaWindowRow } from "./runtime-quota-window";
-
-function accountPoolPrimaryWindow(
-  pool: QuotaAccountPoolState,
-): QuotaWindowState | null {
-  return pool.windows.find((window) => window.windowMinutes === 300) ?? pool.windows[0] ?? null;
-}
 
 export function accountPoolAriaLabel(pool: QuotaAccountPoolState, t: QuotaT): string {
   const balances = pool.windows.map((window) => {
@@ -57,29 +53,6 @@ export function accountPoolAriaLabel(pool: QuotaAccountPoolState, t: QuotaT): st
     total: pool.totalAccounts,
   });
   return `${accountPoolProviderLabel(pool.id)}: ${available}${balances.length > 0 ? ` · ${balances.join(" · ")}` : ""}`;
-}
-
-function AccountPoolBadge({ pool }: { pool: QuotaAccountPoolState }) {
-  const { t } = useT("quota");
-  const relogin = accountPoolNeedsRelogin(pool);
-  const tone = relogin || pool.availableAccounts === 0
-    ? pool.availableAccounts === 0 && !relogin
-      ? "bg-destructive/10 text-destructive"
-      : "bg-warning/10 text-warning"
-    : pool.availableAccounts < pool.totalAccounts
-      ? "bg-warning/10 text-warning"
-      : "bg-muted text-muted-foreground";
-  return (
-    <span
-      aria-label={t(($) => $.account_pools.accounts_available_aria, {
-        available: pool.availableAccounts,
-        total: pool.totalAccounts,
-      })}
-      className={cn("shrink-0 rounded-full px-1.5 text-micro tabular-nums", tone)}
-    >
-      {pool.availableAccounts}/{pool.totalAccounts}
-    </span>
-  );
 }
 
 function AccountPoolBar({
@@ -107,17 +80,6 @@ function AccountPoolBar({
   );
 }
 
-function accountWindowResetCountdown(
-  window: QuotaWindowState,
-  now: number,
-  t: QuotaT,
-): string | null {
-  if (window.resetsAt == null) return null;
-  return t(($) => $.account_pools.resets_in, {
-    time: formatCompactDuration(window.resetsAt * 1000 - now),
-  });
-}
-
 function AccountPoolTooltipWindow({
   window,
   now,
@@ -128,34 +90,31 @@ function AccountPoolTooltipWindow({
   interrupted: boolean;
 }) {
   const { t } = useT("quota");
+  const formatTime = useQuotaTimeFormatter();
   const label = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
-  const reset = window.resetsAt == null
-    ? null
-    : window.exhausted
-      ? t(($) => $.account_pools.recovers_in, {
-          time: formatCompactDuration(window.resetsAt * 1000 - now),
-        })
-      : accountWindowResetCountdown(window, now, t);
+  const reset = quotaWindowResetText(window, now, t, formatTime);
   const value = window.exhausted
     ? t(($) => $.window_exhausted)
     : window.notApplicable || window.remainingPercent == null
       ? quotaWindowValueText(window, t) ?? "--"
       : `${displayRemainingPercent(window.remainingPercent)}%`;
   return (
-    <span className="grid grid-cols-[1.25rem_minmax(3rem,1fr)_2.25rem_auto] items-center gap-1.5">
+    <span className="grid grid-cols-[1.75rem_minmax(2rem,1fr)_auto] items-center gap-1.5">
       <span className="text-muted-foreground">{label}</span>
       <AccountPoolBar window={window} interrupted={interrupted} label={label} />
-      <span
-        className={cn(
-          "text-right tabular-nums",
-          window.notApplicable || (window.remainingPercent == null && !window.exhausted)
-            ? "text-muted-foreground"
-            : quotaValueClass(window.tone, interrupted),
-        )}
-      >
-        {value}
+      <span className="flex flex-wrap items-center justify-end gap-x-2 text-right">
+        <span
+          className={cn(
+            "whitespace-nowrap tabular-nums",
+            window.notApplicable || (window.remainingPercent == null && !window.exhausted)
+              ? "text-muted-foreground"
+              : quotaValueClass(window.tone, interrupted),
+          )}
+        >
+          {value}
+        </span>
+        {reset && <span className="whitespace-nowrap text-micro text-muted-foreground">{reset}</span>}
       </span>
-      {reset && <span className="text-right text-micro text-muted-foreground">{reset}</span>}
     </span>
   );
 }
@@ -256,27 +215,24 @@ export function QuotaHoverCard({
   runtime,
   machineName,
   now,
-  group = null,
-  pool = null,
+  agents = [],
   trigger,
 }: {
   runtime: AgentRuntime;
   machineName?: string;
   now: number;
-  group?: string | null;
-  pool?: QuotaAccountPoolState | null;
+  agents?: Agent[];
   trigger: ReactElement;
 }) {
   return (
     <HoverCard>
       <HoverCardTrigger delay={120} closeDelay={140} render={trigger} />
-      <HoverCardContent align="start" className="w-85 max-w-[calc(100vw-1rem)] p-3">
+      <HoverCardContent align="start" className="w-96 max-w-[calc(100vw-1rem)] p-3">
         <QuotaHoverCardBody
           runtime={runtime}
           machineName={machineName}
           now={now}
-          group={group}
-          pool={pool}
+          agents={agents}
         />
       </HoverCardContent>
     </HoverCard>
@@ -287,29 +243,22 @@ function QuotaHoverCardBody({
   runtime,
   machineName,
   now,
-  group,
-  pool,
+  agents,
 }: {
   runtime: AgentRuntime;
   machineName?: string;
   now: number;
-  group: string | null;
-  pool: QuotaAccountPoolState | null;
+  agents: Agent[];
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
   const state = planQuotaState(runtime.plan_quota, now);
+  const accountPools = evaluateRuntimeAccountPools(runtime, now);
+  const partition = accountPools
+    ? partitionAccountPools(accountPools.pools, agents, runtime.id)
+    : null;
   const runtimeLabel = runtimeRowLabel(runtime, machineName ?? "");
   const interrupted = state?.interrupted ?? false;
-  const pools = group == null
-    ? state?.pools ?? []
-    : state?.pools.filter((item) => item.group === group) ?? [];
-  const windows = pool?.windows ?? pools.flatMap((item) => item.windows);
-  const title = pool
-    ? `${accountPoolProviderLabel(pool.id)} ${t(($) => $.account_pools.pool_suffix)}`
-    : group != null
-      ? `${runtimeLabel} / ${quotaGroupLabel(group, t)}`
-      : runtimeLabel;
   const source = state?.source === "external"
     ? t(($) => $.source_external)
     : t(($) => $.source_daemon);
@@ -320,14 +269,13 @@ function QuotaHoverCardBody({
       : `${source} · ${t(($) => $.observed_ago, {
           time: formatCompactDuration(now - state.observedAt * 1000),
         })}`;
-  const relogin = pool != null && accountPoolNeedsRelogin(pool);
 
   return (
     <div className="flex w-full flex-col gap-2 text-left">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-caption text-muted-foreground">
         <span className="flex min-w-0 items-center gap-1.5">
           <ProviderLogo
-            provider={pool ? accountPoolLogoProvider(pool.id) : state?.provider || runtime.provider}
+            provider={state?.provider || runtime.provider}
             className="size-3.5 shrink-0"
           />
           <span className="truncate">
@@ -338,86 +286,78 @@ function QuotaHoverCardBody({
           <span className={cn("shrink-0", interrupted && "text-warning")}>{freshness}</span>
         )}
       </div>
-      <div className="flex items-baseline gap-2 text-body font-medium">
-        <span className="min-w-0 truncate">{title}</span>
-        {pool && !relogin && (
-          <span className="shrink-0 text-caption font-normal text-muted-foreground">
-            {t(($) => $.account_pools.accounts_available, {
-              available: pool.availableAccounts,
-              total: pool.totalAccounts,
-            })}
-          </span>
-        )}
-      </div>
-      {relogin ? (
-        <div className="-mx-3 border-t border-border px-3 pt-2.5 text-caption text-warning">
-          {t(($) => $.account_pools.all_relogin)}
+      {!state ? (
+        <p className="-mx-3 border-t border-border px-3 pt-2.5 text-caption text-faint-foreground">
+          {t(($) => $.no_snapshot)}
+        </p>
+      ) : accountPools && partition ? (
+        <div className="-mx-3 flex flex-col gap-3 border-t border-border px-3 pt-2.5">
+          {partition.serving.map((pool) => {
+            const relogin = accountPoolNeedsRelogin(pool);
+            const recovery = accountPoolRecoveryText(pool, now, t, formatTime);
+            return (
+              <section key={pool.id} data-hover-account-pool={pool.id} className="space-y-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h4 className="text-body font-medium">{accountPoolProviderLabel(pool.id)}</h4>
+                  <span className="shrink-0 text-caption text-muted-foreground">
+                    {t(($) => $.account_pools.accounts_available, {
+                      available: pool.availableAccounts,
+                      total: pool.totalAccounts,
+                    })}
+                  </span>
+                </div>
+                {relogin ? (
+                  <p className="text-caption text-warning">{t(($) => $.account_pools.all_relogin)}</p>
+                ) : pool.windows.length === 0 ? (
+                  <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-2 text-caption">
+                      {pool.windows.map((window, index) => (
+                        <AccountPoolTooltipWindow
+                          key={`${window.name}-${index}`}
+                          window={window}
+                          now={now}
+                          interrupted={interrupted}
+                        />
+                      ))}
+                    </div>
+                    {recovery && (
+                      <p className={cn("text-micro tabular-nums", interrupted ? "text-faint-foreground" : "text-destructive")}>
+                        {recovery}
+                      </p>
+                    )}
+                    {pool.accounts.length > 0 && (
+                      <AccountPoolAccountsTable pool={pool} interrupted={interrupted} limit={4} />
+                    )}
+                  </>
+                )}
+              </section>
+            );
+          })}
         </div>
-      ) : !state || windows.length === 0 ? (
-        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
       ) : (
-        <>
-          <div className="-mx-3 border-t border-border px-3 pt-2.5">
-            <div className="flex flex-col gap-2 text-caption">
-              {windows.map((window, index) => (
-                <AccountPoolTooltipWindow
-                  key={`${window.name}-${index}`}
-                  window={window}
-                  now={now}
-                  interrupted={interrupted}
-                />
-              ))}
-            </div>
-          </div>
-          {pool && pool.accounts.length > 0 && (
-            <div className="-mx-3 border-t border-border px-3 pt-2">
-              <AccountPoolAccountsTable pool={pool} interrupted={interrupted} limit={4} />
-            </div>
-          )}
-        </>
+        <div className="-mx-3 flex flex-col gap-3 border-t border-border px-3 pt-2.5">
+          {state.pools.map((pool) => (
+            <section key={pool.group ?? "ungrouped"} data-hover-quota-group={pool.group ?? "ungrouped"}>
+              {pool.group != null && (
+                <h4 className="mb-2 text-body font-medium">{quotaGroupLabel(pool.group, t)}</h4>
+              )}
+              <div className="flex flex-col gap-2 text-caption">
+                {pool.windows.map((window, index) => (
+                  <AccountPoolTooltipWindow
+                    key={`${window.name}-${index}`}
+                    window={window}
+                    now={now}
+                    interrupted={interrupted}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
     </div>
-  );
-}
-
-export function AccountPoolMachineChip({
-  pool,
-  interrupted,
-}: {
-  pool: QuotaAccountPoolState;
-  interrupted: boolean;
-}) {
-  const { t } = useT("quota");
-  const primary = accountPoolPrimaryWindow(pool);
-  const relogin = accountPoolNeedsRelogin(pool);
-  const value = relogin
-    ? t(($) => $.account_pools.pool_needs_relogin)
-    : pool.windows.length === 0
-      ? t(($) => $.no_snapshot_chip)
-      : pool.exhausted
-        ? t(($) => $.exhausted)
-        : primary?.remainingPercent == null
-          ? t(($) => $.unknown)
-          : `${displayRemainingPercent(primary.remainingPercent)}%`;
-  const toneClass = interrupted
-    ? "bg-muted text-muted-foreground"
-    : relogin
-      ? "bg-warning/10 text-warning"
-      : pool.windows.length === 0
-        ? "bg-muted text-muted-foreground"
-        : pool.tone === "destructive"
-        ? "bg-destructive/10 text-destructive"
-        : pool.tone === "warning"
-          ? "bg-warning/10 text-warning"
-          : "bg-success/10 text-success";
-  return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-micro font-medium tabular-nums", toneClass)}>
-      <ProviderLogo provider={accountPoolLogoProvider(pool.id)} className="size-3.5" />
-      <span>{accountPoolProviderLabel(pool.id)}</span>
-      <span>{value}</span>
-      <AccountPoolBadge pool={pool} />
-      {interrupted && <span className="font-normal"> · {t(($) => $.collection_interrupted)}</span>}
-    </span>
   );
 }
 
@@ -425,15 +365,11 @@ export function AccountPoolQuotaList({
   summary,
   agents,
   runtime,
-  machineName,
-  now,
   interrupted,
 }: {
   summary: PlanQuotaPoolsSummary;
   agents: Agent[];
   runtime: AgentRuntime;
-  machineName?: string;
-  now: number;
   interrupted: boolean;
 }) {
   const { t } = useT("quota");
@@ -441,45 +377,36 @@ export function AccountPoolQuotaList({
   return (
     <>
       {partition.serving.map((pool) => (
-        <QuotaHoverCard
+        <span
           key={pool.id}
-          runtime={runtime}
-          machineName={machineName}
-          now={now}
-          pool={pool}
-          trigger={
-            <span
-              tabIndex={0}
-              data-account-pool={pool.id}
-              aria-label={accountPoolAriaLabel(pool, t)}
-              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="shrink-0 text-micro text-muted-foreground">
-                {accountPoolProviderLabel(pool.id)}{" "}
-                <span className="text-faint-foreground">
-                  {pool.availableAccounts}/{pool.totalAccounts}
-                </span>
-              </span>
-              {accountPoolNeedsRelogin(pool) ? (
-                <span className="text-micro text-warning">
-                  {t(($) => $.account_pools.pool_needs_relogin)}
-                </span>
-              ) : pool.windows.length === 0 ? (
-                <span className="text-caption text-faint-foreground">
-                  {t(($) => $.no_snapshot)}
-                </span>
-              ) : (
-                pool.windows.map((window, windowIndex) => (
-                  <QuotaWindowRow
-                    key={`${window.name}-${windowIndex}`}
-                    window={window}
-                    interrupted={interrupted}
-                  />
-                ))
-              )}
+          data-account-pool={pool.id}
+          aria-label={accountPoolAriaLabel(pool, t)}
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          <span className="shrink-0 text-micro text-muted-foreground">
+            {accountPoolProviderLabel(pool.id)}{" "}
+            <span className="text-faint-foreground">
+              {pool.availableAccounts}/{pool.totalAccounts}
             </span>
-          }
-        />
+          </span>
+          {accountPoolNeedsRelogin(pool) ? (
+            <span className="text-micro text-warning">
+              {t(($) => $.account_pools.pool_needs_relogin)}
+            </span>
+          ) : pool.windows.length === 0 ? (
+            <span className="text-caption text-faint-foreground">
+              {t(($) => $.no_snapshot)}
+            </span>
+          ) : (
+            pool.windows.map((window, windowIndex) => (
+              <QuotaWindowRow
+                key={`${window.name}-${windowIndex}`}
+                window={window}
+                interrupted={interrupted}
+              />
+            ))
+          )}
+        </span>
       ))}
     </>
   );

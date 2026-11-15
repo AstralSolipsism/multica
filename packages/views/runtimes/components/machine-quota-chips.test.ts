@@ -9,7 +9,6 @@ function chip(overrides: Partial<MachineQuotaChip> = {}): MachineQuotaChip {
     key: "rt-1",
     runtimeId: "rt-1",
     provider: "codex",
-    group: null,
     remainingPercent: 62,
     limited: false,
     tone: "ok",

@@ -3,6 +3,7 @@ import {
   parsePlanQuota,
   quotaWindowLabel,
   type PlanQuotaPoolsSummary,
+  type QuotaAccountPoolState,
   type QuotaPoolState,
   type QuotaSummary,
   type QuotaTone,
@@ -10,6 +11,7 @@ import {
 } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
 import type { useT } from "../../i18n";
+import { accountPoolNeedsRelogin } from "./account-pool-filter";
 
 export type QuotaT = ReturnType<typeof useT<"quota">>["t"];
 export type FormatQuotaTime = (epochSec: number, nowMs: number) => string | null;
@@ -100,6 +102,22 @@ export function quotaInterruptedText(
   return time != null ? `${interrupted} · ${t(($) => $.last_updated, { time })}` : interrupted;
 }
 
+// The first account recovery in an exhausted provider pool. Like every quota
+// reset surface, this is an absolute viewer-local time, never a countdown.
+export function accountPoolRecoveryText(
+  pool: QuotaAccountPoolState,
+  now: number,
+  t: QuotaT,
+  formatTime: FormatQuotaTime,
+): string | null {
+  if (!pool.exhausted || accountPoolNeedsRelogin(pool) || pool.resumesAt == null) return null;
+  const time = formatTime(pool.resumesAt, now);
+  return time == null ? null : t(($) => $.account_pools.pool_recovery_at, {
+    time,
+    account: (pool.resumesAccountIndex ?? 0) + 1,
+  });
+}
+
 // A window's own reset: the upcoming one, or the passed reset that refilled
 // it. A window set aside by its limited pool shows neither.
 export function quotaWindowResetText(
@@ -112,6 +130,9 @@ export function quotaWindowResetText(
   const reset = window.resetsAt ?? window.resetPassedAt;
   const time = reset != null ? formatTime(reset, now) : null;
   if (time == null) return null;
+  if (window.resetsAt != null && window.exhausted) {
+    return t(($) => $.recovers_at, { time });
+  }
   return window.resetsAt != null
     ? t(($) => $.resets_at, { time })
     : t(($) => $.reset_passed, { time });

@@ -17,6 +17,7 @@
   "group_claude_models": "По моделям",
   "remaining": "Осталось {{percent}}%",
   "resets_at": "сброс в {{time}}",
+  "recovers_at": "восстановление: {{time}}",
   "reset_passed": "сброс был в {{time}}",
   "exhausted": "Достигнут лимит запросов",
   "window_exhausted": "Исчерпана",
@@ -39,7 +40,6 @@
     "source_self_hosted": "На собственном сервере"
   },
   "account_pools": {
-    "pool_suffix": "пул",
     "accounts_available": "Доступно аккаунтов: {{available}}/{{total}}",
     "accounts_available_aria": "Доступность аккаунтов: {{available}} из {{total}}",
     "account": "Аккаунт",
@@ -48,13 +48,15 @@
     "all_relogin": "Для каждого аккаунта в этом пуле требуется повторный вход.",
     "unused": "Не использовался",
     "idle": "Простаивает",
+    "idle_pools_one": "{{count}} неиспользуемый пул провайдера",
+    "idle_pools_few": "{{count}} неиспользуемых пула провайдеров",
+    "idle_pools_many": "{{count}} неиспользуемых пулов провайдеров",
+    "idle_pools_other": "{{count}} неиспользуемых пула провайдеров",
     "more_accounts_one": "Ещё {{count}} аккаунт; откройте сведения о среде выполнения, чтобы просмотреть его",
     "more_accounts_few": "Ещё {{count}} аккаунта; откройте сведения о среде выполнения, чтобы просмотреть их",
     "more_accounts_many": "Ещё {{count}} аккаунтов; откройте сведения о среде выполнения, чтобы просмотреть их",
     "more_accounts_other": "Ещё {{count}} аккаунта; откройте сведения о среде выполнения, чтобы просмотреть их",
-    "resets_in": "сброс через {{time}}",
-    "recovers_in": "восстановление через {{time}}",
-    "earliest_recovery": "Ближайшее восстановление через {{time}} (№{{account}})"
+    "pool_recovery_at": "Ближайшее восстановление: {{time}} (№{{account}})"
   },
   "glm_window_tokens": "Токены на 5 часов",
   "glm_window_tokens_weekly": "Токены на 7 дней",

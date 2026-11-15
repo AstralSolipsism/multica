@@ -14,6 +14,7 @@
   "group_claude_models": "特定モデル",
   "remaining": "残り {{percent}}%",
   "resets_at": "{{time}} にリセット",
+  "recovers_at": "{{time}} に復旧",
   "reset_passed": "{{time}} にリセット済み",
   "exhausted": "レート制限中",
   "window_exhausted": "枯渇",
@@ -36,7 +37,6 @@
     "source_self_hosted": "セルフホスト"
   },
   "account_pools": {
-    "pool_suffix": "プール",
     "accounts_available": "{{available}}/{{total}} アカウント利用可能",
     "accounts_available_aria": "{{total}} 個中 {{available}} 個のアカウントが利用可能",
     "account": "アカウント",
@@ -45,10 +45,9 @@
     "all_relogin": "このプールのすべてのアカウントで再ログインが必要です。",
     "unused": "未使用",
     "idle": "アイドル",
+    "idle_pools_other": "未使用プロバイダープール {{count}} 件",
     "more_accounts_other": "ほかに {{count}} 個のアカウントがあります。Runtime 詳細で確認してください",
-    "resets_in": "{{time}} 後にリセット",
-    "recovers_in": "{{time}} 後に復旧",
-    "earliest_recovery": "最短 {{time}} 後に #{{account}} が復旧"
+    "pool_recovery_at": "最短 {{time}} に復旧（#{{account}}）"
   },
   "glm_window_tokens": "5時間トークン",
   "glm_window_tokens_weekly": "7d トークン",

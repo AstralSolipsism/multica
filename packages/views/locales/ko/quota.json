@@ -14,6 +14,7 @@
   "group_claude_models": "특정 모델",
   "remaining": "{{percent}}% 남음",
   "resets_at": "{{time}} 초기화",
+  "recovers_at": "{{time}} 복구",
   "reset_passed": "{{time}}에 초기화됨",
   "exhausted": "속도 제한됨",
   "window_exhausted": "소진됨",
@@ -36,7 +37,6 @@
     "source_self_hosted": "자체 호스팅"
   },
   "account_pools": {
-    "pool_suffix": "풀",
     "accounts_available": "{{available}}/{{total}} 계정 사용 가능",
     "accounts_available_aria": "계정 {{total}}개 중 {{available}}개 사용 가능",
     "account": "계정",
@@ -45,10 +45,9 @@
     "all_relogin": "이 풀의 모든 계정에 재로그인이 필요합니다.",
     "unused": "사용되지 않음",
     "idle": "유휴",
+    "idle_pools_other": "사용하지 않는 제공업체 풀 {{count}}개",
     "more_accounts_other": "추가 계정 {{count}}개는 Runtime 세부 정보에서 확인하세요",
-    "resets_in": "{{time}} 후 초기화",
-    "recovers_in": "{{time}} 후 복구",
-    "earliest_recovery": "가장 빠른 복구: {{time}} 후 #{{account}}"
+    "pool_recovery_at": "가장 빠른 복구: {{time}} (#{{account}})"
   },
   "glm_window_tokens": "5시간 토큰",
   "glm_window_tokens_weekly": "7d 토큰",

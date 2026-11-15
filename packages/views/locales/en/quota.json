@@ -15,6 +15,7 @@
   "group_claude_models": "Model-specific",
   "remaining": "{{percent}}% left",
   "resets_at": "resets at {{time}}",
+  "recovers_at": "recovers at {{time}}",
   "reset_passed": "reset at {{time}}",
   "exhausted": "Rate limited",
   "window_exhausted": "Exhausted",
@@ -37,7 +38,6 @@
     "source_self_hosted": "Self-hosted"
   },
   "account_pools": {
-    "pool_suffix": "pool",
     "accounts_available": "{{available}}/{{total}} accounts available",
     "accounts_available_aria": "{{available}} of {{total}} accounts available",
     "account": "Account",
@@ -46,11 +46,11 @@
     "all_relogin": "Every account in this pool requires re-login.",
     "unused": "Not used",
     "idle": "Idle",
+    "idle_pools_one": "{{count}} idle provider pool",
+    "idle_pools_other": "{{count}} idle provider pools",
     "more_accounts_one": "{{count}} more account; open Runtime details to view it",
     "more_accounts_other": "{{count}} more accounts; open Runtime details to view them",
-    "resets_in": "resets in {{time}}",
-    "recovers_in": "recovers in {{time}}",
-    "earliest_recovery": "Earliest recovery in {{time}} (#{{account}})"
+    "pool_recovery_at": "Earliest recovery at {{time}} (#{{account}})"
   },
   "glm_window_tokens": "5-hour tokens",
   "glm_window_tokens_weekly": "7d tokens",
