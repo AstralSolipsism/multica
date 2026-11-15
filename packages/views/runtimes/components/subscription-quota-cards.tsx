@@ -245,9 +245,10 @@ function SubscriptionQuotaCard({
               <TooltipTrigger
                 render={
                   <span
+                    tabIndex={0}
                     aria-label={[line, ...breakdown].filter(Boolean).join(" · ")}
                     className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums",
+                      "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       muted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[exhausted ? "destructive" : "ok"],
                     )}
                   >
@@ -273,20 +274,27 @@ function SubscriptionQuotaCard({
           <span
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums",
-              source.last_error || probe.available === false
-                ? CHIP_TONE_CLASS[source.last_error?.code === "rate_limited" ? "warning" : "destructive"]
-                : interrupted
-                  ? "bg-muted text-muted-foreground"
-                  : CHIP_TONE_CLASS.ok,
+              probe.available === false
+                ? CHIP_TONE_CLASS.destructive
+                : source.last_error
+                  ? CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"]
+                  : interrupted
+                    ? "bg-muted text-muted-foreground"
+                    : CHIP_TONE_CLASS.ok,
             )}
           >
-            {source.kind === "jev_free"
-              ? source.last_error
+            {probe.available === false
+              // A parsed unavailable probe (402 / Insufficient balance)
+              // outranks last_error: never render "healthy" text with a
+              // destructive style.
+              ? source.kind === "jev_free"
+                ? t(($) => $.quota_sources.cards.probe_abnormal)
+                : t(($) => $.quota_sources.cards.balance_exhausted)
+              : source.last_error
                 ? t(($) => $.quota_sources.cards[source.last_error?.code === "rate_limited" ? "probe_rate_limited" : "probe_abnormal"])
-                : t(($) => $.quota_sources.cards.probe_ok, { latency: probe.latency_ms })
-              : probe.available
-                ? t(($) => $.quota_sources.cards.probe_account_ok, { latency: probe.latency_ms })
-                : t(($) => $.quota_sources.cards.balance_exhausted)}
+                : source.kind === "jev_free"
+                  ? t(($) => $.quota_sources.cards.probe_ok, { latency: probe.latency_ms })
+                  : t(($) => $.quota_sources.cards.probe_account_ok, { latency: probe.latency_ms })}
           </span>
         )}
 

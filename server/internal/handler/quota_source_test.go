@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -203,6 +204,8 @@ func TestQuotaSourceEncryptionGate(t *testing.T) {
 	}
 	resp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, map[string]any{
 		"kind": "jev_free", "name": "free channel", "base_url": srv.URL,
+		// A stray credential must NOT be stored nor echoed as a hint.
+		"credential": "sk-stray-key-123456",
 	})).Want(http.StatusCreated)
 	if err := json.Unmarshal([]byte(resp.Text()), &created); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -225,6 +228,116 @@ func TestQuotaSourceEncryptionGate(t *testing.T) {
 	if err := h.PollDueSource(context.Background(), db.QuotaSource{Kind: "glm"}); err == nil {
 		t.Fatal("glm poll without box must be skipped with an error")
 	}
+}
+
+// A credential-free monitor whose probe hits a transient upstream failure
+// (429/5xx/network) still lands as an enabled row carrying the initial
+// error state — a throttled free channel must not lock the user out.
+func TestQuotaSourceJevFreeTransientCreateLandsErrorState(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	h := withQuotaSourceBox(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	var created struct {
+		ID        string                        `json:"id"`
+		Kind      string                        `json:"kind"`
+		Enabled   bool                          `json:"enabled"`
+		Quota     *protocol.QuotaSourceSnapshot `json:"quota"`
+		LastError *QuotaSourceError             `json:"last_error"`
+	}
+	resp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, map[string]any{
+		"kind": "jev_free", "name": "throttled free channel", "base_url": srv.URL,
+	})).Want(http.StatusCreated)
+	if err := json.Unmarshal([]byte(resp.Text()), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+	if !created.Enabled || created.Quota != nil {
+		t.Fatalf("transient create = enabled=%v quota=%+v, want enabled with no snapshot", created.Enabled, created.Quota)
+	}
+	if created.LastError == nil || created.LastError.Code != "rate_limited" {
+		t.Fatalf("last_error = %+v, want rate_limited", created.LastError)
+	}
+}
+
+// The scheduler polls an enabled jev_free row end to end: one fetch against
+// the registered endpoint, snapshot stored, error cleared.
+func TestQuotaSourceJevFreeEnabledRowPoll(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	h := withQuotaSourceBox(t)
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(`{"answers":{"effort":{"choice":"low"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	resp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, map[string]any{
+		"kind": "jev_free", "name": "polled free channel", "base_url": srv.URL,
+	})).Want(http.StatusCreated)
+	if err := json.Unmarshal([]byte(resp.Text()), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+
+	// Force a failure state first so the poll's success path must clear it.
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE quota_source
+		SET snapshot = NULL, last_error_code = 'provider_error', last_error_message = 'stale',
+		    consecutive_failures = 1, next_poll_at = now()
+		WHERE id = $1
+	`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	row, err := h.Queries.GetQuotaSourceForOwner(context.Background(), db.GetQuotaSourceForOwnerParams{
+		ID: mustUUID(t, created.ID), OwnerID: mustUUID(t, testUserID),
+	})
+	if err != nil {
+		t.Fatalf("reload row: %v", err)
+	}
+	if !row.Enabled {
+		t.Fatal("row must be enabled for a real poll")
+	}
+	if err := h.PollDueSource(context.Background(), row); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("endpoint hits = %d, want 2 (create probe + poll)", got)
+	}
+	updated, err := h.Queries.GetQuotaSourceForOwner(context.Background(), db.GetQuotaSourceForOwnerParams{
+		ID: row.ID, OwnerID: row.OwnerID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap protocol.QuotaSourceSnapshot
+	if err := json.Unmarshal(updated.Snapshot, &snap); err != nil || snap.Probe == nil || !snap.Probe.Available {
+		t.Fatalf("post-poll snapshot = %s (%v)", updated.Snapshot, err)
+	}
+	if code := ptrFromText(updated.LastErrorCode); code != nil && *code != "" {
+		t.Fatalf("last_error_code = %q, want cleared", *code)
+	}
+}
+
+func mustUUID(t *testing.T, raw string) pgtype.UUID {
+	t.Helper()
+	return parseUUID(raw)
 }
 
 // Machine credential actors (task tokens, cloud PATs) are rejected on the

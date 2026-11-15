@@ -82,10 +82,14 @@ export const QuotaSourceBalanceSchema = z.object({
 }).loose();
 export type QuotaSourceBalance = z.infer<typeof QuotaSourceBalanceSchema>;
 
-// Free-tier / pay-as-you-go health probe outcome.
+// Free-tier / pay-as-you-go health probe outcome. `available` and
+// `latency_ms` are required booleans/numbers in the server protocol and get
+// NO catch here: a malformed probe fails the whole field, and the enclosing
+// `.catch(null)` degrades it to `probe: null` instead of fabricating a
+// healthy-looking measurement ("fast" → 0ms).
 export const QuotaSourceProbeSchema = z.object({
-  available: z.boolean().catch(false),
-  latency_ms: z.number().catch(0),
+  available: z.boolean(),
+  latency_ms: z.number(),
   model: z.string().optional().catch(""),
 }).loose();
 export type QuotaSourceProbe = z.infer<typeof QuotaSourceProbeSchema>;

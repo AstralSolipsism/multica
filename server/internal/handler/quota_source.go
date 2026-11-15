@@ -231,9 +231,11 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		quota = nil
 	}
 
-	// Credential-free kinds store an empty ciphertext (allowed by the 9076
-	// constraint) and no hint; credentialed kinds keep the sealed box.
+	// Credential-free kinds never store a ciphertext nor echo a hint —
+	// even when a stray credential rides along in the request; credentialed
+	// kinds keep the sealed box and the masked tail.
 	ciphertext := []byte{}
+	hint := ""
 	if requiresCredential {
 		sealed, err := h.QuotaSourceBox.Seal([]byte(req.Credential))
 		if err != nil {
@@ -241,8 +243,8 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ciphertext = sealed
+		hint = credentialHint(req.Credential)
 	}
-	now := time.Now()
 	var body []byte
 	if quota != nil {
 		if marshaled, err := json.Marshal(quota); err != nil {
@@ -252,13 +254,14 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			body = marshaled
 		}
 	}
+	now := time.Now()
 	row, err := h.Queries.CreateQuotaSource(r.Context(), db.CreateQuotaSourceParams{
 		OwnerID:              parseUUID(userID),
 		Kind:                 req.Kind,
 		Name:                 req.Name,
 		BaseUrl:              textFromPtr(req.BaseURL),
 		CredentialCiphertext: ciphertext,
-		CredentialHint:       credentialHint(req.Credential),
+		CredentialHint:       hint,
 		Enabled:              true,
 		Visibility:           req.Visibility,
 		Snapshot:             body,
@@ -405,6 +408,12 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		BaseUrl:    baseURL,
 		Enabled:    pgtype.Bool{Bool: enabled, Valid: true},
 		Visibility: textFromString(visibility),
+	}
+	if !requiresCredential {
+		// Credential-free kinds overwrite any stray stored credential and
+		// hint (the empty strings are valid COALESCE args, so they stick).
+		params.CredentialCiphertext = []byte{}
+		params.CredentialHint = textFromString("")
 	}
 	if credential != "" {
 		ciphertext, err := h.QuotaSourceBox.Seal([]byte(credential))

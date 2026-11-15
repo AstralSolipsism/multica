@@ -68,14 +68,16 @@ func TestDeepSeekDriverUnavailableFlagLimits(t *testing.T) {
 
 func TestDeepSeekDriverDrainedBalanceLimits(t *testing.T) {
 	// Negative and zero primary balances both mean "cannot spend".
-	snap, err := fetchWith(t, DeepSeekDriver{}, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"-2.50"}]}`))
-	}, "k")
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	if snap.Status != protocol.PlanQuotaStatusLimited || snap.Available == nil || *snap.Available {
-		t.Fatalf("drained balance must be limited/unavailable: %+v", snap)
+	for _, total := range []string{"-2.50", "0.00"} {
+		snap, err := fetchWith(t, DeepSeekDriver{}, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"` + total + `"}]}`))
+		}, "k")
+		if err != nil {
+			t.Fatalf("fetch(%s): %v", total, err)
+		}
+		if snap.Status != protocol.PlanQuotaStatusLimited || snap.Available == nil || *snap.Available {
+			t.Fatalf("drained balance %s must be limited/unavailable: %+v", total, snap)
+		}
 	}
 }
 
@@ -101,10 +103,12 @@ func TestDeepSeekDriverInvalidCredential(t *testing.T) {
 // OpenCode driver.
 // ---------------------------------------------------------------------------
 
+// The official console usage payload (anomalyco/opencode zen/go/v1/usage.ts):
+// status / percent / resetsAt per window.
 const openCodeUsageBody = `{"usage":{` +
-	`"rolling":{"used_percent":30,"resets_at":"2026-11-15T12:00:00Z"},` +
-	`"weekly":{"used":40,"limit":200},` +
-	`"monthly":{"used_percent":100}` +
+	`"rolling":{"status":"ok","percent":30,"resetsAt":"2026-11-15T12:00:00Z"},` +
+	`"weekly":{"status":"ok","percent":20,"resetsAt":"2026-11-22T12:00:00Z"},` +
+	`"monthly":{"status":"rate-limited","percent":100,"resetsAt":"2026-11-30T12:00:00Z"}` +
 	`}}`
 
 func TestOpenCodeDriverUsageWindows(t *testing.T) {
@@ -120,19 +124,33 @@ func TestOpenCodeDriverUsageWindows(t *testing.T) {
 		t.Fatalf("request = %s %q", gotPath, gotAuth)
 	}
 	if snap.Provider != "opencode" || snap.Status != protocol.PlanQuotaStatusLimited {
-		t.Fatalf("provider/status = %s/%s (monthly is 100%% used)", snap.Provider, snap.Status)
+		t.Fatalf("provider/status = %s/%s (monthly is rate-limited)", snap.Provider, snap.Status)
 	}
 	if m, used, ok := window(snap, "opencode_5h"); !ok || m != 300 || used != 30 {
 		t.Errorf("rolling window: minutes=%d used=%v ok=%v", m, used, ok)
 	}
 	if m, used, ok := window(snap, "opencode_7d"); !ok || m != 10080 || used != 20 {
-		t.Errorf("weekly window (used/limit derived): minutes=%d used=%v ok=%v", m, used, ok)
+		t.Errorf("weekly window: minutes=%d used=%v ok=%v", m, used, ok)
 	}
 	if _, _, ok := window(snap, "opencode_30d"); !ok {
 		t.Error("monthly window missing")
 	}
-	if snap.Windows[0].ResetsAt == nil {
-		t.Error("rolling window reset missing")
+	if snap.Windows[0].ResetsAt == nil || *snap.Windows[0].ResetsAt != 1_794_744_000 {
+		t.Errorf("rolling window reset = %v, want 2026-11-15T12:00:00Z", snap.Windows[0].ResetsAt)
+	}
+}
+
+// A Go-subscription window reporting status "rate-limited" flips the snapshot
+// to limited even below 100 percent.
+func TestOpenCodeDriverUsageRateLimitedStatus(t *testing.T) {
+	snap, err := fetchWith(t, OpenCodeDriver{}, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"usage":{"rolling":{"status":"rate-limited","percent":87,"resetsAt":"2026-11-15T13:00:00Z"}}}`))
+	}, "k")
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if snap.Status != protocol.PlanQuotaStatusLimited {
+		t.Fatalf("status = %s, want limited on rate-limited window", snap.Status)
 	}
 }
 
@@ -195,10 +213,38 @@ func TestOpenCodeDriverFallbackInsufficientBalance(t *testing.T) {
 
 func TestOpenCodeDriverUsageInvalidCredential(t *testing.T) {
 	_, err := fetchWith(t, OpenCodeDriver{}, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
+		w.WriteHeader(http.StatusUnauthorized)
 	}, "bad")
 	if err == nil || ClassifyError(err) != "invalid_credential" {
 		t.Fatalf("expected invalid_credential, got %v", err)
+	}
+}
+
+// The official "valid key, no Go subscription" answer (403 EntitlementError)
+// must fall through to the systemone probe, not report invalid_credential.
+func TestOpenCodeDriverEntitlementFallsBackToProbe(t *testing.T) {
+	probeHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/zen/go/v1/usage" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}`))
+			return
+		}
+		probeHits++
+		_, _ = w.Write([]byte(`{"answers":{"effort":{"choice":"low"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := srv.Client()
+	client.Timeout = 5 * time.Second
+	snap, err := OpenCodeDriver{}.Fetch(context.Background(), client, srv.URL, "oc-key-123456", time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if probeHits != 1 {
+		t.Fatalf("probe hits = %d, want 1", probeHits)
+	}
+	if snap.Probe == nil || !snap.Probe.Available {
+		t.Fatalf("entitlement fallback snapshot = %+v", snap)
 	}
 }
 
@@ -293,6 +339,50 @@ func TestJevFreeDriverInvalidDecisionStructure(t *testing.T) {
 	}, "")
 	if err == nil || ClassifyError(err) != "unexpected_response" {
 		t.Fatalf("expected unexpected_response, got %v", err)
+	}
+}
+
+// A decision naming an option the probe never offered is not a healthy
+// answer — the daemon-side jev client rejects it the same way.
+func TestJevFreeDriverIllegalChoiceRejected(t *testing.T) {
+	_, err := fetchWith(t, JevFreeDriver{}, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"answers":{"effort":{"choice":"bogus"}}}`))
+	}, "")
+	if err == nil || ClassifyError(err) != "unexpected_response" {
+		t.Fatalf("expected unexpected_response, got %v", err)
+	}
+}
+
+// A 5xx that happens to quote "Insufficient balance" is still a provider
+// error; the status code outranks any body text.
+func TestJevFreeDriver5xxWithBalanceTextIsProviderError(t *testing.T) {
+	_, err := fetchWith(t, JevFreeDriver{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Insufficient balance"}`))
+	}, "")
+	if err == nil || ClassifyError(err) != "provider_error" {
+		t.Fatalf("expected provider_error, got %v", err)
+	}
+}
+
+// A timeout while reading the response body is a transport failure:
+// network_error, not unexpected_response.
+func TestJevFreeDriverBodyReadTimeoutIsNetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(500 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"answers":{"effort":{"choice":"low"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := srv.Client()
+	client.Timeout = 50 * time.Millisecond
+	_, err := JevFreeDriver{}.Fetch(context.Background(), client, srv.URL, "", time.Unix(1_800_000_000, 0))
+	if err == nil || ClassifyError(err) != "network_error" {
+		t.Fatalf("expected network_error, got %v", err)
 	}
 }
 

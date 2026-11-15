@@ -21,12 +21,13 @@ import (
 
 // OpenCodeDriver collects an OpenCode account's status with one Zen API key.
 // Go-subscription accounts answer GET {base}/zen/go/v1/usage with rolling /
-// weekly / monthly windows (and possibly balances) which normalize into the
-// standard window shape. Pay-as-you-go accounts without a subscription (404
-// or no recognizable windows) fall back to the minimal systemone probe with
-// the same Bearer key: a 200 with a valid decision structure proves the
-// account usable and yields the probe latency; 402 / "Insufficient balance"
-// yields the limited state.
+// weekly / monthly windows in the official console shape (status / percent /
+// resetsAt — see anomalyco/opencode packages/console/.../zen/go/v1/usage.ts).
+// Pay-as-you-go accounts — the endpoint answers 403 EntitlementError ("valid
+// key, no Go subscription"), 404, or 200 without recognizable windows — fall
+// back to the minimal systemone probe with the same Bearer key: a 200 with a
+// valid decision proves the account usable and yields the probe latency;
+// 402 or an "Insufficient balance" body yields the limited state.
 type OpenCodeDriver struct{}
 
 func (OpenCodeDriver) Kind() string           { return "opencode" }
@@ -39,18 +40,18 @@ func (OpenCodeDriver) RequiresCredential() bool { return true }
 const (
 	openCodeGoModel   = "jev-1.13"
 	openCodeFreeModel = "jev-1.13-free"
+
+	// The official usage window status for an exhausted window.
+	openCodeStatusRateLimited = "rate-limited"
 )
 
-// The usage window shape is normalized from whichever fields the endpoint
-// discloses; every numeric field is a pointer so a real 0 stays distinct
-// from "not reported".
+// openCodeUsageWindow is the official usage window shape: used percent,
+// reset deadline, and the provider's own rate-limit verdict. Every numeric
+// field is a pointer so a real 0 stays distinct from "not reported".
 type openCodeUsageWindow struct {
-	UsedPercent  *float64        `json:"used_percent"`
-	UsagePercent *float64        `json:"usage_percent"`
-	Used         *float64        `json:"used"`
-	Limit        *float64        `json:"limit"`
-	ResetsAt     *time.Time      `json:"resets_at"`
-	ResetsAtRaw  json.RawMessage `json:"resets_at_unix"`
+	Status   string   `json:"status"`   // ok | rate-limited
+	Percent  *float64 `json:"percent"`  // used percent (0-100)
+	ResetsAt string   `json:"resetsAt"` // ISO 8601
 }
 
 type openCodeUsageResponse struct {
@@ -59,6 +60,9 @@ type openCodeUsageResponse struct {
 		Weekly  *openCodeUsageWindow `json:"weekly"`
 		Monthly *openCodeUsageWindow `json:"monthly"`
 	} `json:"usage"`
+	// Balances is not part of the official Go-usage response today; kept
+	// tolerant so a future balance disclosure normalizes without a driver
+	// change.
 	Balances []deepSeekBalanceInfo `json:"balances"`
 }
 
@@ -76,11 +80,14 @@ func (d OpenCodeDriver) Fetch(ctx context.Context, client *http.Client, baseURL,
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, &ProbeError{Code: "invalid_credential", Status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, &ProbeError{Code: "rate_limited", Status: resp.StatusCode}
+	}
+	if resp.StatusCode >= 500 {
+		return nil, &ProbeError{Code: "provider_error", Status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusOK {
 		var raw openCodeUsageResponse
@@ -92,16 +99,16 @@ func (d OpenCodeDriver) Fetch(ctx context.Context, client *http.Client, baseURL,
 		}
 		// 200 without recognizable windows or balances: not a Go
 		// subscription — fall through to the pay-as-you-go probe.
-	} else if resp.StatusCode >= 500 {
-		return nil, &ProbeError{Code: "provider_error", Status: resp.StatusCode}
 	}
-	// 404 and other 4xx (short of auth/rate-limit, already handled): the
-	// account has no Go subscription; probe availability instead.
+	// 403 EntitlementError, 404 and other 4xx (auth and rate-limit already
+	// handled above): no Go subscription on this key; probe availability
+	// instead. A genuinely bad key surfaces as the probe's 401.
 	return systemoneProbe(ctx, client, base+"/zen/v1/systemone", credential, openCodeGoModel, now)
 }
 
-// openCodeUsageSnapshot normalizes the usage payload; nil when it carries
-// no recognizable window or balance payload (caller falls back to probing).
+// openCodeUsageSnapshot normalizes the official usage payload; nil when it
+// carries no recognizable window or balance payload (caller falls back to
+// probing).
 func openCodeUsageSnapshot(raw *openCodeUsageResponse, now time.Time) *protocol.QuotaSourceSnapshot {
 	snap := &protocol.QuotaSourceSnapshot{}
 	snap.Provider = "opencode"
@@ -116,15 +123,15 @@ func openCodeUsageSnapshot(raw *openCodeUsageResponse, now time.Time) *protocol.
 		window := protocol.RuntimePlanQuotaWindow{Name: name, Group: "opencode"}
 		m := minutes
 		window.WindowMinutes = &m
-		if used := openCodeUsedPercent(w); used != nil {
-			window.UsedPercent = used
-			if *used >= 100 {
-				limited = true
-			}
+		window.UsedPercent = w.Percent
+		if w.Status == openCodeStatusRateLimited || (w.Percent != nil && *w.Percent >= 100) {
+			limited = true
 		}
-		if ts := openCodeResetTime(w); ts != nil {
-			sec := ts.Unix()
-			window.ResetsAt = &sec
+		if w.ResetsAt != "" {
+			if ts, err := time.Parse(time.RFC3339, strings.TrimSpace(w.ResetsAt)); err == nil {
+				sec := ts.Unix()
+				window.ResetsAt = &sec
+			}
 		}
 		snap.Windows = append(snap.Windows, window)
 	}
@@ -148,43 +155,6 @@ func openCodeUsageSnapshot(raw *openCodeUsageResponse, now time.Time) *protocol.
 		snap.Status = protocol.PlanQuotaStatusLimited
 	}
 	return snap
-}
-
-func openCodeUsedPercent(w *openCodeUsageWindow) *float64 {
-	if w.UsedPercent != nil {
-		return w.UsedPercent
-	}
-	if w.UsagePercent != nil {
-		return w.UsagePercent
-	}
-	if w.Used != nil && w.Limit != nil && *w.Limit > 0 {
-		used := (*w.Used / *w.Limit) * 100
-		return &used
-	}
-	return nil
-}
-
-func openCodeResetTime(w *openCodeUsageWindow) *time.Time {
-	if w.ResetsAt != nil {
-		return w.ResetsAt
-	}
-	s := strings.Trim(strings.TrimSpace(string(w.ResetsAtRaw)), "\"")
-	if s == "" || s == "null" {
-		return nil
-	}
-	var unix float64
-	if err := json.Unmarshal([]byte(s), &unix); err == nil {
-		sec := int64(unix / 1000)
-		if sec <= 0 {
-			sec = int64(unix)
-		}
-		ts := time.Unix(sec, 0).UTC()
-		return &ts
-	}
-	if ts, err := time.Parse(time.RFC3339, s); err == nil {
-		return &ts
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +202,12 @@ func probeRequestBody(model string) []byte {
 	return []byte(fmt.Sprintf(`{"model":%q,"state":{"kind":"health-probe","component":"jev"},"questions":%s}`, model, questions))
 }
 
+// probeOptions are the only choices a healthy System One endpoint may answer
+// with — the same set the probe request offers. Anything else means the
+// response is not a decision for this question, mirroring the daemon-side
+// validation in internal/daemon/jev.
+var probeOptions = map[string]bool{"low": true, "medium": true, "high": true}
+
 // systemOneAnswers is the slice of the decision response the probe validates.
 type systemOneAnswers struct {
 	Answers struct {
@@ -242,9 +218,12 @@ type systemOneAnswers struct {
 }
 
 // systemoneProbe sends one minimal probe request and classifies the outcome:
-// a 200 with a valid decision structure is the ok snapshot (availability +
-// latency); 402 or an "Insufficient balance" body is the limited snapshot;
-// auth failures, rate limiting, 5xx and transport errors are ProbeErrors.
+// a 2xx with a valid decision for this question is the ok snapshot
+// (availability + latency); 402, or a 2xx carrying "Insufficient balance",
+// is the limited snapshot; auth failures and rate limiting are ProbeErrors;
+// every other non-2xx (5xx included, whatever the body says) is
+// provider_error; transport and body-read timeouts stay transport errors so
+// ClassifyError maps them to network_error.
 func systemoneProbe(ctx context.Context, client *http.Client, url, bearer, model string, now time.Time) (*protocol.QuotaSourceSnapshot, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(probeRequestBody(model)))
 	if err != nil {
@@ -262,27 +241,47 @@ func systemoneProbe(ctx context.Context, client *http.Client, url, bearer, model
 	}
 	defer func() { _ = resp.Body.Close() }()
 	latency := time.Since(started).Milliseconds()
+
+	// Status codes outrank any body text: a 500 that happens to quote
+	// "Insufficient balance" is still a provider error, never a clean
+	// limited snapshot.
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, &ProbeError{Code: "invalid_credential", Status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, &ProbeError{Code: "rate_limited", Status: resp.StatusCode}
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil {
-		return nil, &ProbeError{Code: "unexpected_response", Err: readErr}
-	}
-	if resp.StatusCode == http.StatusPaymentRequired || bytes.Contains(body, []byte("Insufficient balance")) {
+	if resp.StatusCode == http.StatusPaymentRequired {
 		return systemOneProbeSnapshot(false, latency, model, now), nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, &ProbeError{Code: "provider_error", Status: resp.StatusCode}
 	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		// A body-read timeout is a transport failure, not a malformed
+		// response: leave it unwrapped so ClassifyError maps
+		// context-deadline errors to network_error.
+		if isDeadlineError(readErr) {
+			return nil, readErr
+		}
+		return nil, &ProbeError{Code: "unexpected_response", Err: readErr}
+	}
+	if bytes.Contains(body, []byte("Insufficient balance")) {
+		return systemOneProbeSnapshot(false, latency, model, now), nil
+	}
 	var answers systemOneAnswers
-	if err := json.Unmarshal(body, &answers); err != nil || answers.Answers.Effort.Choice == "" {
-		return nil, &ProbeError{Code: "unexpected_response", Err: errors.New("response carried no decision structure")}
+	if err := json.Unmarshal(body, &answers); err != nil || !probeOptions[answers.Answers.Effort.Choice] {
+		return nil, &ProbeError{Code: "unexpected_response", Err: errors.New("response carried no decision for the probe question")}
 	}
 	return systemOneProbeSnapshot(true, latency, model, now), nil
+}
+
+// isDeadlineError reports whether a transport error is a timeout, by substring
+// the same way ClassifyError does (Go wraps client timeouts as "context
+// deadline exceeded" in both the dial and the body-read paths).
+func isDeadlineError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "context deadline exceeded")
 }
 
 func systemOneProbeSnapshot(available bool, latencyMS int64, model string, now time.Time) *protocol.QuotaSourceSnapshot {

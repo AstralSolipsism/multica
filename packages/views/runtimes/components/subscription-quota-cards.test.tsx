@@ -225,6 +225,49 @@ describe("SubscriptionQuotaCards", () => {
     expect(screen.queryByText("Waiting for the first collection")).not.toBeInTheDocument();
   });
 
+  it("never labels an unavailable probe as healthy (402 / Insufficient balance snapshot)", () => {
+    const unavailable = source({
+      id: "source-free3",
+      kind: "jev_free",
+      name: "免费通道",
+      quota: {
+        provider: "opencode",
+        status: "limited",
+        source: "subscription",
+        observed_at: NOW_SEC - 30,
+        available: false,
+        windows: [],
+        probe: { available: false, latency_ms: 210, model: "jev-1.13-free" },
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[unavailable]} now={NOW} />);
+
+    expect(screen.queryByText(/Healthy ·/)).not.toBeInTheDocument();
+    const pill = screen.getByText("Abnormal").closest("span")!;
+    expect(pill.className).toContain("text-destructive");
+  });
+
+  it("labels an opencode pay-as-you-go probe exhaustion as balance exhausted", () => {
+    const drained = source({
+      id: "source-oc",
+      kind: "opencode",
+      name: "OpenCode",
+      quota: {
+        provider: "opencode",
+        status: "limited",
+        source: "subscription",
+        observed_at: NOW_SEC - 30,
+        available: false,
+        windows: [],
+        probe: { available: false, latency_ms: 180, model: "jev-1.13" },
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[drained]} now={NOW} />);
+
+    const pill = screen.getByText("Balance exhausted / unavailable").closest("span")!;
+    expect(pill.className).toContain("text-destructive");
+  });
+
   it("renders a rate-limited jev_free monitor with its error reason and check time", () => {
     const limited = source({
       id: "source-free2",
