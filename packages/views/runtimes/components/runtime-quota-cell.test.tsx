@@ -7,7 +7,6 @@ import type { SupportedLocale } from "@multica/core/i18n";
 import type {
   Agent,
   AgentRuntime,
-  RuntimeThinkingAdapt,
 } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
@@ -17,7 +16,6 @@ import {
   MiniMeterBar,
   RuntimeQuotaCard,
   RuntimeQuotaCell,
-  ThinkingAdaptQuotaCard,
   TONE_BAR_CLASS,
 } from "./runtime-quota-cell";
 
@@ -154,21 +152,6 @@ function quotaAgent(model: string, overrides: Partial<Agent> = {}): Agent {
   } as Agent;
 }
 
-function adaptSnapshot(
-  status: string,
-  overrides: Partial<RuntimeThinkingAdapt> = {},
-): RuntimeThinkingAdapt {
-  return {
-    status,
-    active_source: "opencode-free",
-    last_latency_ms: 290,
-    decisions_ok: 12,
-    decisions_fallback: 3,
-    since: "2026-10-21T00:00:00Z",
-    updated_at: "2026-10-21T01:00:00Z",
-    ...overrides,
-  };
-}
 
 function renderChips(
   runtime: AgentRuntime,
@@ -510,29 +493,6 @@ describe("OMP account pools", () => {
   });
 });
 
-describe("thinking Adapt placement", () => {
-  it("keeps Adapt out of quota cells and cards, and renders its own status card", () => {
-    const runtime = claudeRuntime();
-    runtime.thinking_adapt = adaptSnapshot("available");
-    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
-    cell.unmount();
-
-    const card = renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.queryByText(/Adapt ·/)).not.toBeInTheDocument();
-    card.unmount();
-
-    renderWithI18n(<ThinkingAdaptQuotaCard snapshot={runtime.thinking_adapt} />);
-    expect(screen.getByRole("heading", { name: "Adapt" })).toBeInTheDocument();
-    expect(screen.getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
-    expect(screen.getByText("Since daemon started: 12 successful, 3 fallbacks")).toBeInTheDocument();
-  });
-
-  it("renders unavailable Adapt independently of a quota snapshot", () => {
-    renderWithI18n(<ThinkingAdaptQuotaCard snapshot={adaptSnapshot("unavailable")} />);
-    expect(screen.getByText(/Adapt · Unavailable/)).toBeInTheDocument();
-  });
-});
 
 describe("localized quota states", () => {
   it("uses explicit Chinese exhaustion copy", () => {

@@ -34,8 +34,7 @@
     "source_opencode_free": "OpenCode Zen (free)",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "Alibaba Cloud Model Studio",
-    "source_self_hosted": "Self-hosted",
-    "counts": "Since daemon started: {{success}} successful, {{fallback}} fallbacks"
+    "source_self_hosted": "Self-hosted"
   },
   "account_pools": {
     "pool_suffix": "pool",
@@ -53,13 +52,11 @@
     "recovers_in": "recovers in {{time}}",
     "earliest_recovery": "Earliest recovery in {{time}} (#{{account}})"
   },
-  "glm_title": "GLM plan balance",
   "glm_window_tokens": "5-hour tokens",
   "glm_window_tokens_weekly": "7d tokens",
   "glm_window_tokens_generic": "Token window",
   "glm_window_time": "Monthly tool credits",
   "glm_window_credit": "5-hour credits",
   "glm_window_credit_weekly": "7d credits",
-  "glm_window_credit_generic": "Credit window",
-  "glm_window_fallback": "{{type}}"
+  "glm_window_credit_generic": "Credit window"
 }

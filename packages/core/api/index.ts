@@ -15,14 +15,14 @@ export type {
   DependencyErrorDetails,
 } from "./client";
 export type {
-  GlmQuotaStatus,
-  GlmQuotaSnapshot,
-  GlmQuotaWindow,
   QuotaSource,
   QuotaSourceError,
   QuotaSourceKind,
   QuotaSourceListResponse,
   QuotaSourceVisibility,
+  QuotaSourceBalance,
+  QuotaSourceProbe,
+  QuotaSourceSnapshot,
   WorkspaceQuotaSource,
   WorkspaceQuotaSourceListResponse,
   CreateQuotaSourceInput,

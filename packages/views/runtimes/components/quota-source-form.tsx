@@ -25,7 +25,20 @@ import {
   QuotaSourceIcon,
   quotaSourceActionError,
   quotaSourceKindLabel,
+  quotaSourceRequiresCredential,
 } from "./quota-source-shared";
+
+const QUOTA_SOURCE_KINDS = ["glm", "zenmux", "deepseek", "opencode", "jev_free"] as const;
+
+const QUOTA_SOURCE_KIND_BASE_URLS: Record<QuotaSourceKind, string> = {
+  glm: "https://open.bigmodel.cn",
+  zenmux: "https://zenmux.ai",
+  deepseek: "https://api.deepseek.com",
+  opencode: "https://opencode.ai",
+  jev_free: "https://opencode.ai/zen/v1/systemone",
+};
+
+
 
 export function QuotaSourceForm({
   source,
@@ -43,9 +56,9 @@ export function QuotaSourceForm({
   const { t } = useT("runtimes");
   const createSource = useCreateQuotaSource();
   const updateSource = useUpdateQuotaSource();
-  const [kind, setKind] = useState<QuotaSourceKind>(
-    source?.kind === "zenmux" ? "zenmux" : "glm",
-  );
+  const initialKind: QuotaSourceKind =
+    QUOTA_SOURCE_KINDS.find((candidate) => candidate === source?.kind) ?? "glm";
+  const [kind, setKind] = useState<QuotaSourceKind>(initialKind);
   const [name, setName] = useState(source?.name ?? "");
   const [credential, setCredential] = useState("");
   const [replaceCredential, setReplaceCredential] = useState(!source);
@@ -55,7 +68,8 @@ export function QuotaSourceForm({
   );
   const [formError, setFormError] = useState<string | null>(null);
   const saving = createSource.isPending || updateSource.isPending;
-  const credentialRequired = !source || replaceCredential;
+  const needsCredential = quotaSourceRequiresCredential(kind);
+  const credentialRequired = needsCredential && (!source || replaceCredential);
 
   useEffect(() => {
     onSavingChange(saving);
@@ -89,7 +103,7 @@ export function QuotaSourceForm({
             name: trimmedName,
             visibility,
             ...(baseChanged ? { base_url: trimmedBase } : {}),
-            ...(replaceCredential ? { credential: trimmedCredential } : {}),
+            ...(needsCredential && replaceCredential ? { credential: trimmedCredential } : {}),
           },
         });
         toast.success(t(($) => $.quota_sources.toasts.updated));
@@ -97,7 +111,7 @@ export function QuotaSourceForm({
         await createSource.mutateAsync({
           kind,
           name: trimmedName,
-          credential: trimmedCredential,
+          credential: needsCredential ? trimmedCredential : "",
           ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
           visibility,
         });
@@ -146,7 +160,7 @@ export function QuotaSourceForm({
             {t(($) => $.quota_sources.form.kind_section)}
           </h3>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {(["glm", "zenmux"] as const).map((option) => (
+            {QUOTA_SOURCE_KINDS.map((option) => (
               <Button
                 key={option}
                 type="button"
@@ -187,54 +201,62 @@ export function QuotaSourceForm({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <label htmlFor="quota-source-key" className="text-caption font-medium">
-              {kind === "zenmux"
-                ? t(($) => $.quota_sources.form.management_key)
-                : t(($) => $.quota_sources.form.api_key)}
-            </label>
-            {source && !replaceCredential ? (
-              <div className="flex gap-2">
+          {needsCredential ? (
+            <div className="space-y-1.5">
+              <label htmlFor="quota-source-key" className="text-caption font-medium">
+                {kind === "zenmux"
+                  ? t(($) => $.quota_sources.form.management_key)
+                  : kind === "opencode"
+                    ? t(($) => $.quota_sources.form.zen_api_key)
+                    : t(($) => $.quota_sources.form.api_key)}
+              </label>
+              {source && !replaceCredential ? (
+                <div className="flex gap-2">
+                  <Input
+                    id="quota-source-key"
+                    value={source.credential_hint
+                      ? `•••• •••• •••• ${source.credential_hint}`
+                      : "•••• •••• ••••"}
+                    readOnly
+                    aria-label={t(($) => $.quota_sources.form.saved_credential)}
+                    className="font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={saving}
+                    onClick={() => {
+                      setReplaceCredential(true);
+                      setFormError(null);
+                    }}
+                  >
+                    {t(($) => $.quota_sources.form.replace_key)}
+                  </Button>
+                </div>
+              ) : (
                 <Input
                   id="quota-source-key"
-                  value={source.credential_hint
-                    ? `•••• •••• •••• ${source.credential_hint}`
-                    : "•••• •••• ••••"}
-                  readOnly
-                  aria-label={t(($) => $.quota_sources.form.saved_credential)}
-                  className="font-mono"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="shrink-0"
+                  type="password"
+                  autoComplete="off"
+                  value={credential}
                   disabled={saving}
-                  onClick={() => {
-                    setReplaceCredential(true);
+                  placeholder={t(($) => $.quota_sources.form.credential_placeholder)}
+                  onChange={(event) => {
+                    setCredential(event.target.value);
                     setFormError(null);
                   }}
-                >
-                  {t(($) => $.quota_sources.form.replace_key)}
-                </Button>
-              </div>
-            ) : (
-              <Input
-                id="quota-source-key"
-                type="password"
-                autoComplete="off"
-                value={credential}
-                disabled={saving}
-                placeholder={t(($) => $.quota_sources.form.credential_placeholder)}
-                onChange={(event) => {
-                  setCredential(event.target.value);
-                  setFormError(null);
-                }}
-              />
-            )}
+                />
+              )}
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.quota_sources.form.credential_hint)}
+              </p>
+            </div>
+          ) : (
             <p className="text-caption text-muted-foreground">
-              {t(($) => $.quota_sources.form.credential_hint)}
+              {t(($) => $.quota_sources.form.credential_free)}
             </p>
-          </div>
+          )}
 
           <div className="space-y-1.5">
             <label htmlFor="quota-source-base-url" className="text-caption font-medium">
@@ -247,7 +269,7 @@ export function QuotaSourceForm({
               spellCheck={false}
               value={baseUrl}
               disabled={saving}
-              placeholder={kind === "glm" ? "https://open.bigmodel.cn" : "https://zenmux.ai"}
+              placeholder={QUOTA_SOURCE_KIND_BASE_URLS[kind]}
               onChange={(event) => {
                 setBaseUrl(event.target.value);
                 setFormError(null);

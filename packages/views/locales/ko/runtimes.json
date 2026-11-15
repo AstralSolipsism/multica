@@ -71,21 +71,32 @@
     }
   },
   "quota_sources": {
-    "action": "구독 할당량",
+    "action": "전역 할당량 및 서비스 상태",
     "kinds": {
       "glm": "Zhipu GLM Coding Plan",
       "zenmux": "ZenMux",
-      "unknown": "구독"
+      "unknown": "구독",
+      "deepseek": "DeepSeek API 잔액",
+      "opencode": "OpenCode 계정",
+      "jev_free": "OpenCode Jev 무료 채널"
     },
     "cards": {
-      "region": "구독 할당량",
+      "region": "전역 할당량 및 서비스 상태",
       "tokens_period": "{{period}} 토큰",
       "credits_period": "{{period}} 크레딧",
       "tools_period": "{{period}} 도구 크레딧",
       "subscription_period": "{{period}} 구독",
       "subscription_window": "구독 잔량",
       "generic_window": "할당량 기간",
-      "waiting": "첫 수집을 기다리는 중"
+      "waiting": "첫 수집을 기다리는 중",
+      "balance_available": "사용 가능 · 잔액 {{amount}}",
+      "balance_exhausted": "잔액 소진 / 사용 불가",
+      "topped_up": "충전 잔액 {{amount}}",
+      "granted": "증정 잔액 {{amount}}",
+      "probe_ok": "정상 · {{latency}}ms",
+      "probe_account_ok": "계정 사용 가능 · {{latency}}ms",
+      "probe_abnormal": "비정상",
+      "probe_rate_limited": "제한됨"
     },
     "visibility": {
       "private": "나만 보기",
@@ -94,20 +105,21 @@
       "shared_hint": "내 공유 머신이 보이는 워크스페이스에서만 멤버에게 표시됩니다."
     },
     "dialog": {
-      "title": "구독 할당량",
-      "description": "GLM 및 ZenMux 구독 자격 증명과 카드를 관리합니다.",
+      "title": "전역 할당량 및 서비스 상태",
+      "description": "구독 창, 종량제 API 잔액, 무료 채널 상태 모니터를 관리합니다.",
       "loading": "구독 로드 중",
-      "load_failed": "구독 할당량을 불러오지 못했습니다.",
+      "load_failed": "할당량 소스를 불러올 수 없습니다.",
       "retry": "다시 시도",
-      "empty_title": "아직 구독 할당량 소스가 없습니다",
-      "add": "구독 추가",
-      "auto_refresh": "서버가 활성화된 구독을 5분마다 확인합니다",
+      "empty_title": "아직 할당량 소스가 없습니다",
+      "add": "소스 추가",
+      "auto_refresh": "활성화된 소스는 5분마다 서버에서 수집합니다",
       "toggle": "{{name}} 전환",
       "refresh": "{{name}} 새로고침",
       "refresh_now": "지금 새로고침",
       "refresh_in": "{{seconds}}초 후 새로고침 가능",
       "edit": "{{name}} 편집",
-      "delete": "{{name}} 삭제"
+      "delete": "{{name}} 삭제",
+      "no_credential": "자격 증명 불필요"
     },
     "status": {
       "ok": "정상",
@@ -115,9 +127,9 @@
       "disabled": "비활성화됨"
     },
     "form": {
-      "back": "구독 목록으로 돌아가기",
-      "add_title": "구독 할당량 소스 추가",
-      "edit_title": "구독 할당량 소스 편집",
+      "back": "목록으로 돌아가기",
+      "add_title": "할당량 소스 추가",
+      "edit_title": "할당량 소스 편집",
       "description": "새 자격 증명이나 엔드포인트는 저장 전에 제공업체에서 검증합니다.",
       "kind_section": "1. 채널",
       "credential_section": "2. 자격 증명",
@@ -135,7 +147,9 @@
       "credential_required": "API 키를 입력하세요.",
       "cancel": "취소",
       "save": "저장하고 확인",
-      "saving": "확인하고 저장하는 중..."
+      "saving": "확인하고 저장하는 중...",
+      "zen_api_key": "Zen API Key",
+      "credential_free": "이 무료 결정 채널은 API Key가 필요 없으며, 서버가 가용성과 지연 시간을 주기적으로 검사합니다."
     },
     "errors": {
       "invalid_credential": "제공업체가 이 자격 증명을 거부했습니다. API 키를 확인하거나 교체하세요.",
@@ -144,7 +158,7 @@
       "invalid_base_url": "이 채널에서 지원하는 공개 HTTPS 엔드포인트를 사용하세요.",
       "unexpected_response": "제공업체가 읽을 수 없는 할당량 응답을 반환했습니다.",
       "provider_error": "제공업체 할당량을 수집하지 못했습니다.",
-      "generic": "구독을 업데이트할 수 없습니다. 다시 시도하세요.",
+      "generic": "소스를 업데이트할 수 없습니다. 다시 시도하세요.",
       "encryption_unconfigured": "서버 관리자가 MULTICA_QUOTA_SOURCE_SECRET_KEY를 설정해야 구독 자격 증명을 사용할 수 있습니다.",
       "refresh_cooldown": "방금 새로고침했습니다. 30초 재사용 대기 시간 후에 다시 시도하세요."
     },
@@ -152,14 +166,14 @@
       "title": "\"{{name}}\"을(를) 삭제할까요?",
       "description": "카드가 사라지고 암호화된 자격 증명이 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
       "cancel": "취소",
-      "confirm": "구독 삭제",
+      "confirm": "모니터 삭제",
       "deleting": "삭제하는 중..."
     },
     "toasts": {
-      "created": "구독을 추가했습니다",
-      "updated": "구독을 업데이트했습니다",
-      "refreshed": "구독을 새로고침했습니다",
-      "deleted": "구독을 삭제했습니다"
+      "created": "소스를 추가했습니다",
+      "updated": "소스를 업데이트했습니다",
+      "refreshed": "소스를 새로고침했습니다",
+      "deleted": "소스를 삭제했습니다"
     }
   },
   "mika_setup": {

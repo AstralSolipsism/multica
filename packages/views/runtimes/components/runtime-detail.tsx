@@ -54,7 +54,7 @@ import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { HealthBadge, HealthIcon, shortDaemonId, useHealthLabel } from "./shared";
 import { ProviderLogo } from "./provider-logo";
 import { UsageSection } from "./usage-section";
-import { RuntimeQuotaCard, ThinkingAdaptQuotaCard } from "./runtime-quota-cell";
+import { RuntimeQuotaCard } from "./runtime-quota-cell";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { RuntimeAccessEditor, RuntimeAccessReadout } from "./runtime-access-editor";
 import { RuntimeConcurrencyField } from "./runtime-concurrency-field";
@@ -240,9 +240,6 @@ export function RuntimeDetail({
                 agents={agents}
                 agentsPending={agentsPending}
               />
-              {runtime.thinking_adapt && (
-                <ThinkingAdaptQuotaCard snapshot={runtime.thinking_adapt} />
-              )}
             </div>
           )}
 

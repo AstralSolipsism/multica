@@ -71,21 +71,32 @@
     }
   },
   "quota_sources": {
-    "action": "Quotas d'abonnement",
+    "action": "Quotas et état des services",
     "kinds": {
       "glm": "Zhipu GLM Coding Plan",
       "zenmux": "ZenMux",
-      "unknown": "Abonnement"
+      "unknown": "Abonnement",
+      "deepseek": "Solde API DeepSeek",
+      "opencode": "Compte OpenCode",
+      "jev_free": "Canal gratuit Jev d'OpenCode"
     },
     "cards": {
-      "region": "Quotas d'abonnement",
+      "region": "Quotas et état des services",
       "tokens_period": "Jetons {{period}}",
       "credits_period": "Crédits {{period}}",
       "tools_period": "Crédits d'outils {{period}}",
       "subscription_period": "Abonnement {{period}}",
       "subscription_window": "Solde de l'abonnement",
       "generic_window": "Fenêtre de quota",
-      "waiting": "En attente de la première collecte"
+      "waiting": "En attente de la première collecte",
+      "balance_available": "Disponible · solde {{amount}}",
+      "balance_exhausted": "Solde épuisé / indisponible",
+      "topped_up": "Solde rechargé {{amount}}",
+      "granted": "Solde offert {{amount}}",
+      "probe_ok": "Opérationnel · {{latency}}ms",
+      "probe_account_ok": "Compte disponible · {{latency}}ms",
+      "probe_abnormal": "Anomalie",
+      "probe_rate_limited": "Limité"
     },
     "visibility": {
       "private": "Privé",
@@ -94,20 +105,21 @@
       "shared_hint": "Visible par les membres uniquement dans les espaces où l'une de vos machines partagées est visible."
     },
     "dialog": {
-      "title": "Quotas d'abonnement",
-      "description": "Gérez vos identifiants et cartes d'abonnement GLM et ZenMux.",
+      "title": "Quotas et état des services",
+      "description": "Gérez vos fenêtres d'abonnement, soldes API prépayés et moniteurs de canaux gratuits.",
       "loading": "Chargement des abonnements",
-      "load_failed": "Impossible de charger les quotas d'abonnement.",
+      "load_failed": "Impossible de charger les sources de quota.",
       "retry": "Réessayer",
-      "empty_title": "Aucune source de quota d'abonnement",
-      "add": "Ajouter un abonnement",
-      "auto_refresh": "Le serveur vérifie les abonnements actifs toutes les 5 minutes",
+      "empty_title": "Aucune source de quota pour l'instant",
+      "add": "Ajouter une source",
+      "auto_refresh": "Le serveur collecte les sources actives toutes les 5 minutes",
       "toggle": "Activer ou désactiver {{name}}",
       "refresh": "Actualiser {{name}}",
       "refresh_now": "Actualiser maintenant",
       "refresh_in": "Actualisation possible dans {{seconds}} s",
       "edit": "Modifier {{name}}",
-      "delete": "Supprimer {{name}}"
+      "delete": "Supprimer {{name}}",
+      "no_credential": "Sans identifiant"
     },
     "status": {
       "ok": "Normal",
@@ -115,7 +127,7 @@
       "disabled": "Désactivé"
     },
     "form": {
-      "back": "Retour aux abonnements",
+      "back": "Retour à la liste",
       "add_title": "Ajouter une source de quota",
       "edit_title": "Modifier la source de quota",
       "description": "Un nouvel identifiant ou endpoint est validé auprès du fournisseur avant son enregistrement.",
@@ -135,7 +147,9 @@
       "credential_required": "Saisissez une clé API.",
       "cancel": "Annuler",
       "save": "Enregistrer et vérifier",
-      "saving": "Vérification et enregistrement..."
+      "saving": "Vérification et enregistrement...",
+      "zen_api_key": "Zen API Key",
+      "credential_free": "Ce canal de décision gratuit n'exige aucune API Key ; le serveur sonde régulièrement disponibilité et latence."
     },
     "errors": {
       "invalid_credential": "Le fournisseur a rejeté cet identifiant. Vérifiez ou remplacez la clé API.",
@@ -144,7 +158,7 @@
       "invalid_base_url": "Utilisez un endpoint HTTPS public pris en charge par ce canal.",
       "unexpected_response": "Le fournisseur a renvoyé une réponse de quota illisible.",
       "provider_error": "Le fournisseur n'a pas pu collecter les quotas.",
-      "generic": "Impossible de mettre à jour l'abonnement. Réessayez.",
+      "generic": "Impossible de mettre à jour la source ; réessayez.",
       "encryption_unconfigured": "Les identifiants d'abonnement sont indisponibles tant que l'administrateur n'a pas configuré MULTICA_QUOTA_SOURCE_SECRET_KEY.",
       "refresh_cooldown": "Actualisation récente. Attendez la fin du délai de 30 secondes."
     },
@@ -152,14 +166,14 @@
       "title": "Supprimer « {{name}} » ?",
       "description": "Sa carte disparaîtra et l'identifiant chiffré sera détruit. Cette action est irréversible.",
       "cancel": "Annuler",
-      "confirm": "Supprimer l'abonnement",
+      "confirm": "Supprimer le moniteur",
       "deleting": "Suppression..."
     },
     "toasts": {
-      "created": "Abonnement ajouté",
-      "updated": "Abonnement mis à jour",
-      "refreshed": "Abonnement actualisé",
-      "deleted": "Abonnement supprimé"
+      "created": "Source ajoutée",
+      "updated": "Source mise à jour",
+      "refreshed": "Source actualisée",
+      "deleted": "Source supprimée"
     }
   },
   "mika_setup": {

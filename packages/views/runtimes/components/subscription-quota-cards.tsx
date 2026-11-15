@@ -1,6 +1,6 @@
 "use client";
 
-import type { WorkspaceQuotaSource } from "@multica/core/api";
+import type { QuotaSourceBalance, WorkspaceQuotaSource } from "@multica/core/api";
 import {
   formatCompactDuration,
   isCollectorObservationInterrupted,
@@ -38,6 +38,31 @@ const CHIP_TONE_CLASS: Record<QuotaTone, string> = {
   warning: "bg-warning/10 text-warning",
   destructive: "bg-destructive/10 text-destructive",
 };
+
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  CNY: "¥",
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+};
+
+// "¥48.50" for known currency codes, "CNY 48.50" for anything else. A null
+// total renders an em dash (provider reported the bucket but no amount).
+function formatBalanceAmount(balance: QuotaSourceBalance): string {
+  const symbol = CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `;
+  const amount = balance.total_balance == null ? "—" : balance.total_balance.toFixed(2);
+  return `${symbol}${amount}`;
+}
+
+function balanceExhausted(
+  quota: WorkspaceQuotaSource["quota"],
+  balance: QuotaSourceBalance,
+): boolean {
+  if (quota?.available === false || quota?.status === "limited") return true;
+  return balance.total_balance != null && balance.total_balance <= 0;
+}
+
 
 export function subscriptionQuotaWindows(
   source: Pick<WorkspaceQuotaSource, "quota">,
@@ -112,10 +137,28 @@ function SubscriptionQuotaCard({
   const { t: tQuota } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
   const windows = subscriptionQuotaWindows(source, now);
-  const observedAt = source.quota?.observed_at ?? 0;
+  const quota = source.quota ?? null;
+  const balances = quota?.balances ?? [];
+  const probe = quota?.probe ?? null;
+  const observedAt = quota?.observed_at ?? 0;
   const interrupted = observedAt > 0 && isCollectorObservationInterrupted(observedAt, now);
-  const muted = interrupted || !!source.last_error;
+  const muted = interrupted || (!!source.last_error && balances.length === 0 && !probe);
   const shared = source.visibility === "shared";
+  // The free-channel monitor shows its own colored state pill instead of
+  // the muted treatment when polling fails.
+  const lastPolledMs = source.last_polled_at ? Date.parse(source.last_polled_at) : NaN;
+
+  const observedLine = (
+    <div className="text-muted-foreground">
+      {interrupted
+        ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
+        : observedAt > 0
+          ? tQuota(($) => $.observed_ago, {
+              time: formatCompactDuration(now - observedAt * 1000),
+            })
+          : null}
+    </div>
+  );
 
   return (
     <article className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-card px-3 py-2.5">
@@ -172,26 +215,116 @@ function SubscriptionQuotaCard({
                 <div className="space-y-0.5 text-caption">
                   <div>{label} · {remaining}</div>
                   {reset && <div>{reset}</div>}
-                  {observedAt > 0 && (
-                    <div className="text-muted-foreground">
-                      {interrupted
-                        ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
-                        : tQuota(($) => $.observed_ago, {
-                            time: formatCompactDuration(now - observedAt * 1000),
-                          })}
-                    </div>
-                  )}
+                  {observedAt > 0 && observedLine}
                 </div>
               </TooltipContent>
             </Tooltip>
           );
         })}
-        {windows.length === 0 && !source.last_error && (
+
+        {balances.map((balance, index) => {
+          const exhausted = balanceExhausted(quota, balance);
+          const amount = formatBalanceAmount(balance);
+          const line = exhausted
+            ? t(($) => $.quota_sources.cards.balance_exhausted)
+            : t(($) => $.quota_sources.cards.balance_available, { amount });
+          const breakdown = [
+            balance.topped_up_balance != null
+              ? t(($) => $.quota_sources.cards.topped_up, {
+                  amount: `${CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `}${balance.topped_up_balance.toFixed(2)}`,
+                })
+              : null,
+            balance.granted_balance != null
+              ? t(($) => $.quota_sources.cards.granted, {
+                  amount: `${CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `}${balance.granted_balance.toFixed(2)}`,
+                })
+              : null,
+          ].filter(Boolean);
+          return (
+            <Tooltip key={`${balance.currency}-${index}`}>
+              <TooltipTrigger
+                render={
+                  <span
+                    tabIndex={0}
+                    aria-label={[line, ...breakdown].filter(Boolean).join(" · ")}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      muted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[exhausted ? "destructive" : "ok"],
+                    )}
+                  >
+                    <span className="text-muted-foreground">{balance.currency}</span>
+                    <span>{line}</span>
+                  </span>
+                }
+              />
+              <TooltipContent>
+                <div className="space-y-0.5 text-caption">
+                  <div>{line}</div>
+                  {breakdown.map((entry) => (
+                    <div key={entry}>{entry}</div>
+                  ))}
+                  {observedAt > 0 && observedLine}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+
+        {windows.length === 0 && balances.length === 0 && probe && (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums",
+              probe.available === false
+                ? CHIP_TONE_CLASS.destructive
+                : source.last_error
+                  ? CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"]
+                  : interrupted
+                    ? "bg-muted text-muted-foreground"
+                    : CHIP_TONE_CLASS.ok,
+            )}
+          >
+            {probe.available === false
+              // A parsed unavailable probe (402 / Insufficient balance)
+              // outranks last_error: never render "healthy" text with a
+              // destructive style.
+              ? source.kind === "jev_free"
+                ? t(($) => $.quota_sources.cards.probe_abnormal)
+                : t(($) => $.quota_sources.cards.balance_exhausted)
+              : source.last_error
+                ? t(($) => $.quota_sources.cards[source.last_error?.code === "rate_limited" ? "probe_rate_limited" : "probe_abnormal"])
+                : source.kind === "jev_free"
+                  ? t(($) => $.quota_sources.cards.probe_ok, { latency: probe.latency_ms })
+                  : t(($) => $.quota_sources.cards.probe_account_ok, { latency: probe.latency_ms })}
+          </span>
+        )}
+
+        {windows.length === 0 && balances.length === 0 && !probe && source.kind === "jev_free" && source.last_error && (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption",
+              CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"],
+            )}
+          >
+            {source.last_error.code === "rate_limited"
+              ? t(($) => $.quota_sources.cards.probe_rate_limited)
+              : t(($) => $.quota_sources.cards.probe_abnormal)}
+          </span>
+        )}
+
+        {source.kind === "jev_free" && source.last_error && Number.isFinite(lastPolledMs) && (
+          <span className="text-micro tabular-nums text-faint-foreground">
+            {tQuota(($) => $.observed_ago, {
+              time: formatCompactDuration(now - lastPolledMs),
+            })}
+          </span>
+        )}
+
+        {windows.length === 0 && balances.length === 0 && !probe && !source.last_error && source.kind !== "jev_free" && (
           <span className="text-caption text-muted-foreground">
             {t(($) => $.quota_sources.cards.waiting)}
           </span>
         )}
-        {observedAt > 0 && !interrupted && (
+        {observedAt > 0 && !interrupted && source.kind !== "jev_free" && (
           <span className="text-micro tabular-nums text-faint-foreground">
             {tQuota(($) => $.observed_ago, {
               time: formatCompactDuration(now - observedAt * 1000),

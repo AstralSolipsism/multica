@@ -1791,9 +1791,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/theme-store/themes/{themeId}/screenshots/{mode}", h.GetStoreThemeScreenshot)
 		r.Get("/api/me", h.GetMe)
 
-		// Account-level GLM (Zhipu) Coding Plan balance for the runtimes
-		// page's fixed provider card. enabled=false when no key configured.
-		r.Get("/api/glm-quota", h.GetGlmQuota)
 		// User-scoped subscription quota sources (OL-1205 scenario 3).
 		// Human-only: an agent task token or cloud PAT authenticates as its
 		// owner and must not read or write subscription credentials.

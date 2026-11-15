@@ -33,8 +33,7 @@
     "source_opencode_free": "OpenCode Zen(무료)",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "Alibaba Cloud Model Studio",
-    "source_self_hosted": "자체 호스팅",
-    "counts": "데몬 시작 이후: 성공 {{success}}회, 폴백 {{fallback}}회"
+    "source_self_hosted": "자체 호스팅"
   },
   "account_pools": {
     "pool_suffix": "풀",
@@ -51,13 +50,11 @@
     "recovers_in": "{{time}} 후 복구",
     "earliest_recovery": "가장 빠른 복구: {{time}} 후 #{{account}}"
   },
-  "glm_title": "GLM 플랜 잔여량",
   "glm_window_tokens": "5시간 토큰",
   "glm_window_tokens_weekly": "7d 토큰",
   "glm_window_tokens_generic": "토큰 윈도우",
   "glm_window_time": "월간 도구 크레딧",
   "glm_window_credit": "5시간 크레딧",
   "glm_window_credit_weekly": "7d 크레딧",
-  "glm_window_credit_generic": "크레딧 윈도우",
-  "glm_window_fallback": "{{type}}"
+  "glm_window_credit_generic": "크레딧 윈도우"
 }

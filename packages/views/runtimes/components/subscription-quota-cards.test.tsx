@@ -156,6 +156,134 @@ describe("SubscriptionQuotaCards", () => {
     expect(screen.getAllByText(/剩 \d+%/).length).toBeGreaterThan(0);
   });
 
+  it("renders a DeepSeek money balance with topped-up/granted breakdown in the tooltip", async () => {
+    const deepseek = source({
+      id: "source-ds",
+      kind: "deepseek",
+      name: "DeepSeek 充值",
+      quota: {
+        provider: "deepseek",
+        status: "ok",
+        source: "subscription",
+        observed_at: NOW_SEC - 120,
+        available: true,
+        windows: [],
+        balances: [
+          { currency: "CNY", total_balance: 48.5, granted_balance: 0.5, topped_up_balance: 48 },
+        ],
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[deepseek]} now={NOW} />);
+
+    expect(screen.getByText("CNY")).toBeInTheDocument();
+    expect(screen.getAllByText("Available · balance ¥48.50").length).toBeGreaterThan(0);
+    await userEvent.hover(chip("Available · balance ¥48.50"));
+    expect(await screen.findByText("Topped-up balance ¥48.00")).toBeInTheDocument();
+    expect(screen.getByText("Granted balance ¥0.50")).toBeInTheDocument();
+  });
+
+  it("flags an exhausted or unavailable balance destructively", () => {
+    const drained = source({
+      id: "source-ds2",
+      kind: "deepseek",
+      name: "Drained",
+      quota: {
+        provider: "deepseek",
+        status: "limited",
+        source: "subscription",
+        observed_at: NOW_SEC - 120,
+        available: false,
+        windows: [],
+        balances: [{ currency: "CNY", total_balance: -2.5 }],
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[drained]} now={NOW} />);
+
+    const exhaustedPill = screen.getAllByText("Balance exhausted / unavailable")[0];
+    expect(exhaustedPill?.parentElement?.className).toContain("text-destructive");
+  });
+
+  it("renders the jev_free health probe with latency", () => {
+    const free = source({
+      id: "source-free",
+      kind: "jev_free",
+      name: "免费通道",
+      quota: {
+        provider: "opencode",
+        status: "ok",
+        source: "subscription",
+        observed_at: NOW_SEC - 30,
+        available: true,
+        windows: [],
+        probe: { available: true, latency_ms: 340, model: "jev-1.13-free" },
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[free]} now={NOW} />);
+
+    const pill = screen.getByText("Healthy · 340ms").closest("span")!;
+    expect(pill.className).toContain("text-success");
+    expect(screen.queryByText("Waiting for the first collection")).not.toBeInTheDocument();
+  });
+
+  it("never labels an unavailable probe as healthy (402 / Insufficient balance snapshot)", () => {
+    const unavailable = source({
+      id: "source-free3",
+      kind: "jev_free",
+      name: "免费通道",
+      quota: {
+        provider: "opencode",
+        status: "limited",
+        source: "subscription",
+        observed_at: NOW_SEC - 30,
+        available: false,
+        windows: [],
+        probe: { available: false, latency_ms: 210, model: "jev-1.13-free" },
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[unavailable]} now={NOW} />);
+
+    expect(screen.queryByText(/Healthy ·/)).not.toBeInTheDocument();
+    const pill = screen.getByText("Abnormal").closest("span")!;
+    expect(pill.className).toContain("text-destructive");
+  });
+
+  it("labels an opencode pay-as-you-go probe exhaustion as balance exhausted", () => {
+    const drained = source({
+      id: "source-oc",
+      kind: "opencode",
+      name: "OpenCode",
+      quota: {
+        provider: "opencode",
+        status: "limited",
+        source: "subscription",
+        observed_at: NOW_SEC - 30,
+        available: false,
+        windows: [],
+        probe: { available: false, latency_ms: 180, model: "jev-1.13" },
+      },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[drained]} now={NOW} />);
+
+    const pill = screen.getByText("Balance exhausted / unavailable").closest("span")!;
+    expect(pill.className).toContain("text-destructive");
+  });
+
+  it("renders a rate-limited jev_free monitor with its error reason and check time", () => {
+    const limited = source({
+      id: "source-free2",
+      kind: "jev_free",
+      name: "免费通道",
+      quota: null,
+      last_polled_at: new Date(NOW - 60_000).toISOString(),
+      last_error: { code: "rate_limited", message: "rate_limited (http 429)" },
+    });
+    renderWithI18n(<SubscriptionQuotaCards sources={[limited]} now={NOW} />);
+
+    const pill = screen.getByText("Rate limited").closest("span")!;
+    expect(pill.className).toContain("text-warning");
+    expect(screen.getByText("The provider is rate limiting requests. Try again later.")).toBeInTheDocument();
+  });
+
   it("renders an enabled source with no snapshot as waiting", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[source({ quota: null })]} now={NOW} />);
     expect(screen.getByText("Waiting for the first collection")).toBeInTheDocument();

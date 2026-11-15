@@ -2,6 +2,7 @@
 
 import { CreditCard } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
+import { ProviderLogo } from "./provider-logo";
 import {
   ApiError,
   clientErrorMessage,
@@ -24,9 +25,21 @@ export function quotaSourceKindLabel(kind: string, t: RuntimesT): string {
       return t(($) => $.quota_sources.kinds.glm);
     case "zenmux":
       return t(($) => $.quota_sources.kinds.zenmux);
+    case "deepseek":
+      return t(($) => $.quota_sources.kinds.deepseek);
+    case "opencode":
+      return t(($) => $.quota_sources.kinds.opencode);
+    case "jev_free":
+      return t(($) => $.quota_sources.kinds.jev_free);
     default:
       return t(($) => $.quota_sources.kinds.unknown);
   }
+}
+
+// The kinds that need no API key (free-channel monitors). Drives the form's
+// hidden credential input and the dialog's "no credential" hint.
+export function quotaSourceRequiresCredential(kind: string): boolean {
+  return kind !== "jev_free";
 }
 
 export function QuotaSourceIcon({
@@ -45,6 +58,13 @@ export function QuotaSourceIcon({
         className={cn("size-5 shrink-0", className)}
       />
     );
+  }
+  // Reuse the runtime provider marks (DeepSeek harness, OpenCode "O").
+  if (kind === "deepseek") {
+    return <ProviderLogo provider="dsh" className={cn("size-5 shrink-0", className)} />;
+  }
+  if (kind === "opencode" || kind === "jev_free") {
+    return <ProviderLogo provider="opencode" className={cn("size-5 shrink-0", className)} />;
   }
   return (
     <span

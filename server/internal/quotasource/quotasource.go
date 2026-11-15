@@ -20,17 +20,30 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// Driver fetches one provider's subscription balance. Implementations must be
-// safe for concurrent use.
+// Driver fetches one provider's subscription balance or account status.
+// Implementations must be safe for concurrent use.
 type Driver interface {
 	Kind() string
 	DefaultBaseURL() string
 	// AllowedHosts is the base_url host allowlist; empty means "any host the
 	// SSRF validator accepts as a public HTTPS endpoint".
 	AllowedHosts() []string
-	// Fetch performs one collection round. baseURL is the validated endpoint;
-	// credential is the decrypted API key.
-	Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.RuntimePlanQuota, error)
+	// RequiresCredential reports whether the kind needs an API key. Kinds
+	// that answer false (jev_free) can be created, stored and polled with
+	// an empty credential and without the encryption box configured.
+	RequiresCredential() bool
+	// Fetch performs one collection round. baseURL is the validated
+	// endpoint; credential is the decrypted API key (empty for
+	// credential-free kinds).
+	Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.QuotaSourceSnapshot, error)
+}
+
+// snapshotOf wraps a windows-only plan quota in the persisted snapshot
+// shape the quota_source table stores.
+func snapshotOf(quota protocol.RuntimePlanQuota) *protocol.QuotaSourceSnapshot {
+	snap := &protocol.QuotaSourceSnapshot{}
+	snap.RuntimePlanQuota = quota
+	return snap
 }
 
 // DriverFor returns the driver for a quota_source kind, or nil.
@@ -40,6 +53,12 @@ func DriverFor(kind string) Driver {
 		return GLMDriver{}
 	case "zenmux":
 		return ZenMuxDriver{}
+	case "deepseek":
+		return DeepSeekDriver{}
+	case "opencode":
+		return OpenCodeDriver{}
+	case "jev_free":
+		return JevFreeDriver{}
 	default:
 		return nil
 	}
@@ -113,8 +132,9 @@ func ClassifyError(err error) string {
 // Authorization (no Bearer prefix).
 type GLMDriver struct{}
 
-func (GLMDriver) Kind() string           { return "glm" }
-func (GLMDriver) DefaultBaseURL() string { return "https://open.bigmodel.cn" }
+func (GLMDriver) Kind() string             { return "glm" }
+func (GLMDriver) DefaultBaseURL() string   { return "https://open.bigmodel.cn" }
+func (GLMDriver) RequiresCredential() bool { return true }
 func (GLMDriver) AllowedHosts() []string {
 	return []string{"open.bigmodel.cn", "api.z.ai", "bigmodel.cn"}
 }
@@ -167,7 +187,7 @@ type glmRaw struct {
 	} `json:"data"`
 }
 
-func (GLMDriver) Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.RuntimePlanQuota, error) {
+func (GLMDriver) Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.QuotaSourceSnapshot, error) {
 	var raw glmRaw
 	if err := fetchJSON(ctx, client, strings.TrimRight(baseURL, "/")+"/api/monitor/usage/quota/limit", credential, &raw); err != nil {
 		return nil, err
@@ -226,7 +246,7 @@ func (GLMDriver) Fetch(ctx context.Context, client *http.Client, baseURL, creden
 	if limited {
 		quota.Status = protocol.PlanQuotaStatusLimited
 	}
-	return quota, nil
+	return snapshotOf(*quota), nil
 }
 
 // usedPercent prefers the provider's percentage (used), else derives it from
@@ -251,9 +271,10 @@ func usedPercent(percentage, usage, remaining *float64) *float64 {
 // Bearer Management API key.
 type ZenMuxDriver struct{}
 
-func (ZenMuxDriver) Kind() string           { return "zenmux" }
-func (ZenMuxDriver) DefaultBaseURL() string { return "https://zenmux.ai" }
-func (ZenMuxDriver) AllowedHosts() []string { return []string{"zenmux.ai", "www.zenmux.ai"} }
+func (ZenMuxDriver) Kind() string             { return "zenmux" }
+func (ZenMuxDriver) DefaultBaseURL() string   { return "https://zenmux.ai" }
+func (ZenMuxDriver) RequiresCredential() bool { return true }
+func (ZenMuxDriver) AllowedHosts() []string   { return []string{"zenmux.ai", "www.zenmux.ai"} }
 
 type zenmuxEnvelope struct {
 	Success bool `json:"success"`
@@ -268,7 +289,7 @@ type zenmuxQuotaWindow struct {
 	ResetsAt        *string  `json:"resets_at,omitempty"`        // ISO 8601
 }
 
-func (ZenMuxDriver) Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.RuntimePlanQuota, error) {
+func (ZenMuxDriver) Fetch(ctx context.Context, client *http.Client, baseURL, credential string, now time.Time) (*protocol.QuotaSourceSnapshot, error) {
 	var env zenmuxEnvelope
 	url := strings.TrimRight(baseURL, "/") + "/api/v1/management/subscription/detail"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -335,5 +356,5 @@ func (ZenMuxDriver) Fetch(ctx context.Context, client *http.Client, baseURL, cre
 	if limited {
 		quota.Status = protocol.PlanQuotaStatusLimited
 	}
-	return quota, nil
+	return snapshotOf(*quota), nil
 }
