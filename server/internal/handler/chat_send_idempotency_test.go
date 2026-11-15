@@ -17,9 +17,11 @@ func TestSendChatMessageIdempotency(t *testing.T) {
 	key := uuidToString(dbid.NewV7())
 	send := func(session, content, id string, status int) SendChatMessageResponse {
 		t.Helper()
-		req := newRequest("POST", "/api/chat/sessions/"+session+"/messages", map[string]any{
-			"content": content, "client_message_id": id,
-		})
+		body := map[string]any{"content": content}
+		if id != "" {
+			body["submission_id"] = id
+		}
+		req := newRequest("POST", "/api/chat/sessions/"+session+"/messages", body)
 		req = withChatTestWorkspaceCtx(t, withURLParam(req, "sessionId", session))
 		var out SendChatMessageResponse
 		response := testutil.Call(t, testHandler.SendChatMessage, req).Want(status)

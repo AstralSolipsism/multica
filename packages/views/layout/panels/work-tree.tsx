@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useId, useMemo, useRef, useSyncExternalStore, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -9,6 +9,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Folder, Plus } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { IconButton } from "@multica/ui/components/common/icon-button";
+import { DropdownMenuItem } from "@multica/ui/components/ui/dropdown-menu";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { issueKeys, sidebarIssuesOptions } from "@multica/core/issues/queries";
 import { filterDependencyState, statusCatalogSource } from "@multica/core/issues/surface/filter-dependency";
@@ -36,10 +37,12 @@ import {
   isPathWithin,
   panelRowStateClass,
 } from "../panel-nav";
-import { ProjectIcon } from "../../projects/components/project-icon";
-import { useDragClickGuard } from "../use-drag-click-guard";
 import { useSpacePanelOpen } from "../space-panel-open-context";
-import { RowMenu } from "./row-menu";
+import { ProjectIcon } from "../../projects/components/project-icon";
+import { ProjectMenu } from "../../projects/components/project-row-actions";
+import { shouldOpenRowMenu, useRowMenu } from "../../common/point-menu";
+import { CollectionRowContext } from "../collection-list/row-context";
+import { useDragClickGuard } from "../use-drag-click-guard";
 import { ProjectsSectionSettings } from "./sidebar-settings";
 import { SidebarIssueList, TreeRow } from "./sidebar-tree";
 
@@ -281,7 +284,6 @@ function ProjectTreeItem({
   const linkRef = useRef<HTMLAnchorElement>(null);
   const source = projectSidebarSource(project.id);
   const [expanded, setExpanded] = useExpanded(source);
-  const [menuOpen, setMenuOpen] = useState(false);
   const open = useSpacePanelOpen();
   const statusCatalog = useIssueStatuses(wsId, open);
   const catalogDependency = filterDependencyState(true, [statusCatalogSource(statusCatalog)]);
@@ -291,6 +293,13 @@ function ProjectTreeItem({
   const prefetch = usePrefetch(wsId, source, params);
 
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: project.id });
+  // Right-click opens the projects page's row menu at the cursor. It mounts on
+  // the first right-click, so idle rows hold no menu or its queries.
+  const rowMenu = useRowMenu();
+  const rowMenuContext = useMemo(
+    () => ({ menu: rowMenu.menu, setMenu: rowMenu.setMenu }),
+    [rowMenu.menu, rowMenu.setMenu],
+  );
 
   return (
     <li
@@ -317,12 +326,11 @@ function ProjectTreeItem({
         listId={listId}
         toggleLabel={t(($) => $.panels.work.project_issues, { name: project.title })}
         onPrefetch={prefetch}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
+        onContextMenu={(event: MouseEvent) => {
+          if (shouldOpenRowMenu(event)) rowMenu.openAtPointer(event);
         }}
         trailing={
-          // The actions take the count's place on hover, so the row never reflows.
+          // The button takes the count's place on hover, so the row never reflows.
           <span className="relative flex h-5 min-w-5 items-center justify-end">
             {showCount && (
               <PanelCount
@@ -330,27 +338,33 @@ function ProjectTreeItem({
                 className="transition-opacity group-focus-within/row:opacity-0 group-hover/row:opacity-0 [@media(pointer:coarse)]:opacity-0"
               />
             )}
-            <span className="absolute -right-2 z-10 flex items-center opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
-              <RowMenu
-                label={t(($) => $.panels.work.project_actions, { name: project.title })}
-                open={menuOpen}
-                onOpenChange={setMenuOpen}
-              >
-                <ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={open && menuOpen} />
-              </RowMenu>
-              <IconButton
-                label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
-                size="icon-xs"
-                className="text-muted-foreground"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
-              >
-                <Plus />
-              </IconButton>
-            </span>
+            <IconButton
+              label={t(($) => $.panels.work.new_issue_in_project, { name: project.title })}
+              size="icon-xs"
+              className="absolute -right-2 z-10 text-muted-foreground opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => openCreateIssueWithPreference({ project_id: project.id })}
+            >
+              <Plus />
+            </IconButton>
           </span>
         }
       />
+      {rowMenu.menu.point && (
+        <CollectionRowContext.Provider value={rowMenuContext}>
+          <ProjectMenu
+            project={project}
+            triggerHidden
+            leading={
+              <DropdownMenuItem onClick={() => openCreateIssueWithPreference({ project_id: project.id })}>
+                <Plus />
+                {t(($) => $.panels.work.new_issue_here)}
+              </DropdownMenuItem>
+            }
+            trailing={<ProjectEngineeringMenuItems wsId={wsId} projectId={project.id} userId={userId} active={rowMenu.menu.open} />}
+          />
+        </CollectionRowContext.Provider>
+      )}
       {expanded && (
         <SidebarIssueList
           id={listId}

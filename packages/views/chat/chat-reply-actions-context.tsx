@@ -9,9 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useChatStore } from "@multica/core/chat";
 import type { Attachment, ChatSendAttempt } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
+import { useChatStore } from "@multica/core/chat";
 
 /**
  * Reply actions for HTML blocks rendered inside a chat conversation (a
@@ -26,7 +26,7 @@ export type ChatReplyActions = Readonly<{
    * Send `content` as the user's next message in the active session through
    * the surface's own `handleSend`, so queueing, failure handling and the
    * archived-agent guards all apply. `cardKey` is the card's stable identity
-   * (hashSource of its html): it scopes the retry attempt below.
+   * (hashSource of its html).
    */
   submit: (content: string, cardKey: string) => Promise<boolean>;
   /** Replace the compose draft with `content` and focus the composer. */
@@ -35,9 +35,7 @@ export type ChatReplyActions = Readonly<{
 
 /**
  * The chat composer's send entry — `useChatController().handleSend` on the
- * full page, the floating window's own copy. The attempt argument is passed
- * EXPLICITLY: without it each call mints a fresh clientMessageId and a retry
- * after a lost response would duplicate the message and its task server-side.
+ * full page, the floating window's own copy.
  */
 export type ChatSurfaceSend = (
   content: string,
@@ -66,11 +64,11 @@ export function ChatReplyActionsProvider({
   children: ReactNode;
 }) {
   // One attempt per [sessionId, cardKey], kept across FAILED sends so an
-  // unchanged answer retried after a lost response reuses the same
-  // clientMessageId and the server's dedup window replays the first result —
-  // same rule as the composer's sendAttemptsRef (chat-input.tsx). Component-
-  // local by design: not in Zustand, not persisted. A success deletes the
-  // record; a changed answer replaces it with a fresh id.
+  // unchanged answer retried after a lost response reuses the same submission
+  // UUID and the server replays the first acceptance — same rule as the
+  // composer's sendAttemptsRef (chat-input.tsx). Component-local by design:
+  // not in Zustand, not persisted. A success deletes the record; a changed
+  // answer replaces it with a fresh id.
   const attemptsRef = useRef(
     new Map<string, { content: string; attempt: ChatSendAttempt }>(),
   );
@@ -83,7 +81,7 @@ export function ChatReplyActionsProvider({
       const key = `${sessionId}:${cardKey}`;
       let record = attemptsRef.current.get(key);
       if (!record || record.content !== content) {
-        record = { content, attempt: { clientMessageId: createSafeId() } };
+        record = { content, attempt: { submissionId: createSafeId() } };
         attemptsRef.current.set(key, record);
       }
       let ok = false;

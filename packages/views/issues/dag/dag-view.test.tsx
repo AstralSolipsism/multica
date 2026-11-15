@@ -532,6 +532,7 @@ describe("DagView error and refresh handling", () => {
       negatedFilters: [],
       advancedFilter: null,
       agentRunningFilter: false,
+      agentIdleFilter: false,
       unreadFilter: false,
       propertyFilters: {},
     };
@@ -549,6 +550,7 @@ describe("DagView error and refresh handling", () => {
       dueDate: new Set(),
       negated: new Set(),
       agentRunning: false,
+      agentIdle: false,
       unread: false,
       property: new Map(),
       raw,

@@ -42,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/themestore"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -218,7 +219,6 @@ type RuntimeRecoveryNotifier interface {
 }
 
 type Handler struct {
-	chatSends              *service.ChatSendCache
 	Queries                *db.Queries
 	ReadSelector           *dbreader.Selector
 	DB                     dbExecutor
@@ -247,6 +247,9 @@ type Handler struct {
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
 	FeatureFlags          *featureflag.Service
+	// ThemeStore serves the community theme registry. Nil when the operator
+	// turned the store off: its routes return 404 and /api/config omits it.
+	ThemeStore *themestore.Store
 	// IssueStatusCatalog reads the workspace status catalog. Defaults to
 	// Queries; a test can substitute a counting wrapper to assert HOW MANY
 	// catalog reads a request performs, which is the only property that
@@ -545,7 +548,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
 	h := &Handler{
-		chatSends:                    &service.ChatSendCache{},
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
@@ -864,19 +866,6 @@ func (h *Handler) NotifyRuntimeRecovered(_ context.Context, workspaceID string) 
 	h.PublishRuntimeRefresh(workspaceID, "system", "", "heartbeat_recovery")
 }
 
-// publishTask is publish() plus a TaskID hint so the realtime layer can route
-// the event to the per-task scope rather than the whole workspace.
-func (h *Handler) publishTask(eventType, workspaceID, actorType, actorID, taskID string, payload any) {
-	h.Bus.Publish(events.Event{
-		Type:        eventType,
-		WorkspaceID: workspaceID,
-		ActorType:   actorType,
-		ActorID:     actorID,
-		TaskID:      taskID,
-		Payload:     payload,
-	})
-}
-
 // publishChat is publish() plus the chat session routing hints. actorID must
 // be the session's creator: every chat endpoint gates on creator ownership
 // before publishing, and the realtime layer delivers the event to that user
@@ -1074,6 +1063,9 @@ func (h *Handler) requireWorkspaceMember(w http.ResponseWriter, r *http.Request,
 
 	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
 	if err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return db.Member{}, false
+		}
 		writeError(w, http.StatusNotFound, notFoundMsg)
 		return db.Member{}, false
 	}
@@ -1153,7 +1145,11 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 		}
 		return true
 	}
-	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+	issue, found, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID)
+	if writeQueryCancellation(w, r, err) {
+		return db.Issue{}, false
+	}
+	if found {
 		if !visible(issue) {
 			return db.Issue{}, false
 		}
@@ -1172,11 +1168,14 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid workspace_id")
 		return db.Issue{}, false
 	}
-	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+	issue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 		ID:          issueUUID,
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return db.Issue{}, false
+		}
 		notFound()
 		return db.Issue{}, false
 	}
@@ -1195,31 +1194,35 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 // resolved to the same issue number, so `FOO-134` and `TRS-134` were
 // interchangeable — which makes the identifier URL `/{ws}/issues/{key}`
 // unusable as a canonical link.
-func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool) {
+func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool, error) {
 	parts := splitIdentifier(id)
 	if parts == nil {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	if workspaceID == "" {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	// Case-insensitive: a hand-typed `trs-134` should open `TRS-134`.
-	prefix := h.getIssuePrefix(ctx, wsUUID)
+	workspace, err := h.Queries.GetWorkspace(ctx, wsUUID)
+	if err != nil {
+		return db.Issue{}, false, err
+	}
+	prefix := issuePrefixForWorkspace(workspace)
 	if prefix == "" || !strings.EqualFold(parts.prefix, prefix) {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
 		WorkspaceID: wsUUID,
 		Number:      parts.number,
 	})
 	if err != nil {
-		return db.Issue{}, false
+		return db.Issue{}, false, err
 	}
-	return issue, true
+	return issue, true, nil
 }
 
 type identifierParts struct {
@@ -1312,6 +1315,9 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
+		if writeQueryCancellation(w, r, err) {
+			return db.Agent{}, false
+		}
 		writeError(w, http.StatusNotFound, "agent not found")
 		return db.Agent{}, false
 	}

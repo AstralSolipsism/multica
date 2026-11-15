@@ -17,7 +17,6 @@ import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
   ChatMessage,
-  ChatSendAttempt,
   ChatSession,
   MemberWithUser,
   StorageAdapter,
@@ -101,7 +100,7 @@ vi.mock("../../chat/components/chat-input", () => ({
         {leftAdornment}
         <button
           type="button"
-          onClick={() => void onSend("hello", undefined, vi.fn(), [], { clientMessageId: "11111111-1111-4111-8111-111111111111" })}
+          onClick={() => void onSend("hello", undefined, vi.fn(), [])}
         >
           send from composer
         </button>
@@ -342,7 +341,9 @@ describe("the floating chat on a side chat", () => {
     await waitFor(() =>
       expect(within(screen.getByTestId("messages")).getByText("Tell me more")).toBeInTheDocument(),
     );
-    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith("side-1", "Tell me more", undefined, expect.any(String));
+    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith(
+      "side-1", "Tell me more", undefined, expect.any(String),
+    );
     expect(apiMock.createChatSession).not.toHaveBeenCalled();
     expect(screen.queryByRole("group", { name: "Common questions" })).toBeNull();
     // The banner stays with the chat.
@@ -396,7 +397,7 @@ describe("the floating chat on a side chat", () => {
     expect(apiMock.getChatSession).not.toHaveBeenCalled();
   });
 
-  it("retries a lost first-send response with the same session and client id", async () => {
+  it("retries a lost first-send response in the same session", async () => {
     apiMock.createChatSession.mockResolvedValue({
       ...sideChat,
       id: "new-1",
@@ -409,24 +410,25 @@ describe("the floating chat on a side chat", () => {
     renderWithYsk(<ChatWindow />);
     await waitFor(() => expect(composer()).toHaveAttribute("data-agent", "Sigma"));
 
-    // ChatInput owns retry identity; exercise the floating window's real send
-    // callback with the same attempt while no session has been activated yet.
-    const attempt: ChatSendAttempt = { clientMessageId: "11111111-1111-4111-8111-111111111111" };
+    // A retry after a lost response reuses the SAME submission id and the
+    // lazily created session, so the server replays the first acceptance
+    // instead of starting a second turn. The mocked composer stands in for
+    // ChatInput's sendAttemptsRef bookkeeping here.
     const commitInput = vi.fn();
+    const attempt: { submissionId: string; sessionId?: string } = { submissionId: "side-stable-submission-id" };
     await act(async () => {
       expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(false);
     });
     expect(useChatStore.getState().activeSessionId).toBeNull();
-    expect(attempt.sessionId).toBe("new-1");
     expect(commitInput).not.toHaveBeenCalled();
 
     await act(async () => {
       expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(true);
     });
-    expect(apiMock.createChatSession).toHaveBeenCalledTimes(1);
     expect(apiMock.sendChatMessage).toHaveBeenCalledTimes(2);
-    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(1, "new-1", "hello", undefined, attempt.clientMessageId);
-    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(2, "new-1", "hello", undefined, attempt.clientMessageId);
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(1, "new-1", "hello", undefined, "side-stable-submission-id");
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(2, "new-1", "hello", undefined, "side-stable-submission-id");
+    expect(attempt.sessionId).toBe("new-1");
     expect(useChatStore.getState().activeSessionId).toBe("new-1");
     expect(commitInput).toHaveBeenCalledTimes(1);
   });

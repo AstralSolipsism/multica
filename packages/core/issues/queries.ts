@@ -51,9 +51,6 @@ export interface IssueSortParam {
 
 export const issueKeys = {
   all: (wsId: string) => ["issues", wsId] as const,
-  graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
-  graph: (wsId: string, request: IssueGraphRequest) =>
-    [...issueKeys.graphAll(wsId), request] as const,
   /** PREFIX for invalidation — no sort. */
   list: (wsId: string) => [...issueKeys.all(wsId), "list"] as const,
   /** FULL KEY for queryOptions — includes sort. */
@@ -145,6 +142,9 @@ export const issueKeys = {
     [...issueKeys.sidebarAll(wsId), source, request, limit] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
+  graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
+  graph: (wsId: string, request: IssueGraphRequest) =>
+    [...issueKeys.graphAll(wsId), request] as const,
   /** Prefix for every per-issue dependency projection in a workspace — a
    *  relation or status write on one issue can change another issue's
    *  inherited/unsatisfied sets, so mutations invalidate the whole prefix. */
@@ -215,9 +215,9 @@ export const issueKeys = {
   subscribersAll: () => ["issues", "subscribers"] as const,
   subscribers: (issueId: string) =>
     [...issueKeys.subscribersAll(), issueId] as const,
-  workspaceUsage: (wsId: string) => [...issueKeys.all(wsId), "usage-summary"] as const,
   usageAll: () => ["issues", "usage"] as const,
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
+  workspaceUsage: (wsId: string) => [...issueKeys.all(wsId), "usage-summary"] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
   /** Issue-level attachments — used by the description editor so its
    *  inline file-card / image NodeViews can re-sign download URLs at
@@ -251,6 +251,7 @@ export type MyIssuesFilter = Pick<
   | "assignee_ids"
   | "assignee_types"
   | "creator_id"
+  | "created_by_user_id"
   | "project_id"
   | "involves_user_id"
 >;
@@ -484,26 +485,7 @@ export function projectGanttIssuesOptions(
   });
 }
 
-const issueDetailReads = new WeakMap<QueryClient, Map<string, Promise<Issue>>>();
-
-function readIssueDetail(qc: QueryClient, wsId: string, id: string): Promise<Issue> {
-  let reads = issueDetailReads.get(qc);
-  if (!reads) {
-    reads = new Map();
-    issueDetailReads.set(qc, reads);
-  }
-  const key = `${wsId}:${id}`;
-  const existing = reads.get(key);
-  if (existing) return existing;
-  const request = api.getIssue(id).finally(() => {
-    reads.delete(key);
-    if (reads.size === 0) issueDetailReads.delete(qc);
-  });
-  reads.set(key, request);
-  return request;
-}
-
-/** Both list endpoints cap a page here, so a longer sidebar list is fetched in pages. */
+/** The table endpoint caps a page here, so a longer sidebar list is fetched in pages. */
 const SIDEBAR_MAX_PAGE = 100;
 
 async function listSidebarTableIssues(query: IssueTableQuerySpec, limit: number): Promise<ListIssuesResponse> {
@@ -526,22 +508,6 @@ async function listSidebarTableIssues(query: IssueTableQuerySpec, limit: number)
   return { issues, total };
 }
 
-async function listSidebarIssues(params: ListIssuesParams, limit: number): Promise<ListIssuesResponse> {
-  const issues: Issue[] = [];
-  let total = 0;
-  do {
-    const page = await api.listIssues({
-      ...params,
-      limit: Math.min(limit - issues.length, SIDEBAR_MAX_PAGE),
-      offset: issues.length,
-    });
-    issues.push(...page.issues);
-    total = page.total;
-    if (page.issues.length === 0) break;
-  } while (issues.length < limit && issues.length < total);
-  return { issues, total };
-}
-
 /** The first `limit` issues of a sidebar list, with the filtered total. */
 export function sidebarIssuesOptions(
   wsId: string,
@@ -551,11 +517,27 @@ export function sidebarIssuesOptions(
 ) {
   return queryOptions({
     queryKey: issueKeys.sidebar(wsId, source, request, limit),
-    queryFn: () =>
-      "table" in request
-        ? listSidebarTableIssues(request.table, limit)
-        : listSidebarIssues(request, limit),
+    queryFn: () => listSidebarTableIssues(request.table, limit),
   });
+}
+
+const issueDetailReads = new WeakMap<QueryClient, Map<string, Promise<Issue>>>();
+
+function readIssueDetail(qc: QueryClient, wsId: string, id: string): Promise<Issue> {
+  let reads = issueDetailReads.get(qc);
+  if (!reads) {
+    reads = new Map();
+    issueDetailReads.set(qc, reads);
+  }
+  const key = `${wsId}:${id}`;
+  const existing = reads.get(key);
+  if (existing) return existing;
+  const request = api.getIssue(id).finally(() => {
+    reads.delete(key);
+    if (reads.size === 0) issueDetailReads.delete(qc);
+  });
+  reads.set(key, request);
+  return request;
 }
 
 export function issueDetailOptions(wsId: string, id: string) {
@@ -791,13 +773,28 @@ export function issueSubscribersOptions(issueId: string) {
 }
 
 // Reports arrive over realtime; the interval only re-derives "unreachable"
-// once a daemon goes quiet, which no event announces.
+// once a daemon goes quiet, and a command expiring when its machine never
+// answers, which no event announces.
 export function issueEnvironmentsOptions(wsId: string, issueId: string) {
   return queryOptions({
     queryKey: issueKeys.environments(wsId, issueId),
     queryFn: () => api.listIssueEnvironments(issueId),
     enabled: !!wsId && !!issueId,
-    refetchInterval: 60_000,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const pending = !!data && (
+        data.pending_starts.length > 0 ||
+        data.environments.some((env) => env.pending_action?.status === "pending")
+      );
+      return pending ? 5_000 : 60_000;
+    },
+  });
+}
+
+export function issueUsageOptions(issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.usage(issueId),
+    queryFn: () => api.getIssueUsage(issueId),
   });
 }
 
@@ -807,13 +804,6 @@ export function workspaceIssueUsageOptions(wsId: string) {
     queryFn: async () => Object.groupBy(await api.listWorkspaceIssueUsage(), (row) => row.issue_id),
     staleTime: 30_000,
     enabled: !!wsId,
-  });
-}
-
-export function issueUsageOptions(issueId: string) {
-  return queryOptions({
-    queryKey: issueKeys.usage(issueId),
-    queryFn: () => api.getIssueUsage(issueId),
   });
 }
 

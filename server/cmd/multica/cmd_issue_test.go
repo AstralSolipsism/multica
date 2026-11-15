@@ -1411,89 +1411,6 @@ func TestRunIssueCreateRewritesInlineRelativeAttachmentWithoutDuplicating(t *tes
 	}
 }
 
-func TestResolveUploadedAttachmentReferencesEscapesAndTitles(t *testing.T) {
-	uploaded := []uploadedIssueAttachment{
-		{
-			localPath: "shot(1).png",
-			response: cli.AttachmentResponse{
-				ID:          "att-1",
-				Filename:    "shot(1).png",
-				MarkdownURL: "https://api.example/api/attachments/att-1/download",
-			},
-		},
-		{
-			localPath: "a&b.png",
-			response: cli.AttachmentResponse{
-				ID:          "att-2",
-				Filename:    "a&b.png",
-				MarkdownURL: "https://api.example/api/attachments/att-2/download",
-			},
-		},
-		{
-			localPath: "sub/my file (1).png",
-			response: cli.AttachmentResponse{
-				ID:          "att-3",
-				Filename:    "my file (1).png",
-				MarkdownURL: "https://api.example/api/attachments/att-3/download",
-			},
-		},
-		{
-			localPath: "out/only-basename.png",
-			response: cli.AttachmentResponse{
-				ID:          "att-4",
-				Filename:    "only-basename.png",
-				MarkdownURL: "https://api.example/api/attachments/att-4/download",
-			},
-		},
-		{
-			localPath: "before/dup.png",
-			response: cli.AttachmentResponse{
-				ID:          "att-5",
-				Filename:    "dup.png",
-				MarkdownURL: "https://api.example/api/attachments/att-5/download",
-			},
-		},
-		{
-			localPath: "after/dup.png",
-			response: cli.AttachmentResponse{
-				ID:          "att-6",
-				Filename:    "dup.png",
-				MarkdownURL: "https://api.example/api/attachments/att-6/download",
-			},
-		},
-	}
-
-	body := strings.Join([]string{
-		`![escaped parens](shot\(1\).png "say \"hi\"")`,
-		`![html entity](a&amp;b.png 'single "quoted" title')`,
-		`![numeric entity](a&#38;b.png)`,
-		`![angle bracketed](<./sub/my file (1).png> "kept \"as-is\"")`,
-		`![basename fallback](only-basename.png)`,
-		`![exact path 1](before/dup.png)`,
-		`![exact path 2](after/dup.png)`,
-		`![ambiguous basename](dup.png)`,
-		`![traversal 1](../only-basename.png)`,
-		`![traversal 2](out/../only-basename.png)`,
-	}, "\n\n")
-
-	got := resolveUploadedAttachmentReferences(body, uploaded)
-	want := strings.Join([]string{
-		`![escaped parens](https://api.example/api/attachments/att-1/download "say \"hi\"")`,
-		`![html entity](https://api.example/api/attachments/att-2/download 'single "quoted" title')`,
-		`![numeric entity](https://api.example/api/attachments/att-2/download)`,
-		`![angle bracketed](https://api.example/api/attachments/att-3/download "kept \"as-is\"")`,
-		`![basename fallback](https://api.example/api/attachments/att-4/download)`,
-		`![exact path 1](https://api.example/api/attachments/att-5/download)`,
-		`![exact path 2](https://api.example/api/attachments/att-6/download)`,
-		`![ambiguous basename](dup.png)`,
-		`![traversal 1](../only-basename.png)`,
-		`![traversal 2](out/../only-basename.png)`,
-	}, "\n\n")
-	if got != want {
-		t.Fatalf("resolveUploadedAttachmentReferences:\ngot:  %s\nwant: %s", got, want)
-	}
-}
-
 func TestRunIssueCommentAddRewritesInlineRelativeAttachmentReferences(t *testing.T) {
 	const issueID = "11111111-1111-4111-8111-111111111111"
 	var postedContent string
@@ -4926,6 +4843,52 @@ func TestRunIssueListFieldsFiltersJSONOutput(t *testing.T) {
 				if _, ok := got[f]; !ok {
 					t.Fatalf("issue missing field %q; got keys %v", f, keysOf(got))
 				}
+			}
+		})
+	}
+}
+
+func TestRunIssueListRequesterFieldProjection(t *testing.T) {
+	requesterID := "user-requester"
+	for _, tc := range []struct {
+		name string
+		id   *string
+	}{
+		{"attributed", &requesterID},
+		{"unattributed", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := sampleIssueResponse()
+			issue.CreatorType = "agent"
+			issue.RequesterID = tc.id
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{"issues": []any{issue}, "total": 1})
+			}))
+			defer srv.Close()
+			setCLITestServerEnv(t, srv.URL)
+			t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+			t.Setenv("MULTICA_TOKEN", "test-token")
+
+			cmd := newIssueListTestCmd()
+			_ = cmd.Flags().Set("output", "json")
+			_ = cmd.Flags().Set("fields", "id,requester_id")
+			out, err := captureStdout(t, func() error { return runIssueList(cmd, nil) })
+			if err != nil {
+				t.Fatalf("runIssueList: %v", err)
+			}
+			var resp struct {
+				Issues []map[string]any `json:"issues"`
+			}
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("unmarshal output: %v", err)
+			}
+			var wantRequester any
+			if tc.id != nil {
+				wantRequester = *tc.id
+			}
+			want := []map[string]any{{"id": issue.ID, "requester_id": wantRequester}}
+			if !reflect.DeepEqual(resp.Issues, want) {
+				t.Fatalf("issues = %#v, want %#v", resp.Issues, want)
 			}
 		})
 	}

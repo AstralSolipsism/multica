@@ -112,8 +112,8 @@ function mountCard(handleSend: MockSend) {
   return { ...view, frame, reply };
 }
 
-describe("ChatReplyActionsProvider — retry contract", () => {
-  it("reuses the same clientMessageId when an unanswered send is retried unchanged", async () => {
+describe("ChatReplyActionsProvider — submit and fill", () => {
+  it("reuses the same submission id when an unanswered send is retried unchanged", async () => {
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const { ref } = renderActionsProbe(handleSend);
 
@@ -122,7 +122,7 @@ describe("ChatReplyActionsProvider — retry contract", () => {
       expect(await ref.current!.submit("拍板：方案 B", "card-1")).toBe(true);
     });
     const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
+    expect(second![4]!.submissionId).toBe(first![4]!.submissionId);
     // Same record object — handleSend pins attempt.sessionId into it, and the
     // retry must carry that pinned session back.
     expect(second![4]).toBe(first![4]);
@@ -134,15 +134,13 @@ describe("ChatReplyActionsProvider — retry contract", () => {
     await act(async () => {
       await ref.current!.submit("answer", "card-1");
     });
-    const [call] = handleSend.mock.calls;
-    expect(call![0]).toBe("answer");
-    expect(call![1]).toBeUndefined();
-    expect(call![2]).toBeUndefined();
-    expect(call![3]).toEqual([]);
-    expect(typeof call![4]!.clientMessageId).toBe("string");
+    expect(handleSend).toHaveBeenCalledExactlyOnceWith(
+      "answer", undefined, undefined, [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
+    );
   });
 
-  it("mints a fresh clientMessageId for a changed answer", async () => {
+  it("mints a fresh submission id for a changed answer", async () => {
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValue(false);
     const { ref } = renderActionsProbe(handleSend);
     await act(async () => {
@@ -150,7 +148,7 @@ describe("ChatReplyActionsProvider — retry contract", () => {
       await ref.current!.submit("answer B", "card-1");
     });
     const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).not.toBe(first![4]!.clientMessageId);
+    expect(second![4]!.submissionId).not.toBe(first![4]!.submissionId);
   });
 
   it("clears the record on success so a repeat send is a new attempt", async () => {
@@ -161,7 +159,7 @@ describe("ChatReplyActionsProvider — retry contract", () => {
       await ref.current!.submit("answer", "card-1");
     });
     const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).not.toBe(first![4]!.clientMessageId);
+    expect(second![4]!.submissionId).not.toBe(first![4]!.submissionId);
   });
 
   it("keys the attempt per card and per session", async () => {
@@ -173,7 +171,7 @@ describe("ChatReplyActionsProvider — retry contract", () => {
       useChatStore.getState().activeSessionId = "session-2";
       await ref.current!.submit("answer", "card-1");
     });
-    const ids = handleSend.mock.calls.map((call) => call[4]!.clientMessageId);
+    const ids = handleSend.mock.calls.map((call) => call[4]!.submissionId);
     expect(new Set(ids).size).toBe(3);
   });
 
@@ -185,7 +183,7 @@ describe("ChatReplyActionsProvider — retry contract", () => {
       expect(await ref.current!.submit("answer", "card-1")).toBe(true);
     });
     const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
+    expect(second![4]!.submissionId).toBe(first![4]!.submissionId);
   });
 
   it("publishes fill requests the composer can adopt", () => {
@@ -223,11 +221,12 @@ describe("HTML block inside a chat conversation", () => {
     post(frame, { type: "submit-comment", content: "拍板：方案 B" });
     await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", true), "*"));
     expect(handleSend).toHaveBeenCalledExactlyOnceWith(
-      "拍板：方案 B", undefined, undefined, [], expect.objectContaining({ clientMessageId: expect.any(String) }),
+      "拍板：方案 B", undefined, undefined, [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
     );
   });
 
-  it("reuses the clientMessageId when the card is retried after a lost response", async () => {
+  it("acknowledges a retried card send after a lost response", async () => {
     activation.isActive = true;
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const { frame, reply } = mountCard(handleSend);
@@ -235,11 +234,9 @@ describe("HTML block inside a chat conversation", () => {
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", false), "*"));
     post(frame, { type: "submit-comment", content: "answer" });
     await waitFor(() => expect(reply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
-    const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
   });
 
-  it("keeps the card's retry identity across a reload (the document key changes, the card key does not)", async () => {
+  it("acknowledges a card retry across a reload (the document key changes)", async () => {
     activation.isActive = true;
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const { frame, reply } = mountCard(handleSend);
@@ -251,8 +248,6 @@ describe("HTML block inside a chat conversation", () => {
     const freshReply = vi.spyOn(fresh.contentWindow!, "postMessage");
     post(fresh, { type: "submit-comment", content: "answer" });
     await waitFor(() => expect(freshReply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
-    const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
   });
 
   it("rejects actions without transient activation, before handleSend", async () => {
@@ -263,7 +258,7 @@ describe("HTML block inside a chat conversation", () => {
     expect(handleSend).not.toHaveBeenCalled();
   });
 
-  it("keeps the card's retry identity across a theme rebuild (the srcdoc changes, the card key does not)", async () => {
+  it("acknowledges a card retry across a theme rebuild (the srcdoc changes)", async () => {
     activation.isActive = true;
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const { frame, reply } = mountCard(handleSend);
@@ -285,8 +280,6 @@ describe("HTML block inside a chat conversation", () => {
     const rebuiltReply = vi.spyOn(rebuilt.contentWindow!, "postMessage");
     post(rebuilt, { type: "submit-comment", content: "answer" });
     await waitFor(() => expect(rebuiltReply).toHaveBeenCalledWith(result("submit-comment", true), "*"));
-    const [first, second] = handleSend.mock.calls;
-    expect(second![4]!.clientMessageId).toBe(first![4]!.clientMessageId);
   });
 
   it("fills the composer draft and acknowledges ok", async () => {

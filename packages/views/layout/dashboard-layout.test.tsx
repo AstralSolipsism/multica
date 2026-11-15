@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./dashboard-guard", () => ({
   DashboardGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+vi.mock("./bottom-bar", () => ({ AppBottomBar: () => null }));
 vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   SidebarInset: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,

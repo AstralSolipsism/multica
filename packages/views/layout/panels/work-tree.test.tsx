@@ -47,7 +47,19 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("@multica/core/issue-statuses/hooks", () => ({
   useIssueStatuses: () => buildIssueStatusCatalog([]),
 }));
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/auth", () => {
+  const state = { user: { id: "u1" } };
+  return {
+    useAuthStore: Object.assign(
+      (selector?: (s: typeof state) => unknown) => (selector ? selector(state) : state),
+      { getState: () => state },
+    ),
+  };
+});
 vi.mock("../../navigation", () => ({
+  useIntentNavigate: () => vi.fn(),
+  useNavigation: () => ({ getShareableUrl: (path: string) => `https://app.example${path}`, push: navigationMock.push }),
   AppLink: ({
     children,
     href,
@@ -58,7 +70,6 @@ vi.mock("../../navigation", () => ({
       {children}
     </a>
   ),
-  useNavigation: () => navigationMock,
 }));
 vi.mock("../../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("@multica/ui/components/common/tooltip-hint", () => ({
@@ -179,11 +190,31 @@ describe("ProjectsSection", () => {
     expect(openCreateIssue).toHaveBeenCalledWith({ project_id: "p2" });
   });
 
+  it("opens the project's menu on right-click, led by a new issue in it", async () => {
+    renderSection();
+    fireEvent.contextMenu(screen.getByText("Mobile"), { clientX: 20, clientY: 40 });
+
+    await screen.findByRole("menuitem", { name: "Open engineering baseline" });
+    const menu = screen.getByRole("menu");
+    const items = Array.from(menu.querySelectorAll('[role="menuitem"]'), (el) => el.textContent?.trim());
+    expect(items).toEqual([
+      "New issue in this project",
+      "Rename",
+      "Open in new tab",
+      "Pin to sidebar",
+      "Copy link",
+      "Open engineering baseline",
+    ]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "New issue in this project" }));
+    expect(openCreateIssue).toHaveBeenCalledWith({ project_id: "p2" });
+  });
+
   it("loads engineering only for an open project menu and opens its baseline", async () => {
     renderSection();
     expect(apiMock.getProjectEngineeringConfig).not.toHaveBeenCalled();
 
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
     const item = await screen.findByRole("menuitem", { name: "Open engineering baseline" });
     expect(apiMock.getProjectEngineeringConfig).toHaveBeenCalledWith("ws-1", "p2");
 
@@ -195,7 +226,7 @@ describe("ProjectsSection", () => {
     apiMock.getProjectEngineeringConfig.mockReturnValue(new Promise(() => {}));
     apiMock.listMembers.mockReturnValue(new Promise(() => {}));
     renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
 
     const item = await screen.findByRole("menuitem", { name: "Loading..." });
     expect(item).toHaveAttribute("aria-disabled", "true");
@@ -204,7 +235,7 @@ describe("ProjectsSection", () => {
   it("hides engineering actions from a member when the project has not enabled them", async () => {
     apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
     renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
 
     const item = await screen.findByRole("menuitem", { name: "Engineering overview is not enabled" });
     expect(item).toHaveAttribute("aria-disabled", "true");
@@ -216,7 +247,7 @@ describe("ProjectsSection", () => {
     apiMock.getProjectEngineeringConfig.mockResolvedValue({ engineering: { enabled: false } });
     apiMock.listMembers.mockResolvedValue([{ user_id: "u1", role: "admin" }]);
     renderSection();
-    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }));
+    fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
 
     const item = await screen.findByRole("menuitem", { name: "Enable overview" });
     fireEvent.click(item);

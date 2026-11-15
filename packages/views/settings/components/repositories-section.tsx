@@ -76,6 +76,7 @@ import type {
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsSection } from "./settings-layout";
+import type { useConnectGitHub } from "./use-connect-github";
 import { GitHubMark } from "./github-mark";
 import { GitHubReuseMenuItems, useGitHubReuseConnect } from "./github-connect-reuse";
 
@@ -124,6 +125,13 @@ export function repositoryIdentity(rawURL: string): string | null {
   return `${host.toLowerCase()}/${normalizedPath}`;
 }
 
+interface RepositoryDraft {
+  /** Index being edited, or null when adding. */
+  index: number | null;
+  url: string;
+  description: string;
+}
+
 /** Copy for the install callback's `github_error`. Retrying cannot fix the
  * codes that refuse the binding, so they say what can; the suspended and
  * unverifiable ones also name the Configure-page dead end their retry hits:
@@ -147,19 +155,12 @@ function githubCallbackErrorMessage(
   }
 }
 
-interface RepositoryDraft {
-  /** Index being edited, or null when adding. */
-  index: number | null;
-  url: string;
-  description: string;
-}
-
 /**
  * The repositories agents may clone and push to. Rows are read-only; adding
  * and editing happen in a dialog that saves on confirm, so a half-typed URL
  * is never persisted and every change is one deliberate request.
  */
-export function RepositoriesSection() {
+export function RepositoriesSection({ connection }: { connection: ReturnType<typeof useConnectGitHub> }) {
   const { t } = useT("settings");
   const { t: tForkUi } = useT("fork-ui");
   const workspace = useCurrentWorkspace();
@@ -174,6 +175,13 @@ export function RepositoriesSection() {
   const [saving, setSaving] = useState(false);
   const [pendingRemovalIndex, setPendingRemovalIndex] = useState<number | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const {
+    connectedInstallationID,
+    reset: resetConnection,
+  } = connection;
+  const [preselectInstallationID, setPreselectInstallationID] = useState("");
+  const preselectedRepositoryIDs = useRef(new Set<number>());
+  const handledCallback = useRef("");
   const [githubPickerOpen, setGitHubPickerOpen] = useState(false);
   const [selectedInstallationID, setSelectedInstallationID] = useState("");
   const [selectedRepositories, setSelectedRepositories] = useState<
@@ -196,6 +204,22 @@ export function RepositoriesSection() {
   const githubConnectConfigured = githubData?.configured === true;
   const githubBrowseConfigured =
     githubData?.repository_browse_configured === true;
+  const githubRepositoriesQuery = useInfiniteQuery({
+    ...githubInstallationRepositoriesOptions(wsId, selectedInstallationID),
+    enabled:
+      githubPickerOpen &&
+      canManageWorkspace &&
+      githubBrowseConfigured &&
+      !!selectedInstallationID,
+  });
+  const githubRepositories = useMemo(
+    () =>
+      githubRepositoriesQuery.data?.pages.flatMap(
+        (page) => page.repositories,
+      ) ?? [],
+    [githubRepositoriesQuery.data?.pages],
+  );
+
   // Same connect decision as the Code tab's GitHub row: bind an account the
   // caller manages elsewhere without leaving the page, else go to GitHub. A
   // binding made here lands in the picker, like an install callback does.
@@ -216,21 +240,7 @@ export function RepositoriesSection() {
       setGitHubPickerOpen(true);
     },
   });
-  const githubRepositoriesQuery = useInfiniteQuery({
-    ...githubInstallationRepositoriesOptions(wsId, selectedInstallationID),
-    enabled:
-      githubPickerOpen &&
-      canManageWorkspace &&
-      githubBrowseConfigured &&
-      !!selectedInstallationID,
-  });
-  const githubRepositories = useMemo(
-    () =>
-      githubRepositoriesQuery.data?.pages.flatMap(
-        (page) => page.repositories,
-      ) ?? [],
-    [githubRepositoriesQuery.data?.pages],
-  );
+
   // The plain item morphs into the submenu trigger when a wait finds reusable
   // accounts; the focused element unmounts with it. Only a focus that actually
   // got lost is restored — Base UI's own focus moves are left alone.
@@ -275,6 +285,8 @@ export function RepositoriesSection() {
   // error). Open the picker once the installation list reflects the new
   // install, then drop the one-shot params so a refresh does not repeat it.
   useEffect(() => {
+    const callbackKey = navigation.searchParams.toString();
+    if (handledCallback.current === callbackKey) return;
     const connected = navigation.searchParams.get("github_connected") === "1";
     const githubError = navigation.searchParams.get("github_error");
     if ((!connected && !githubError) || !canManageWorkspace) return;
@@ -285,6 +297,7 @@ export function RepositoriesSection() {
       return;
     }
 
+    handledCallback.current = callbackKey;
     if (githubError) {
       const message = githubCallbackErrorMessage(githubError, t, tForkUi);
       // These two spell out a recovery path the user gets to see only once;
@@ -295,8 +308,13 @@ export function RepositoriesSection() {
         toast.error(message);
       }
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
-      setSelectedInstallationID(githubInstallations[0]!.id);
-      setGitHubPickerOpen(true);
+      const installationID = navigation.searchParams.get("github_installation") ?? githubInstallations[0]!.id;
+      if (githubInstallations.some((installation) => installation.id === installationID)) {
+        setSelectedInstallationID(installationID);
+        setPreselectInstallationID(installationID);
+        preselectedRepositoryIDs.current.clear();
+        setGitHubPickerOpen(true);
+      }
     } else if (githubInstallations.length > 0) {
       toast.error(t(($) => $.repositories.github_browse_not_configured));
     }
@@ -304,6 +322,7 @@ export function RepositoriesSection() {
     const next = new URLSearchParams(navigation.searchParams);
     next.delete("github_connected");
     next.delete("github_error");
+    next.delete("github_installation");
     const search = next.toString();
     navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
   }, [
@@ -316,6 +335,55 @@ export function RepositoriesSection() {
     t,
     tForkUi,
   ]);
+
+  useEffect(() => {
+    const installationID = connectedInstallationID;
+    if (!installationID || !canManageWorkspace || githubInstallationsPending || githubInstallationsFetching) return;
+    if (!githubInstallations.some((installation) => installation.id === installationID)) return;
+    if (githubBrowseConfigured) {
+      setSelectedInstallationID(installationID);
+      setPreselectInstallationID(installationID);
+      preselectedRepositoryIDs.current.clear();
+      setGitHubPickerOpen(true);
+    } else {
+      toast.error(t(($) => $.repositories.github_browse_not_configured));
+    }
+    resetConnection();
+  }, [connectedInstallationID, resetConnection, canManageWorkspace, githubInstallations, githubInstallationsPending, githubInstallationsFetching, githubBrowseConfigured, t]);
+
+  const preselectingRepositories = githubPickerOpen &&
+    selectedInstallationID === preselectInstallationID &&
+    githubRepositoriesQuery.data?.pages[0]?.repository_selection === "selected";
+
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isError: repositoriesError,
+    fetchNextPage,
+  } = githubRepositoriesQuery;
+  useEffect(() => {
+    if (preselectingRepositories && hasNextPage &&
+      !isFetchingNextPage && !repositoriesError) {
+      void fetchNextPage();
+    }
+  }, [preselectingRepositories, hasNextPage, isFetchingNextPage, repositoriesError, fetchNextPage]);
+
+  useEffect(() => {
+    if (!githubPickerOpen || selectedInstallationID !== preselectInstallationID ||
+      githubRepositoriesQuery.data?.pages[0]?.repository_selection !== "selected") return;
+    const additions = githubRepositories.filter((repository) => {
+      if (preselectedRepositoryIDs.current.has(repository.id)) return false;
+      preselectedRepositoryIDs.current.add(repository.id);
+      const identity = repositoryIdentity(repository.clone_url);
+      return !repository.archived && !!identity && !existingRepositoryIdentities.has(identity);
+    });
+    if (additions.length) {
+      setSelectedRepositories((current) => new Map([
+        ...current,
+        ...additions.map((repository) => [repository.id, repository] as const),
+      ]));
+    }
+  }, [githubPickerOpen, selectedInstallationID, preselectInstallationID, githubRepositoriesQuery.data, githubRepositories, existingRepositoryIdentities]);
 
   const persist = async (next: WorkspaceRepo[]) => {
     if (!workspace) return false;
@@ -378,6 +446,47 @@ export function RepositoriesSection() {
     setGitHubPickerOpen(true);
   };
 
+  const closeGitHubPicker = () => {
+    setGitHubPickerOpen(false);
+    setPreselectInstallationID("");
+    preselectedRepositoryIDs.current.clear();
+    setSelectedRepositories(new Map());
+    setRepositorySearch("");
+  };
+
+  const toggleGitHubRepository = (
+    repository: GitHubRepository,
+    checked: boolean,
+  ) => {
+    setSelectedRepositories((current) => {
+      const next = new Map(current);
+      if (checked) next.set(repository.id, repository);
+      else next.delete(repository.id);
+      return next;
+    });
+  };
+
+  const importGitHubRepositories = async () => {
+    const additions: WorkspaceRepo[] = [];
+    const known = new Set(existingRepositoryIdentities);
+    for (const repository of selectedRepositories.values()) {
+      const identity = repositoryIdentity(repository.clone_url);
+      if (!identity || known.has(identity) || repository.archived) continue;
+      known.add(identity);
+      additions.push({
+        url: repository.clone_url,
+        ...(repository.description?.trim()
+          ? { description: repository.description.trim() }
+          : {}),
+      });
+    }
+    if (additions.length === 0) {
+      closeGitHubPicker();
+      return;
+    }
+    if (await persist([...repositories, ...additions])) closeGitHubPicker();
+  };
+
   // A first connection with nothing reusable stays one click to GitHub; the
   // decision needs the menu to stay open only while it checks or turns into
   // the account choice. If the menu was closed during the wait (Escape,
@@ -429,45 +538,6 @@ export function RepositoriesSection() {
       void previewAccountMenu();
     }
   }
-
-  const closeGitHubPicker = () => {
-    setGitHubPickerOpen(false);
-    setSelectedRepositories(new Map());
-    setRepositorySearch("");
-  };
-
-  const toggleGitHubRepository = (
-    repository: GitHubRepository,
-    checked: boolean,
-  ) => {
-    setSelectedRepositories((current) => {
-      const next = new Map(current);
-      if (checked) next.set(repository.id, repository);
-      else next.delete(repository.id);
-      return next;
-    });
-  };
-
-  const importGitHubRepositories = async () => {
-    const additions: WorkspaceRepo[] = [];
-    const known = new Set(existingRepositoryIdentities);
-    for (const repository of selectedRepositories.values()) {
-      const identity = repositoryIdentity(repository.clone_url);
-      if (!identity || known.has(identity) || repository.archived) continue;
-      known.add(identity);
-      additions.push({
-        url: repository.clone_url,
-        ...(repository.description?.trim()
-          ? { description: repository.description.trim() }
-          : {}),
-      });
-    }
-    if (additions.length === 0) {
-      closeGitHubPicker();
-      return;
-    }
-    if (await persist([...repositories, ...additions])) closeGitHubPicker();
-  };
 
   if (!workspace) return null;
 
@@ -910,10 +980,10 @@ export function RepositoriesSection() {
             </Button>
             <Button
               onClick={() => void importGitHubRepositories()}
-              disabled={selectedRepositories.size === 0 || saving}
+              disabled={selectedRepositories.size === 0 || saving || (preselectingRepositories && (githubRepositoriesQuery.hasNextPage || githubRepositoriesQuery.isFetchingNextPage))}
               aria-busy={saving || undefined}
             >
-              {t(($) => $.repositories.github_import)}
+              {t(($) => $.repositories.github_import, { count: selectedRepositories.size })}
             </Button>
           </DialogFooter>
         </DialogContent>

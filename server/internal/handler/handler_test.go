@@ -44,13 +44,14 @@ const (
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
+	dbConfigured := dbURL != ""
+	if !dbConfigured {
 		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		fmt.Printf("Invalid test database configuration: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Failed to configure handler test database from DATABASE_URL")
 		os.Exit(1)
 	}
 	// Lock-order tests hold an admission, two writers and a later reader while
@@ -59,12 +60,20 @@ func TestMain(m *testing.M) {
 	poolConfig.MaxConns = 8
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
+		if dbConfigured {
+			fmt.Fprintln(os.Stderr, "Failed to configure handler test database from DATABASE_URL")
+			os.Exit(1)
+		}
 		fmt.Printf("Skipping tests: could not connect to database: %v\n", err)
 		os.Exit(0)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		fmt.Printf("Skipping tests: database not reachable: %v\n", err)
 		pool.Close()
+		if dbConfigured {
+			fmt.Fprintln(os.Stderr, "Failed to connect to handler test database configured by DATABASE_URL")
+			os.Exit(1)
+		}
+		fmt.Printf("Skipping tests: database not reachable: %v\n", err)
 		os.Exit(0)
 	}
 

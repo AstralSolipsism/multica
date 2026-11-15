@@ -31,6 +31,16 @@
     },
     "connected_apps": {
       "catalog_description": "Les apps sélectionnées ont des règles par défaut vérifiées. « Toutes les apps » ajoute tout ce que Composio peut connecter ; les actions que Labrastro ne sait pas classer demandent toujours d'abord. Une liste personnalisée n'autorise que les apps choisies."
+    },
+    "shortcuts": {
+      "actions": {
+        "newChat": {
+          "label": "Demander à Labrastro"
+        }
+      }
+    },
+    "chat": {
+      "ask_agent_label": "Agent de Demander à Labrastro"
     }
   },
   "common": {
@@ -149,6 +159,12 @@
     },
     "pr_automation": {
       "link_not_found": "Labrastro n’a pas encore reçu cette PR. Vérifiez que son dépôt est connecté."
+    },
+    "environments": {
+      "outdated_hint": "Mettez à jour Labrastro sur cet appareil pour le gérer d'ici.",
+      "app_desktop_hint": "Une app de bureau. Basculez vers sa fenêtre depuis Labrastro Desktop sur la machine qui l'exécute.",
+      "app_remote_hint": "S'exécute sur {{machine}}. Basculez vers sa fenêtre depuis Labrastro Desktop sur cette machine.",
+      "focus_unsupported": "Le daemon de cette machine ne peut pas encore basculer vers les fenêtres d'apps. Mettez à jour Labrastro et réessayez."
     }
   },
   "billing": {
@@ -232,7 +248,7 @@
   },
   "projects": {
     "resources": {
-      "mode_worktree_needs_server_upgrade": "Votre serveur Labrastro est trop ancien pour lancer des exécutions en parallèle : il les lancerait silencieusement dans ce dossier. Mettez le serveur à jour avant d'activer cette option."
+      "mode_worktree_needs_server_upgrade": "Votre serveur Labrastro est trop ancien pour les exécutions en parallèle et les lancerait dans ce dossier. Mettez d'abord le serveur à jour."
     }
   },
   "agents": {

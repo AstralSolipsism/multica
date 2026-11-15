@@ -72,6 +72,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"chat_message":                       workspaceDelete,
 	"chat_pinned_agent":                  workspaceDelete,
 	"chat_session":                       workspaceDelete,
+	"chat_submission_receipt":            workspaceDelete,
 	"client_usage_daily":                 workspaceDeleteDetach,
 	"comment":                            workspaceDelete,
 	"comment_reaction":                   workspaceDelete,
@@ -142,6 +143,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"project_baseline_page":              workspaceDelete,
 	"project_baseline_revision":          workspaceDelete,
 	"project_member":                     workspaceDelete,
+	"project_subscriber":                 workspaceDelete,
 	"project_resource":                   workspaceDelete,
 	"quick_action":                       workspaceDelete,
 	"quota_source":                       workspaceDeleteKeep, // user-scoped subscription credentials, no workspace_id
@@ -158,6 +160,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"squad":                              workspaceDelete,
 	"squad_member":                       workspaceDelete,
 	"sys_cron_executions":                workspaceDeleteKeep,
+	"theme_store_download":               workspaceDeleteKeep, // per registry theme, not workspace-owned
+	"task_context_receipt":               workspaceDelete,
 	"task_message":                       workspaceDelete,
 	"task_supplement":                    workspaceDelete,
 	"task_supplement_capability":         workspaceDelete,
@@ -180,6 +184,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"app_action_request":                 workspaceDelete,
 	"app_tool_call":                      workspaceDelete,
 	"issue_environment":                  workspaceDelete,
+	"issue_environment_command":          workspaceDelete,
+	"issue_environment_config":           workspaceDelete,
 	"workspace_app_setting":              workspaceDelete,
 	"app_tool_class_override":            workspaceDelete,
 	"workspace":                          workspaceDelete,

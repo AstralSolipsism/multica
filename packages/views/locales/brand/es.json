@@ -26,6 +26,16 @@
     },
     "connected_apps": {
       "catalog_description": "Las aplicaciones seleccionadas incluyen reglas predeterminadas revisadas. Todas las aplicaciones incluye todo lo que Composio puede conectar; las acciones que Labrastro no puede clasificar siempre piden confirmación. Una lista personalizada permite solo las aplicaciones que elijas."
+    },
+    "shortcuts": {
+      "actions": {
+        "newChat": {
+          "label": "Pregunta a Labrastro"
+        }
+      }
+    },
+    "chat": {
+      "ask_agent_label": "Agente de Preguntar a Labrastro"
     }
   },
   "common": {
@@ -144,6 +154,12 @@
     },
     "pr_automation": {
       "link_not_found": "Labrastro aún no ha recibido este PR. Comprueba que su repositorio esté conectado."
+    },
+    "environments": {
+      "outdated_hint": "Actualiza Labrastro en este equipo para gestionarlo desde aquí.",
+      "app_desktop_hint": "Una app de escritorio. Cambia a su ventana desde Labrastro Desktop en la máquina que la ejecuta.",
+      "app_remote_hint": "Se ejecuta en {{machine}}. Cambia a su ventana desde Labrastro Desktop en esa máquina.",
+      "focus_unsupported": "El daemon de esta máquina aún no puede cambiar a ventanas de apps. Actualiza Labrastro e inténtalo de nuevo."
     }
   },
   "billing": {
@@ -233,7 +249,7 @@
   },
   "projects": {
     "resources": {
-      "mode_worktree_needs_server_upgrade": "Tu servidor de Labrastro es demasiado antiguo para ejecutar ejecuciones en paralelo; las ejecutaría en silencio en esta carpeta. Actualiza el servidor y activa esta opción."
+      "mode_worktree_needs_server_upgrade": "Tu servidor de Labrastro es demasiado antiguo para ejecuciones en paralelo y las haría en esta carpeta. Actualiza primero el servidor."
     }
   },
   "agents": {

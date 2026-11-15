@@ -380,8 +380,9 @@ const MODEL_PRICING: Record<
   // Kimi Code CLI reports the same model as `kimi-code/k3`; provider-qualified
   // because `k3` is a generic id (see the provider-qualified keys note above).
   "kimi/k3":            { input: 3.0,  output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.0 },
-  // Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat, 2026-11-11); same
-  // cache-write convention as kimi-k3. `k3.1-pro` is generic, so it prices
+  // Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat via models.dev
+  // providers/moonshotai/models/kimi-k3.1-pro.toml, 2026-11-11); default 5m
+  // cache write is 1x input, like kimi-k3. `k3.1-pro` is generic, so it prices
   // only under the provider-qualified `kimi/k3.1-pro` key (also covering
   // Kimi Code's `kimi-code/k3.1-pro`); the highspeed SKU and CodeBuddy's
   // `kimi-k3-1` stay unmapped.
@@ -1434,9 +1435,11 @@ export function sliceWindow(
   days: number,
   tz: string,
 ): { filtered: RuntimeUsage[]; prevFiltered: RuntimeUsage[] } {
+  // `days` calendar days including today. The backend's `days=N` series
+  // starts one day earlier on purpose, so the cutoff must not be today - N.
   const today = todayIso(tz);
-  const isoCurrent = addDaysIso(today, -days);
-  const isoPrev = addDaysIso(today, -days * 2);
+  const isoCurrent = addDaysIso(today, -(days - 1));
+  const isoPrev = addDaysIso(today, -(days * 2 - 1));
   return {
     filtered: usage.filter((u) => u.date >= isoCurrent),
     prevFiltered: usage.filter(

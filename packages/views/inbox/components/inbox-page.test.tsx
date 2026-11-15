@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ApiError } from "@multica/core/api";
 import type { AgentTask, InboxItem } from "@multica/core/types";
 import { useInboxFilterStore } from "@multica/core/inbox/filter-store";
+import { useInboxSelectionStore } from "@multica/core/inbox/selection-store";
 import { InboxPage } from "./inbox-page";
 import { createTipAnchorRegistry } from "@multica/core/you-should-know/anchors";
 import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
@@ -258,6 +259,7 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 function reset() {
+  useInboxSelectionStore.setState({ lastResolvedKeyByWorkspace: {} });
   listData.active = [];
   listData.archived = [];
   listData.lookup = undefined;

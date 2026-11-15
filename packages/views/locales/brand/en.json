@@ -31,6 +31,16 @@
     },
     "connected_apps": {
       "catalog_description": "Curated apps come with reviewed default rules. All apps adds everything Composio can connect; actions Labrastro can't classify always ask first. A custom list allows only the apps you pick."
+    },
+    "shortcuts": {
+      "actions": {
+        "newChat": {
+          "label": "Ask Labrastro"
+        }
+      }
+    },
+    "chat": {
+      "ask_agent_label": "Ask Labrastro agent"
     }
   },
   "common": {
@@ -149,6 +159,12 @@
     },
     "pr_automation": {
       "link_not_found": "Labrastro hasn’t received this PR yet. Check that its repository is connected."
+    },
+    "environments": {
+      "outdated_hint": "Update Labrastro on this machine to manage it from here.",
+      "app_desktop_hint": "A desktop app. Switch to its window from Labrastro Desktop on the machine running it.",
+      "app_remote_hint": "Runs on {{machine}}. Switch to its window from Labrastro Desktop on that machine.",
+      "focus_unsupported": "This machine's daemon can't switch to app windows yet. Update Labrastro and try again."
     }
   },
   "billing": {
@@ -231,7 +247,7 @@
   },
   "projects": {
     "resources": {
-      "mode_worktree_needs_server_upgrade": "Your Labrastro server is too old to execute runs in parallel — it would quietly execute them in this folder instead. Update the server, then switch this on."
+      "mode_worktree_needs_server_upgrade": "Your Labrastro server is too old for parallel runs and would run them in this folder instead. Update the server first."
     }
   },
   "agents": {

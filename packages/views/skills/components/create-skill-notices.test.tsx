@@ -89,7 +89,7 @@ function renderDialog(onCreated = vi.fn(), onClose = vi.fn()) {
     ...render(
       <I18nProvider locale="en" resources={getTestResources()}>
         <QueryClientProvider client={queryClient}>
-          <CreateSkillDialog onClose={onClose} onCreated={onCreated} />
+          <CreateSkillDialog method="local" onClose={onClose} onCreated={onCreated} />
         </QueryClientProvider>
       </I18nProvider>,
     ),

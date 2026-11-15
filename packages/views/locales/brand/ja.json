@@ -31,6 +31,16 @@
     },
     "connected_apps": {
       "catalog_description": "厳選アプリにはレビュー済みの既定ルールがあります。「すべてのアプリ」は Composio で接続できるすべてを含み、Labrastro が分類できない操作は必ず確認を求めます。カスタムリストでは選んだアプリだけを許可します。"
+    },
+    "shortcuts": {
+      "actions": {
+        "newChat": {
+          "label": "Labrastro に質問"
+        }
+      }
+    },
+    "chat": {
+      "ask_agent_label": "「Labrastro に聞く」のエージェント"
     }
   },
   "common": {
@@ -146,6 +156,12 @@
     },
     "pr_automation": {
       "link_not_found": "Labrastro はまだこの PR を受け取っていません。リポジトリが接続されているか確認してください。"
+    },
+    "environments": {
+      "outdated_hint": "このマシンの Labrastro を更新すると、ここから操作できます。",
+      "app_desktop_hint": "デスクトップアプリです。実行中のマシンの Labrastro Desktop からウィンドウに切り替えられます。",
+      "app_remote_hint": "{{machine}} で実行中です。そのマシンの Labrastro Desktop からウィンドウに切り替えられます。",
+      "focus_unsupported": "このマシンのデーモンはまだアプリのウィンドウに切り替えられません。Labrastro を更新してもう一度お試しください。"
     }
   },
   "billing": {
@@ -228,7 +244,7 @@
   },
   "projects": {
     "resources": {
-      "mode_worktree_needs_server_upgrade": "接続中の Labrastro サーバーが古いため並行実行に対応できません。このままでは、このフォルダ内で直接実行されます。サーバーを更新してから有効にしてください。"
+      "mode_worktree_needs_server_upgrade": "Labrastro サーバーが古いため、並行実行はこのフォルダでの直接実行になってしまいます。先にサーバーを更新してください。"
     }
   },
   "agents": {

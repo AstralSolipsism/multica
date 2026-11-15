@@ -87,6 +87,11 @@ func TestPrepareAndReuseReturnSkillDirectories(t *testing.T) {
 				if err != nil || !strings.Contains(string(body), "Use references/file.txt") {
 					t.Fatalf("%s mapping does not locate the selected body: %s, %v", stage, body, err)
 				}
+				prepared := ApplyPreparedSkillNames(task, env.PreparedSkillNames)
+				receipt := env.SkillReceipts(provider, prepared.AgentSkills)[0]
+				if !receipt.Available || receipt.Bytes != len(body) || receipt.Path != SkillDeliveryLocation(env.WorkDir, provider)+"/review-code/SKILL.md" {
+					t.Fatalf("%s receipt does not match the selected directory: %+v", stage, receipt)
+				}
 			}
 		})
 	}

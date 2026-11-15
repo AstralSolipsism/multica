@@ -354,6 +354,29 @@ func TestLabrastroTipChatFirstTurnAndVisibility(t *testing.T) {
 	}
 }
 
+func TestLabrastroTipChatSubmissionReplayRechecksSourceAccess(t *testing.T) {
+	f := newTipChatFixture(t)
+	project := f.Project(t, "Tip receipt project")
+	f.Exec(t, `UPDATE issue SET project_id=$2 WHERE id=$1`, f.issue, project)
+	session := f.openTipChat(t, f.tip(t, "receipt source"), http.StatusCreated)
+	f.Cleanup(t, `DELETE FROM chat_submission_receipt WHERE chat_session_id=$1`, session.ID)
+	body := map[string]any{"content": "Tell me more", "submission_id": uuid.NewString()}
+	send := func(status int) {
+		t.Helper()
+		testutil.Call(t, f.tipChatHandler(f.h.SendChatMessage), f.request("POST", body, "sessionId", session.ID)).Want(status)
+	}
+	send(http.StatusCreated)
+	send(http.StatusCreated)
+	if f.Count(t, `SELECT count(*) FROM agent_task_queue WHERE chat_session_id=$1`, session.ID) != 1 {
+		t.Fatal("replaying the submission created another task")
+	}
+	// Even an unlinked chat must retain the source issue's access boundary.
+	f.Exec(t, `UPDATE chat_session SET project_id=NULL WHERE id=$1`, session.ID)
+	f.Exec(t, `UPDATE member SET role='member' WHERE workspace_id=$1 AND user_id=$2`, f.WorkspaceID, testUserID)
+	f.Exec(t, `UPDATE project SET visibility='private' WHERE id=$1`, project)
+	send(http.StatusNotFound)
+}
+
 func TestLabrastroTipChatCancelAndEditKeepContext(t *testing.T) {
 	for _, action := range []string{"", "edit", "remove"} {
 		for _, queuedSuccessor := range []bool{false, true} {

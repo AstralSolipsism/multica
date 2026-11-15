@@ -20,11 +20,24 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.mjs", "scripts/brand/*.mjs"],
-      "project": ["scripts/*.mjs", "scripts/brand/*.mjs"]
+      "project": ["scripts/*.mjs", "scripts/brand/*.mjs"],
+      // scripts/theme-preview.mjs drives Tailwind through the PostCSS API; the
+      // root has no Tailwind stylesheets for the plugin to read.
+      "tailwind": false,
+      // server/internal/daemon/** TS tests import the claude-code CLI's
+      // testing SDK from the runtime environment, not from npm.
+      "ignoreDependencies": ["claude-code"]
     },
-
     "apps/web": {
-      "entry": ["eslint.config.mjs"],
+      "entry": [
+        "eslint.config.mjs",
+        // Retired marketing implementations kept upstream-compatible behind
+        // the fork route gates (AGENTS.md "Change and Delivery Rules");
+        // unreachable by design, so nothing imports them.
+        "features/landing/components/download/hero.tsx",
+        "features/landing/components/download/started.tsx",
+        "features/landing/site/locale-suggestion.tsx"
+      ],
       // Referenced only by the `@type {import('postcss-load-config').Config}`
       // JSDoc annotation in postcss.config.mjs. Declaring it would add a
       // runtime dependency to satisfy a type comment.
@@ -34,12 +47,27 @@
     "apps/desktop": {
       // window-state.node-test.mjs is run by hand (`node --test`, see its
       // header) rather than by a package script, so nothing imports it.
-      "entry": ["eslint.config.mjs", "src/main/*.node-test.mjs"],
+      // bundle-cli.node-test.mjs is run the same way. test/electron-guard.ts
+      // is the `electron` alias target in vitest.config.ts, a path string
+      // knip does not follow; the glob still admits it as a project file.
+      "entry": [
+        "eslint.config.mjs",
+        "src/main/*.node-test.mjs",
+        "scripts/*.node-test.mjs"
+      ],
       // Consumed by `extends` in tsconfig.node.json / tsconfig.web.json.
       // knip follows `extends` from the default tsconfig.json only.
-      "ignoreDependencies": ["@multica/tsconfig"]
+      "ignoreDependencies": [
+        "@multica/tsconfig",
+        // Resolved at run time through rootRequire()/binary paths inside
+        // scripts/package.mjs and scripts/stage-candidate.mjs — no static
+        // import for knip to follow.
+        "@electron/asar",
+        "app-builder-bin",
+        "js-yaml",
+        "yargs"
+      ]
     },
-
     "apps/docs": {},
 
     // The three shared packages export raw .ts/.tsx compiled by their
@@ -61,11 +89,19 @@
     // export and knip picks that directory back up; the script reads the same
     // manifest, so the two stay in step without overlapping.
     "packages/ui": {
-      "entry": ["eslint.config.mjs"],
+      // test/shimmer-text-bundle.mjs wraps this fixture for e2e's esbuild
+      // entry (e2e/shimmer-text.spec.ts sits outside every workspace); as an
+      // .mjs outside the project globs below, knip does not scan it.
+      "entry": [
+        "eslint.config.mjs",
+        "test/shimmer-text-fixture.tsx"
+      ],
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/views": {
-      "entry": ["eslint.config.mjs"],
+      // The timing reporter is passed to vitest as
+      // `--reporter=./test/timing-reporter.ts` when refreshing shard timings
+      // (packages/views/test/README.md); the glob below also admits it.
       "project": ["**/*.{ts,tsx}"]
     },
     "packages/core": {
@@ -73,6 +109,9 @@
       "project": ["**/*.{ts,tsx}"]
     },
 
+    "packages/plugin-sdk": {
+      "entry": ["eslint.config.mjs"]
+    },
     "packages/eslint-config": {},
     "packages/tsconfig": {},
     "packages/vitest-setup": {}

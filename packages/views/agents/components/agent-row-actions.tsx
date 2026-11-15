@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlertCircle,
   Copy,
@@ -34,11 +34,11 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useT } from "../../i18n";
 import { AppLink, useIntentNavigate } from "../../navigation";
+import { CollectionRowMenu } from "../../layout/collection-list";
 import {
   AgentTreeRowMenuItems,
   type AgentTreeActions,
 } from "./agent-tree-actions";
-import { CollectionRowMenu } from "../../layout/collection-list";
 
 interface AgentRowActionsProps {
   agent: Agent;
@@ -52,6 +52,10 @@ interface AgentRowActionsProps {
   // this agent's config as a template. A href rather than a callback so the
   // menu item is a real link (modifier-click opens it in a new tab).
   duplicateHref: string;
+  /** Items for the top of the menu, for actions only one surface offers. */
+  leading?: ReactNode;
+  /** For rows that open the menu only on right-click. */
+  triggerHidden?: boolean;
   /** Labrastro fork (OL-1030): folder move/place actions when the folder
    *  tree loaded. */
   treeActions?: AgentTreeActions;
@@ -69,6 +73,8 @@ export function AgentRowActions({
   presence,
   canManage,
   duplicateHref,
+  leading,
+  triggerHidden,
   treeActions,
   parentFolderId,
 }: AgentRowActionsProps) {
@@ -139,7 +145,17 @@ export function AgentRowActions({
 
   return (
     <>
-      <CollectionRowMenu label={t(($) => $.row.actions_aria)} contentClassName="w-auto">
+      <CollectionRowMenu
+        label={t(($) => $.row.actions_aria)}
+        contentClassName="w-auto"
+        triggerHidden={triggerHidden}
+      >
+        {leading && (
+          <>
+            {leading}
+            <DropdownMenuSeparator />
+          </>
+        )}
         {/* Same shape as every other entity row menu: an explicit CTA is a
             foreground open executed through the adapter (an anchor-based
             item would depend on native activation surviving the menu

@@ -95,12 +95,12 @@ export function createEnDict(): LandingDict {
   licensing: {
     title: "Licensing",
     intro: [
-      "Labrastro is released under the [Labrastro License](https://github.com/multica-ai/multica/blob/main/LICENSE): the Apache License 2.0 with a few additional conditions. The source code is public, and using Labrastro inside your own organization is free, including self-hosting it for your whole team.",
-      "The main additional condition covers hosted use: offering Labrastro to people outside your organization requires a commercial license. This page shows where that line falls, using the questions we hear most often. It is a plain-language guide, not legal advice. If anything here differs from the LICENSE, the LICENSE controls.",
+      "Multica is released under the [Multica License](https://github.com/multica-ai/multica/blob/main/LICENSE): the Apache License 2.0 with a few additional conditions. The source code is public, and using Multica inside your own organization is free, including self-hosting it for your whole team.",
+      "The main additional condition covers hosted use: offering Multica to people outside your organization requires a commercial license. This page shows where that line falls, using the questions we hear most often. It is a plain-language guide, not legal advice. If anything here differs from the LICENSE, the LICENSE controls.",
     ],
     rule: {
       title: "The rule of thumb",
-      text: "Is anyone outside your organization driving the instance — creating issues, talking to agents, or triggering work? If so, through any interface (web, Slack, or API), that is a hosted service. If they only receive results your team produced with Labrastro, that is internal use.",
+      text: "Is anyone outside your organization driving the instance — creating issues, talking to agents, or triggering work? If so, through any interface (web, Slack, or API), that is a hosted service. If they only receive results your team produced with Multica, that is internal use.",
     },
     scenarios: {
       title: "Common scenarios",
@@ -110,21 +110,21 @@ export function createEnDict(): LandingDict {
       notRequired: "Not required",
       items: [
         {
-          scenario: "Your organization uses Labrastro internally",
+          scenario: "Your organization uses Multica internally",
           example: "Self-hosted, across any number of workspaces.",
           required: false,
         },
         {
           scenario:
-            "You deploy Labrastro for a client, who owns it and uses it internally",
+            "You deploy Multica for a client, who owns it and uses it internally",
           example: "Implementation, training, consulting, or customization work.",
           required: false,
         },
         {
           scenario:
-            "Your team uses Labrastro to do work for clients, who only receive the deliverables",
+            "Your team uses Multica to do work for clients, who only receive the deliverables",
           example:
-            "An agency that runs its content production in Labrastro and ships the finished work.",
+            "An agency that runs its content production in Multica and ships the finished work.",
           required: false,
         },
         {
@@ -136,7 +136,7 @@ export function createEnDict(): LandingDict {
         },
         {
           scenario:
-            "You run and manage Labrastro instances for clients on your own infrastructure",
+            "You run and manage Multica instances for clients on your own infrastructure",
           example: "A managed service, whether or not you charge for it.",
           required: true,
         },
@@ -149,12 +149,12 @@ export function createEnDict(): LandingDict {
           scenario:
             "People outside your organization drive your instance through another entry point",
           example:
-            "A public website backed by Labrastro, a Slack integration, or an API \u2014 even when it is free.",
+            "A public website backed by Multica, a Slack integration, or an API \u2014 even when it is free.",
           required: true,
         },
         {
-          scenario: "You embed Labrastro in a product you sell or distribute",
-          example: "Labrastro ships as a component of another commercial offering.",
+          scenario: "You embed Multica in a product you sell or distribute",
+          example: "Multica ships as a component of another commercial offering.",
           required: true,
         },
       ],
@@ -163,8 +163,8 @@ export function createEnDict(): LandingDict {
       {
         heading: "Other conditions",
         bullets: [
-          "Branding: keep the Labrastro logo, product name, and the copyright and attribution information shown in the Labrastro interface, unless we have given you a written branding waiver.",
-          "Attribution: if you build on Labrastro\u2019s backend, daemon, or CLI without the Labrastro interface, keep the copyright and NOTICE information, and state in your user-facing documentation that your product is built on Labrastro, with a link to the [GitHub repository](https://github.com/multica-ai/multica).",
+          "Branding: keep the Multica logo, product name, and the copyright and attribution information shown in the Multica interface, unless we have given you a written branding waiver.",
+          "Attribution: if you build on Multica\u2019s backend, daemon, or CLI without the Multica interface, keep the copyright and NOTICE information, and state in your user-facing documentation that your product is built on Multica, with a link to the [GitHub repository](https://github.com/multica-ai/multica).",
           "Forks: publishing the source code of a fork is not a hosted service and needs no commercial license. Anyone who operates a hosted service from that fork needs their own.",
           "A commercial license and a branding waiver are separate grants. One does not include the other.",
         ],
@@ -182,15 +182,15 @@ export function createEnDict(): LandingDict {
     title: "Privacy Policy",
     lastUpdated: "Last updated: October 22, 2026",
     intro: [
-      "This Privacy Policy explains how Index Labs (Hong Kong) Limited (“Labrastro”, “we”, “us”) collects, uses, and shares personal information when you visit multica.ai, contact us, or use Labrastro Cloud, our hosted service, including the web, desktop, and mobile apps.",
-      "It does not cover Labrastro deployments you host yourself. The operator of a self-hosted deployment controls its data, and any AI providers, integrations, or analytics it uses depend on how they configure it. The only thing a self-hosted server sends us is a daily usage snapshot: a random ID for the deployment, so snapshots from the same server can be linked; the server version; approximate counts of workspaces, members, agents, and connected daemons; the number of agent runs started, completed, failed, and cancelled that day; and approximate counts of members who opened the web or desktop app, and of members who personally started an agent run, over the previous 1, 7, and 28 days. It contains no names, email addresses, or content. Setting DO_NOT_TRACK=1 turns off this snapshot.",
+      "This Privacy Policy explains how Index Labs (Hong Kong) Limited (“Multica”, “we”, “us”) collects, uses, and shares personal information when you visit multica.ai, contact us, or use Multica Cloud, our hosted service, including the web, desktop, and mobile apps.",
+      "It does not cover Multica deployments you host yourself. The operator of a self-hosted deployment controls its data, and any AI providers, integrations, or analytics it uses depend on how they configure it. The only thing a self-hosted server sends us is a daily usage snapshot: a random ID for the deployment, so snapshots from the same server can be linked; the server version; approximate counts of workspaces, members, agents, and connected daemons; the number of agent runs started, completed, failed, and cancelled that day; and approximate counts of members who opened the web or desktop app, and of members who personally started an agent run, over the previous 1, 7, and 28 days. It contains no names, email addresses, or content. Setting DO_NOT_TRACK=1 turns off this snapshot.",
     ],
     sections: [
       {
         heading: "Information we collect",
         bullets: [
-          "Account information: your name, email address, and profile picture. If you sign in with Google, we receive your name, email address, and profile picture from Google. You can also add profile details such as language, time zone, and a short bio, and answer onboarding questions such as your role, your use case, and how you heard about Labrastro.",
-          "Content you create: workspaces, issues, comments, chat messages, attachments, agent instructions, and anything else you or your agents put into Labrastro Cloud.",
+          "Account information: your name, email address, and profile picture. If you sign in with Google, we receive your name, email address, and profile picture from Google. You can also add profile details such as language, time zone, and a short bio, and answer onboarding questions such as your role, your use case, and how you heard about Multica.",
+          "Content you create: workspaces, issues, comments, chat messages, attachments, agent instructions, and anything else you or your agents put into Multica Cloud.",
           "Contact Sales inquiries: your name, business email, company name and size, country or region, use case, goals, and communication preferences. To prevent abuse, we also record the IP address and browser user agent the form was sent from.",
           "Billing information: subscription payments are handled by Stripe on pages hosted by Stripe. We never receive or store your full card details.",
           "Usage and device information: app version, operating system, client type, and a randomly generated installation ID; the name of each machine you connect as a runtime (its hostname by default); and crash and error reports. Before a report is sent, we filter recognizable email addresses and credentials out of the error message, but reports can still contain other details about what went wrong.",
@@ -200,24 +200,24 @@ export function createEnDict(): LandingDict {
       {
         heading: "How we use information",
         bullets: [
-          "To provide, operate, and secure Labrastro Cloud, including signing you in, syncing your workspaces, and delivering notifications and invitations.",
+          "To provide, operate, and secure Multica Cloud, including signing you in, syncing your workspaces, and delivering notifications and invitations.",
           "To respond to Contact Sales inquiries and support requests.",
           "To send service messages such as sign-in codes and workspace invitations. We only send product updates or marketing if you opted in, and you can unsubscribe at any time.",
-          "To understand how Labrastro is used, fix bugs, and improve the product.",
+          "To understand how Multica is used, fix bugs, and improve the product.",
           "To prevent abuse and meet our legal obligations.",
         ],
       },
       {
         heading: "Legal bases",
         paragraphs: [
-          "Where the law requires a legal basis for processing, we rely on performing our contract with you, to provide Labrastro Cloud; our legitimate interests in securing, supporting, and improving Labrastro and responding to inquiries; your consent, for marketing messages; and compliance with our legal obligations.",
+          "Where the law requires a legal basis for processing, we rely on performing our contract with you, to provide Multica Cloud; our legitimate interests in securing, supporting, and improving Multica and responding to inquiries; your consent, for marketing messages; and compliance with our legal obligations.",
         ],
       },
       {
         heading: "AI features",
         paragraphs: [
-          "Your coding agents run on your own machines or on runtimes you connect, using the coding tools and accounts you set up. An agent running on your machine does not mean the model runs there: those tools send prompts, code, files, and tool results to their model providers, under the terms of the tool and account you use. Labrastro coordinates their work.",
-          "Some Labrastro Cloud features, such as chat titles and suggested follow-ups, send your first chat message or a few recent messages to a third-party large language model provider we choose, to generate the result. Labrastro does not use your content to train AI models.",
+          "Your coding agents run on your own machines or on runtimes you connect, using the coding tools and accounts you set up. An agent running on your machine does not mean the model runs there: those tools send prompts, code, files, and tool results to their model providers, under the terms of the tool and account you use. Multica coordinates their work.",
+          "Some Multica Cloud features, such as chat titles and suggested follow-ups, send your first chat message or a few recent messages to a third-party large language model provider we choose, to generate the result. Multica does not use your content to train AI models.",
         ],
       },
       {
@@ -231,8 +231,8 @@ export function createEnDict(): LandingDict {
         heading: "Who we share information with",
         paragraphs: [
           "Information you put into a workspace is visible to its other members and admins, and to the agents and integrations they authorize, according to the workspace’s permissions. If your workspace belongs to an organization, that organization manages its content and may handle requests about it.",
-          "We also disclose information when the law requires it, and to a buyer or successor if Labrastro is involved in a merger, acquisition, or sale of assets.",
-          "Beyond that, we share personal information only with the service providers that help us run Labrastro and with integrations you choose to connect:",
+          "We also disclose information when the law requires it, and to a buyer or successor if Multica is involved in a merger, acquisition, or sale of assets.",
+          "Beyond that, we share personal information only with the service providers that help us run Multica and with integrations you choose to connect:",
         ],
         bullets: [
           "Amazon Web Services: hosting, file storage, and content delivery",
@@ -248,19 +248,19 @@ export function createEnDict(): LandingDict {
       {
         heading: "Where information is stored",
         paragraphs: [
-          "Labrastro Cloud is hosted on Amazon Web Services and Vercel. We and our service providers may process your information in the United States and other countries. Wherever it is processed, we protect it as described in this policy.",
+          "Multica Cloud is hosted on Amazon Web Services and Vercel. We and our service providers may process your information in the United States and other countries. Wherever it is processed, we protect it as described in this policy.",
         ],
       },
       {
         heading: "How long we keep information",
         paragraphs: [
-          "We keep account information and workspace content for as long as your account or workspace exists. When a workspace owner deletes a workspace, its issues, comments, and other content are removed from Labrastro Cloud, though backups we keep for recovery may still contain copies for a period afterwards. To have files uploaded to a deleted workspace erased from our file storage, email [support@multica.ai](mailto:support@multica.ai). We keep billing records for as long as accounting and tax rules require, and product analytics, crash reports, Contact Sales inquiries, and feedback for as long as they are useful for supporting you and improving Labrastro. We delete inquiries and feedback on request.",
+          "We keep account information and workspace content for as long as your account or workspace exists. When a workspace owner deletes a workspace, its issues, comments, and other content are removed from Multica Cloud, though backups we keep for recovery may still contain copies for a period afterwards. To have files uploaded to a deleted workspace erased from our file storage, email [support@multica.ai](mailto:support@multica.ai). We keep billing records for as long as accounting and tax rules require, and product analytics, crash reports, Contact Sales inquiries, and feedback for as long as they are useful for supporting you and improving Multica. We delete inquiries and feedback on request.",
         ],
       },
       {
         heading: "Your choices and rights",
         paragraphs: [
-          "Depending on where you live, you may have the right to access, correct, delete, or export your personal information; to object to or restrict certain processing; to withdraw consent you have given, such as for marketing messages; and to complain to your local data protection authority. You can update your profile in Labrastro at any time and delete a workspace you own from its settings. For anything else, including deleting your account, email [support@multica.ai](mailto:support@multica.ai). We will respond within 30 days.",
+          "Depending on where you live, you may have the right to access, correct, delete, or export your personal information; to object to or restrict certain processing; to withdraw consent you have given, such as for marketing messages; and to complain to your local data protection authority. You can update your profile in Multica at any time and delete a workspace you own from its settings. For anything else, including deleting your account, email [support@multica.ai](mailto:support@multica.ai). We will respond within 30 days.",
         ],
       },
       {
@@ -272,7 +272,7 @@ export function createEnDict(): LandingDict {
       {
         heading: "Children",
         paragraphs: [
-          "Labrastro is not directed to children under 16, and we do not knowingly collect their personal information.",
+          "Multica is not directed to children under 16, and we do not knowingly collect their personal information.",
         ],
       },
       {
@@ -284,7 +284,7 @@ export function createEnDict(): LandingDict {
       {
         heading: "Contact us",
         paragraphs: [
-          "Labrastro is operated by Index Labs (Hong Kong) Limited, which is responsible for your personal information. For privacy questions or requests, email [support@multica.ai](mailto:support@multica.ai).",
+          "Multica is operated by Index Labs (Hong Kong) Limited, which is responsible for your personal information. For privacy questions or requests, email [support@multica.ai](mailto:support@multica.ai).",
         ],
       },
     ],
@@ -301,67 +301,100 @@ export function createEnDict(): LandingDict {
     },
     entries: [
       {
-        version: "0.8.2",
-        date: "2026-11-10",
-        title: "Appearance settings with built-in themes, private projects for everyone, and Issue dev environments",
+        version: "0.9.0",
+        date: "2026-11-13",
+        title: "Community themes, environment controls in the Issue sidebar, and one right-click menu on desktop",
         changes: [],
         features: [
-          "The Labrastro website is redesigned, including the home, download, and changelog pages. English stays at the root, while Chinese, Japanese, and Korean have their own addresses (/zh, /ja, /ko), so you can share and bookmark a page in your language. On your first visit, the site suggests a language that matches your browser.",
-          "Settings → Appearance: pick one of five built-in themes (Default, Pop, GitHub, Blueprint, Notion), set Latin and CJK fonts and sizes separately for interface and content text, and adjust density, line height, code font, Reduce motion, and Increase contrast. These settings are saved on this device.",
-          "Private projects are available in every workspace. When you create a project, or later in its properties, set Access to Project members only and manage its members. Its Issues, comments, attachments, search results, notifications, and runs are then visible only to project members and workspace owners and admins. New projects are still visible to the whole workspace unless you choose otherwise.",
-          "An Issue's sidebar lists the services its runs started under Environments, with the machine, status, link, and time left. On macOS and Linux they are detected automatically, or you can declare them in .multica/environments.toml and run them with multica env start/list/stop. Managed services keep running between agent runs and are stopped after 24 hours by default. Windows is not supported yet, and a localhost link opens only on the machine running it.",
-          "Connected Apps, in workspaces where composio_mcp_apps is enabled, is rebuilt: connect team or personal accounts, turn apps on per agent and pick the account, and see a log of app calls. A personal account is the one of the person who triggered the run. Allowed actions run without per-call approval, while blocks, read-only access, and restricted toolkits you set still apply. Connect buttons for team and personal accounts now look the same.",
-          "Select text to leave a comment on it and reply right there, including @mentioning an agent. The comment and your whole reply draft are saved and sent together.",
-          "Copy a link to the latest version of a deliverable from the deliverables sidebar, the overview, or the previewer. When a file with the same name is uploaded again, the link opens the newest upload on web and desktop.",
-          "Turn on Include sub-issues in an Issue's execution log or Runs panel to see run counts, cost, charts, and the timeline across sub-Issues at every level, each labeled with its Issue.",
-          "Filter the Inbox and its archive the same way as Issues: by notification type, time received, project, assignee, label, due date, and more, with search, exclusions, and filter chips.",
-          "Hand a workflow step to a squad. The step's instructions and statuses are kept, and handoffs wait in line while the leader is busy, so back-to-back handoffs are not lost.",
-          "Labrastro is available in Russian on web and desktop, including the desktop app's menus.",
-          "Run a personal agent on Muse app with the new museapp backend. It needs an endpoint, a compatible protocol, and a shared task directory, and is separate from the muse backend for Meta Muse Code. If a cancelled or lost run can't be confirmed as stopped, it isn't retried automatically, so check it and rerun it yourself.",
-          "Qoder uses the workspace's GitHub App when no repository credential is set, with a short-lived token for each authorized repository. Credentials you set yourself take priority.",
-          "Open in Desktop in the web app's Issue menu opens the same Issue or comment in the desktop app, including on self-hosted servers.",
-          "Use --pr-auto-complete off or on with issue create or issue update in the CLI, so an Issue delivered over several PRs isn't completed when the first one merges.",
-          "multica issue search can be limited to one project with --project.",
-          "Workflow statuses can carry their icon, and issue-status commands in the CLI list and update the workspace's statuses. Importing a workflow doesn't overwrite statuses that already exist.",
-          "Rename a project from its menu in the project list or on the project page.",
-          "Edit a saved view from its menu in the sidebar.",
-          "Drag the icons in the left navigation bar to reorder spaces.",
-          "After you finish some work, Labrastro may ask you to star it on GitHub, at most twice per account and at least 30 days apart. The Help menu always has a GitHub link.",
+          "Make, import, or install community themes in Settings → Appearance, and switch themes from the account menu.",
+          "Start, stop, and restart services from Environments in the Issue sidebar, read their logs, and switch to desktop app windows.",
+          "Open a run to see the instructions, skills, and MCP servers it received.",
+          "Run tasks on Factory Droid and Amp.",
+          "The desktop app has one right-click menu everywhere, with quick actions for Issues.",
+          "Quick chat moves into a new bottom bar, and Shift+Cmd+J starts a new Ask Labrastro chat.",
+          "Select text in an agent's chat reply to annotate it, and the note is sent with your next message.",
+          "Choose whether chat replies send system notifications, and desktop background chat alerts and the Dock unread count work again.",
+          "Telegram replies show what the agent is doing as it works, with more detail in private chats than in groups.",
+          "Subscribe to every Issue in a project.",
+          "Show linked PRs and their status on boards, swimlanes, lists, and tables.",
+          "Delete an item from your Inbox after confirming, without touching the Issue or other members' notifications.",
+          "Permanently delete one or many Issues from the CLI, with a confirmation and a report of any that failed.",
+          "Choose and reorder the sections in the Issue sidebar.",
+          "Comment images show as thumbnails, and you can switch them to full size.",
         ],
         improvements: [
-          "The navigation bar is narrower, buttons and labels are rectangular by default, the desktop title bar and panel edges line up, and on wide screens Issues and chat use a wider reading column.",
-          "The team page shows fewer agent status previews at once and remembers which groups you collapsed.",
-          "Projects in the sidebar show their own icons.",
-          "Cut-off text in the navigation bar and property labels can be read in full, also with the keyboard.",
-          "Icon-only buttons in chat and Issue views have names for screen readers.",
-          "The sidebar has a thinner scrollbar, closed system wakeups move into history, and workflow names no longer end with \"from project\".",
-          "Fewer animations: the launch icon mode, the onboarding star entrance, and the site logo's hover bounce are gone, and large star icons use thinner lines.",
-          "Searching only open Issues is faster.",
-          "The docs explain what 0s means for each timeout and how the daemon watchdog differs from Codex's own timers.",
+          "Setting up a project's workflow, repositories, local folders, and sub-Issue wakeup defaults takes fewer steps.",
+          "Creating skills, managing labels, and inviting people are simpler, and squads can be edited in place.",
+          "Messaging channels belong to agents and connect with one click, and GitHub authorization brings you back with the repository selected.",
+          "Agent filters share one meaning of \"my agents\", add Idle, and Issues show who actually requested an agent's work.",
+          "Execution logs show command input line by line, and the runtime usage page keeps its time range.",
+          "Lark tasks include message, thread, and sender IDs, and Qoder sessions are marked as coming from Labrastro.",
+          "The CLI links local images in a body to the attachments uploaded with it.",
+          "The web app caches translations for each language, so pages load less repeated data.",
         ],
         fixes: [
-          "Attachments are no longer served from public /uploads/* links and always download with sign-in. Older images and drafts, previews from other domains, and audio, video, and PDF files work again, and an expired link picks up where you were. Update older desktop versions to keep local drafts and old links working.",
-          "CSV previews no longer split columns on separators inside quoted fields.",
-          "When importing local skills, you choose the local folder as the source, and a folder with several skills imports all of them.",
-          "The daemon clears build caches of idle chats, so disk use doesn't keep growing.",
-          "Codex replies stream continuously again instead of stopping after the first word.",
-          "Hermes runs on Windows inside restricted Job Objects.",
-          "If the Issue list fails to load, you can retry, and an empty Unread list with a date filter can be cleared.",
-          "The result of marking an Issue as a duplicate stays on screen after the picker closes.",
-          "Issue mentions that failed to load retry when you come back to the window.",
-          "Pending invitations refresh when you come back to the window or reconnect.",
-          "Search boxes in filter submenus accept typing again.",
-          "Opening an Issue no longer expands its project in the sidebar every time, clicks right after dragging pinned items, views, or projects work, and Issue rows no longer show an extra title tooltip.",
-          "Custom triggers in squad pickers behave like normal buttons, including with the keyboard.",
-          "If you can edit a run-only autopilot, you can stop its runs from the run history.",
-          "When Issue numbers collide, Labrastro repairs the counter and tries again, so new Issues can be created.",
-          "Files attached to a comment from the CLI are linked to the comment only after it is accepted.",
-          "multica daemon start reports success only after the daemon is healthy, and self-host setup checks that the server is a real Labrastro backend before saving.",
-          "Squad and autopilot CLI commands prefer the agent whose name matches exactly.",
-          "The CLI no longer suggests deleting the task marker of a run that is still active.",
-          "A late 401 from an old request no longer signs you out of a newer session.",
-          "Channel binding pages such as lark, slack, telegram, and wecom no longer clash with workspace URLs.",
+          "Long discussions render as you scroll, show all older images, and have a button to jump to the latest activity.",
+          "Private project Issues no longer show up through runs, references, autopilots, wakeup lists, or sub-Issue counts.",
+          "The Inbox opens the right comment, drops deleted items, and no longer jumps back to an old selection.",
+          "Images keep HTML addresses and preview in the same order everywhere, and titled Mermaid, HTML, and code blocks render again.",
+          "Label picks and order you change while a new label is created are no longer overwritten.",
+          "On desktop, tabs work in full screen, saved views switch correctly, and a closed sidebar stays closed on load.",
+          "Floating chats use the main chat's controls, drop the page context tag on send, and show the same title everywhere.",
+          "Mentioning a missing or unavailable agent leaves a lasting error, and mentions with no recipient no longer add subscribers.",
+          "Only sign-in sessions are renewed, daemon tokens no longer act as users, and builds use Go 1.27.4 for security fixes.",
+          "Fixed Antigravity resume, Hermes detection, ZCode on Linux, mise-installed runtimes, and false failures when macOS runs exit.",
+          "Claude execution logs keep thinking text, and Copilot reports usage for new sessions.",
+          "Raising a runtime's concurrency limit starts waiting tasks right away, and repeat checkouts reuse the same folder, branch, and access.",
+          "Daemons connected to self-hosted servers now delete finished tasks' working folders after 14 days by default, as on Cloud. To keep them, set MULTICA_GC_COMPLETED_TASK_TTL=0 before upgrading the daemon.",
+          "Usage counts the right calendar days, accepts reports that arrive out of order, and prices newer models.",
+          "Fixed smaller issues with cancelled uploads, failed installs, schedules that never run, deliverable links, file sizes, and environment variable editing.",
+        ],
+      },
+      {
+        version: "0.8.2",
+        date: "2026-11-10",
+        title: "Appearance themes, private projects for everyone, and Issue environments",
+        changes: [],
+        features: [
+          "The Labrastro website is redesigned, with its own address for each language (/zh, /ja, /ko).",
+          "Settings → Appearance: pick one of five built-in themes and set fonts, sizes, density, and contrast.",
+          "Private projects are available in every workspace. Their Issues are visible only to project members and workspace owners and admins.",
+          "An Issue's sidebar lists the services its runs started under Environments. On macOS and Linux, agents can keep a service running with multica env start.",
+          "Connected Apps is rebuilt in workspaces where it's enabled: connect team or personal accounts and choose which apps each agent uses.",
+          "Select text to comment on it and reply right there.",
+          "Copy a link that always opens the latest version of a deliverable.",
+          "Turn on Include sub-issues in the execution log to see runs and cost across all sub-Issues.",
+          "Filter the Inbox the same way as Issues.",
+          "Hand a workflow step to a squad.",
+          "Labrastro is available in Russian.",
+          "Run a personal agent on Muse app with the new museapp backend.",
+          "Qoder can use the workspace's GitHub App to access repositories.",
+          "Open an Issue from the web app in the desktop app.",
+          "Rename projects and edit saved views from their menus, and drag icons in the navigation bar to reorder spaces.",
+          "New in the CLI: --pr-auto-complete for Issues delivered over several PRs, --project for issue search, and issue-status commands.",
+        ],
+        improvements: [
+          "The navigation bar is narrower, buttons are rectangular, and Issues and chat use a wider column on wide screens.",
+          "Projects in the sidebar show their own icons, and the team page remembers collapsed groups.",
+          "Icon-only buttons have screen reader names, and cut-off labels can be read in full with the keyboard.",
+          "Fewer animations across the app and website.",
+          "Searching open Issues is faster.",
+        ],
+        fixes: [
+          "Attachments always require sign-in to download, and older images, audio, video, and PDFs open again. Update older desktop versions to keep local drafts and old links working.",
+          "Codex replies stream fully again instead of stopping after the first word.",
           "Autopilots triggered by Issue updates run again.",
+          "A late 401 from an old request no longer signs you out.",
+          "Creating an Issue no longer fails when Issue numbers collide.",
+          "The daemon clears build caches of idle chats, so disk use stops growing.",
+          "Importing a folder with several local skills imports all of them.",
+          "CSV previews no longer split columns on separators inside quotes.",
+          "Hermes runs inside restricted Job Objects on Windows.",
+          "A failed Issue list can be retried, and Issue mentions and pending invitations refresh when you return to the window.",
+          "Search boxes in filter submenus accept typing again.",
+          "multica daemon start reports success only once the daemon is healthy.",
+          "Channel binding pages such as Lark and Slack no longer clash with workspace URLs.",
+          "Smaller fixes to the sidebar, squad pickers, autopilot run history, and the CLI.",
         ],
       },
       {
@@ -1644,7 +1677,7 @@ export function createEnDict(): LandingDict {
           "When WeCom cannot connect, the page now says whether it was refused or simply unreachable.",
         ],
         improvements: [
-          "Signing up now lands you on Mika's opening message right away.",
+          "Signing up now lands you on Mizuki's opening message right away.",
           "A saved view can be sorted ascending or descending.",
           "The project tag on a new Issue clears in one click, and no longer remembers your last project.",
           "A bare /new or /issue in a channel now tells you exactly what happened.",
@@ -1701,11 +1734,11 @@ export function createEnDict(): LandingDict {
       {
         version: "0.4.20",
         date: "2026-08-06",
-        title: "DingTalk bots, a guided first run with Mika, and per-run token costs",
+        title: "DingTalk bots, a guided first run with Mizuki, and per-run token costs",
         changes: [],
         features: [
           "Your agents can now live in DingTalk — DM them or @-mention them in a group.",
-          "Signing up now ends with Mika ready to talk, plus cards to start your first task.",
+          "Signing up now ends with Mizuki ready to talk, plus cards to start your first task.",
           "The execution log shows what each run cost, and the whole Issue's total.",
           "Muting comment notifications no longer hides messages that @-mention you.",
           "Chat on a phone opens full screen and the composer rides above the keyboard.",
@@ -3118,7 +3151,7 @@ export function createEnDict(): LandingDict {
         title: "Smarter Welcome, Live Work Signals & Safer Collaboration",
         changes: [],
         features: [
-          "New users now enter a guided Mika conversation that helps them complete one real first task and add specialists only when needed",
+          "New users now enter a guided Mizuki conversation that helps them complete one real first task and add specialists only when needed",
           "Issue lists now show when agents are actively working, with per-Issue indicators, hover details, and a quick filter for work in progress",
           "When a child Issue is finished, the parent Issue now receives a platform-generated update and can notify the right parent owner without creating loops",
           "The public site now includes a Contact Sales flow with a business-email form and submission protection",

@@ -102,7 +102,7 @@ describe("Desktop daemon localization with real resources", () => {
         "登录时自动启动。",
       ),
     ).toBeInTheDocument();
-    const command = screen.getByText("multica daemon stop");
+    const command = await screen.findByText("multica daemon stop");
     expect(command.closest("p")).toHaveTextContent(/multica daemon stop。$/);
   });
 

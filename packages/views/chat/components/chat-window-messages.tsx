@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ComponentProps, type ReactNode } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { motion, useIsPresent } from "motion/react";
 import type { AgentAvailability } from "@multica/core/agents";
@@ -21,6 +21,7 @@ export function ChatWindowMessages({
   quickActionsPendingMessageId,
   resumeFollowNonce,
   onReady,
+  annotations,
   children,
 }: {
   sessionId: string | null;
@@ -33,6 +34,7 @@ export function ChatWindowMessages({
   resumeFollowNonce?: number;
   /** This area has something to show — the window can fade in around it. */
   onReady?: () => void;
+  annotations?: ComponentProps<typeof ChatMessageList>["annotations"];
   children: ReactNode;
 }) {
   const isPresent = useIsPresent();
@@ -87,6 +89,7 @@ export function ChatWindowMessages({
             ? regenerateQuickActions.mutateAsync({ sessionId, messageId: message.id })
             : undefined}
           quickActionsPendingMessageId={quickActionsPendingMessageId}
+          annotations={annotations}
         />
       ) : children}
     </motion.div>

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,7 +34,7 @@ func (*controller) interrupt(cmd *exec.Cmd) error {
 		return os.ErrProcessDone
 	}
 	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
+		if errors.Is(err, syscall.ESRCH) || onlyExitingMembers(err) {
 			return nil
 		}
 		return err
@@ -46,7 +47,7 @@ func (*controller) stop(cmd *exec.Cmd) error {
 		return os.ErrProcessDone
 	}
 	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
+		if errors.Is(err, syscall.ESRCH) || onlyExitingMembers(err) {
 			return nil
 		}
 		return cmd.Process.Kill()
@@ -65,15 +66,20 @@ func (c *controller) finish(cmd *exec.Cmd) error {
 	// A normally-exited leader can still leave a descendant holding inherited
 	// pipes or repository locks. Kill the remaining group before returning
 	// ownership of the repository to another operation.
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) && !onlyExitingMembers(err) {
 		return err
 	}
 	deadline := time.Now().Add(processTreeFinishTimeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if !processGroupAlive(pid) {
+		lastErr = syscall.Kill(-pid, 0)
+		if !processGroupAlive(pid) || onlyExitingMembers(lastErr) {
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("process group %d still active after %s: %w", pid, processTreeFinishTimeout, lastErr)
 	}
 	return fmt.Errorf("process group %d still active after %s", pid, processTreeFinishTimeout)
 }
@@ -129,6 +135,14 @@ func procStatStateAndPgid(pid int) (state byte, pgid int, ok bool) {
 		return 0, 0, false
 	}
 	return fields[0][0], pgid, true
+}
+
+// onlyExitingMembers reports whether a kill(-pgid, ...) error means the group
+// still exists but none of its members can take a signal any more. Darwin
+// skips members that are exiting or zombies and then returns EPERM rather than
+// ESRCH while the group lingers; the group disappears once they are reaped.
+func onlyExitingMembers(err error) bool {
+	return runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM)
 }
 
 func (*controller) close() {}

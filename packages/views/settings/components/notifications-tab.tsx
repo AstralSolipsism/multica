@@ -8,7 +8,7 @@ import type { NotificationGroupKey, NotificationPreferences } from "@multica/cor
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
-import { PersonalFeishuPushSection } from "../../message-delivery";
+import { PersonalFeishuPushSection, TeamSubscriptionsSection } from "../../message-delivery";
 import { YouShouldKnowPersonalRow } from "../../you-should-know/settings/personal-toggle";
 import { BrowserNotificationSetting } from "./browser-notification-setting";
 import {
@@ -26,6 +26,7 @@ const INBOX_GROUP_KEYS = [
   "comments",
   "mentions",
   "updates",
+  "new_issues",
   "agent_activity",
 ] as const;
 type InboxGroupKey = (typeof INBOX_GROUP_KEYS)[number];
@@ -102,20 +103,39 @@ export function NotificationsTab() {
         <PersonalFeishuPushSection />
       </SettingsSection>
 
+      {/* OL-28: team event subscriptions (activity/comment → group/topic).
+          Self-gated on the member's role; a plain member sees an explanatory
+          note, never the admin-only configuration. */}
+      <TeamSubscriptionsSection />
+
       <SettingsSection
         title={t(($) => $.notifications.system.title)}
+        anchor={systemEnabled ? undefined : "chat_replies"}
       >
         <SettingsCard>
           <SettingsRow
             anchor="system"
             label={t(($) => $.notifications.system.label)}
           >
-              <Switch
-                checked={systemEnabled}
-                aria-label={t(($) => $.notifications.system.label)}
-                onCheckedChange={(checked) => handleToggle("system_notifications", checked)}
-              />
+            <Switch
+              checked={systemEnabled}
+              aria-label={t(($) => $.notifications.system.label)}
+              onCheckedChange={(checked) => handleToggle("system_notifications", checked)}
+            />
           </SettingsRow>
+          {systemEnabled && (
+            <SettingsRow
+              anchor="chat_replies"
+              className="pl-8"
+              label={t(($) => $.notifications.groups.chat_replies.label)}
+            >
+              <Switch
+                checked={preferences.chat_replies !== "muted"}
+                aria-label={t(($) => $.notifications.groups.chat_replies.label)}
+                onCheckedChange={(checked) => handleToggle("chat_replies", checked)}
+              />
+            </SettingsRow>
+          )}
         </SettingsCard>
 
         {/* Web-only: the browser permission banners require. Renders nothing on

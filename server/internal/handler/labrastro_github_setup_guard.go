@@ -39,30 +39,25 @@ import (
 
 // ── Setup state with operator (fork extension of upstream's state) ──────────
 //
-// Upstream's signStateForReturn/verifyStateWithReturn sign 3- or 4-part
-// tokens (workspace, optional returnTo, nonce). The setup callback is a
+// The setup callback is a
 // public route whose X-User-ID header is client-forgeable, so the operator
 // identity the binding gate relies on travels inside the state instead:
 //
 //	<ws>.<returnTo>.<operator>.<nonce>.<sig>
 //
-// Legacy 3/4-part tokens verify too (empty operator) — states minted before
-// this change must not strand an in-flight install.
+// The nonce is also the upstream connection ID, including its desktop marker.
 
 // signGitHubSetupState signs a 5-part setup state naming the operator who
 // started the flow (the authenticated caller of the admin-gated Connect
-// endpoint). operatorID may be empty, which produces the legacy 4-part
+// endpoint). operatorID may be empty, which produces the legacy 3-part
 // shape without an operator segment.
-func signGitHubSetupState(workspaceID, returnTo, operatorID string) (string, error) {
+func signGitHubSetupState(workspaceID string, desktop bool, operatorID string) (string, error) {
 	if operatorID == "" {
-		return signStateForReturn(workspaceID, returnTo)
+		return signGitHubState(workspaceID, desktop)
 	}
 	secret := githubWebhookSecret()
 	if secret == "" {
 		return "", errors.New("github integration is not configured")
-	}
-	if !isAllowedGitHubReturnTo(returnTo) {
-		return "", errors.New("invalid github return target")
 	}
 	if _, err := parseStrictUUID(operatorID); err != nil {
 		return "", errors.New("invalid operator id")
@@ -71,28 +66,32 @@ func signGitHubSetupState(workspaceID, returnTo, operatorID string) (string, err
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return "", err
 	}
-	payload := workspaceID + "." + returnTo + "." + operatorID + "." + hex.EncodeToString(nonceBytes)
+	nonce := hex.EncodeToString(nonceBytes)
+	if desktop {
+		nonce = "desktop-" + nonce
+	}
+	payload := workspaceID + ".github." + operatorID + "." + nonce
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(payload))
 	return payload + "." + hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // verifyGitHubSetupState validates a state minted by signGitHubSetupState
-// and recovers the workspace, return target, and operator (invalid UUID when
+// and recovers the workspace, connection ID, and operator (invalid UUID when
 // the token carries none). The operator is only ever read from this signed
 // token, never from request headers.
-func verifyGitHubSetupState(token string) (workspaceID, returnTo string, operator pgtype.UUID, ok bool) {
+func verifyGitHubSetupState(token string) (workspaceID, connectionID string, operator pgtype.UUID, ok bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 5 {
-		ws, ret, legacyOK := verifyStateWithReturn(token)
+		ws, ret, legacyOK := verifyGitHubState(token)
 		return ws, ret, pgtype.UUID{}, legacyOK
 	}
 	secret := githubWebhookSecret()
 	if secret == "" {
 		return "", "", pgtype.UUID{}, false
 	}
-	workspaceID, returnTo, operatorID := parts[0], parts[1], parts[2]
-	if !isAllowedGitHubReturnTo(returnTo) {
+	workspaceID, connectionID, operatorID := parts[0], parts[3], parts[2]
+	if parts[1] != "github" && parts[1] != "repositories" {
 		return "", "", pgtype.UUID{}, false
 	}
 	operator, err := parseStrictUUID(operatorID)
@@ -105,7 +104,7 @@ func verifyGitHubSetupState(token string) (workspaceID, returnTo string, operato
 	if !hmac.Equal([]byte(expected), []byte(parts[4])) {
 		return "", "", pgtype.UUID{}, false
 	}
-	return workspaceID, returnTo, operator, true
+	return workspaceID, connectionID, operator, true
 }
 
 // ── Binding gate ────────────────────────────────────────────────────────────

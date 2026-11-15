@@ -157,7 +157,9 @@ var modelPrices = map[string]ModelPrice{
 	// providers/moonshotai/models/kimi-k3.toml). Moonshot bills no separate
 	// cache write, so CacheWritePerM mirrors Input.
 	"moonshotai:kimi-k3": {Provider: "moonshotai", Model: "kimi-k3", InputPerM: 3.0, CacheReadPerM: 0.30, CacheWritePerM: 3.0, OutputPerM: 15.0},
-	// Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat, 2026-11-11); no separate cache write, like kimi-k3.
+	// Kimi K3.1 Pro (platform.kimi.ai/docs/pricing/chat via models.dev
+	// providers/moonshotai/models/kimi-k3.1-pro.toml, 2026-11-11); default 5m
+	// cache write is 1x Input, like kimi-k3.
 	"moonshotai:kimi-k3.1-pro": {Provider: "moonshotai", Model: "kimi-k3.1-pro", InputPerM: 2.0, CacheReadPerM: 0.20, CacheWritePerM: 2.0, OutputPerM: 10.0},
 	// GLM-5.3 / GLM-5.3-Flash (docs.z.ai/guides/overview/pricing, 2026-11-11); the 5.3 Flash tier is paid.
 	"zai:glm-5.3":       {Provider: "zai", Model: "glm-5.3", InputPerM: 1.4, CacheReadPerM: 0.26, CacheWritePerM: 1.4, OutputPerM: 4.4},

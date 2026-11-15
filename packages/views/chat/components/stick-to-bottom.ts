@@ -138,6 +138,8 @@ export interface StickToBottom {
    * (OL-272 review). Not a reader-action override — nothing else calls it.
    */
   resumeLiveEnd(): void;
+  /** Release the follow before scrolling to an older row on the reader's behalf. */
+  disengage(): void;
   /**
    * False until the newest message has actually arrived at the bottom of the
    * viewport. Keep the list hidden until then: Virtuoso opens it by scrolling
@@ -317,10 +319,6 @@ export function useStickToBottom(
       const nowAtEdge = isAtLiveEnd(scrollEl);
       if (nowAtEdge !== atEdge) {
         atEdge = nowAtEdge;
-        // Edge transitions are reported BEFORE the scroll itself: re-entering
-        // the zone re-engages the follow, and the latch must then judge this
-        // same event by its DIRECTION (a scrollbar drag on the way back must
-        // not re-release — the release threshold sits inside the zone).
         follow.onAtEdgeChange(nowAtEdge);
       }
       // The list itself moved: this is what promotes staged input.
@@ -377,6 +375,7 @@ export function useStickToBottom(
       isFollowing: () => follow.isFollowing(),
       onContentHeightChanged: onResize,
       resumeLiveEnd,
+      disengage: () => follow.disengage(),
       hasReachedLiveEnd,
     }),
     [follow, onResize, resumeLiveEnd, hasReachedLiveEnd],

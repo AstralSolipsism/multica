@@ -29,10 +29,11 @@ import {
   SettingsTab,
 } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
-import { GitHubAccountRows, GitHubConnectButton } from "./code-github";
 import { VCSConnectionRows } from "./code-vcs";
+import { GitHubAccountRows, GitHubConnectButton } from "./code-github";
 import { HostMark, HostStatus } from "./code-host";
 import { RepositoriesSection } from "./repositories-section";
+import { useConnectGitHub } from "./use-connect-github";
 import { PRMergeStatusRow } from "./pr-merge-status-row";
 
 type GitHubSettingsKey =
@@ -69,6 +70,7 @@ export function CodeTab() {
 
   const flags = deriveGitHubSettings(workspace);
   const [savingKey, setSavingKey] = useState<GitHubSettingsKey | null>(null);
+  const githubConnection = useConnectGitHub(wsId);
 
   async function persistSetting(key: GitHubSettingsKey, next: boolean) {
     if (!workspace || savingKey) return;
@@ -188,7 +190,7 @@ export function CodeTab() {
         </SettingsCard>
       </SettingsSection>
 
-      <RepositoriesSection />
+      <RepositoriesSection connection={githubConnection} />
 
       <SettingsSection
         title={t(($) => $.code.pr_linking_title)}
@@ -244,6 +246,7 @@ export function CodeTab() {
           <PRMergeStatusRow canManage={isManager} />
         </SettingsCard>
       </SettingsSection>
+
     </SettingsTab>
   );
 }

@@ -11,6 +11,7 @@ func TestPreferenceGroupForType(t *testing.T) {
 		wantGroup string
 		wantOK    bool
 	}{
+		{"issue_created", GroupNewIssues, true},
 		{"issue_assigned", GroupAssignments, true},
 		{"unassigned", GroupAssignments, true},
 		{"assignee_changed", GroupAssignments, true},

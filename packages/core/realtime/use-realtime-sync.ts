@@ -1,24 +1,31 @@
 "use client";
 
-import { invalidateAgentFolderQueries } from "../agents/folder-queries";
-import { skillPackageKeys } from "../skills/package-queries";
-
-import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
-import { subscribeLabrastroEngineeringEvents } from "./labrastro-engineering-realtime";
 import { useEffect, useRef } from "react";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import { useQueryClient, type InfiniteData, type QueryClient, type QueryFilters } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
+import {
+  holdSyncCauses,
+  registerRealtimeSyncTarget,
+  runWithSyncCauses,
+  type SyncCauses,
+} from "../api/realtime-observer";
 import { parseWithFallback } from "../api/schema";
 import { TaskMessagePayloadSchema } from "../api/schemas";
+import type { WSMessage } from "../types/events";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
 import { createLogger } from "../logger";
 import { clearWorkspaceStorage } from "../platform/storage-cleanup";
 import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
+import { invalidateAgentFolderQueries } from "../agents/folder-queries";
+import { skillPackageKeys } from "../skills/package-queries";
+
+import { invalidateDependencyQueries, invalidateIssueQueries } from "../issues/invalidation";
+import { subscribeLabrastroEngineeringEvents } from "./labrastro-engineering-realtime";
 import { issueKeys } from "../issues/queries";
-import { isSidebarTableRequest, type SidebarIssuesRequest } from "../issues/sidebar-list";
+import type { SidebarIssuesRequest } from "../issues/sidebar-list";
 import { refreshIssueUnread } from "../issues/unread";
 import { refreshSubscribedIssues, subscribedIssueKeys } from "../issues/subscribed";
 import { projectKeys } from "../projects/queries";
@@ -39,6 +46,7 @@ import {
   agentTasksKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
+import { useGitHubConnectionStore } from "../github/connection-store";
 import { larkKeys } from "../lark/queries";
 import { slackKeys } from "../slack/queries";
 import { dingtalkKeys } from "../dingtalk/queries";
@@ -67,7 +75,8 @@ import {
 import { workspaceKeys, workspaceListOptions } from "../workspace/queries";
 import { isWorkspaceDeletePending } from "../workspace/pending-delete";
 import {
-  showWebNotification,
+  showSystemNotification,
+  systemNotificationSuppressedByFocus,
   type SystemNotificationPayload,
 } from "../platform/system-notification";
 import type { Workspace } from "../types/workspace";
@@ -126,6 +135,7 @@ import type {
   TaskFailedPayload,
   TaskCancelledPayload,
   ChatDonePayload,
+  ChatReplyNotificationPayload,
   ChatQuickActionsPayload,
   ChatQuickActionsPendingState,
   ChatQuickActionsFailureState,
@@ -592,7 +602,7 @@ export async function handleInboxNew(
   // the user is already looking at Multica, the inbox sidebar's unread
   // styling is enough — no need to interrupt with a banner. `desktopAPI`
   // is injected by the preload script; its absence (web app) skips silently.
-  if (typeof document !== "undefined" && document.hasFocus()) return;
+  if (systemNotificationSuppressedByFocus()) return;
   // Resolve the source workspace's slug once: it pins BOTH the mute check
   // and the deep link to the workspace the inbox item BELONGS to, never the
   // currently active one. Reading `getCurrentSlug()` here was the source of
@@ -637,21 +647,39 @@ export async function handleInboxNew(
     title: item.title,
     body: item.body ?? "",
   };
-  const desktopAPI = (
-    globalThis as unknown as {
-      desktopAPI?: {
-        showNotification?: (payload: SystemNotificationPayload) => void;
-      };
+  showSystemNotification(payload);
+}
+
+export function createChatReplyNotifier(
+  qc: QueryClient,
+  getUserId: () => string | undefined,
+): (payload: ChatReplyNotificationPayload) => Promise<void> {
+  const seen = new Set<string>();
+  return async (payload) => {
+    const messageId = payload.message_id;
+    const userId = getUserId();
+    if (!payload.workspace_id || !messageId || !payload.chat_session_id || !userId || seen.has(messageId)) return;
+    seen.add(messageId);
+    if (seen.size > 1_000) seen.delete(seen.values().next().value!);
+    if (systemNotificationSuppressedByFocus()) return;
+
+    const slug = await resolveInboxSourceSlug(qc, payload.workspace_id);
+    if (!slug) return;
+    try {
+      const { preferences } = await qc.ensureQueryData(notificationPreferenceOptions(payload.workspace_id, slug));
+      if (preferences.system_notifications === "muted" || preferences.chat_replies === "muted") return;
+    } catch {
+      // Match the existing default-on system-notification behavior.
     }
-  ).desktopAPI;
-  if (desktopAPI?.showNotification) {
-    // Desktop: native OS banner rendered by the Electron main process.
-    desktopAPI.showNotification(payload);
-    return;
-  }
-  // Web: the browser Notification API. No-op without granted permission or on
-  // SSR — the in-app inbox + unread badge still reflect the new item.
-  showWebNotification(payload);
+    if (getUserId() !== userId || systemNotificationSuppressedByFocus()) return;
+    showSystemNotification({
+      slug,
+      itemId: `chat:${messageId}`,
+      chatSessionId: payload.chat_session_id,
+      title: payload.title,
+      body: payload.body,
+    });
+  };
 }
 
 /**
@@ -733,9 +761,14 @@ function invalidateWorkspaceScopedQueries(qc: QueryClient): void {
   qc.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
 
-async function refreshWorkingAgentQueries(qc: QueryClient, wsId: string): Promise<void> {
+async function refreshWorkingAgentQueries(
+  qc: QueryClient,
+  wsId: string,
+  causes: SyncCauses,
+): Promise<void> {
   const filters: QueryFilters[] = [
     { queryKey: workspaceWorkingAgentsKeys.all(wsId) },
+    { queryKey: agentTaskSnapshotKeys.all(wsId) },
     {
       queryKey: issueKeys.tableAll(wsId),
       predicate: ({ queryKey }) => {
@@ -752,6 +785,7 @@ async function refreshWorkingAgentQueries(qc: QueryClient, wsId: string): Promis
         // projection may contain newly started work. Other facets also
         // depend on this membership, not only rows and group descriptors.
         return spec?.filters.working_only === true ||
+          spec?.filters.idle_only === true ||
           spec?.filters.working_issue_ids !== undefined;
       },
     },
@@ -759,7 +793,7 @@ async function refreshWorkingAgentQueries(qc: QueryClient, wsId: string): Promis
       queryKey: issueKeys.sidebarAll(wsId),
       predicate: ({ queryKey }) => {
         const request = queryKey[4] as SidebarIssuesRequest | undefined;
-        return !!request && isSidebarTableRequest(request) && request.table.filters.working_only === true;
+        return request?.table.filters.working_only === true || request?.table.filters.idle_only === true;
       },
     },
   ];
@@ -767,21 +801,48 @@ async function refreshWorkingAgentQueries(qc: QueryClient, wsId: string): Promis
   // captured before that event. With staleTime=Infinity it could otherwise
   // leave a completed run visible until another event happens to arrive.
   await Promise.all(filters.map((filter) => qc.cancelQueries(filter)));
-  await Promise.all(filters.map((filter) => qc.invalidateQueries(filter)));
+  await runWithSyncCauses(causes, () =>
+    Promise.all(filters.map((filter) => qc.invalidateQueries(filter))),
+  );
 }
 
-function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void {
-  qc.invalidateQueries({
-    predicate: (query) => {
-      const key = query.queryKey;
-      return (
-        key[0] === "workspaces" &&
-        key[1] === wsId &&
-        key[2] === "squads" &&
-        key[4] === "members-status"
-      );
+type SyncEventHandler = Parameters<WSClient["on"]>[1];
+
+/**
+ * `ws.on` / `ws.onAny` that remember realtime sync's own handlers, so the dev
+ * toolbar can replay a frame through them alone. Other subscribers stay out
+ * of a replay: some answer an event with a server write, such as reading the
+ * inbox notification of the issue on screen.
+ */
+function replayableSubscriptions(ws: WSClient) {
+  const handlers = new Map<string, Set<SyncEventHandler>>();
+  const anyHandlers = new Set<(msg: WSMessage) => void>();
+  return {
+    on(event: Parameters<WSClient["on"]>[0], handler: SyncEventHandler) {
+      const set = handlers.get(event) ?? new Set();
+      handlers.set(event, set);
+      set.add(handler);
+      const unsubscribe = ws.on(event, handler);
+      return () => {
+        set.delete(handler);
+        unsubscribe();
+      };
     },
-  });
+    onAny(handler: (msg: WSMessage) => void) {
+      anyHandlers.add(handler);
+      const unsubscribe = ws.onAny(handler);
+      return () => {
+        anyHandlers.delete(handler);
+        unsubscribe();
+      };
+    },
+    replay(msg: WSMessage) {
+      for (const handler of handlers.get(msg.type) ?? []) {
+        handler(msg.payload, msg.actor_id, msg.actor_type);
+      }
+      for (const handler of anyHandlers) handler(msg);
+    },
+  };
 }
 
 function applyAgentStatusPatch(
@@ -815,6 +876,20 @@ function applyAgentStatusPatch(
   return true;
 }
 
+function invalidateSquadMemberStatusQueries(qc: QueryClient, wsId: string): void {
+  qc.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        key[0] === "workspaces" &&
+        key[1] === wsId &&
+        key[2] === "squads" &&
+        key[4] === "members-status"
+      );
+    },
+  });
+}
+
 export interface RealtimeSyncStores {
   authStore: UseBoundStore<StoreApi<AuthState>>;
 }
@@ -832,12 +907,12 @@ export interface RealtimeSyncStores {
  * updates). Daemon register events invalidate runtimes globally; heartbeats
  * are skipped to avoid excessive refetches.
  *
- * @param ws - WebSocket client instance (null when not yet connected)
+ * @param client - WebSocket client instance (null when not yet connected)
  * @param stores - Platform-created Zustand store instances for auth and workspace
  * @param onToast - Optional callback for showing toast messages (platform-specific)
  */
 export function useRealtimeSync(
-  ws: WSClient | null,
+  client: WSClient | null,
   stores: RealtimeSyncStores,
   onToast?: (message: string, type?: "info" | "error") => void,
 ) {
@@ -853,13 +928,18 @@ export function useRealtimeSync(
 
   // Main sync: onAny -> refreshMap with debounce
   useEffect(() => {
-    if (!ws) return;
+    if (!client) return;
+    const ws = replayableSubscriptions(client);
+    const releaseSyncTarget = registerRealtimeSyncTarget({
+      replay: ws.replay,
+      drop: () => client.drop(),
+    });
 
     const refreshMap: Record<string, () => void> = {
       inbox: () => {
         const wsId = getCurrentWsId();
         if (wsId) void onInboxInvalidate(qc, wsId);
-        // inbox:archived / inbox:unarchived / batch events arrive
+        // inbox:read / inbox:archived / inbox:unarchived / batch events arrive
         // here. They can originate from a workspace other than the active one
         // (personal events fan out to all the user's connections), so always
         // refresh the cross-workspace summary — its dot must clear when another
@@ -916,8 +996,8 @@ export function useRealtimeSync(
       project: () => {
         const wsId = getCurrentWsId();
         if (wsId) {
-          qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
           void invalidateIssueQueries(qc, wsId, "graph");
+          qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
           // Workflow responses include the projects using them. Creating,
           // deleting or changing a project also changes that usage list.
           qc.invalidateQueries({ queryKey: issueWorkflowKeys.all(wsId) });
@@ -1081,16 +1161,13 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: issueKeys.environmentsAll(wsId) });
       },
-      // Powers the agent presence cache: any task lifecycle change
-      // (dispatch / completed / failed / cancelled) refreshes the
-      // workspace-wide agent-task-snapshot query so per-agent presence
-      // reflects the change. task:message and task:progress stay in
-      // specificEvents to avoid invalidate storms during long runs.
+      // Task history and aggregates follow lifecycle changes. Activity
+      // membership, including the presence snapshot, uses the bounded
+      // refresh below so it cancels a pre-event first load without repeatedly
+      // cancelling its own slow refreshes. task:message stays in specificEvents.
       task: () => {
         const wsId = getCurrentWsId();
         if (!wsId) return;
-        qc.invalidateQueries({ queryKey: agentTaskSnapshotKeys.list(wsId) });
-        // Working-agent and DAG projections have bounded refreshers below.
         // 30d activity series shares the same lifecycle signal — any task
         // completion / failure shifts the histogram. (Dispatch alone
         // doesn't change a completed_at-anchored series, but invalidating
@@ -1128,6 +1205,7 @@ export function useRealtimeSync(
     const workingAgentTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const workingAgentInFlight = new Set<string>();
     const workingAgentDirty = new Set<string>();
+    const workingAgentCauses = new Map<string, SyncCauses>();
     let disposed = false;
     const scheduleWorkingAgentRefresh = (wsId: string) => {
       // Flush one second after the FIRST event in a batch. Later events do
@@ -1135,13 +1213,16 @@ export function useRealtimeSync(
       // Capture the workspace now: navigation must not redirect a queued
       // refresh into a different workspace's cache.
       workingAgentDirty.add(wsId);
+      workingAgentCauses.set(wsId, holdSyncCauses(workingAgentCauses.get(wsId)));
       if (workingAgentTimers.has(wsId) || workingAgentInFlight.has(wsId)) return;
       workingAgentTimers.set(wsId, setTimeout(async () => {
         workingAgentTimers.delete(wsId);
         workingAgentDirty.delete(wsId);
         workingAgentInFlight.add(wsId);
+        const causes = workingAgentCauses.get(wsId) ?? [];
+        workingAgentCauses.delete(wsId);
         try {
-          await refreshWorkingAgentQueries(qc, wsId);
+          await refreshWorkingAgentQueries(qc, wsId, causes);
         } finally {
           workingAgentInFlight.delete(wsId);
           // Serialize slow requests: cancelling our own refresh every second
@@ -1172,14 +1253,18 @@ export function useRealtimeSync(
     };
 
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
+    const timerCauses = new Map<string, SyncCauses>();
     const debouncedRefresh = (prefix: string, fn: () => void) => {
       const existing = timers.get(prefix);
       if (existing) clearTimeout(existing);
+      const causes = holdSyncCauses(timerCauses.get(prefix));
+      if (causes.length > 0) timerCauses.set(prefix, causes);
       timers.set(
         prefix,
         setTimeout(() => {
           timers.delete(prefix);
-          fn();
+          timerCauses.delete(prefix);
+          runWithSyncCauses(causes, fn);
         }, 100),
       );
     };
@@ -1196,17 +1281,15 @@ export function useRealtimeSync(
       "subscriber:added", "subscriber:removed",
       "daemon:heartbeat",
       // Chat events are handled explicitly below; do not double-invalidate.
-      "chat:message", "chat:done", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
+      "chat:message", "chat:done", "chat:reply_notification", "chat:quick_actions", "chat:cancel_finalized", "chat:session_read",
       "chat:session_created", "chat:session_deleted", "chat:session_updated",
       // Streamed messages and high-frequency progress frames stay out of the
       // prefix path. Specific task/chat subscriptions still receive them via
       // ws.on(), which is independent of this onAny dispatch.
       "task:message", "task:progress",
-      // task:completed / task:failed deliberately NOT here. They go through
-      // both the task-prefix invalidate (refreshes the agent-task-snapshot
-      // cache) AND the chat-specific ws.on() handlers below. The two
-      // channels are independent — onAny dispatch and ws.on are separate
-      // subscriptions.
+      // task:completed / task:failed deliberately NOT here. They reach both
+      // onAny (task-prefix invalidation and bounded activity refresh) and the
+      // chat-specific ws.on() handlers below through independent subscriptions.
     ]);
 
     const unsubAny = ws.onAny((msg) => {
@@ -1271,6 +1354,10 @@ export function useRealtimeSync(
     // No self-event filtering: actor_id identifies the USER, not the TAB.
     // Filtering by actor_id would block other tabs of the same user.
     // Instead, both mutations and WS handlers use dedup checks to be idempotent.
+
+    const unsubGitHubInstallationCreated = ws.on("github_installation:created", (payload) => {
+      useGitHubConnectionStore.getState().complete(payload);
+    });
 
     const unsubIssueUpdated = ws.on("issue:updated", (p) => {
       const payload = p as IssueUpdatedPayload;
@@ -1535,7 +1622,7 @@ export function useRealtimeSync(
       onSubscriberChanged(p as SubscriberRemovedPayload),
     );
 
-    const unsubLabrastroEngineeringEvents = subscribeLabrastroEngineeringEvents(ws, qc);
+    const unsubLabrastroEngineeringEvents = subscribeLabrastroEngineeringEvents(client, qc);
 
     // --- Side-effect handlers (toast, navigation) ---
 
@@ -1556,6 +1643,7 @@ export function useRealtimeSync(
         hasOnboardedRef.current,
       );
       if (typeof window !== "undefined") {
+        // eslint-disable-next-line no-restricted-syntax -- in-app path, not an external URL; core has no router to hand it to
         window.location.assign(target);
       }
     };
@@ -1692,6 +1780,7 @@ export function useRealtimeSync(
     // re-checks rather than trusting the gate — see flushTaskMessages.
     const taskMessageBatches = new Map<string, TaskMessagePayload[]>();
     let taskMessageFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let taskMessageCauses: SyncCauses = [];
 
     const writeTaskMessageBatch = (taskId: string, batch: TaskMessagePayload[]) => {
       // Re-check, because a queued batch may be up to one window old and
@@ -1713,10 +1802,14 @@ export function useRealtimeSync(
 
     const flushTaskMessages = () => {
       taskMessageFlushTimer = null;
+      const causes = taskMessageCauses;
+      taskMessageCauses = [];
 
-      for (const [taskId, batch] of taskMessageBatches) {
-        writeTaskMessageBatch(taskId, batch);
-      }
+      runWithSyncCauses(causes, () => {
+        for (const [taskId, batch] of taskMessageBatches) {
+          writeTaskMessageBatch(taskId, batch);
+        }
+      });
       taskMessageBatches.clear();
     };
 
@@ -1741,6 +1834,7 @@ export function useRealtimeSync(
         const batch = taskMessageBatches.get(payload.task_id);
         if (batch) batch.push(payload);
         else taskMessageBatches.set(payload.task_id, [payload]);
+        taskMessageCauses = holdSyncCauses(taskMessageCauses);
       }
 
       chatWsLogger.debug("task:message (global)", {
@@ -1774,11 +1868,15 @@ export function useRealtimeSync(
     // aggregate is refreshed only on task lifecycle transitions, which are
     // per-task and low-frequency, then coalesced by the debounce below.
     let aggregateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let aggregateCauses: SyncCauses = [];
     const invalidatePendingAggregate = () => {
       if (aggregateRefreshTimer) clearTimeout(aggregateRefreshTimer);
+      aggregateCauses = holdSyncCauses(aggregateCauses);
       aggregateRefreshTimer = setTimeout(() => {
         aggregateRefreshTimer = null;
-        refetchPendingChatAggregate(qc, getCurrentWsId());
+        const causes = aggregateCauses;
+        aggregateCauses = [];
+        runWithSyncCauses(causes, () => refetchPendingChatAggregate(qc, getCurrentWsId()));
       }, 750);
     };
     const invalidateSessionLists = () => {
@@ -1800,6 +1898,10 @@ export function useRealtimeSync(
       // by the task lifecycle handlers below (MUL-4159).
     });
 
+    const notifyChatReply = createChatReplyNotifier(qc, () => authStore.getState().user?.id);
+    const unsubChatReplyNotification = ws.on("chat:reply_notification", (p) => {
+      void notifyChatReply(p as ChatReplyNotificationPayload);
+    });
     const unsubChatDone = ws.on("chat:done", (p) => {
       const payload = p as ChatDonePayload;
       chatWsLogger.info("chat:done (global)", {
@@ -2048,7 +2150,9 @@ export function useRealtimeSync(
     });
 
     return () => {
+      releaseSyncTarget();
       unsubAny();
+      unsubGitHubInstallationCreated();
       unsubIssueUpdated();
       unsubIssueCreated();
       unsubIssueDeleted();
@@ -2083,6 +2187,7 @@ export function useRealtimeSync(
       unsubTaskMessage();
       unsubChatMessage();
       unsubChatDone();
+      unsubChatReplyNotification();
       unsubChatQuickActions();
       unsubChatCancelFinalized();
       unsubTaskQueued();
@@ -2104,17 +2209,18 @@ export function useRealtimeSync(
       workingAgentTimers.forEach(clearTimeout);
       workingAgentTimers.clear();
       workingAgentDirty.clear();
+      workingAgentCauses.clear();
       taskGraphTimers.forEach(clearTimeout);
       taskGraphTimers.clear();
       taskGraphDirty.clear();
     };
-  }, [ws, qc, authStore, onToast]);
+  }, [client, qc, authStore, onToast]);
 
   // Reconnect -> refetch all data to recover missed events
   useEffect(() => {
-    if (!ws) return;
+    if (!client) return;
 
-    const unsub = ws.onReconnect(async () => {
+    const unsub = client.onReconnect(async () => {
       logger.info("reconnected, refetching all data");
       try {
         invalidateWorkspaceScopedQueries(qc);
@@ -2124,23 +2230,23 @@ export function useRealtimeSync(
     });
 
     return unsub;
-  }, [ws, qc]);
+  }, [client, qc]);
 
   // New WSClient instance (workspace switch) -> invalidate workspace-scoped
   // queries to recover events missed while the previous instance was torn down.
   // Skips the initial assignment to avoid a redundant refetch on first mount.
   const wsInstanceRef = useRef<WSClient | null>(null);
   useEffect(() => {
-    if (!ws) return;
+    if (!client) return;
     if (wsInstanceRef.current === null) {
       // First non-null instance — store and skip invalidation.
-      wsInstanceRef.current = ws;
+      wsInstanceRef.current = client;
       return;
     }
-    if (wsInstanceRef.current === ws) return;
-    wsInstanceRef.current = ws;
+    if (wsInstanceRef.current === client) return;
+    wsInstanceRef.current = client;
 
     logger.info("new WSClient instance detected, invalidating workspace queries");
     invalidateWorkspaceScopedQueries(qc);
-  }, [ws, qc]);
+  }, [client, qc]);
 }

@@ -7,12 +7,15 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { Bot, CircleUser, Copy, EyeOff, Filter, Layers, Link2, ListTodo, Pencil, Plus, Trash2 } from "@multica/ui/icons";
+import { Bot, CircleUser, Copy, EyeOff, Filter, Layers, Link2, ListTodo, MoreHorizontal, Pencil, Plus, Trash2 } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import type { IssueView } from "@multica/core/api/schemas";
 import { isMyAgentsSearch, useWorkspacePaths } from "@multica/core/paths";
@@ -58,18 +61,22 @@ import { ViewNameInput } from "../../issue-views/view-name-input";
 import { UnreadViewIcon } from "../../issue-views/unread-view-icon";
 import { useBuiltinViewNavigation } from "../../issue-views/builtin-views";
 import { useNavigation } from "../../navigation";
+import { shouldOpenRowMenu, useRowMenu } from "../../common/point-menu";
 import { useT } from "../../i18n";
 import { PANEL_ROW_CLASS, PanelCount, PanelLink, PanelList, PanelSection, isPathWithin, panelRowAnchor, panelRowStateClass } from "../panel-nav";
 import { useDragClickGuard } from "../use-drag-click-guard";
 import { useSpacePanelOpen } from "../space-panel-open-context";
-import { RowMenu } from "./row-menu";
-import { SidebarIssueList, TreeRow } from "./sidebar-tree";
+import { SidebarIssueList, TREE_ROW_BUTTON_CLASS, TreeRow } from "./sidebar-tree";
 
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 const EMPTY_VIEWS: IssueView[] = [];
 const WORKSPACE_SCOPE = { scope_type: "workspace" } as const;
 const MY_SCOPE = { scope_type: "my" } as const;
 const NO_SEARCH = new URLSearchParams();
+const ROW_MENU_CLASS = cn(
+  TREE_ROW_BUTTON_CLASS,
+  "text-muted-foreground opacity-0 group-hover/row:opacity-100 data-[popup-open]:opacity-100 [@media(pointer:coarse)]:opacity-100",
+);
 
 interface ViewsSectionProps {
   wsId: string;
@@ -255,6 +262,45 @@ function SortableViewRow({ id, children }: { id: string; children: (drag: DragBi
   );
 }
 
+/** "…" on hover, and the same menu on right-click. */
+/** A view row's ⋯ menu. A right-click on the row opens it at the cursor. */
+function RowMenu({
+  label,
+  state,
+  className,
+  children,
+}: {
+  label: string;
+  state: ReturnType<typeof useRowMenu>;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <DropdownMenu open={state.menu.open} onOpenChange={state.onOpenChange}>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            onPointerDown={(event) => event.stopPropagation()}
+            className={cn(ROW_MENU_CLASS, className)}
+          />
+        }
+      >
+        <MoreHorizontal className="size-3.5" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        side={state.menu.point ? "bottom" : "right"}
+        anchor={state.anchor}
+        className="w-auto min-w-48"
+      >
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 type ScopeBuiltinViewKey = Exclude<BuiltinViewKey, "unread">;
 
 const BUILTIN_ICON: Record<ScopeBuiltinViewKey, React.ReactNode> = {
@@ -286,7 +332,7 @@ function BuiltinViewRow({
   const p = useWorkspacePaths();
   const listId = useId();
   const linkRef = useRef<HTMLAnchorElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const rowMenu = useRowMenu();
   const builtinNav = useBuiltinViewNavigation();
   const { searchParams } = useNavigation();
   const myScope = useStore(myIssuesViewStore, (s) => myIssuesScopeFor(NO_SEARCH, s.scope));
@@ -340,12 +386,11 @@ function BuiltinViewRow({
         toggleLabel={t(($) => $.panels.work.project_issues, { name: label })}
         onPrefetch={prefetch}
         onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
+          if (shouldOpenRowMenu(event)) rowMenu.openAtPointer(event);
         }}
         onNavigateInPlace={() => builtinNav.prepare(builtin)}
         trailing={
-          <RowMenu label={t(($) => $.panels.work.view_actions, { name: label })} open={menuOpen} onOpenChange={setMenuOpen}>
+          <RowMenu label={t(($) => $.panels.work.view_actions, { name: label })} state={rowMenu}>
             <DropdownMenuItem onClick={() => actions.copyLink(href)}>
               <Link2 className="size-3.5" />
               {t(($) => $.panels.work.view_copy_link)}
@@ -400,7 +445,7 @@ function UnreadViewRow({
   const p = useWorkspacePaths();
   const listId = useId();
   const linkRef = useRef<HTMLAnchorElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const rowMenu = useRowMenu();
   const target = issueViewTarget(wsId, UNREAD_VIEW, p);
   const open = useActiveIssueViewStore(
     (s) => pathname === target.path && s.active[target.containerKey] === UNREAD_VIEW_ID,
@@ -436,8 +481,7 @@ function UnreadViewRow({
         toggleLabel={t(($) => $.panels.work.project_issues, { name: label })}
         onPrefetch={prefetch}
         onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
+          if (shouldOpenRowMenu(event)) rowMenu.openAtPointer(event);
         }}
         onNavigateInPlace={() => setActive(target.containerKey, UNREAD_VIEW_ID)}
         trailing={
@@ -449,8 +493,7 @@ function UnreadViewRow({
             />
             <RowMenu
               label={t(($) => $.panels.work.view_actions, { name: label })}
-              open={menuOpen}
-              onOpenChange={setMenuOpen}
+              state={rowMenu}
               className="absolute right-0"
             >
               <DropdownMenuItem onClick={() => actions.copyLink(target.href)}>
@@ -509,7 +552,7 @@ function SavedViewRow({
   const { view } = item;
   const listId = useId();
   const linkRef = useRef<HTMLAnchorElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const rowMenu = useRowMenu();
   const target = issueViewTarget(wsId, view, p);
   const active = useActiveIssueViewStore(
     (s) => plainRowsLit && pathname === target.path && s.active[target.containerKey] === view.id,
@@ -563,12 +606,11 @@ function SavedViewRow({
         toggleLabel={t(($) => $.panels.work.project_issues, { name: view.name })}
         onPrefetch={prefetch}
         onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
+          if (shouldOpenRowMenu(event)) rowMenu.openAtPointer(event);
         }}
         onNavigateInPlace={() => setActive(target.containerKey, view.id)}
         trailing={
-          <RowMenu label={t(($) => $.panels.work.view_actions, { name: view.name })} open={menuOpen} onOpenChange={setMenuOpen}>
+          <RowMenu label={t(($) => $.panels.work.view_actions, { name: view.name })} state={rowMenu}>
             {canManage && (
               <>
                 <DropdownMenuItem onClick={() => actions.edit(view)}>

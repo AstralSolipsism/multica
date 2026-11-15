@@ -12,13 +12,14 @@ import {
   DropdownMenuSeparator,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { githubAppInstallationsOptions, githubKeys } from "@multica/core/github";
+import { githubAppInstallationsOptions, githubKeys, useGitHubConnectionStore } from "@multica/core/github";
 import { ApiError, api, errorCode } from "@multica/core/api";
 import type {
   GitHubAppInstallation,
   GitHubInstallation,
   ListGitHubInstallationsResponse,
 } from "@multica/core/types";
+import { isDesktopShell, openExternal } from "../../platform";
 import { useT } from "../../i18n";
 
 /** Installations the caller manages elsewhere that this workspace lacks. */
@@ -108,14 +109,25 @@ export function useGitHubReuseConnect({
 
   async function openGitHubInstall() {
     setOpening(true);
+    // The install half rides the platform connect flow, not a bare window:
+    // on desktop the signed connection ID is registered with the connection
+    // store so the completion event can be matched and hand the user to the
+    // repository picker; the browser keeps its return target.
+    const desktop = isDesktopShell();
     try {
-      const resp = await api.getGitHubConnectURL(wsId, returnTo);
+      const resp = await api.getGitHubConnectURL(wsId, desktop ? { desktop: true, returnTo } : returnTo);
       if (!resp.configured || !resp.url) {
         toast.error(t(($) => $.github.toast_not_configured));
         return;
       }
-      window.open(resp.url, "_blank", "noopener");
+      if (desktop) {
+        useGitHubConnectionStore.getState().begin(wsId, resp.connection_id);
+        openExternal(resp.url, { webTarget: "same-tab" });
+      } else {
+        window.open(resp.url, "_blank", "noopener");
+      }
     } catch (e) {
+      if (desktop) useGitHubConnectionStore.getState().reset(wsId);
       toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_open_failed));
     } finally {
       setOpening(false);
