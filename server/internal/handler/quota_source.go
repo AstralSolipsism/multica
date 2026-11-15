@@ -41,23 +41,33 @@ const (
 // QuotaSourceResponse is the owner-facing view of one source. The credential
 // itself never appears; credential_hint is the stored last-4 mask.
 type QuotaSourceResponse struct {
-	ID             string                     `json:"id"`
-	Kind           string                     `json:"kind"`
-	Name           string                     `json:"name"`
-	BaseURL        *string                    `json:"base_url"`
-	CredentialHint string                     `json:"credential_hint"`
-	Enabled        bool                       `json:"enabled"`
-	Visibility     string                     `json:"visibility"`
-	Quota          *protocol.RuntimePlanQuota `json:"quota,omitempty"`
-	LastPolledAt   *time.Time                 `json:"last_polled_at,omitempty"`
-	LastError      *QuotaSourceError          `json:"last_error,omitempty"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	UpdatedAt      time.Time                  `json:"updated_at"`
+	ID             string                        `json:"id"`
+	Kind           string                        `json:"kind"`
+	Name           string                        `json:"name"`
+	BaseURL        *string                       `json:"base_url"`
+	CredentialHint string                        `json:"credential_hint"`
+	Enabled        bool                          `json:"enabled"`
+	Visibility     string                        `json:"visibility"`
+	Quota          *protocol.QuotaSourceSnapshot `json:"quota,omitempty"`
+	LastPolledAt   *time.Time                    `json:"last_polled_at,omitempty"`
+	LastError      *QuotaSourceError             `json:"last_error,omitempty"`
+	CreatedAt      time.Time                     `json:"created_at"`
+	UpdatedAt      time.Time                     `json:"updated_at"`
 }
 
 type QuotaSourceError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// quotaSourceSnapshotHasPayload reports whether a stored snapshot carries
+// any renderable payload: windows (glm, zenmux, opencode Go), account pools,
+// balances (deepseek, opencode) or a probe result (jev_free, opencode
+// pay-as-you-go). The legacy filter only accepted windows, which would drop
+// every new kind's snapshot.
+func quotaSourceSnapshotHasPayload(snap *protocol.QuotaSourceSnapshot) bool {
+	return len(snap.Windows) > 0 || len(snap.AccountPools) > 0 ||
+		len(snap.Balances) > 0 || snap.Probe != nil
 }
 
 func quotaSourceToResponse(row db.QuotaSource) QuotaSourceResponse {
@@ -84,9 +94,9 @@ func quotaSourceToResponse(row db.QuotaSource) QuotaSourceResponse {
 		resp.LastError = &QuotaSourceError{Code: *code, Message: msg}
 	}
 	if row.Snapshot != nil {
-		var quota protocol.RuntimePlanQuota
-		if err := json.Unmarshal(row.Snapshot, &quota); err == nil && quota.Windows != nil {
-			resp.Quota = &quota
+		var snap protocol.QuotaSourceSnapshot
+		if err := json.Unmarshal(row.Snapshot, &snap); err == nil && quotaSourceSnapshotHasPayload(&snap) {
+			resp.Quota = &snap
 		}
 	}
 	return resp
@@ -131,7 +141,7 @@ func credentialHint(credential string) string {
 
 // probeQuotaSource runs one synchronous collection with the candidate
 // credential/base_url (not yet stored). Returns the validated snapshot.
-func (h *Handler) probeQuotaSource(ctx context.Context, driver quotasource.Driver, rawBaseURL, credential string) (*protocol.RuntimePlanQuota, error) {
+func (h *Handler) probeQuotaSource(ctx context.Context, driver quotasource.Driver, rawBaseURL, credential string) (*protocol.QuotaSourceSnapshot, error) {
 	endpoint, err := quotasource.ValidateBaseURL(ctx, driver, rawBaseURL, nil)
 	if err != nil {
 		return nil, &quotasource.ProbeError{Code: "invalid_base_url", Err: err}
@@ -162,11 +172,12 @@ func (h *Handler) ListQuotaSources(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateQuotaSource serves POST /api/me/quota-sources. The probe runs BEFORE
-// the row is written: a failed probe never lands in the database.
+// the row is written: a failed probe never lands in the database — except
+// for credential-free kinds (jev_free), where a transient upstream failure
+// (rate limit, 5xx, network) still lands the monitor row in its initial
+// error state, so a throttled free channel cannot lock the user out of
+// adding the monitor at all.
 func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
-	if h.requireQuotaSourceBox(w) == nil {
-		return
-	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -184,7 +195,11 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	}
 	driver := quotasource.DriverFor(req.Kind)
 	if driver == nil {
-		writeError(w, http.StatusBadRequest, "unsupported kind (want glm or zenmux)")
+		writeError(w, http.StatusBadRequest, "unsupported kind (want glm, zenmux, deepseek, opencode or jev_free)")
+		return
+	}
+	requiresCredential := driver.RequiresCredential()
+	if requiresCredential && h.requireQuotaSourceBox(w) == nil {
 		return
 	}
 	if req.Name == "" || utf8.RuneCountInString(req.Name) > 64 {
@@ -195,7 +210,7 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "visibility must be private or shared")
 		return
 	}
-	if strings.TrimSpace(req.Credential) == "" {
+	if requiresCredential && strings.TrimSpace(req.Credential) == "" {
 		writeError(w, http.StatusBadRequest, "credential is required")
 		return
 	}
@@ -207,21 +222,36 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	// Synchronous probe: only a passing credential is persisted.
 	quota, probeErr := h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(textFromPtr(req.BaseURL))), req.Credential)
 	if probeErr != nil {
-		writeProbeError(w, probeErr)
-		return
+		if requiresCredential || !quotaSourceProbeTransient(probeErr) {
+			writeProbeError(w, probeErr)
+			return
+		}
+		// Credential-free monitor + transient upstream error: create the
+		// row with the initial error state below instead of refusing.
+		quota = nil
 	}
 
-	ciphertext, err := h.QuotaSourceBox.Seal([]byte(req.Credential))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encrypt credential")
-		return
-	}
-	body, err := json.Marshal(quota)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to marshal snapshot")
-		return
+	// Credential-free kinds store an empty ciphertext (allowed by the 9076
+	// constraint) and no hint; credentialed kinds keep the sealed box.
+	ciphertext := []byte{}
+	if requiresCredential {
+		sealed, err := h.QuotaSourceBox.Seal([]byte(req.Credential))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt credential")
+			return
+		}
+		ciphertext = sealed
 	}
 	now := time.Now()
+	var body []byte
+	if quota != nil {
+		if marshaled, err := json.Marshal(quota); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to marshal snapshot")
+			return
+		} else {
+			body = marshaled
+		}
+	}
 	row, err := h.Queries.CreateQuotaSource(r.Context(), db.CreateQuotaSourceParams{
 		OwnerID:              parseUUID(userID),
 		Kind:                 req.Kind,
@@ -239,16 +269,34 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create quota source")
 		return
 	}
+	if probeErr != nil {
+		h.recordQuotaSourceFailure(row, quotasource.ClassifyError(probeErr), sanitizeProviderError(probeErr))
+		updated, err := h.Queries.GetQuotaSourceForOwner(r.Context(), db.GetQuotaSourceForOwnerParams{
+			ID: row.ID, OwnerID: row.OwnerID,
+		})
+		if err == nil {
+			row = updated
+		}
+	}
 	writeJSON(w, http.StatusCreated, quotaSourceToResponse(row))
+}
+
+// quotaSourceProbeTransient reports whether a probe failure is an upstream
+// hiccup rather than a user-input problem. Used only for credential-free
+// kinds, whose rows may land despite these errors.
+func quotaSourceProbeTransient(err error) bool {
+	switch quotasource.ClassifyError(err) {
+	case "rate_limited", "provider_error", "network_error", "unexpected_response":
+		return true
+	default:
+		return false
+	}
 }
 
 // UpdateQuotaSource serves PATCH /api/me/quota-sources/{id}. A changed
 // credential or base_url (re)probes before the update lands; flipping
 // enabled back to true also probes.
 func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
-	if h.requireQuotaSourceBox(w) == nil {
-		return
-	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -273,6 +321,10 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	driver := quotasource.DriverFor(row.Kind)
 	if driver == nil {
 		writeError(w, http.StatusInternalServerError, "unknown quota source kind")
+		return
+	}
+	requiresCredential := driver.RequiresCredential()
+	if requiresCredential && h.requireQuotaSourceBox(w) == nil {
 		return
 	}
 
@@ -302,7 +354,7 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		baseURL = row.BaseUrl // not part of the patch: keep stored value
 	}
 	credential := ""
-	if req.Credential != nil {
+	if req.Credential != nil && requiresCredential {
 		credential = strings.TrimSpace(*req.Credential)
 		if credential == "" {
 			writeError(w, http.StatusBadRequest, "credential must not be empty")
@@ -317,7 +369,7 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	credentialChanged := credential != ""
 	baseURLChanged := !sameText(baseURL, row.BaseUrl)
 	reEnabling := !row.Enabled && enabled
-	var probeQuota *protocol.RuntimePlanQuota
+	var probeQuota *protocol.QuotaSourceSnapshot
 	var probeErr error
 	if credentialChanged || baseURLChanged || reEnabling {
 		probeCred := credential
@@ -331,8 +383,14 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		}
 		probeQuota, probeErr = h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(baseURL)), probeCred)
 		if probeErr != nil {
-			writeProbeError(w, probeErr)
-			return
+			// Credential-free kinds tolerate transient upstream errors on
+			// edit too: the field update lands and the failure is recorded
+			// as the poll error state instead of refusing the edit.
+			if requiresCredential || !quotaSourceProbeTransient(probeErr) {
+				writeProbeError(w, probeErr)
+				return
+			}
+			probeQuota = nil
 		}
 	}
 
@@ -371,6 +429,8 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 				ID: row.ID, Snapshot: body, NextPollSecs: quotaSourcePollInterval.Seconds(),
 			})
 		}
+	} else if probeErr != nil {
+		h.recordQuotaSourceFailure(row, quotasource.ClassifyError(probeErr), sanitizeProviderError(probeErr))
 	}
 	updated, err := h.Queries.GetQuotaSourceForOwner(r.Context(), db.GetQuotaSourceForOwnerParams{
 		ID: row.ID, OwnerID: row.OwnerID,
@@ -404,9 +464,6 @@ func (h *Handler) DeleteQuotaSource(w http.ResponseWriter, r *http.Request) {
 // RefreshQuotaSource serves POST /api/me/quota-sources/{id}/refresh: one
 // synchronous collection, 30s cooldown.
 func (h *Handler) RefreshQuotaSource(w http.ResponseWriter, r *http.Request) {
-	if h.requireQuotaSourceBox(w) == nil {
-		return
-	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -420,6 +477,12 @@ func (h *Handler) RefreshQuotaSource(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "quota source not found")
+		return
+	}
+	// Encryption only matters for kinds that store a credential.
+	if driver := quotasource.DriverFor(row.Kind); driver != nil && driver.RequiresCredential() && h.QuotaSourceBox == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "quota_source_encryption_unconfigured",
+			"quota source encryption key is not configured (MULTICA_QUOTA_SOURCE_SECRET_KEY)")
 		return
 	}
 	if row.LastPolledAt.Valid && time.Since(row.LastPolledAt.Time) < quotaSourceRefreshCooldown {
@@ -498,6 +561,10 @@ func (h *Handler) recordQuotaSourceFailure(row db.QuotaSource, code, message str
 // openQuotaSourceCredential decrypts the stored credential. The plaintext
 // never leaves this call graph: not logged, not returned to clients.
 func (h *Handler) openQuotaSourceCredential(ctx context.Context, row db.QuotaSource) (string, error) {
+	// Credential-free kinds never stored anything to decrypt.
+	if driver := quotasource.DriverFor(row.Kind); driver != nil && !driver.RequiresCredential() {
+		return "", nil
+	}
 	if h.QuotaSourceBox == nil {
 		return "", fmt.Errorf("encryption not configured")
 	}
@@ -554,15 +621,15 @@ func (h *Handler) ListWorkspaceQuotaSources(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	type cardView struct {
-		ID           string                     `json:"id"`
-		Kind         string                     `json:"kind"`
-		Name         string                     `json:"name"`
-		OwnerID      string                     `json:"owner_id"`
-		Visibility   string                     `json:"visibility"`
-		IsOwn        bool                       `json:"is_own"`
-		Quota        *protocol.RuntimePlanQuota `json:"quota,omitempty"`
-		LastPolledAt *time.Time                 `json:"last_polled_at,omitempty"`
-		LastError    *QuotaSourceError          `json:"last_error,omitempty"`
+		ID           string                        `json:"id"`
+		Kind         string                        `json:"kind"`
+		Name         string                        `json:"name"`
+		OwnerID      string                        `json:"owner_id"`
+		Visibility   string                        `json:"visibility"`
+		IsOwn        bool                          `json:"is_own"`
+		Quota        *protocol.QuotaSourceSnapshot `json:"quota,omitempty"`
+		LastPolledAt *time.Time                    `json:"last_polled_at,omitempty"`
+		LastError    *QuotaSourceError             `json:"last_error,omitempty"`
 	}
 	cards := make([]cardView, 0, len(rows))
 	for _, row := range rows {
@@ -578,9 +645,9 @@ func (h *Handler) ListWorkspaceQuotaSources(w http.ResponseWriter, r *http.Reque
 			IsOwn:      uuidToString(row.OwnerID) == userID,
 		}
 		if row.Snapshot != nil {
-			var quota protocol.RuntimePlanQuota
-			if err := json.Unmarshal(row.Snapshot, &quota); err == nil && quota.Windows != nil {
-				view.Quota = &quota
+			var snap protocol.QuotaSourceSnapshot
+			if err := json.Unmarshal(row.Snapshot, &snap); err == nil && quotaSourceSnapshotHasPayload(&snap) {
+				view.Quota = &snap
 			}
 		}
 		if row.LastPolledAt.Valid {
@@ -665,7 +732,11 @@ func sameOptionalString(a, b *string) bool {
 // PollDueSource implements scheduler.QuotaSourcePoller: one collection round
 // for an already-loaded row.
 func (h *Handler) PollDueSource(ctx context.Context, row db.QuotaSource) error {
-	if h.QuotaSourceBox == nil {
+	// Encryption only gates kinds that store a credential; jev_free rows
+	// keep polling without MULTICA_QUOTA_SOURCE_SECRET_KEY.
+	if driver := quotasource.DriverFor(row.Kind); driver == nil {
+		return fmt.Errorf("no driver for kind %s; skipping source %s", row.Kind, uuidToString(row.ID))
+	} else if driver.RequiresCredential() && h.QuotaSourceBox == nil {
 		return fmt.Errorf("encryption key not configured; skipping source %s", uuidToString(row.ID))
 	}
 	if !row.Enabled {

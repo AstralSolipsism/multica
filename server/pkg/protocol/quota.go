@@ -179,6 +179,50 @@ type HostMetrics struct {
 	CapturedAt int64 `json:"captured_at"`
 }
 
+// QuotaSourceBalance is one currency bucket of a user-registered pay-as-you-go
+// account (deepseek, opencode). Amounts are the provider's own numbers — NOT
+// percentages: quota_source rows are the account owner's explicit
+// registrations, so the RuntimePlanQuota percentage-only red line does not
+// apply, but these values must stay confined to the quota_source read paths
+// (GET /api/me/quota-sources, GET /api/runtimes/quota-sources) and must never
+// ride daemon heartbeats or agent_runtime.plan_quota.
+type QuotaSourceBalance struct {
+	// Currency is the ISO code the provider reported ("CNY", "USD").
+	Currency string `json:"currency"`
+	// TotalBalance is the spendable total for this currency.
+	TotalBalance *float64 `json:"total_balance,omitempty"`
+	// GrantedBalance is the promotional/granted portion, when disclosed.
+	GrantedBalance *float64 `json:"granted_balance,omitempty"`
+	// ToppedUpBalance is the paid/topped-up portion, when disclosed.
+	ToppedUpBalance *float64 `json:"topped_up_balance,omitempty"`
+}
+
+// QuotaSourceProbe is a free-tier health probe result (jev_free, and the
+// opencode pay-as-you-go availability fallback). LatencyMS is the measured
+// round trip of one business-content-free probe request.
+type QuotaSourceProbe struct {
+	Available bool  `json:"available"`
+	LatencyMS int64 `json:"latency_ms"`
+	// Model is the probe's model identifier ("jev-1.13-free").
+	Model string `json:"model,omitempty"`
+}
+
+// QuotaSourceSnapshot is what a quotasource.Driver collects and what the
+// quota_source.snapshot JSONB column stores. It embeds RuntimePlanQuota so
+// window-based subscriptions (glm, zenmux) keep their stored shape unchanged,
+// and adds the balance and probe payloads the global cards render. It is
+// deliberately NOT part of the daemon heartbeat protocol.
+type QuotaSourceSnapshot struct {
+	RuntimePlanQuota
+	// Available mirrors the provider's account-level availability flag,
+	// when the provider reports one.
+	Available *bool `json:"available,omitempty"`
+	// Balances carries per-currency account balances (credit/cash kinds).
+	Balances []QuotaSourceBalance `json:"balances,omitempty"`
+	// Probe carries the free-tier health probe outcome.
+	Probe *QuotaSourceProbe `json:"probe,omitempty"`
+}
+
 // ThinkingAdaptSnapshot is the daemon's Jev health snapshot (contract §3)
 // for adaptive thinking levels. It travels as "thinking_adapt" on daemon
 // heartbeats of thinking-capable runtimes, is cached in Redis keyed by

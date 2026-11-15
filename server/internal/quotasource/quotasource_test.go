@@ -17,7 +17,7 @@ import (
 // fetchWith drives a driver against a local test server. The server URL is a
 // plain http origin; the SSRF validation is exercised separately in
 // TestValidateBaseURLHostAllowlist.
-func fetchWith(t *testing.T, driver Driver, handler http.HandlerFunc, credential string) (*protocol.RuntimePlanQuota, error) {
+func fetchWith(t *testing.T, driver Driver, handler http.HandlerFunc, credential string) (*protocol.QuotaSourceSnapshot, error) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -27,7 +27,7 @@ func fetchWith(t *testing.T, driver Driver, handler http.HandlerFunc, credential
 }
 
 // window finds one window by name and returns its minutes/used percent.
-func window(q *protocol.RuntimePlanQuota, name string) (minutes int64, used float64, found bool) {
+func window(q *protocol.QuotaSourceSnapshot, name string) (minutes int64, used float64, found bool) {
 	for _, w := range q.Windows {
 		if w.Name == name {
 			if w.WindowMinutes != nil {
@@ -311,8 +311,10 @@ func TestNewHTTPClientDialGateMatchesValidation(t *testing.T) {
 }
 
 func TestDriverFor(t *testing.T) {
-	if DriverFor("glm") == nil || DriverFor("zenmux") == nil {
-		t.Fatal("known kinds must resolve")
+	for _, kind := range []string{"glm", "zenmux", "deepseek", "opencode", "jev_free"} {
+		if DriverFor(kind) == nil {
+			t.Fatalf("kind %s must resolve to a driver", kind)
+		}
 	}
 	if DriverFor("http") != nil {
 		t.Fatal("generic kind must not resolve")

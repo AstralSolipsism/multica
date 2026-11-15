@@ -177,8 +177,9 @@ func TestQuotaSourceCreateProbeFailureNoRow(t *testing.T) {
 	_ = count
 }
 
-// Without the encryption key, every write path refuses with 503 and the
-// legacy GLM endpoint answers enabled=false.
+// Without the encryption key, credentialed write paths refuse with 503 —
+// while the credential-free jev_free kind still works end to end (empty
+// ciphertext, no hint, probe snapshot stored).
 func TestQuotaSourceEncryptionGate(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -189,9 +190,40 @@ func TestQuotaSourceEncryptionGate(t *testing.T) {
 		"kind": "glm", "name": "x", "credential": "sk-123456789012",
 	})).Want(http.StatusServiceUnavailable)
 
-	legacy := testutil.Call(t, h.GetGlmQuota, httptest.NewRequest(http.MethodGet, "/api/glm-quota", nil)).Want(http.StatusOK)
-	if !strings.Contains(legacy.Text(), `"enabled":false`) {
-		t.Fatalf("legacy glm-quota body: %s", legacy.Text())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"answers":{"effort":{"choice":"low"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("MULTICA_PLUGIN_DEV_ORIGINS", srv.URL)
+
+	var created struct {
+		ID             string `json:"id"`
+		Kind           string `json:"kind"`
+		CredentialHint string `json:"credential_hint"`
+	}
+	resp := testutil.Call(t, h.CreateQuotaSource, quotaSourceRequest(http.MethodPost, "/api/me/quota-sources", testUserID, map[string]any{
+		"kind": "jev_free", "name": "free channel", "base_url": srv.URL,
+	})).Want(http.StatusCreated)
+	if err := json.Unmarshal([]byte(resp.Text()), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Kind != "jev_free" || created.CredentialHint != "" {
+		t.Fatalf("created = %+v", created)
+	}
+	if !strings.Contains(resp.Text(), `"probe"`) {
+		t.Fatalf("jev_free snapshot missing probe: %s", resp.Text())
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM quota_source WHERE id = $1`, created.ID)
+	})
+
+	// The scheduler path also gates only credentialed kinds on the box
+	// (disabled rows return before any fetch, so no network here).
+	if err := h.PollDueSource(context.Background(), db.QuotaSource{Kind: "jev_free"}); err != nil {
+		t.Fatalf("jev_free poll gate without box: %v", err)
+	}
+	if err := h.PollDueSource(context.Background(), db.QuotaSource{Kind: "glm"}); err == nil {
+		t.Fatal("glm poll without box must be skipped with an error")
 	}
 }
 
