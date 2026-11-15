@@ -1924,3 +1924,78 @@ describe("chat send identity", () => {
     expect(onSend.mock.calls[3]![4].submissionId).not.toBe(edited.submissionId);
   });
 });
+
+describe("chat send identity with page context", () => {
+  const pageA = {
+    id: "issue-1", label: "MUL-1", description: "Fix [the] cache", type: "issue" as const, group: "current" as const,
+  };
+  const pageB = {
+    id: "issue-2", label: "MUL-2", description: "Second page", type: "issue" as const, group: "current" as const,
+  };
+  const editor = () => screen.getByTestId("editor");
+
+  beforeEach(() => {
+    (useChatStore.getState() as unknown as { activeSessionId: string | null }).activeSessionId = "session-1";
+  });
+
+  async function submit() {
+    await act(async () => {
+      await (editorProps.last?.onSubmit as () => Promise<void>)();
+    });
+  }
+
+  it("reuses the id when the full payload is unchanged across a lost response", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderInput({ onSend, pageContext: pageA });
+    fireEvent.keyDown(editor(), { key: "Tab" });
+    fireEvent.change(editor(), { target: { value: "same question" } });
+
+    await submit();
+    await submit();
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend.mock.calls[1]![0]).toBe("[MUL-1](mention://issue/issue-1)\n\nsame question");
+    expect(onSend.mock.calls[1]![4]).toBe(onSend.mock.calls[0]![4]);
+  });
+
+  it("mints a fresh id when the page context is removed before the retry", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderInput({ onSend, pageContext: pageA });
+    fireEvent.keyDown(editor(), { key: "Tab" });
+    fireEvent.change(editor(), { target: { value: "why now?" } });
+    await submit();
+
+    fireEvent.keyDown(editor(), { key: "Tab" }); // detach the page
+    await submit();
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend.mock.calls[1]![0]).toBe("why now?");
+    expect(onSend.mock.calls[1]![4]!.submissionId).not.toBe(onSend.mock.calls[0]![4]!.submissionId);
+  });
+
+  it("mints a fresh id when a page context is added before the retry", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderInput({ onSend, pageContext: pageA });
+    fireEvent.change(editor(), { target: { value: "why now?" } });
+    await submit();
+
+    fireEvent.keyDown(editor(), { key: "Tab" }); // attach the page
+    await submit();
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend.mock.calls[1]![0]).toBe("[MUL-1](mention://issue/issue-1)\n\nwhy now?");
+    expect(onSend.mock.calls[1]![4]!.submissionId).not.toBe(onSend.mock.calls[0]![4]!.submissionId);
+  });
+
+  it("mints a fresh id when the page context is swapped before the retry", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    const view = render(element({ onSend, pageContext: pageA }));
+    fireEvent.keyDown(editor(), { key: "Tab" });
+    fireEvent.change(editor(), { target: { value: "why now?" } });
+    await submit();
+
+    view.rerender(element({ onSend, pageContext: pageB }));
+    fireEvent.keyDown(editor(), { key: "Tab" });
+    await submit();
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend.mock.calls[1]![0]).toBe("[MUL-2](mention://issue/issue-2)\n\nwhy now?");
+    expect(onSend.mock.calls[1]![4]!.submissionId).not.toBe(onSend.mock.calls[0]![4]!.submissionId);
+  });
+});

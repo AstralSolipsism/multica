@@ -244,7 +244,10 @@ export function ChatInput({
   ]);
   const sendAttemptsRef = useRef(new Map<string, {
     draftKey: string;
+    /** Raw draft body at send — the commitDraft retire check compares it. */
     content: string;
+    /** The full payload actually sent (page-context mention included). */
+    sent: string;
     attachments: string;
     attempt: ChatSendAttempt;
   }>());
@@ -572,10 +575,19 @@ export function ChatInput({
       const pendingFlush = editorRef.current?.flushPendingUpdate?.();
       if (pendingFlush != null) commitDraft(editorDraftKeyRef.current, pendingFlush);
       const draftValueAtSend = useChatStore.getState().inputDrafts[keyAtSend];
+      // The page goes ahead of the message as a mention, which is how chat
+      // already hands the agent an issue or project to read. Identity keys on
+      // the FULL payload: a retry may only reuse the submission UUID when what
+      // the server will receive is unchanged — a swapped, added or removed
+      // page context changes the fingerprint, and replaying the old UUID
+      // would 409 against the first acceptance forever.
+      const sent = attachedPage
+        ? `[${escapeMarkdownLabel(attachedPage.label)}](mention://${attachedPage.type}/${attachedPage.id})\n\n${content}`
+        : content;
       const attachmentKey = JSON.stringify([...uniqueActiveIds].sort());
       let submission = sendAttemptsRef.current.get(sendTarget);
-      if (!submission || submission.content !== content || submission.attachments !== attachmentKey) {
-        submission = { draftKey: keyAtSend, content, attachments: attachmentKey, attempt: { submissionId: createSafeId() } };
+      if (!submission || submission.sent !== sent || submission.attachments !== attachmentKey) {
+        submission = { draftKey: keyAtSend, content, sent, attachments: attachmentKey, attempt: { submissionId: createSafeId() } };
         sendAttemptsRef.current.set(sendTarget, submission);
       }
       // Context is for the message it went with; the next one starts without.
@@ -634,11 +646,6 @@ export function ChatInput({
         draftKey: keyAtSend,
         attachmentCount: uniqueActiveIds.length,
       });
-      // The page goes ahead of the message as a mention, which is how chat
-      // already hands the agent an issue or project to read.
-      const sent = attachedPage
-        ? `[${escapeMarkdownLabel(attachedPage.label)}](mention://${attachedPage.type}/${attachedPage.id})\n\n${content}`
-        : content;
       const accepted = await onSend(
         sent,
         uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
