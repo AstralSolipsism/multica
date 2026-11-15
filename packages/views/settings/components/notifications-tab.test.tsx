@@ -17,9 +17,12 @@ vi.mock("./browser-notification-setting", () => ({ BrowserNotificationSetting: (
 vi.mock("../../you-should-know/settings/personal-toggle", () => ({
   YouShouldKnowPersonalRow: () => null,
 }));
-vi.mock("../../message-delivery", () => ({
+vi.mock("@multica/core/permissions", () => ({
+  useCurrentMember: () => ({ role: "member", isLoading: false }),
+}));
+vi.mock("../../message-delivery", async () => ({
   PersonalFeishuPushSection: () => <div>personal push section</div>,
-  TeamSubscriptionsSection: () => <div>team subscriptions section</div>,
+  TeamSubscriptionsSection: (await import("../../message-delivery/components/team-subscriptions-section")).TeamSubscriptionsSection,
 }));
 
 afterEach(cleanup);
@@ -80,7 +83,9 @@ describe("NotificationsTab sections", () => {
 
   it("renders the team subscriptions section next to the personal push", () => {
     renderTab();
-    expect(screen.getByText("team subscriptions section")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Team event subscriptions" })).toBeInTheDocument();
+    expect(screen.getByText(enMessageDelivery.team.description)).toBeInTheDocument();
+    expect(screen.getByText(enMessageDelivery.team.admin_required)).toBeInTheDocument();
     expect(screen.getByText("personal push section")).toBeInTheDocument();
   });
 

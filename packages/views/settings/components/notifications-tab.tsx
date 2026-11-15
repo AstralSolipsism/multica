@@ -106,12 +106,7 @@ export function NotificationsTab() {
       {/* OL-28: team event subscriptions (activity/comment → group/topic).
           Self-gated on the member's role; a plain member sees an explanatory
           note, never the admin-only configuration. */}
-      <SettingsSection
-        title={tMd(($) => $.team.title)}
-        description={tMd(($) => $.team.description)}
-      >
-        <TeamSubscriptionsSection />
-      </SettingsSection>
+      <TeamSubscriptionsSection />
 
       <SettingsSection
         title={t(($) => $.notifications.system.title)}
