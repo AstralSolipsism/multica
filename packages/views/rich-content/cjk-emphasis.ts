@@ -59,11 +59,8 @@ function repairSpan(
 
   const innerWs = (char: string | undefined) => char === " " || char === "\t";
   const repaired =
-    // (a1) trailing whitespace inside: a closer preceded by whitespace can
-    // never close, whatever follows the span.
-    (cjkInside && !innerWs(first) && innerWs(last)) ||
-    // (a2) leading whitespace inside: the opener can never open.
-    (cjkInside && innerWs(first) && !innerWs(last)) ||
+    // (a1/a2) Whitespace at either inner edge (or both) breaks CommonMark.
+    (cjkInside && (innerWs(first) || innerWs(last))) ||
     // (b1) CJK letter glued before the opener: the run cannot open.
     (before !== undefined && CJK_SCRIPT.test(before) && /\S/u.test(inner)) ||
     // (b2) CJK letter glued after the closer: the run cannot close.

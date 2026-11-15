@@ -20,8 +20,22 @@ describe("plainWikiExcerpt", () => {
     expect(plainWikiExcerpt("看 [文档](https://example.com) 和 ![图](x.png)")).toBe("看 文档 和 图");
   });
 
-  it("keeps snake_case intact (no underscore-italic guessing)", () => {
+  it("keeps snake_case intact", () => {
     expect(plainWikiExcerpt("字段 some_field_name 保留")).toBe("字段 some_field_name 保留");
+  });
+
+  it("parses quotes and underscore emphasis without changing identifiers", () => {
+    expect(plainWikiExcerpt("> __重点__ 和 _强调_，字段 some_field_name"))
+      .toBe("重点 和 强调，字段 some_field_name");
+    expect(plainWikiExcerpt("说明 ** 中文 ** 结束")).toBe("说明 中文 结束");
+  });
+
+  it.each([
+    ["截断边界](mention://issue/99999999-9999-4999-8999-999999999999) needle 后续文字", "截断边界 needle 后续文字"],
+    ["参见 [OL-12](mention://issue/9999", "参见 OL-12"],
+    ["mention://issue/9999) needle", "needle"],
+  ])("cleans server-truncated link fragments: %s", (source, expected) => {
+    expect(plainWikiExcerpt(source)).toBe(expected);
   });
 
   it("truncates by code points with an ellipsis", () => {

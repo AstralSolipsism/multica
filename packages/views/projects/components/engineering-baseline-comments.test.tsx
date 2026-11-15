@@ -79,3 +79,13 @@ it("reopens a resolved thread without a reply composer", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
   await waitFor(() => expect(resolve).toHaveBeenCalledWith("ws", "project", "thread", false));
 });
+
+it("cleans Markdown and mention syntax in section-comment previews", () => {
+  const { container } = renderPanel({ mode: "list" }, [{
+    ...thread,
+    anchor: { ...anchor, kind: "section", exact: "" },
+    comments: [{ ...thread.comments[0]!, bodyMarkdown: "> __重点__ 和 _强调_，请 [@Owner](mention://member/me) 看 [[page|说明]]" }],
+  }]);
+  expect(screen.getByText("重点 和 强调，请 @Owner 看 说明")).toBeVisible();
+  expect(container.textContent).not.toMatch(/mention:\/\/|__|\[\[/);
+});

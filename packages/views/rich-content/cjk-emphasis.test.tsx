@@ -39,6 +39,19 @@ describe("remarkRepairCjkStrongTrailingWhitespace", () => {
     expect(text).toBe("首先 中文。后续文本");
   });
 
+  it.each(["说明 ** 中文 ** 结束", "text ** 中文** end", "text **\t中文\t** end"])("repairs isolated inner whitespace: %s", (source) => {
+    const { text, strongs } = renderMarkdown(source);
+    expect(strongs).toEqual(["中文"]);
+    expect(text).toBe(source.replaceAll("**", ""));
+  });
+
+  it("preserves escaped markers and code containing CJK whitespace", () => {
+    const { text, strongs } = renderMarkdown("采用\\*\\*「家庭」\\*\\*的架构和 `** 中文 **`");
+    expect(strongs).toEqual([]);
+    expect(text).toContain("采用**「家庭」**的架构");
+    expect(text).toContain("** 中文 **");
+  });
+
   it("repairs a closer glued to a following CJK letter", () => {
     const { text, strongs } = renderMarkdown("text **加粗**的结尾");
     expect(strongs).toEqual(["加粗"]);

@@ -2,21 +2,29 @@ package engineering
 
 import (
 	"bytes"
-	"regexp"
+	"html"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 	xhtml "golang.org/x/net/html"
 )
 
-// Text selections use normalized rendered text, never Markdown syntax.
+// Text selections use the same canonical text as the Wiki DOM index.
 func renderedCommentText(source string) string {
+	source = commentMarkdown(source)
+	markdown := goldmark.New(goldmark.WithExtensions(extension.GFM))
+	input := []byte(source)
+	doc := markdown.Parser().Parse(text.NewReader(input))
+	repairCommentTextNodes(doc, input)
 	var rendered bytes.Buffer
-	if goldmark.New(goldmark.WithExtensions(extension.GFM)).Convert([]byte(source), &rendered) != nil {
+	if markdown.Renderer().Render(&rendered, input, doc) != nil {
 		return ""
 	}
 	z := xhtml.NewTokenizer(&rendered)
@@ -29,8 +37,6 @@ func renderedCommentText(source string) string {
 		case xhtml.TextToken:
 			value := string(z.Text())
 			if codeDepth == 0 {
-				value = repairCjkStrong(value)
-				value = repairHighlightMarkers(value)
 				value = commentWikiLinks.ReplaceAllStringFunc(value, func(raw string) string {
 					_, section, display := ParseWikiLinkRaw(raw[2 : len(raw)-2])
 					if section != "" {
@@ -53,6 +59,56 @@ func renderedCommentText(source string) string {
 			case "p", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "tr", "td", "th", "blockquote", "div", "ul", "ol", "table", "hr":
 				text.WriteByte(' ')
 			}
+		}
+	}
+}
+
+// Match the remark repair's source-equals-value guard before HTML decoding
+// erases escapes/entities. Goldmark splits literal delimiters into adjacent
+// Text nodes; they represent the single text run remark visits.
+func repairCommentTextNodes(parent ast.Node, source []byte) {
+	for node := parent.FirstChild(); node != nil; {
+		if first, ok := node.(*ast.Text); ok && parent.Kind() != ast.KindCodeSpan {
+			var raw strings.Builder
+			next := node
+			for next != nil {
+				part, ok := next.(*ast.Text)
+				if !ok {
+					break
+				}
+				raw.Write(part.Segment.Value(source))
+				next = next.NextSibling()
+				if part.SoftLineBreak() || part.HardLineBreak() {
+					break
+				}
+			}
+			value := raw.String()
+			if html.UnescapeString(string(util.UnescapePunctuations([]byte(value)))) == value {
+				repaired := repairCjkStrong(value)
+				if repaired != value {
+					last := next
+					if next == nil {
+						last = parent.LastChild()
+					} else {
+						last = next.PreviousSibling()
+					}
+					if tail, ok := last.(*ast.Text); ok && (tail.SoftLineBreak() || tail.HardLineBreak()) {
+						repaired += "\n"
+					}
+					parent.InsertBefore(parent, first, ast.NewString([]byte(repaired)))
+					for node != next {
+						following := node.NextSibling()
+						parent.RemoveChild(parent, node)
+						node = following
+					}
+				}
+			}
+			node = next
+		} else {
+			if node.Kind() != ast.KindCodeSpan {
+				repairCommentTextNodes(node, source)
+			}
+			node = node.NextSibling()
 		}
 	}
 }
@@ -112,9 +168,7 @@ func cjkStrongCandidate(value string, opening, closing int) bool {
 	}
 	cjkInside := containsCJK(inner) && nonSpace(inner)
 	switch {
-	case cjkInside && first != ' ' && first != '\t' && (last == ' ' || last == '\t'):
-		return true
-	case cjkInside && (first == ' ' || first == '\t') && last != ' ' && last != '\t':
+	case cjkInside && (first == ' ' || first == '\t' || last == ' ' || last == '\t'):
 		return true
 	case before != -1 && cjkRune(before) && nonSpace(inner):
 		return true
@@ -165,22 +219,6 @@ func repairCjkStrong(value string) string {
 	}
 	out.WriteString(value[consumed:])
 	return out.String()
-}
-
-// highlightMarker matches the `==text==` highlight syntax the web read-only
-// pipeline lowers to <mark> before rendering (highlightToHtml). goldmark has
-// no such extension, so those spans stay literal here; text-wise the lowering
-// is deleting the two `==` runs.
-var highlightMarker = regexp.MustCompile(`==([^=\n]+)==`)
-
-// repairHighlightMarkers keeps the server text index in step with that
-// lowering. Single-line pairs only, mirroring highlight-match.ts's rule that
-// a highlight may not cross a line break.
-func repairHighlightMarkers(value string) string {
-	if !strings.Contains(value, "==") {
-		return value
-	}
-	return highlightMarker.ReplaceAllString(value, "$1")
 }
 
 // User-controlled summary and anchors must remain inert even in code fences:

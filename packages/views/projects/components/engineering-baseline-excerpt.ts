@@ -1,4 +1,7 @@
 import { stripMentionMarkdown } from "../../issues/utils/strip-mention-markdown";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "mdast";
+import { remarkRepairCjkStrongTrailingWhitespace } from "../../rich-content/cjk-emphasis";
 
 /**
  * Plain-text excerpts for wiki surfaces (OL-1373): hover-preview snippets,
@@ -23,34 +26,35 @@ export function wikiLinkLabel(raw: string): string {
   return `${targetWithSection.slice(0, hash).trim()} › ${targetWithSection.slice(hash + 1).trim()}`;
 }
 
-function stripInlineMarkdown(text: string): string {
-  return text
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/\*(.*?)\*/g, "$1")
-    .replace(/~~(.*?)~~/g, "$1")
-    .replace(/==(.+?)==/g, "$1");
-}
-
-function stripLineMarkdown(text: string): string {
-  return text
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/^\s*\|?[\s:|-]*\|?\s*$/gm, "");
+function excerptText(node: Nodes): string {
+  if (node.type === "html" || node.type === "definition") return "";
+  if (node.type === "image") return node.alt ?? "";
+  if ("value" in node) return node.value;
+  if ("children" in node) {
+    const text = node.children.map(excerptText).join("");
+    return ["paragraph", "heading", "listItem", "blockquote"].includes(node.type) ? `${text} ` : text;
+  }
+  return node.type === "break" ? " " : "";
 }
 
 /**
  * Turn one wiki markdown fragment into a single-line plain-text excerpt.
- * `maxLength` (UTF-16 code points, matching the old first-paragraph cap)
+ * `maxLength` counts Unicode code points (including emoji as one character) and
  * truncates with an ellipsis when given.
  */
 export function plainWikiExcerpt(markdown: string, maxLength?: number): string {
-  const cleaned = stripLineMarkdown(stripInlineMarkdown(stripMentionMarkdown(markdown)))
+  const source = stripMentionMarkdown(markdown)
     .replace(/\[\[([^[\]\n]+)\]\]/g, (_, raw: string) => wikiLinkLabel(raw))
-    .replace(/\|/g, " ")
+    // Search/backlink windows may cut either end of a Markdown link.
+    .replace(/\[([^\]\n]*)\]\(mention:\/\/[^)\s]*\)?/gi, "$1")
+    .replace(/\]?\(?mention:\/\/[^)\s]*\)?/gi, "")
+    .replace(/~~(.*?)~~/g, "$1")
+    .replace(/==(.+?)==/g, "$1")
+    .replace(/^\s*\|?[\s:|-]*\|?\s*$/gm, "")
+    .replace(/\|/g, " ");
+  const tree = fromMarkdown(source);
+  remarkRepairCjkStrongTrailingWhitespace()(tree, { value: source });
+  const cleaned = excerptText(tree)
     .replace(/\s+/g, " ")
     .trim();
   if (maxLength === undefined || [...cleaned].length <= maxLength) return cleaned;

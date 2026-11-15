@@ -7,6 +7,7 @@ import type { WikiPageRead, WikiTree } from "@multica/core/api";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
+import { WikiSearchPalette } from "./engineering-baseline-search";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), mockRestore: vi.fn() } }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "11111111-1111-4111-8111-111111111111" }));
@@ -128,6 +129,34 @@ beforeEach(() => {
 });
 
 describe("EngineeringBaselineWiki", () => {
+  it("cleans backlink windows and prefetched hover excerpts", async () => {
+    const read = pageRead();
+    read.backlinks[0]!.snippet = "截断边界](mention://issue/9999) __重点__";
+    const target = pageRead();
+    target.contentMarkdown = "# 架构\n\n> __重点__ 和 _强调_，请 [@Owner](mention://member/me) 看 [[rules|规则]]";
+    getProjectWikiPage.mockImplementation(async (_ws, _project, page) => page === "architecture" ? target : read);
+    const { container } = renderWiki();
+    expect(await screen.findByText("截断边界 重点")).toBeVisible();
+    await waitFor(() => expect(container.querySelector("[data-wiki-link-preview-snippet]"))
+      .toHaveTextContent("重点 和 强调，请 @Owner 看 规则"));
+    expect(container.querySelector("[data-wiki-link-preview-snippet]")?.textContent).not.toContain("mention://");
+  });
+
+  it("cleans truncated mention destinations in body search results", async () => {
+    const searchProjectWiki = vi.fn(async () => ({ results: [{
+      pageId: PAGE_ID, slug: "overview", title: "项目概览", sectionAnchor: "rules", sectionTitle: "Rules", match: "body",
+      snippet: "截断边界](mention://issue/9999) needle __重点__", score: 1,
+    }] }));
+    setApiInstance({ searchProjectWiki } as unknown as ApiClient);
+    const { container } = renderWithI18n(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <WikiSearchPalette wsId={WS} projectId={PROJECT} pages={[]} open onOpenChange={vi.fn()} onJump={vi.fn()} />
+    </QueryClientProvider>);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "needle" } });
+    expect(await screen.findByText("截断边界 needle 重点")).toBeVisible();
+    expect(searchProjectWiki).toHaveBeenCalled();
+    expect(container.textContent).not.toContain("mention://");
+  });
+
   it("renders the tree, reader meta, wikilink chip, backlink footer and outline", async () => {
     renderWiki();
     expect(await screen.findByRole("button", { name: "历史版本（6）" })).toBeInTheDocument(); // meta line loaded
@@ -462,7 +491,6 @@ describe("EngineeringBaselineWiki", () => {
     fireEvent.click(screen.getByTestId("wiki-edit-page"));
     const sourceInput = await screen.findByTestId("wiki-editor-source-issue");
     await waitFor(() => expect(sourceInput).toHaveValue("OL-1304"));
-    fireEvent.change(screen.getByTestId("wiki-editor-source"), { target: { value: "# 项目概览\n\n## Rules\n\nNew body." } });
     // An unknown identifier fails the save with a toast, never a write.
     fireEvent.change(sourceInput, { target: { value: "NOPE-1" } });
     fireEvent.click(screen.getByTestId("wiki-editor-save"));
@@ -474,6 +502,37 @@ describe("EngineeringBaselineWiki", () => {
     await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
       WS, PROJECT, "overview",
       expect.objectContaining({ sourceIssueId: null }),
+    ));
+  });
+
+  it("saves a source-issue-only change from the section editor and preserves its binding on body edits", async () => {
+    const section = pageRead();
+    section.revision.sourceIssueId = SOURCE_ISSUE_ID;
+    section.sections = [{ page: "overview", anchor: "rules", title: "Rules", level: 2, contentMarkdown: "## Rules\n\nSee [[架构]]." }];
+    getProjectWikiPage.mockImplementation(async (_ws, _project, _page, options) => options?.section ? section : pageRead());
+    const replacementId = "88888888-8888-4888-8888-888888888888";
+    const getIssue = vi.fn(async (id: string) => id === SOURCE_ISSUE_ID
+      ? { id, identifier: "OL-1304", title: "Refund policy" }
+      : { id: replacementId, identifier: "OL-1305", title: "Replacement" });
+    setApiInstance({ getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, getIssue } as unknown as ApiClient);
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(document.querySelector('[data-wiki-edit-section="rules"]')!);
+    const input = await screen.findByTestId("wiki-editor-source-issue");
+    await waitFor(() => expect(input).toHaveValue("OL-1304"));
+    expect(screen.getByTestId("wiki-editor-source")).toHaveValue(section.sections[0]!.contentMarkdown);
+    fireEvent.change(input, { target: { value: "OL-1305" } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
+      WS, PROJECT, "overview", expect.objectContaining({ section: "rules", sourceIssueId: replacementId, contentMarkdown: section.sections[0]!.contentMarkdown }),
+    ));
+    await waitFor(() => expect(screen.queryByTestId("wiki-editor-source")).not.toBeInTheDocument());
+    fireEvent.click(document.querySelector('[data-wiki-edit-section="rules"]')!);
+    await waitFor(() => expect(screen.getByTestId("wiki-editor-source-issue")).toHaveValue("OL-1304"));
+    fireEvent.change(screen.getByTestId("wiki-editor-source"), { target: { value: "## Rules\n\nUpdated section." } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenLastCalledWith(
+      WS, PROJECT, "overview", expect.objectContaining({ section: "rules", sourceIssueId: SOURCE_ISSUE_ID, contentMarkdown: "## Rules\n\nUpdated section." }),
     ));
   });
 

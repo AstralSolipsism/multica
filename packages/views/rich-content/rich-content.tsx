@@ -69,6 +69,7 @@ import {
 } from "../editor/utils/link-handler";
 import { preprocessMarkdown } from "../editor/utils/preprocess";
 import { highlightToHtml } from "../editor/utils/highlight-markdown";
+import { rehypeMathSource } from "./math-source";
 import { AttachmentDownloadProvider } from "../editor/attachment-download-context";
 import {
   EntityAttachmentsProvider,
@@ -545,6 +546,7 @@ export const REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> 
 export const REHYPE_PLUGINS: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
+  rehypeMathSource,
   rehypeKatex,
 ];
 

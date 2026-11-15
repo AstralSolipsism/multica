@@ -677,5 +677,555 @@
       "section_anchor": "Marks",
       "start": 11
     }
+  },
+  {
+    "name": "highlight containing strong",
+    "markdown": "==**高亮**== 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "高亮 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "高亮 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "literal highlight inner whitespace",
+    "markdown": "== 高亮 == 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "== 高亮 == 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "== 高亮 == 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight across soft break",
+    "markdown": "==第一行\n第二行== 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "第一行 第二行 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "第一行 第二行 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight skips inline code delimiter",
+    "markdown": "==a `b==c` d== 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "a b==c d 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "a b==c d 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight cannot cross blank line",
+    "markdown": "==first\n\nsecond== 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "==first second== 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "==first second== 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "escaped CJK strong markers",
+    "markdown": "采用\\*\\*「家庭」\\*\\*的架构",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "采用**「家庭」**的架构"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "采用**「家庭」**的架构",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "CJK leading whitespace without adjacent CJK",
+    "markdown": "text ** 中文** end",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "text 中文 end"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "text 中文 end",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "CJK both inner whitespace",
+    "markdown": "说明 ** 中文 ** 结束",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "说明 中文 结束"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "说明 中文 结束",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "CJK literal code whitespace",
+    "markdown": "说明 `** 中文 **` 结束",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "说明 ** 中文 ** 结束"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "说明 ** 中文 ** 结束",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "inline math atomic source",
+    "markdown": "公式 $x^2$ 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "公式 $x^2$ 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "公式 $x^2$ 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "inline math TeX atomic source",
+    "markdown": "公式 $\\frac{x_1}{y} + \\{z\\}$ 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "公式 $\\frac{x_1}{y} + \\{z\\}$ 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "公式 $\\frac{x_1}{y} + \\{z\\}$ 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "math immediately beside prose",
+    "markdown": "公式$x^2$后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "公式$x^2$后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "公式$x^2$后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "display math atomic source",
+    "markdown": "前文\n\n$$\nx^2 + y_1\n$$\n\n后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "前文 $$ x^2 + y_1 $$ 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "前文 $$ x^2 + y_1 $$ 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "math inside code stays literal",
+    "markdown": "公式 `$\\{x\\}$` 后续",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "公式 $\\{x\\}$ 后续"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "公式 $\\{x\\}$ 后续",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight skips math delimiters",
+    "markdown": "==a $b==c$ d==",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "a $b==c$ d"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "a $b==c$ d",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight literal inside code",
+    "markdown": "`x==y==z`",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "x==y==z"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "x==y==z",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight literal inside unclosed fence",
+    "markdown": "```\ncode\n==x==",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "code ==x=="
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "code ==x==",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight literal inside tilde fence",
+    "markdown": "~~~\n==x==\n~~~",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "==x=="
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "==x==",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight literal inside longer fence",
+    "markdown": "````markdown\n```js\n==x==\n```\n````",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "```js ==x== ```"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "```js ==x== ```",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "highlight skips unmatched backtick runs in code",
+    "markdown": "==a ``b```==c`` d==",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "a b```==c d"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "a b```==c d",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "literal dollars keep highlight markers",
+    "markdown": "$ a==b== $",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "$ a==b== $"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "$ a==b== $",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
+  },
+  {
+    "name": "fenced math indexes code source",
+    "markdown": "```math\nx^2\n```",
+    "texts": [
+      {
+        "anchor": "_preamble",
+        "title": "",
+        "text": "x^2"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "_preamble",
+      "section_title": "",
+      "exact": "x^2",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "_preamble",
+      "start": 0
+    }
   }
 ]

@@ -30,16 +30,17 @@ export function indexWikiCommentText(root: HTMLElement): CommentTextIndex {
     if (!(node instanceof Element) || node.matches(noise)) return;
     // Rendered diagrams/HTML retain the GFM code source as one atomic block.
     // Their preview chrome, SVG labels and iframe contents are not text anchors.
-    const source = node.getAttribute("data-wiki-comment-source");
+    const math = node.getAttribute("data-math-source");
+    const source = math ?? node.getAttribute("data-wiki-comment-source");
     if (source !== null && node.parentNode) {
       const offset = Array.from(node.parentNode.childNodes).indexOf(node);
       const start = { node: node.parentNode, offset }, end = { node: node.parentNode, offset: offset + 1 };
       const normalized = source.replace(/\s+/g, " ").trim();
       if (normalized) {
-        if (text) { text += " "; starts.push(ends.at(-1)!); ends.push(start); }
+        if (text && (math === null || pendingSpace || blocks.has(node.tagName))) { text += " "; starts.push(ends.at(-1)!); ends.push(start); }
         for (let i = 0; i < normalized.length; i++) { text += normalized[i]; starts.push(start); ends.push(end); }
       }
-      pendingSpace = {};
+      pendingSpace = math === null || blocks.has(node.tagName) ? {} : null;
       return;
     }
     const block = blocks.has(node.tagName);
