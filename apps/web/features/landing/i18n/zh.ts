@@ -87,12 +87,12 @@ export function createZhDict(): LandingDict {
   licensing: {
     title: "授权说明",
     intro: [
-      "Labrastro 采用 [Labrastro License](https://github.com/multica-ai/multica/blob/main/LICENSE) 发布：在 Apache License 2.0 的基础上附加了几项条件。源代码公开，在你自己的组织内部使用 Labrastro 是免费的，包括为整个团队自托管。",
-      "最主要的附加条件针对托管使用：把 Labrastro 提供给组织外部的人使用，需要商业授权。这一页用大家最常问的问题，说明这条线划在哪里。这是一份通俗说明，不构成法律意见；如与 LICENSE 原文不一致，以 LICENSE 为准。",
+      "Multica 采用 [Multica License](https://github.com/multica-ai/multica/blob/main/LICENSE) 发布：在 Apache License 2.0 的基础上附加了几项条件。源代码公开，在你自己的组织内部使用 Multica 是免费的，包括为整个团队自托管。",
+      "最主要的附加条件针对托管使用：把 Multica 提供给组织外部的人使用，需要商业授权。这一页用大家最常问的问题，说明这条线划在哪里。这是一份通俗说明，不构成法律意见；如与 LICENSE 原文不一致，以 LICENSE 为准。",
     ],
     rule: {
       title: "一条判断标准",
-      text: "看组织外部的人有没有在驱动这个实例——创建任务、和智能体对话、触发工作。只要有，不管通过什么界面（Web、Slack 还是 API），都算托管服务；如果他们只是收到你的团队用 Labrastro 做出来的成果，就属于内部使用。",
+      text: "看组织外部的人有没有在驱动这个实例——创建任务、和智能体对话、触发工作。只要有，不管通过什么界面（Web、Slack 还是 API），都算托管服务；如果他们只是收到你的团队用 Multica 做出来的成果，就属于内部使用。",
     },
     scenarios: {
       title: "常见场景",
@@ -102,18 +102,18 @@ export function createZhDict(): LandingDict {
       notRequired: "不需要",
       items: [
         {
-          scenario: "你的组织内部使用 Labrastro",
+          scenario: "你的组织内部使用 Multica",
           example: "自托管，不限工作区数量。",
           required: false,
         },
         {
-          scenario: "你帮客户部署 Labrastro，由客户自己拥有、在其组织内部使用",
+          scenario: "你帮客户部署 Multica，由客户自己拥有、在其组织内部使用",
           example: "实施、培训、咨询或定制开发。",
           required: false,
         },
         {
-          scenario: "你的团队用 Labrastro 为客户干活，客户只收到交付物",
-          example: "例如 agency 在 Labrastro 里管理内容生产，向客户交付成品。",
+          scenario: "你的团队用 Multica 为客户干活，客户只收到交付物",
+          example: "例如 agency 在 Multica 里管理内容生产，向客户交付成品。",
           required: false,
         },
         {
@@ -122,7 +122,7 @@ export function createZhDict(): LandingDict {
           required: false,
         },
         {
-          scenario: "你在自己的基础设施上替客户运行和管理 Labrastro 实例",
+          scenario: "你在自己的基础设施上替客户运行和管理 Multica 实例",
           example: "即代运维服务（managed service），无论是否收费。",
           required: true,
         },
@@ -133,12 +133,12 @@ export function createZhDict(): LandingDict {
         },
         {
           scenario: "组织外部的人通过其他入口驱动你的实例",
-          example: "例如接入 Labrastro 后端的公开网站、Slack 集成或 API，免费提供也一样。",
+          example: "例如接入 Multica 后端的公开网站、Slack 集成或 API，免费提供也一样。",
           required: true,
         },
         {
-          scenario: "你把 Labrastro 嵌入到你销售或分发的产品中",
-          example: "Labrastro 作为另一个商业产品的组件一起交付。",
+          scenario: "你把 Multica 嵌入到你销售或分发的产品中",
+          example: "Multica 作为另一个商业产品的组件一起交付。",
           required: true,
         },
       ],
@@ -147,8 +147,8 @@ export function createZhDict(): LandingDict {
       {
         heading: "其他条件",
         bullets: [
-          "品牌：除非获得我们的书面品牌豁免，请保留 Labrastro 界面中显示的 Labrastro Logo、产品名称以及版权和署名信息。",
-          "署名：如果你只基于 Labrastro 的后端、守护进程或 CLI 构建产品、不使用 Labrastro 界面，需要保留版权和 NOTICE 信息，并在面向用户的文档中注明产品基于 Labrastro 构建，附上 [GitHub 仓库](https://github.com/multica-ai/multica)链接。",
+          "品牌：除非获得我们的书面品牌豁免，请保留 Multica 界面中显示的 Multica Logo、产品名称以及版权和署名信息。",
+          "署名：如果你只基于 Multica 的后端、守护进程或 CLI 构建产品、不使用 Multica 界面，需要保留版权和 NOTICE 信息，并在面向用户的文档中注明产品基于 Multica 构建，附上 [GitHub 仓库](https://github.com/multica-ai/multica)链接。",
           "Fork：公开发布 fork 的源代码不算托管服务，不需要商业授权。但任何用这个 fork 运营托管服务的人，都需要各自获得商业授权。",
           "商业授权和品牌豁免是两项独立的授权，获得其中一项不代表获得另一项。",
         ],
@@ -166,16 +166,16 @@ export function createZhDict(): LandingDict {
     title: "隐私政策",
     lastUpdated: "最后更新：2026 年 10 月 22 日",
     intro: [
-      "本隐私政策说明 Index Labs (Hong Kong) Limited（下称「Labrastro」或「我们」）在你访问 multica.ai、联系我们或使用我们的托管服务 Labrastro Cloud（包括网页端、桌面端和移动端）时，如何收集、使用和共享个人信息。",
-      "本政策不适用于你自行部署的 Labrastro。自托管部署的数据由部署方控制，它使用哪些 AI 服务商、集成或分析工具，取决于部署方的配置。自托管服务器唯一会发送给我们的是每天一次的使用快照，内容包括：一个随机生成的部署 ID（用于关联同一台服务器的历次快照）、服务器版本、工作区、成员、智能体和已连接守护进程的大致数量，当天开始、完成、失败和取消的运行次数，以及过去 1、7、28 天内打开过网页端或桌面端的成员、亲自发起过智能体运行的成员的大致人数。快照不含任何姓名、邮箱或内容。设置 DO_NOT_TRACK=1 即可关闭这份快照。",
+      "本隐私政策说明 Index Labs (Hong Kong) Limited（下称「Multica」或「我们」）在你访问 multica.ai、联系我们或使用我们的托管服务 Multica Cloud（包括网页端、桌面端和移动端）时，如何收集、使用和共享个人信息。",
+      "本政策不适用于你自行部署的 Multica。自托管部署的数据由部署方控制，它使用哪些 AI 服务商、集成或分析工具，取决于部署方的配置。自托管服务器唯一会发送给我们的是每天一次的使用快照，内容包括：一个随机生成的部署 ID（用于关联同一台服务器的历次快照）、服务器版本、工作区、成员、智能体和已连接守护进程的大致数量，当天开始、完成、失败和取消的运行次数，以及过去 1、7、28 天内打开过网页端或桌面端的成员、亲自发起过智能体运行的成员的大致人数。快照不含任何姓名、邮箱或内容。设置 DO_NOT_TRACK=1 即可关闭这份快照。",
       "本政策以英文版本为准。如中文版本与英文版本不一致，以英文版本为准。",
     ],
     sections: [
       {
         heading: "我们收集的信息",
         bullets: [
-          "账户信息：你的姓名、邮箱地址和头像。如果你使用 Google 登录，我们会从 Google 获得你的姓名、邮箱地址和头像。你也可以填写语言、时区、个人简介等资料，以及回答上手引导中的问题，例如你的角色、使用场景、从哪里了解到 Labrastro。",
-          "你创建的内容：工作区、任务、评论、聊天消息、附件、智能体指令，以及你或你的智能体放进 Labrastro Cloud 的其他内容。",
+          "账户信息：你的姓名、邮箱地址和头像。如果你使用 Google 登录，我们会从 Google 获得你的姓名、邮箱地址和头像。你也可以填写语言、时区、个人简介等资料，以及回答上手引导中的问题，例如你的角色、使用场景、从哪里了解到 Multica。",
+          "你创建的内容：工作区、任务、评论、聊天消息、附件、智能体指令，以及你或你的智能体放进 Multica Cloud 的其他内容。",
           "联系商务表单：你的姓名、工作邮箱、公司名称和规模、国家或地区、使用场景、目标，以及你的沟通偏好。为了防止滥用，我们还会记录提交表单时的 IP 地址和浏览器 user agent。",
           "账单信息：订阅付款由 Stripe 在其托管的页面上处理，我们不会接收或存储你的完整银行卡信息。",
           "使用和设备信息：应用版本、操作系统、客户端类型和一个随机生成的安装 ID；你连接为运行时的每台机器的名称（默认是其主机名）；以及崩溃和错误报告。报告发送前，我们会从错误信息中过滤掉能识别出的邮箱地址和凭据，但报告仍可能包含与出错情况相关的其他细节。",
@@ -185,24 +185,24 @@ export function createZhDict(): LandingDict {
       {
         heading: "我们如何使用信息",
         bullets: [
-          "提供、运营和保护 Labrastro Cloud，包括登录、同步工作区、发送通知和邀请。",
+          "提供、运营和保护 Multica Cloud，包括登录、同步工作区、发送通知和邀请。",
           "回复联系商务表单和支持请求。",
           "发送服务消息，例如登录验证码和工作区邀请。只有在你主动同意后，我们才会发送产品动态或营销信息，你可以随时退订。",
-          "了解 Labrastro 的使用情况、修复问题并改进产品。",
+          "了解 Multica 的使用情况、修复问题并改进产品。",
           "防止滥用，并履行法律义务。",
         ],
       },
       {
         heading: "法律依据",
         paragraphs: [
-          "在法律要求说明处理依据的地区，我们依据以下几点处理个人信息：履行与你之间的合同，以提供 Labrastro Cloud；我们在保障安全、提供支持、改进 Labrastro 和回复咨询方面的正当利益；你对接收营销信息的同意；以及履行我们的法律义务。",
+          "在法律要求说明处理依据的地区，我们依据以下几点处理个人信息：履行与你之间的合同，以提供 Multica Cloud；我们在保障安全、提供支持、改进 Multica 和回复咨询方面的正当利益；你对接收营销信息的同意；以及履行我们的法律义务。",
         ],
       },
       {
         heading: "AI 功能",
         paragraphs: [
-          "你的编码智能体运行在你自己的机器或你连接的运行时上，使用的是你配置的编码工具和账户。智能体在本机运行，不代表模型也在本机推理：这些工具会把提示词、代码、文件和工具调用结果发送给各自的模型服务商，并受你所用工具和账户的条款约束。Labrastro 负责协调智能体的工作。",
-          "Labrastro Cloud 的部分功能（如生成聊天标题和推荐后续操作）会把你的第一条聊天消息或最近几条消息，发送给我们选用的第三方大语言模型服务商来生成结果。Labrastro 不会用你的内容训练 AI 模型。",
+          "你的编码智能体运行在你自己的机器或你连接的运行时上，使用的是你配置的编码工具和账户。智能体在本机运行，不代表模型也在本机推理：这些工具会把提示词、代码、文件和工具调用结果发送给各自的模型服务商，并受你所用工具和账户的条款约束。Multica 负责协调智能体的工作。",
+          "Multica Cloud 的部分功能（如生成聊天标题和推荐后续操作）会把你的第一条聊天消息或最近几条消息，发送给我们选用的第三方大语言模型服务商来生成结果。Multica 不会用你的内容训练 AI 模型。",
         ],
       },
       {
@@ -216,8 +216,8 @@ export function createZhDict(): LandingDict {
         heading: "我们与谁共享信息",
         paragraphs: [
           "你放进工作区的信息，会按工作区的权限设置，被其他成员和管理员，以及他们授权的智能体和集成看到。如果你的工作区属于某个组织，其中的内容由该组织管理，相关请求也可能由该组织处理。",
-          "在法律要求时，我们会披露相关信息；如果 Labrastro 发生合并、收购或资产出售，相关信息也可能转移给买方或继任方。",
-          "除此之外，我们只会与帮助我们运营 Labrastro 的服务商，以及你选择连接的集成共享个人信息：",
+          "在法律要求时，我们会披露相关信息；如果 Multica 发生合并、收购或资产出售，相关信息也可能转移给买方或继任方。",
+          "除此之外，我们只会与帮助我们运营 Multica 的服务商，以及你选择连接的集成共享个人信息：",
         ],
         bullets: [
           "Amazon Web Services：托管、文件存储和内容分发",
@@ -233,19 +233,19 @@ export function createZhDict(): LandingDict {
       {
         heading: "信息的存储位置",
         paragraphs: [
-          "Labrastro Cloud 托管在 Amazon Web Services 和 Vercel 上。我们和我们的服务商可能会在美国及其他国家或地区处理你的信息。无论在哪里处理，我们都会按照本政策保护这些信息。",
+          "Multica Cloud 托管在 Amazon Web Services 和 Vercel 上。我们和我们的服务商可能会在美国及其他国家或地区处理你的信息。无论在哪里处理，我们都会按照本政策保护这些信息。",
         ],
       },
       {
         heading: "信息的保留期限",
         paragraphs: [
-          "账户信息和工作区内容会在你的账户或工作区存在期间一直保留。工作区所有者删除工作区后，其中的任务、评论等内容会从 Labrastro Cloud 中移除，但用于恢复的备份在之后一段时间内仍可能包含副本。如需从我们的文件存储中清除已删除工作区里上传的文件，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。账单记录按会计和税务规定要求的期限保留；产品分析数据、崩溃报告、联系商务表单和反馈，会在为你提供支持和改进 Labrastro 所需的期间内保留。你可以要求我们删除联系商务表单和反馈。",
+          "账户信息和工作区内容会在你的账户或工作区存在期间一直保留。工作区所有者删除工作区后，其中的任务、评论等内容会从 Multica Cloud 中移除，但用于恢复的备份在之后一段时间内仍可能包含副本。如需从我们的文件存储中清除已删除工作区里上传的文件，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。账单记录按会计和税务规定要求的期限保留；产品分析数据、崩溃报告、联系商务表单和反馈，会在为你提供支持和改进 Multica 所需的期间内保留。你可以要求我们删除联系商务表单和反馈。",
         ],
       },
       {
         heading: "你的选择和权利",
         paragraphs: [
-          "根据你所在地的法律，你可能有权访问、更正、删除或导出你的个人信息，反对或限制某些处理，撤回你已给出的同意（例如接收营销信息的同意），以及向当地的数据保护机构投诉。你可以随时在 Labrastro 中更新个人资料，也可以在设置中删除你拥有的工作区。其他请求（包括删除账户），请发邮件至 [support@multica.ai](mailto:support@multica.ai)，我们会在 30 天内回复。",
+          "根据你所在地的法律，你可能有权访问、更正、删除或导出你的个人信息，反对或限制某些处理，撤回你已给出的同意（例如接收营销信息的同意），以及向当地的数据保护机构投诉。你可以随时在 Multica 中更新个人资料，也可以在设置中删除你拥有的工作区。其他请求（包括删除账户），请发邮件至 [support@multica.ai](mailto:support@multica.ai)，我们会在 30 天内回复。",
         ],
       },
       {
@@ -257,7 +257,7 @@ export function createZhDict(): LandingDict {
       {
         heading: "儿童",
         paragraphs: [
-          "Labrastro 并非面向 16 岁以下的儿童，我们也不会在知情的情况下收集他们的个人信息。",
+          "Multica 并非面向 16 岁以下的儿童，我们也不会在知情的情况下收集他们的个人信息。",
         ],
       },
       {
@@ -269,7 +269,7 @@ export function createZhDict(): LandingDict {
       {
         heading: "联系我们",
         paragraphs: [
-          "Labrastro 由 Index Labs (Hong Kong) Limited 运营，并由其负责你的个人信息。如有隐私相关的问题或请求，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。",
+          "Multica 由 Index Labs (Hong Kong) Limited 运营，并由其负责你的个人信息。如有隐私相关的问题或请求，请发邮件至 [support@multica.ai](mailto:support@multica.ai)。",
         ],
       },
     ],

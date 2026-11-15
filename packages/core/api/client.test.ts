@@ -2290,6 +2290,41 @@ describe("ApiClient", () => {
       });
     });
 
+    it("sendChatMessage serialises submission_id onto the JSON body when given", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.sendChatMessage("session-1", "hello", undefined, "646fed2d-71b3-4cbb-bdb3-e39675f005c3");
+
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init?.body as string)).toEqual({
+        content: "hello",
+        submission_id: "646fed2d-71b3-4cbb-bdb3-e39675f005c3",
+      });
+    });
+
+    it("sendChatMessage omits submission_id when none is supplied", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.sendChatMessage("session-1", "hello");
+
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init?.body as string)).toEqual({ content: "hello" });
+    });
+
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
       const fetchMock = vi.fn().mockImplementation(() =>
         Promise.resolve(

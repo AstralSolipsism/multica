@@ -113,6 +113,7 @@ vi.mock("../../editor", async () => ({
     editorProps.last = props as unknown as Record<string, unknown>;
     const valueRef = useRef<string>(value ?? defaultValue ?? "");
     const uploadingRef = useRef(0);
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     useEffect(() => {
       if (value !== undefined) valueRef.current = value;
     }, [value]);
@@ -121,6 +122,10 @@ vi.mock("../../editor", async () => ({
       clearContent: () => {
         editorState.cleared += 1;
         valueRef.current = "";
+        // Mirror the real editor clearing the visible document: a later
+        // fireEvent.change of the SAME text must still fire React's onChange
+        // (its value tracker dedupes unchanged values on a stale DOM node).
+        if (textareaRef.current) textareaRef.current.value = "";
       },
       blur: () => {
         editorState.blurred += 1;
@@ -179,6 +184,7 @@ vi.mock("../../editor", async () => ({
     }));
     return (
       <textarea
+        ref={textareaRef}
         data-testid="editor"
         defaultValue={value ?? defaultValue}
         placeholder={placeholder}
@@ -600,6 +606,7 @@ describe("ChatInput conversation starter send", () => {
       undefined,
       expect.any(Function),
       [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
     );
   });
 
@@ -1492,6 +1499,7 @@ describe("ChatInput async send", () => {
       undefined,
       expect.any(Function),
       [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
     );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
     await waitFor(() => expect(sendButton!).toBeDisabled());
@@ -1530,7 +1538,10 @@ describe("ChatInput async send", () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith(
+      "retry me", undefined, expect.any(Function), [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
+    );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 
@@ -1577,6 +1588,7 @@ describe("ChatInput async send", () => {
       ["att-persisted"],
       expect.any(Function),
       [attachment],
+      expect.objectContaining({ submissionId: expect.any(String) }),
     );
   });
 });
@@ -1877,5 +1889,38 @@ describe("ChatInput send disabled reason", () => {
 
     expect(sendButton()).toBeDisabled();
     expect(sendButton()).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("chat send identity", () => {
+  async function submitInput() {
+    await act(async () => {
+      await (editorProps.last?.onSubmit as () => Promise<void>)();
+    });
+  }
+
+  it("reuses failed submissions and retires the id after success or edited input", async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    renderInput({ onSend });
+    const editor = screen.getByTestId("editor");
+    fireEvent.change(editor, { target: { value: "hello" } });
+    await submitInput();
+    const first = onSend.mock.calls[0]![4];
+    expect(first.submissionId).toMatch(/^[0-9a-f-]{36}$/);
+    await submitInput();
+    expect(onSend.mock.calls[1]![4]).toBe(first);
+
+    fireEvent.change(editor, { target: { value: "changed" } });
+    fireEvent.change(editor, { target: { value: "hello" } });
+    onSend.mockResolvedValue(true);
+    await submitInput();
+    const edited = onSend.mock.calls[2]![4];
+    expect(edited.submissionId).not.toBe(first.submissionId);
+    // Paste the same text in one update: an intermediate empty update would
+    // retire the ID via the edit path and mask missing success cleanup.
+    fireEvent.change(editor, { target: { value: "hello" } });
+    await submitInput();
+    expect(onSend).toHaveBeenCalledTimes(4);
+    expect(onSend.mock.calls[3]![4].submissionId).not.toBe(edited.submissionId);
   });
 });

@@ -9,7 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Attachment } from "@multica/core/types";
+import type { Attachment, ChatSendAttempt } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
+import { useChatStore } from "@multica/core/chat";
 
 /**
  * Reply actions for HTML blocks rendered inside a chat conversation (a
@@ -40,6 +42,7 @@ export type ChatSurfaceSend = (
   attachmentIds?: string[],
   commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
   draftAttachments?: Attachment[],
+  attempt?: ChatSendAttempt,
 ) => Promise<boolean>;
 
 const ChatReplyActionsContext = createContext<ChatReplyActions | null>(null);
@@ -60,16 +63,35 @@ export function ChatReplyActionsProvider({
   handleSend: ChatSurfaceSend;
   children: ReactNode;
 }) {
+  // One attempt per [sessionId, cardKey], kept across FAILED sends so an
+  // unchanged answer retried after a lost response reuses the same submission
+  // UUID and the server replays the first acceptance — same rule as the
+  // composer's sendAttemptsRef (chat-input.tsx). Component-local by design:
+  // not in Zustand, not persisted. A success deletes the record; a changed
+  // answer replaces it with a fresh id.
+  const attemptsRef = useRef(
+    new Map<string, { content: string; attempt: ChatSendAttempt }>(),
+  );
   const [adoptRequest, setAdoptRequest] = useState<ChatReplyAdoptRequest | null>(null);
   const nextAdoptIdRef = useRef(0);
 
   const submit = useCallback(
-    async (content: string, _cardKey: string): Promise<boolean> => {
-      try {
-        return await handleSend(content, undefined, undefined, []);
-      } catch {
-        return false;
+    async (content: string, cardKey: string): Promise<boolean> => {
+      const sessionId = useChatStore.getState().activeSessionId ?? "";
+      const key = `${sessionId}:${cardKey}`;
+      let record = attemptsRef.current.get(key);
+      if (!record || record.content !== content) {
+        record = { content, attempt: { submissionId: createSafeId() } };
+        attemptsRef.current.set(key, record);
       }
+      let ok = false;
+      try {
+        ok = await handleSend(content, undefined, undefined, [], record.attempt);
+      } catch {
+        ok = false;
+      }
+      if (ok) attemptsRef.current.delete(key);
+      return ok;
     },
     [handleSend],
   );

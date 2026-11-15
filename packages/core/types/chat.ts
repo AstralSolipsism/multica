@@ -1,5 +1,14 @@
 import type { AgentTask } from "./agent";
 
+
+/** One composer submission, retained across retries including lazy session
+ *  creation. `submissionId` is the server's idempotency key: replaying it
+ *  with unchanged content returns the original acceptance. */
+export interface ChatSendAttempt {
+  submissionId: string;
+  sessionId?: string;
+}
+
 /** A user's pinned "quick agent" for the Chat list top bar. */
 export interface ChatPinnedAgent {
   agent_id: string;

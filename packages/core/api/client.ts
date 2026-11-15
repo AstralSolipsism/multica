@@ -4186,11 +4186,17 @@ export class ApiClient {
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    submissionId?: string,
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       attachment_ids?: string[];
+      submission_id?: string;
     } = { content };
+    // A stable submission UUID lets the server replay the original acceptance
+    // when a response is lost and the same content is retried; omitting it
+    // keeps the plain one-turn send (docs/engineering/chat-submissions.md).
+    if (submissionId) body.submission_id = submissionId;
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
@@ -5339,11 +5345,16 @@ export class ApiClient {
   // GitHub integration
   async getGitHubConnectURL(
     workspaceId: string,
-    options?: { desktop?: boolean } | "github" | "repositories",
+    options?: { desktop?: boolean; returnTo?: "github" | "repositories" } | "github" | "repositories",
   ): Promise<GitHubConnectResponse> {
     const search = new URLSearchParams();
+    // The two parameters are independent: `desktop` signs the state for the
+    // in-app completion handoff, `return_to` keeps the browser's landing page.
     if (typeof options === "string") search.set("return_to", options);
-    else if (options?.desktop) search.set("desktop", "1");
+    else {
+      if (options?.desktop) search.set("desktop", "1");
+      if (options?.returnTo) search.set("return_to", options.returnTo);
+    }
     const suffix = search.size > 0 ? `?${search.toString()}` : "";
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/github/connect${suffix}`,

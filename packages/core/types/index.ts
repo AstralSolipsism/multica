@@ -190,6 +190,7 @@ export type {
   ChatSession,
   ChatLastMessage,
   ChatPinnedAgent,
+  ChatSendAttempt,
   ChatMessage,
   ChatQuickAction,
   ChatQuickActionsPendingState,

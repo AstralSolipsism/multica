@@ -30,7 +30,8 @@ import { useShortcut, type ShortcutChord } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
 import { escapeMarkdownLabel } from "../../editor/utils/escape-markdown-label";
-import type { Attachment, Project } from "@multica/core/types";
+import type { Attachment, ChatSendAttempt, Project } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ClearablePillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
@@ -69,6 +70,7 @@ interface ChatInputProps {
     attachmentIds: string[] | undefined,
     commitInput: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
     draftAttachments: Attachment[],
+    attempt?: ChatSendAttempt,
   ) => void | boolean | Promise<void | boolean>;
   restoreDraftRequest?: {
     id: string;
@@ -201,6 +203,7 @@ export function ChatInput({
   const editorAreaRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const selectedAgentId = useChatStore((s) => s.selectedAgentId);
   // Two keys with deliberately different concerns:
   //
   // `draftKey` — zustand storage key. Scopes the in-progress draft per session
@@ -230,6 +233,21 @@ export function ChatInput({
   // Embedded surfaces (Agent Builder) still pass `editorKeyOverride` to isolate
   // their own composer.
   const draftKey = draftKeyOverride ?? activeSessionId ?? DRAFT_NEW_SESSION;
+  // One in-flight submission identity per send target: a retried send of the
+  // unchanged draft reuses its submission UUID so the server replays the
+  // original acceptance instead of creating a second turn. A new-session
+  // draft keys by agent AND project — both pick the session lazily.
+  const sendTarget = JSON.stringify([
+    draftKey,
+    draftKey === DRAFT_NEW_SESSION ? selectedAgentId : null,
+    draftKey === DRAFT_NEW_SESSION ? projectId : null,
+  ]);
+  const sendAttemptsRef = useRef(new Map<string, {
+    draftKey: string;
+    content: string;
+    attachments: string;
+    attempt: ChatSendAttempt;
+  }>());
   // Select a primitive — empty-string fallback keeps referential stability.
   const inputDraft = useChatStore((s) => s.inputDrafts[draftKey] ?? "");
   const storeUploads = useChatStore(
@@ -293,6 +311,13 @@ export function ChatInput({
   // belongs to the selected draft, not the loaded one.
   const commitDraft = useCallback(
     (key: string, markdown: string) => {
+      // Editing the draft retires its submission identity: the retry is a new
+      // logical send and must take a fresh submission UUID.
+      for (const [target, submission] of sendAttemptsRef.current) {
+        if (submission.draftKey === key && submission.content !== markdown.trim()) {
+          sendAttemptsRef.current.delete(target);
+        }
+      }
       setInputDraft(key, markdown);
       const uploads =
         useChatStore.getState().inputDraftAttachments[key] ?? EMPTY_UPLOADS;
@@ -547,6 +572,12 @@ export function ChatInput({
       const pendingFlush = editorRef.current?.flushPendingUpdate?.();
       if (pendingFlush != null) commitDraft(editorDraftKeyRef.current, pendingFlush);
       const draftValueAtSend = useChatStore.getState().inputDrafts[keyAtSend];
+      const attachmentKey = JSON.stringify([...uniqueActiveIds].sort());
+      let submission = sendAttemptsRef.current.get(sendTarget);
+      if (!submission || submission.content !== content || submission.attachments !== attachmentKey) {
+        submission = { draftKey: keyAtSend, content, attachments: attachmentKey, attempt: { submissionId: createSafeId() } };
+        sendAttemptsRef.current.set(sendTarget, submission);
+      }
       // Context is for the message it went with; the next one starts without.
       const pageKeyAtSend = attachedPage ? attachedPageKey : null;
       let committed = false;
@@ -594,6 +625,9 @@ export function ChatInput({
         if (pageKeyAtSend) {
           setAttachedPageKey((current) => (current === pageKeyAtSend ? null : current));
         }
+        // Accepted: the retained identity must not suppress a later,
+        // deliberately repeated send of the same text.
+        if (sendAttemptsRef.current.get(sendTarget) === submission) sendAttemptsRef.current.delete(sendTarget);
       };
       logger.info("input.send", {
         contentLength: content.length,
@@ -610,6 +644,7 @@ export function ChatInput({
         uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
         commitInput,
         draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
+        submission.attempt,
       );
       // Owner rejected the send (or threw, which useComposerSubmit also treats
       // as a rejection): the draft was never committed, so it stays put for

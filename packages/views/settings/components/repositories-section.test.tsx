@@ -11,6 +11,7 @@ import enSettings from "../../locales/en/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockGetGitHubConnectURL = vi.hoisted(() => vi.fn());
+const platformMocks = vi.hoisted(() => ({ openExternal: vi.fn(), desktop: false }));
 const mockConnectInstallation = vi.hoisted(() => vi.fn());
 const mockInvalidateQueries = vi.hoisted(() => vi.fn());
 const mockFetchQuery = vi.hoisted(() => vi.fn());
@@ -117,6 +118,11 @@ vi.mock("@multica/core/api", async (importOriginal) => ({
   },
 }));
 vi.mock("sonner", () => ({ toast: { success: mockToastSuccess, error: mockToastError } }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...await importOriginal(),
+  isDesktopShell: () => platformMocks.desktop,
+  openExternal: platformMocks.openExternal,
+}));
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({
     push: vi.fn(),
@@ -134,6 +140,7 @@ const connection = {
   reset: vi.fn(),
 };
 
+import { useGitHubConnectionStore } from "@multica/core/github";
 import { RepositoriesSection, repositoryIdentity } from "./repositories-section";
 
 const TEST_RESOURCES = {
@@ -320,6 +327,47 @@ describe("RepositoriesSection", () => {
 
     expect(screen.queryByRole("button", { name: /Add repository/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Actions for/ })).toBeNull();
+  });
+
+  it("keeps the desktop connection handoff when starting from the repositories entry", async () => {
+    mockGetGitHubConnectURL.mockResolvedValueOnce({
+      configured: true,
+      url: "https://github.com/apps/multica/installations/new",
+      connection_id: "desktop-nonce",
+    });
+    platformMocks.desktop = true;
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    await user.click(await screen.findByRole("menuitem", { name: /Connect GitHub/ }));
+
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", {
+        desktop: true,
+        returnTo: "repositories",
+      });
+      expect(platformMocks.openExternal).toHaveBeenCalledWith(
+        "https://github.com/apps/multica/installations/new",
+        { webTarget: "same-tab" },
+      );
+    });
+    expect(open).not.toHaveBeenCalled();
+    expect(useGitHubConnectionStore.getState().connection).toEqual({
+      workspaceID: "workspace-1",
+      connectionID: "desktop-nonce",
+      installationID: "",
+    });
+    act(() =>
+      useGitHubConnectionStore.getState().complete({
+        installation: { id: "install-1", workspace_id: "workspace-1" },
+        connection_id: "desktop-nonce",
+      }),
+    );
+    expect(useGitHubConnectionStore.getState().connection?.installationID).toBe("install-1");
+    open.mockRestore();
+    platformMocks.desktop = false;
   });
 
   it("starts GitHub connection with the signed repository return target", async () => {

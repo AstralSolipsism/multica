@@ -113,22 +113,77 @@ function mountCard(handleSend: MockSend) {
 }
 
 describe("ChatReplyActionsProvider — submit and fill", () => {
+  it("reuses the same submission id when an unanswered send is retried unchanged", async () => {
+    const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { ref } = renderActionsProbe(handleSend);
+
+    await act(async () => {
+      expect(await ref.current!.submit("拍板：方案 B", "card-1")).toBe(false);
+      expect(await ref.current!.submit("拍板：方案 B", "card-1")).toBe(true);
+    });
+    const [first, second] = handleSend.mock.calls;
+    expect(second![4]!.submissionId).toBe(first![4]!.submissionId);
+    // Same record object — handleSend pins attempt.sessionId into it, and the
+    // retry must carry that pinned session back.
+    expect(second![4]).toBe(first![4]);
+  });
+
   it("passes the card content through with explicit empty-send arguments", async () => {
     const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValue(true);
     const { ref } = renderActionsProbe(handleSend);
     await act(async () => {
       await ref.current!.submit("answer", "card-1");
     });
-    expect(handleSend).toHaveBeenCalledExactlyOnceWith("answer", undefined, undefined, []);
+    expect(handleSend).toHaveBeenCalledExactlyOnceWith(
+      "answer", undefined, undefined, [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
+    );
   });
 
-  it("returns false when handleSend throws", async () => {
+  it("mints a fresh submission id for a changed answer", async () => {
+    const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValue(false);
+    const { ref } = renderActionsProbe(handleSend);
+    await act(async () => {
+      await ref.current!.submit("answer A", "card-1");
+      await ref.current!.submit("answer B", "card-1");
+    });
+    const [first, second] = handleSend.mock.calls;
+    expect(second![4]!.submissionId).not.toBe(first![4]!.submissionId);
+  });
+
+  it("clears the record on success so a repeat send is a new attempt", async () => {
+    const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValue(true);
+    const { ref } = renderActionsProbe(handleSend);
+    await act(async () => {
+      await ref.current!.submit("answer", "card-1");
+      await ref.current!.submit("answer", "card-1");
+    });
+    const [first, second] = handleSend.mock.calls;
+    expect(second![4]!.submissionId).not.toBe(first![4]!.submissionId);
+  });
+
+  it("keys the attempt per card and per session", async () => {
+    const handleSend = vi.fn<ChatSurfaceSend>().mockResolvedValue(false);
+    const { ref } = renderActionsProbe(handleSend);
+    await act(async () => {
+      await ref.current!.submit("answer", "card-1");
+      await ref.current!.submit("answer", "card-2");
+      useChatStore.getState().activeSessionId = "session-2";
+      await ref.current!.submit("answer", "card-1");
+    });
+    const ids = handleSend.mock.calls.map((call) => call[4]!.submissionId);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it("returns false and retains the attempt when handleSend throws", async () => {
     const handleSend = vi.fn<ChatSurfaceSend>().mockRejectedValueOnce(new Error("lost")).mockResolvedValueOnce(true);
     const { ref } = renderActionsProbe(handleSend);
     await act(async () => {
       expect(await ref.current!.submit("answer", "card-1")).toBe(false);
       expect(await ref.current!.submit("answer", "card-1")).toBe(true);
     });
+    const [first, second] = handleSend.mock.calls;
+    expect(second![4]!.submissionId).toBe(first![4]!.submissionId);
   });
 
   it("publishes fill requests the composer can adopt", () => {
@@ -165,7 +220,10 @@ describe("HTML block inside a chat conversation", () => {
     const { frame, reply } = mountCard(handleSend);
     post(frame, { type: "submit-comment", content: "拍板：方案 B" });
     await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", true), "*"));
-    expect(handleSend).toHaveBeenCalledExactlyOnceWith("拍板：方案 B", undefined, undefined, []);
+    expect(handleSend).toHaveBeenCalledExactlyOnceWith(
+      "拍板：方案 B", undefined, undefined, [],
+      expect.objectContaining({ submissionId: expect.any(String) }),
+    );
   });
 
   it("acknowledges a retried card send after a lost response", async () => {

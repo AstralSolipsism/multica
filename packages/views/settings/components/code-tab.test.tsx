@@ -17,6 +17,7 @@ import enSettings from "../../locales/en/settings.json";
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockDeleteInstallation = vi.hoisted(() => vi.fn());
 const mockGetConnectURL = vi.hoisted(() => vi.fn());
+const platformMocks = vi.hoisted(() => ({ openExternal: vi.fn(), desktop: false }));
 const mockConnectInstallation = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 const mockFetchQuery = vi.hoisted(() => vi.fn());
@@ -112,6 +113,11 @@ vi.mock("@multica/core/api", async (importOriginal) => {
   };
 });
 vi.mock("sonner", () => ({ toast: { success: mockToastSuccess, error: mockToastError } }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...await importOriginal(),
+  isDesktopShell: () => platformMocks.desktop,
+  openExternal: platformMocks.openExternal,
+}));
 // The repository list and self-hosted rows have their own tests.
 vi.mock("./repositories-section", () => ({ RepositoriesSection: () => null }));
 vi.mock("./code-vcs", () => ({ VCSConnectionRows: () => <div>VCS rows</div> }));
@@ -122,6 +128,7 @@ vi.mock("./pr-merge-status-row", () => ({
   ),
 }));
 
+import { useGitHubConnectionStore } from "@multica/core/github";
 import { CodeTab } from "./code-tab";
 
 const TEST_RESOURCES = {
@@ -245,6 +252,41 @@ describe("CodeTab — GitHub", () => {
       expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener"),
     );
     open.mockRestore();
+  });
+
+  it("registers the desktop connection flow instead of a bare browser window", async () => {
+    const open = spyOnWindowOpen();
+    mockGetConnectURL.mockResolvedValueOnce({
+      configured: true,
+      url: INSTALL_URL,
+      connection_id: "desktop-nonce",
+    });
+    platformMocks.desktop = true;
+    const user = userEvent.setup();
+    render(<CodeTab />, { wrapper: Wrapper });
+
+    await user.click(screen.getByRole("button", { name: "Connect GitHub" }));
+
+    await waitFor(() =>
+      expect(platformMocks.openExternal).toHaveBeenCalledWith(INSTALL_URL, { webTarget: "same-tab" }),
+    );
+    expect(mockGetConnectURL).toHaveBeenCalledWith("workspace-1", { desktop: true, returnTo: undefined });
+    expect(open).not.toHaveBeenCalled();
+    expect(useGitHubConnectionStore.getState().connection).toEqual({
+      workspaceID: "workspace-1",
+      connectionID: "desktop-nonce",
+      installationID: "",
+    });
+    // The completion event matches the registered connection and completes it.
+    act(() =>
+      useGitHubConnectionStore.getState().complete({
+        installation: { id: "install-1", workspace_id: "workspace-1" },
+        connection_id: "desktop-nonce",
+      }),
+    );
+    expect(useGitHubConnectionStore.getState().connection?.installationID).toBe("install-1");
+    open.mockRestore();
+    platformMocks.desktop = false;
   });
 
   it("lists every connected account in its own row, with who connected it", () => {

@@ -341,7 +341,9 @@ describe("the floating chat on a side chat", () => {
     await waitFor(() =>
       expect(within(screen.getByTestId("messages")).getByText("Tell me more")).toBeInTheDocument(),
     );
-    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith("side-1", "Tell me more", undefined);
+    expect(apiMock.sendChatMessage).toHaveBeenCalledExactlyOnceWith(
+      "side-1", "Tell me more", undefined, expect.any(String),
+    );
     expect(apiMock.createChatSession).not.toHaveBeenCalled();
     expect(screen.queryByRole("group", { name: "Common questions" })).toBeNull();
     // The banner stays with the chat.
@@ -408,22 +410,25 @@ describe("the floating chat on a side chat", () => {
     renderWithYsk(<ChatWindow />);
     await waitFor(() => expect(composer()).toHaveAttribute("data-agent", "Sigma"));
 
-    // Upstream v0.9.0: the client carries no send identity — a retry after a
-    // lost response simply sends again, and the server's submission dedup
-    // reconciles it. Exercise the floating window's real send callback.
+    // A retry after a lost response reuses the SAME submission id and the
+    // lazily created session, so the server replays the first acceptance
+    // instead of starting a second turn. The mocked composer stands in for
+    // ChatInput's sendAttemptsRef bookkeeping here.
     const commitInput = vi.fn();
+    const attempt: { submissionId: string; sessionId?: string } = { submissionId: "side-stable-submission-id" };
     await act(async () => {
-      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [])).toBe(false);
+      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(false);
     });
     expect(useChatStore.getState().activeSessionId).toBeNull();
     expect(commitInput).not.toHaveBeenCalled();
 
     await act(async () => {
-      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [])).toBe(true);
+      expect(await composerProps.current!.onSend("hello", undefined, commitInput, [], attempt)).toBe(true);
     });
     expect(apiMock.sendChatMessage).toHaveBeenCalledTimes(2);
-    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(1, "new-1", "hello", undefined);
-    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(2, "new-1", "hello", undefined);
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(1, "new-1", "hello", undefined, "side-stable-submission-id");
+    expect(apiMock.sendChatMessage).toHaveBeenNthCalledWith(2, "new-1", "hello", undefined, "side-stable-submission-id");
+    expect(attempt.sessionId).toBe("new-1");
     expect(useChatStore.getState().activeSessionId).toBe("new-1");
     expect(commitInput).toHaveBeenCalledTimes(1);
   });

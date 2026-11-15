@@ -29,7 +29,15 @@
       "ignoreDependencies": ["claude-code"]
     },
     "apps/web": {
-      "entry": ["eslint.config.mjs"],
+      "entry": [
+        "eslint.config.mjs",
+        // Retired marketing implementations kept upstream-compatible behind
+        // the fork route gates (AGENTS.md "Change and Delivery Rules");
+        // unreachable by design, so nothing imports them.
+        "features/landing/components/download/hero.tsx",
+        "features/landing/components/download/started.tsx",
+        "features/landing/site/locale-suggestion.tsx"
+      ],
       // Referenced only by the `@type {import('postcss-load-config').Config}`
       // JSDoc annotation in postcss.config.mjs. Declaring it would add a
       // runtime dependency to satisfy a type comment.

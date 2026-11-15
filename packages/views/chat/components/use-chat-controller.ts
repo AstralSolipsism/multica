@@ -50,7 +50,9 @@ import type {
   Attachment,
   ChatMessage,
   ChatPendingTask,
+  ChatSendAttempt,
 } from "@multica/core/types";
+import { createSafeId } from "@multica/core/utils";
 import { useT } from "../../i18n";
 import { useAppForeground } from "../../common/use-app-foreground";
 
@@ -479,6 +481,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      attempt: ChatSendAttempt = { submissionId: createSafeId() },
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -529,7 +532,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
 
       let sessionId: string | null = null;
       try {
-        sessionId = await ensureSession();
+        // A failed response after lazy creation must retry in the SAME session:
+        // the attempt pins the session the first send created so the replay's
+        // submission receipt matches it.
+        sessionId = attempt.sessionId ?? await ensureSession();
+        if (sessionId) attempt.sessionId = sessionId;
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
         // A revoked invoke permission blocks session create with a structured
@@ -559,7 +566,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, attempt.submissionId);
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         // Invoke permission can be revoked mid-session; the send is refused with
