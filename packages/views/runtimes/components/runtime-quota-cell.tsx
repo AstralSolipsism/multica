@@ -17,7 +17,6 @@ import { QuotaWindowRow } from "./runtime-quota-window";
 
 export {
   accountPoolAriaLabel,
-  AccountPoolMachineChip,
   QuotaHoverCard,
 } from "./runtime-quota-account-pools";
 export {
@@ -63,60 +62,53 @@ export function RuntimeQuotaCell({
       </span>
     );
   }
-  if (accountPools) {
-    return (
-      <div className="flex w-full flex-col gap-1.5 leading-tight">
+  const trigger = (
+    <span
+      tabIndex={0}
+      className="flex w-full flex-col gap-1.5 rounded-sm leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {accountPools ? (
         <AccountPoolQuotaList
           summary={accountPools}
           agents={agents}
           runtime={runtime}
-          machineName={machineName}
-          now={now}
           interrupted={state.interrupted}
         />
-        {state.interrupted && (
-          <span className="text-micro tabular-nums text-faint-foreground">
-            {quotaInterruptedText(state.observedAt, now, t, formatTime)}
+      ) : (
+        state.pools.map((pool) => (
+          <span
+            key={pool.group ?? "ungrouped"}
+            className="flex w-full flex-wrap items-center gap-x-3 gap-y-1"
+          >
+            {pool.group != null && (
+              <span className="text-micro text-muted-foreground">
+                {quotaGroupLabel(pool.group, t)}
+              </span>
+            )}
+            {pool.windows.map((window, index) => (
+              <QuotaWindowRow
+                key={`${window.name}-${index}`}
+                window={window}
+                interrupted={state.interrupted}
+              />
+            ))}
           </span>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="flex w-full flex-col gap-1.5 leading-tight">
-      {state.pools.map((pool) => (
-        <QuotaHoverCard
-          key={pool.group ?? "ungrouped"}
-          runtime={runtime}
-          machineName={machineName}
-          now={now}
-          group={pool.group}
-          trigger={
-            <span
-              tabIndex={0}
-              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {pool.group != null && (
-                <span className="text-micro text-muted-foreground">
-                  {quotaGroupLabel(pool.group, t)}
-                </span>
-              )}
-              {pool.windows.map((window, index) => (
-                <QuotaWindowRow
-                  key={`${window.name}-${index}`}
-                  window={window}
-                  interrupted={state.interrupted}
-                />
-              ))}
-            </span>
-          }
-        />
-      ))}
+        ))
+      )}
       {state.interrupted && (
         <span className="text-micro tabular-nums text-faint-foreground">
           {quotaInterruptedText(state.observedAt, now, t, formatTime)}
         </span>
       )}
-    </div>
+    </span>
+  );
+  return (
+    <QuotaHoverCard
+      runtime={runtime}
+      machineName={machineName}
+      now={now}
+      agents={agents}
+      trigger={trigger}
+    />
   );
 }

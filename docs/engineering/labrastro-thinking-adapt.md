@@ -430,7 +430,7 @@ issue 运行沿用领取响应的 `thread_name` 作为标题；服务端仅在�
 
 ### 额度区与 Runtime 名称
 
-动态思考调档不混入额度区域。机器详情页的 Runtime 名称下仅以小字显示版本；Runtime 详情页只渲染配额卡（OL-1369 移除了二/三级页面的 `ThinkingAdaptQuotaRow` / `ThinkingAdaptQuotaCard` 及 `runtime-quota-cell` 的重导出）。免费的 OpenCode Jev 决策通道可用性现在由顶部「全局配额与服务状态」区的 `jev_free` 监控卡承载（`subscription-quota-cards.tsx`），与余额、订阅窗口在那里统一展示。
+动态思考调档不混入额度区域。机器详情页的 Runtime 名称下仅以小字显示版本；Runtime 详情页只渲染配额卡（OL-1369 已移除二/三级页面的旧自适应配额入口及 `runtime-quota-cell` 的对应重导出）。免费的 OpenCode Jev 决策通道可用性现在由顶部「全局配额与服务状态」区的 `jev_free` 监控卡承载（`subscription-quota-cards.tsx`），与余额、订阅窗口在那里统一展示。
 
 智能体运行期间的挡位状态（D3 的 Chat / Issue / 执行记录微标）与 inspector 副标题的 `thinking_adapt` 快照显示保持不变。
 

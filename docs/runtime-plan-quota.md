@@ -1,7 +1,9 @@
-# Runtime subscription quota observations
+# Runtime and global quota observations
 
-Subscription quota is the provider account's allowance, not task token usage or
-an estimate of money remaining. Runtimes sharing an account share its limits.
+Runtime subscription quota is the provider account's allowance, not task token
+usage. Runtimes sharing an account share its limits; the UI never sums their
+allowances. Global `quota_source` snapshots are separate: they can additionally
+represent real currency balances and free-channel health, as described below.
 
 ## Heartbeat contract and freshness
 
@@ -19,16 +21,58 @@ minutes per server process. External quota pushes still return HTTP 400 on
 invalid input. Conditional database writes and the five-minute freshness throttle
 are unchanged.
 
+## Machine → Runtime → provider hierarchy
+
+The three surfaces keep the same mental model; there is no cross-machine or
+cross-Runtime deduplication.
+
+- **L1 — machine rows.** `runtime-machines.ts` emits exactly one quota chip per
+  Runtime. `machine-quota-chips.tsx` renders a bordered Runtime capsule with
+  its icon/name on the left and its provider or model pools on the right.
+  Single-provider CLIs show one summary; Antigravity shows Gemini and Claude +
+  GPT; OMP shows its serving provider pools. A Runtime never splits into
+  pool-level chips. The first eight Runtime capsules wrap naturally and any
+  remainder appears as Runtime capsules in the `+N` hover card.
+- **Shared hover — one Runtime, one card.** Hovering an L1 capsule or the L2
+  quota cell opens one `QuotaHoverCard` for the whole Runtime. Its header is
+  `Runtime · machine`, with collection source and freshness on the right.
+  Single-provider windows appear directly; Antigravity and OMP use labeled
+  pool sections. Every OMP section includes available/total accounts, aggregate
+  windows and at most four account rows, with the remainder deferred to L3.
+- **L2 — machine details.** Each table row is already a Runtime. Its quota cell
+  lists provider/model-pool summaries on separate lines and has one hover
+  trigger for the same whole-Runtime card as L1.
+- **L3 — Runtime details.** `RuntimeQuotaCard` uses labeled provider/model-pool
+  sections, a two-column window grid and full account tables. Serving OMP pools
+  are visible by default; idle pools are behind an accessible disclosure.
+  Antigravity's Gemini and Claude + GPT pools remain separate sections within
+  the one Runtime card.
+
+`partitionAccountPools` is the only serving-pool filter. No matching active
+provider prefix (including no agents, a default/unrecognized model, or only
+archived agents) falls back to all reported pools instead of rendering an empty
+surface. The fallback is not evidence of usage: L3 only marks pools unused when
+the agent query is settled and a real provider intersection or an agent-less
+Runtime establishes that state.
+
 ## Display rules
 
-The runtime list cell, runtime settings card, machine chips and the GLM card
-apply one set of rules (`evaluatePlanQuota` in
+The Runtime list cell, Runtime settings card, machine capsules and global
+subscription cards apply one set of rules (`evaluatePlanQuota` in
 `packages/core/runtimes/plan-quota.ts`):
 
-- **Reset times** are wall-clock times in the viewer's timezone (the
-  Preferences timezone, else the browser's) on detail cards: the time alone on
-  the viewer's current day, month and day otherwise. Hover cards use compact
-  reset countdowns, and exhausted windows show their recovery countdown.
+- **Reset and recovery times are always absolute.** Every Runtime hover row,
+  L3 normal/exhausted window, OMP earliest account recovery and global
+  subscription tooltip goes through `formatQuotaTime` or
+  `useQuotaTimeFormatter` in `packages/views/runtimes/components/quota-time.ts`
+  (usually via `quotaWindowResetText`, `quotaStatusText` or
+  `accountPoolRecoveryText`). The viewer's Preferences timezone wins, with the
+  browser timezone as fallback. Same-day values show `HH:mm`; other days add
+  month and day (for example `11月15日 10:20` in Chinese), with locale-appropriate
+  “reset”, “recover” and “earliest recovery … (#account)” wording. There are no
+  future-reset countdown branches or locale countdown keys. Elapsed collection
+  freshness such as “updated 2m ago” is intentionally different and remains a
+  compact past duration.
 - **A passed reset refills its window.** The window counts as 100% with no next
   reset, and its row notes when it was refilled. The next observation replaces
   the inference.
@@ -47,25 +91,17 @@ apply one set of rules (`evaluatePlanQuota` in
   is guessed: there is no recovery time, independent pools are not split, and
   no reset lifts the limit before the next observation replaces the snapshot.
   Each window keeps its own balance and color.
-- **Machine chips and subject rows.** Chips show the tightest pool. When every
-  window is grouped (Antigravity), each pool gets its own chip and subject row.
-  Claude's model-specific pools still merge into the runtime's single value,
-  since an agent using that model is blocked. Machine chips wrap with an
-  eight-chip cutoff; machine details use one horizontal window row per CLI or
-  serving account-pool subject. CLI and pool hover cards share the same source,
-  title, window and account-table skeleton.
-- **Pool visibility.** Machine rows and tables omit unused provider pools.
-  Runtime details list every reported pool, marking unused pools inline rather
-  than providing a separate idle-pool section or entry point. The all-pools
-  display fallback is not proof of usage: when an active agent uses a default
-  or unrecognized model, no pool is marked unused. A Runtime with no active
-  agents marks every pool unused; a pending agent query marks none.
+- **Independent pools stay nested.** Antigravity's model groups retain their
+  own balances and colors, while Claude's model-specific pools still constrain
+  the Runtime as a whole. This distinction controls summaries inside the one
+  Runtime capsule/card; it never creates another machine-level quota subject.
 - **Freshness.** Task-reported providers (Codex, Claude and others) never age
   out: no task means no usage, so the last balance holds until its reset.
-  Collectors (Kimi, Antigravity, ZenMux) and the server's GLM collector show
-  "Collection interrupted" after an hour without a successful poll, longer than
-  the collectors' 30-minute maximum backoff. The last balance stays visible,
-  uncolored, with the absolute time of the last update.
+  Collectors (Kimi, OMP, Antigravity and ZenMux) and the server's global
+  quota-source pollers show "Collection interrupted" after an hour without a
+  successful poll, longer than the collectors' 30-minute maximum backoff. The
+  last balance stays visible, uncolored, with the absolute time of the last
+  update.
 - Runtimes sharing one account are not detected and no account information is
   read; each runtime shows its own observations.
 
@@ -187,14 +223,43 @@ the updated daemon's heartbeat to reach the server. Offline fixtures do not
 replace that deployment check. Reverting OL-846 restores the known incorrect
 host/identity pair; no data migration is involved.
 
-## Zhipu / GLM
+## Global quota and service-status sources
 
-The backend's existing GLM account collector and API are unchanged. Web and Desktop
-show its card once above the runtime list, including an empty list. Its display
-does not depend on `anchor_device` or a runtime's provider/login. Unconfigured or
-never-successful collection remains absent rather than showing a zero balance.
-Reset times, refilled windows and the one-hour "Collection interrupted" rule
-follow the display rules; the UI does not use the endpoint's 24-hour `stale` flag.
+The cards above the machine list come only from workspace-visible `quota_source`
+records, not from a Runtime heartbeat. `QuotaSourceSnapshot` keeps these global
+observations separate from `agent_runtime.plan_quota`. Credentials remain in the
+server's secretbox and API responses expose only their masked hint; snapshots
+contain measurements, never API keys. Private/shared visibility and the outbound
+host allow-list/SSRF checks apply to every source kind.
+
+There are three display contracts:
+
+1. **Subscription windows — `glm`, `zenmux`.** The snapshot uses the same
+  `windows` shape as Runtime plan quota. Cards show localized window labels and
+  remaining percentages; tooltips use the shared absolute reset formatter.
+  Unconfigured or never-successfully collected sources stay absent rather than
+  inventing a zero balance.
+2. **Account balances — `deepseek`, `opencode`.** `balances[]` contains independent
+  currency buckets with nullable `total_balance`, `topped_up_balance` and
+  `granted_balance`; null remains unknown and a numeric zero remains a real zero.
+  Cards render the currency amount, availability and a topped-up/granted
+  breakdown. DeepSeek defaults to `GET https://api.deepseek.com/user/balance`
+  with bearer authentication and `api.deepseek.com` as its allowed host. OpenCode
+  uses its configured OpenCode base URL (`https://opencode.ai` by default) and the
+  same balance/probe snapshot contract. Unavailable accounts and non-positive
+  total balances are destructive states.
+3. **Free-channel health — `jev_free`.** This source is credential-free. The
+  server probes the configured OpenCode endpoint (default
+  `https://opencode.ai/zen/v1/systemone`) with model `jev-1.13-free`, without
+  business content, and stores `probe.available`, `probe.latency_ms` and the
+  model. Cards show healthy/latency, abnormal or rate-limited state plus the last
+  poll time; provider errors never get a healthy green treatment.
+
+Global subscription reset times, refilled windows and interruption wording follow
+the same display rules as Runtime quota. Balance and health observations use
+elapsed past durations only for freshness; they do not manufacture reset times.
+The old Runtime-level Thinking Adapt quota rows/cards are not alternate entry
+points for these global monitors.
 
 ## Focused verification
 

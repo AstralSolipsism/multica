@@ -436,7 +436,6 @@ describe("runtime machine quota chips", () => {
         key: "rt-claude",
         runtimeId: "rt-claude",
         provider: "claude",
-        group: null,
         remainingPercent: null,
         limited: true,
         tone: "destructive",
@@ -446,7 +445,6 @@ describe("runtime machine quota chips", () => {
         key: "rt-codex",
         runtimeId: "rt-codex",
         provider: "codex",
-        group: null,
         remainingPercent: 12,
         limited: false,
         tone: "warning",
@@ -455,7 +453,7 @@ describe("runtime machine quota chips", () => {
     ]);
   });
 
-  it("splits independent pools into one chip each", () => {
+  it("keeps independent pools inside one runtime chip", () => {
     const machines = buildRuntimeMachines(
       [
         makeRuntime({
@@ -475,10 +473,15 @@ describe("runtime machine quota chips", () => {
       { now: NOW },
     );
 
-    expect(machines[0]?.quotaChips).toEqual([
-      expect.objectContaining({ key: "rt-agy:gemini", group: "gemini", limited: false, remainingPercent: 100, tone: "ok" }),
-      expect.objectContaining({ key: "rt-agy:claude_gpt", group: "claude_gpt", limited: true, tone: "destructive" }),
-    ]);
+    expect(machines[0]?.quotaChips).toEqual([{
+      key: "rt-agy",
+      runtimeId: "rt-agy",
+      provider: "antigravity",
+      remainingPercent: null,
+      limited: true,
+      tone: "destructive",
+      interrupted: false,
+    }]);
   });
 
   it("keeps old, reset and interrupted snapshots, excluding malformed ones", () => {

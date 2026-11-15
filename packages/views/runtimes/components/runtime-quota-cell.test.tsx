@@ -181,18 +181,20 @@ describe("CLI quota subjects", () => {
     expect(screen.queryByText(/Rate limited ·/)).not.toBeInTheDocument();
   });
 
-  it("opens the shared hover skeleton with source, context, windows, and recovery", async () => {
+  it("opens one card with both model pools and absolute recovery", async () => {
     renderChips(antigravityRuntime());
-    const limited = chipTrigger(/ · Claude \+ GPT: Rate limited$/);
-    await userEvent.hover(limited);
+    const trigger = chipTrigger(/^Antigravity: Gemini: 100% left · Claude \+ GPT: Rate limited$/);
+    expect(screen.getAllByLabelText(/^Antigravity:/)).toHaveLength(1);
+    await userEvent.hover(trigger);
 
-    const title = await screen.findByText("Antigravity / Claude + GPT");
-    const card = title.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
-    expect(within(card).getByText("Antigravity · dev.local")).toBeInTheDocument();
+    const context = await screen.findByText("Antigravity · dev.local");
+    const card = context.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
+    expect(within(card).getByText("Gemini")).toBeInTheDocument();
+    expect(within(card).getByText("Claude + GPT")).toBeInTheDocument();
     expect(within(card).getByText(/via daemon · updated/)).toBeInTheDocument();
     expect(within(card).getByText("Not applicable now")).toBeInTheDocument();
     expect(within(card).getByText("Exhausted")).toBeInTheDocument();
-    expect(within(card).getByText("recovers in 48h")).toBeInTheDocument();
+    expect(within(card).getByText(`recovers at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
     expect(card.querySelectorAll("table")).toHaveLength(0);
   });
 
@@ -241,6 +243,22 @@ describe("CLI quota subjects", () => {
     expect(screen.getByText("Rate limited")).toHaveClass("text-destructive");
     expect(screen.getByText("2%")).toBeInTheDocument();
     expect(screen.getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
+  });
+});
+
+describe("grouped Runtime detail cards", () => {
+  it("labels each Antigravity model pool and uses absolute recovery", () => {
+    const { container } = renderWithI18n(
+      <RuntimeQuotaCard runtime={antigravityRuntime()} now={NOW} />,
+    );
+
+    const gemini = container.querySelector('[data-quota-group="gemini"]');
+    const claudeGpt = container.querySelector('[data-quota-group="claude_gpt"]');
+    expect(gemini).not.toBeNull();
+    expect(claudeGpt).not.toBeNull();
+    expect(within(gemini as HTMLElement).getByText("Gemini")).toBeInTheDocument();
+    expect(within(claudeGpt as HTMLElement).getByText("Claude + GPT")).toBeInTheDocument();
+    expect(within(claudeGpt as HTMLElement).getByText(`recovers at ${at(NOW_SEC + 2 * DAY)}`)).toBeInTheDocument();
   });
 });
 
@@ -332,24 +350,44 @@ describe("OMP account pools", () => {
     expect(screen.getByText("Z.AI")).toBeInTheDocument();
   });
 
-  it("uses pool headers and one account table in the shared hover card", async () => {
+  it("keeps serving providers inside one OMP machine capsule", () => {
+    const { container } = renderChips(ompRuntime(), "en", servingAgents());
+
+    expect(container.querySelectorAll('[data-slot="hover-card-trigger"]')).toHaveLength(1);
+    const trigger = chipTrigger(/^Omp: Kimi Code:/);
+    expect(within(trigger).getByText("Omp")).toBeInTheDocument();
+    expect(within(trigger).getByText("Kimi Code")).toBeInTheDocument();
+    expect(within(trigger).getByText("Claude")).toBeInTheDocument();
+    expect(within(trigger).getByText("62%")).toBeInTheDocument();
+    expect(within(trigger).getByText("72%")).toBeInTheDocument();
+    expect(within(trigger).queryByText("Codex")).not.toBeInTheDocument();
+    expect(within(trigger).queryByText("Z.AI")).not.toBeInTheDocument();
+  });
+
+  it("combines serving provider pools and their account tables in one hover card", async () => {
     const user = userEvent.setup();
     renderWithI18n(
-      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={[quotaAgent("kimi-code/k2.5")]} />,
+      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
     );
     const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
     await user.hover(trigger);
 
     const account = await screen.findByText("#1 (19*)");
     const card = account.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
-    expect(within(card).getByText("Kimi Code pool")).toBeInTheDocument();
+    expect(within(card).getByText("Kimi Code")).toBeInTheDocument();
+    expect(within(card).getByText("Claude")).toBeInTheDocument();
+    expect(within(card).queryByText("Codex")).not.toBeInTheDocument();
+    expect(within(card).queryByText("Z.AI")).not.toBeInTheDocument();
     expect(within(card).getByText("2/3 accounts available")).toBeInTheDocument();
-    const table = within(card).getByRole("table");
-    expect(within(table).getByRole("columnheader", { name: "Account" })).toBeInTheDocument();
-    expect(within(table).getAllByRole("columnheader", { name: "5h" })).toHaveLength(1);
-    expect(within(table).getAllByRole("columnheader", { name: "7d" })).toHaveLength(1);
+    expect(within(card).getByText("1/2 accounts available")).toBeInTheDocument();
+    const tables = within(card).getAllByRole("table");
+    expect(tables).toHaveLength(2);
+    expect(within(tables[0]!).getByRole("columnheader", { name: "Account" })).toBeInTheDocument();
+    expect(within(tables[0]!).getAllByRole("columnheader", { name: "5h" })).toHaveLength(1);
+    expect(within(tables[0]!).getAllByRole("columnheader", { name: "7d" })).toHaveLength(1);
     expect(within(card).getByText("#2 (as*)")).toBeInTheDocument();
     expect(within(card).getByText("#3 (de*)")).toBeInTheDocument();
+    expect(within(card).getByText("#1 (ca*9*)")).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByText("#1 (19*)")).not.toBeInTheDocument());
@@ -396,17 +434,25 @@ describe("OMP account pools", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("lists every pool in details, marks only unused pools, and never collapses accounts", () => {
+  it("shows serving pools in details and expands idle pools on demand", async () => {
     const { container } = renderWithI18n(
       <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
     );
 
+    expect(container.querySelectorAll("[data-account-pool-matrix]")).toHaveLength(2);
+    expect(screen.getByText("#1 (19*)")).toBeInTheDocument();
+    expect(screen.getByText("#1 (ca*9*)")).toBeInTheDocument();
+    expect(screen.queryByText("#1 (7f*)")).not.toBeInTheDocument();
+    expect(screen.queryByText("#1 (mo*)")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "2 idle provider pools" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelectorAll("[data-account-pool-matrix]")).toHaveLength(4);
     expect(screen.getByText("Codex").parentElement).toHaveTextContent("· Not used");
     expect(screen.getByText("Z.AI").parentElement).toHaveTextContent("· Not used");
-    expect(screen.queryByText("Idle provider pools")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Expand/ })).not.toBeInTheDocument();
-    expect(screen.getByText("#1 (19*)")).toBeInTheDocument();
     expect(screen.getByText("#1 (7f*)")).toBeInTheDocument();
     expect(screen.getByText("#1 (mo*)")).toBeInTheDocument();
     expect(screen.getByText("Re-login required")).toBeInTheDocument();
@@ -433,7 +479,7 @@ describe("OMP account pools", () => {
     account.windows = [];
     const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
     const chips = renderChips(runtime);
-    const trigger = chipTrigger(/Kimi Code: 1 of 1 accounts available/);
+    const trigger = chipTrigger(/Omp: Kimi Code: 1 of 1 accounts available/);
     expect(within(trigger).getByText("No snapshot")).toBeInTheDocument();
     await userEvent.hover(trigger);
     expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
@@ -478,7 +524,7 @@ describe("OMP account pools", () => {
     }
   });
 
-  it("shows the earliest recovering account without an idle section or banner", () => {
+  it("shows the earliest recovering account as an absolute time", () => {
     const first = ompAccount("19*", "exhausted", 0, 65);
     const second = ompAccount("as*", "exhausted", 0, 12);
     first.windows[0]!.resets_at = NOW_SEC + 4320;
@@ -488,7 +534,7 @@ describe("OMP account pools", () => {
     });
     renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
 
-    expect(screen.getByText("Earliest recovery in 1h (#2)")).toBeInTheDocument();
+    expect(screen.getByText(`Earliest recovery at ${at(NOW_SEC + HOUR)} (#2)`)).toBeInTheDocument();
     expect(screen.queryByText(/All accounts in this provider pool/)).not.toBeInTheDocument();
   });
 });

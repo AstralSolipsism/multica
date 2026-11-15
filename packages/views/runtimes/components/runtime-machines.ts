@@ -20,17 +20,12 @@ export interface RuntimeWorkloadSummary {
   queuedCount: number;
 }
 
-/** One quota pill on the machine row: a runtime's tightest constraint, or
- *  one pill per pool when its pools are independent (antigravity). */
+/** One quota pill on the machine row per Runtime. Provider and model pools
+ *  render inside that Runtime's pill rather than becoming separate subjects. */
 export interface MachineQuotaChip {
-  /** Unique per runtime and pool. */
   key: string;
   runtimeId: string;
   provider: string;
-  /** The pool this pill summarizes; null when it covers the whole runtime. */
-  group: string | null;
-  /** OMP provider pool id; absent for single-account quota chips. */
-  accountPoolId?: string;
   remainingPercent: number | null;
   limited: boolean;
   tone: QuotaTone;
@@ -336,9 +331,9 @@ function finalizeRuntimeMachine(
   };
 }
 
-// Quota pills for an online machine: one per runtime with a usable snapshot,
-// split per pool when the pools are independent. Interrupted collections
-// keep their last balance instead of disappearing.
+// Quota pills for an online machine: exactly one per Runtime. Provider and
+// model pools stay nested inside that Runtime's pill and hover card.
+// Interrupted collections keep their last balance instead of disappearing.
 function machineQuotaChips(
   runtimes: AgentRuntime[],
   now: number,
@@ -350,21 +345,16 @@ function machineQuotaChips(
       : null;
     const accountPools = quota ? evaluatePlanQuotaPools(quota, now) : null;
     if (quota && accountPools) {
-      for (const pool of accountPools.pools) {
-        const primary = pool.windows.find((window) => window.windowMinutes === 300) ?? pool.windows[0];
-        chips.push({
-          key: `${runtime.id}:account-pool:${pool.id}`,
-          runtimeId: runtime.id,
-          provider: quota.provider || runtime.provider,
-          group: null,
-          accountPoolId: pool.id,
-          remainingPercent: primary?.remainingPercent ?? null,
-          limited: pool.exhausted,
-          tone: pool.tone,
-          interrupted: isQuotaCollectionInterrupted(quota, now),
-          empty: pool.windows.length === 0,
-        });
-      }
+      chips.push({
+        key: runtime.id,
+        runtimeId: runtime.id,
+        provider: quota.provider || runtime.provider,
+        remainingPercent: null,
+        limited: accountPools.exhausted,
+        tone: accountPools.tone,
+        interrupted: isQuotaCollectionInterrupted(quota, now),
+        empty: accountPools.pools.every((pool) => pool.windows.length === 0),
+      });
       continue;
     }
     const state = planQuotaState(runtime.plan_quota, now);
@@ -374,7 +364,6 @@ function machineQuotaChips(
         key: runtime.id,
         runtimeId: runtime.id,
         provider: runtime.provider,
-        group: null,
         remainingPercent: null,
         limited: false,
         tone: "ok",
@@ -383,22 +372,15 @@ function machineQuotaChips(
       });
       continue;
     }
-    const provider = state.provider || runtime.provider;
-    const parts = state.independentPools
-      ? state.pools.map((pool) => ({ group: pool.group, status: pool }))
-      : [{ group: null, status: state.summary }];
-    for (const { group, status } of parts) {
-      chips.push({
-        key: group == null ? runtime.id : `${runtime.id}:${group}`,
-        runtimeId: runtime.id,
-        provider,
-        group,
-        remainingPercent: status.remainingPercent,
-        limited: status.limited,
-        tone: status.tone,
-        interrupted: state.interrupted,
-      });
-    }
+    chips.push({
+      key: runtime.id,
+      runtimeId: runtime.id,
+      provider: state.provider || runtime.provider,
+      remainingPercent: state.summary.remainingPercent,
+      limited: state.summary.limited,
+      tone: state.summary.tone,
+      interrupted: state.interrupted,
+    });
   }
   return chips;
 }

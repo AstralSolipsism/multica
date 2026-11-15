@@ -96,6 +96,19 @@ describe("locale bundle parity", () => {
   }
 });
 
+describe("quota absolute-time copy", () => {
+  for (const locale of Object.keys(RESOURCES)) {
+    it(`${locale} has absolute recovery copy and no countdown keys`, () => {
+      const keys = keySet(RESOURCES[locale as keyof typeof RESOURCES]?.quota ?? {});
+      const obsolete = ["resets", "recovers"].map((prefix) => `${prefix}_in`);
+      obsolete.push(["earliest", "recovery"].join("_"));
+      expect([...keys].filter((key) => obsolete.includes(key.split(".").at(-1) ?? key))).toEqual([]);
+      expect(keys).toContain("recovers_at");
+      expect(keys).toContain("account_pools.pool_recovery_at");
+    });
+  }
+});
+
 // Dead plural-key guard: a locale whose CLDR plural rules have no `one`
 // category (e.g. ja/ko/zh-Hans) resolves only `_other`, so any `_one` key in
 // it is dead weight i18next never renders. Left unchecked these accumulate and

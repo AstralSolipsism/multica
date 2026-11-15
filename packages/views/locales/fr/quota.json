@@ -15,6 +15,7 @@
   "group_claude_models": "Modèles spécifiques",
   "remaining": "{{percent}} % restant",
   "resets_at": "réinitialisation : {{time}}",
+  "recovers_at": "rétablissement : {{time}}",
   "reset_passed": "réinitialisé : {{time}}",
   "exhausted": "Limite atteinte",
   "window_exhausted": "Épuisé",
@@ -37,7 +38,6 @@
     "source_self_hosted": "Auto-hébergé"
   },
   "account_pools": {
-    "pool_suffix": "pool",
     "accounts_available": "{{available}}/{{total}} comptes disponibles",
     "accounts_available_aria": "{{available}} comptes disponibles sur {{total}}",
     "account": "Compte",
@@ -46,11 +46,11 @@
     "all_relogin": "Tous les comptes de ce pool nécessitent une reconnexion.",
     "unused": "Non utilisé",
     "idle": "Inactif",
+    "idle_pools_one": "{{count}} pool de fournisseur inactif",
+    "idle_pools_other": "{{count}} pools de fournisseurs inactifs",
     "more_accounts_one": "{{count}} compte supplémentaire ; consultez les détails du Runtime pour l'afficher",
     "more_accounts_other": "{{count}} comptes supplémentaires ; consultez les détails du Runtime pour les afficher",
-    "resets_in": "réinitialisation dans {{time}}",
-    "recovers_in": "rétablissement dans {{time}}",
-    "earliest_recovery": "Rétablissement le plus proche dans {{time}} (#{{account}})"
+    "pool_recovery_at": "Rétablissement le plus proche : {{time}} (n°{{account}})"
   },
   "glm_window_tokens": "Jetons sur 5 heures",
   "glm_window_tokens_weekly": "Jetons 7d",

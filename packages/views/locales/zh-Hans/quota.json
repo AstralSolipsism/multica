@@ -14,6 +14,7 @@
   "group_claude_models": "限定模型",
   "remaining": "剩 {{percent}}%",
   "resets_at": "{{time}} 重置",
+  "recovers_at": "{{time}} 恢复",
   "reset_passed": "已于 {{time}} 重置",
   "exhausted": "已限流",
   "window_exhausted": "已耗尽",
@@ -36,7 +37,6 @@
     "source_self_hosted": "自部署"
   },
   "account_pools": {
-    "pool_suffix": "号池",
     "accounts_available": "{{available}}/{{total}} 账号可用",
     "accounts_available_aria": "{{total}} 个账号中 {{available}} 个可用",
     "account": "账号",
@@ -45,10 +45,9 @@
     "all_relogin": "该号池的账号均需重新登录。",
     "unused": "未被使用",
     "idle": "空闲",
+    "idle_pools_other": "{{count}} 个闲置服务商号池",
     "more_accounts_other": "另有 {{count}} 个账号，在运行时详情中查看",
-    "resets_in": "{{time}} 后重置",
-    "recovers_in": "{{time}} 后恢复",
-    "earliest_recovery": "最快 {{time}} 后恢复 #{{account}}"
+    "pool_recovery_at": "最快 {{time}} 恢复（#{{account}}）"
   },
   "glm_window_tokens": "5 小时 token",
   "glm_window_tokens_weekly": "7d token",

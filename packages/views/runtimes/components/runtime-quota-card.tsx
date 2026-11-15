@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ChevronDown } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import {
   formatCompactDuration,
@@ -17,6 +19,7 @@ import {
 } from "./account-pool-filter";
 import { AccountPoolAccountsTable } from "./runtime-quota-account-pools";
 import {
+  accountPoolRecoveryText,
   displayRemainingPercent,
   evaluateRuntimeAccountPools,
   formatQuotaWindowLabel,
@@ -27,21 +30,8 @@ import {
   quotaValueClass,
   quotaWindowResetText,
   quotaWindowValueText,
-  type QuotaT,
 } from "./runtime-quota-utils";
 import { MiniMeterBar } from "./runtime-quota-window";
-
-function accountPoolRecoveryText(
-  pool: QuotaAccountPoolState,
-  now: number,
-  t: QuotaT,
-): string | null {
-  if (!pool.exhausted || accountPoolNeedsRelogin(pool) || pool.resumesAt == null) return null;
-  return t(($) => $.account_pools.earliest_recovery, {
-    time: formatCompactDuration(pool.resumesAt * 1000 - now),
-    account: (pool.resumesAccountIndex ?? 0) + 1,
-  });
-}
 
 function AccountPoolQuotaSubject({
   pool,
@@ -55,7 +45,8 @@ function AccountPoolQuotaSubject({
   serving: boolean;
 }) {
   const { t } = useT("quota");
-  const recovery = accountPoolRecoveryText(pool, now, t);
+  const formatTime = useQuotaTimeFormatter();
+  const recovery = accountPoolRecoveryText(pool, now, t, formatTime);
   const relogin = accountPoolNeedsRelogin(pool);
   return (
     <div data-account-pool-matrix={pool.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
@@ -120,6 +111,7 @@ export function RuntimeQuotaCard({
   agentsPending?: boolean;
 }) {
   const { t } = useT("quota");
+  const [idlePoolsOpen, setIdlePoolsOpen] = useState(false);
   const formatTime = useQuotaTimeFormatter();
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
@@ -146,7 +138,7 @@ export function RuntimeQuotaCard({
           <>
             <div className="divide-y divide-border">
               {accountPools && partition
-                ? partition.all.map((pool) => (
+                ? partition.serving.map((pool) => (
                     <AccountPoolQuotaSubject
                       key={pool.id}
                       pool={pool}
@@ -159,7 +151,16 @@ export function RuntimeQuotaCard({
                     />
                   ))
                 : state.pools.map((pool) => (
-                    <div key={pool.group ?? "ungrouped"} className="py-4 first:pt-0 last:pb-0">
+                    <div
+                      key={pool.group ?? "ungrouped"}
+                      data-quota-group={pool.group ?? "ungrouped"}
+                      className="py-4 first:pt-0 last:pb-0"
+                    >
+                      {pool.group != null && (
+                        <h4 className="mb-3 text-caption font-medium">
+                          {quotaGroupLabel(pool.group, t)}
+                        </h4>
+                      )}
                       <div className="grid grid-cols-2 gap-x-8 gap-y-3">
                         {pool.windows.map((window, index) => (
                           <QuotaCardWindow
@@ -173,6 +174,35 @@ export function RuntimeQuotaCard({
                     </div>
                   ))}
             </div>
+            {accountPools && partition && partition.idle.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-left text-caption font-medium text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-expanded={idlePoolsOpen}
+                  aria-controls={`runtime-quota-idle-${runtime.id}`}
+                  onClick={() => setIdlePoolsOpen((open) => !open)}
+                >
+                  {t(($) => $.account_pools.idle_pools, { count: partition.idle.length })}
+                  <ChevronDown
+                    className={cn("size-4 shrink-0 transition-transform", idlePoolsOpen && "rotate-180")}
+                  />
+                </button>
+                {idlePoolsOpen && (
+                  <div id={`runtime-quota-idle-${runtime.id}`} className="divide-y divide-border">
+                    {partition.idle.map((pool) => (
+                      <AccountPoolQuotaSubject
+                        key={pool.id}
+                        pool={pool}
+                        now={now}
+                        interrupted={state.interrupted}
+                        serving={!canIdentifyUnusedPools}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {state.unattributedLimit && (
               <p
                 className={cn(
@@ -209,17 +239,11 @@ function QuotaCardWindow({
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
   const windowLabel = formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name;
-  const label = window.group != null
-    ? `${quotaGroupLabel(window.group, t)} · ${windowLabel}`
-    : windowLabel;
+  const label = windowLabel;
   const valueText = window.exhausted
     ? t(($) => $.window_exhausted)
     : quotaWindowValueText(window, t);
-  const reset = window.resetsAt != null && window.exhausted
-    ? t(($) => $.account_pools.recovers_in, {
-        time: formatCompactDuration(window.resetsAt * 1000 - now),
-      })
-    : quotaWindowResetText(window, now, t, formatTime);
+  const reset = quotaWindowResetText(window, now, t, formatTime);
   const showBar = window.remainingPercent != null && !window.notApplicable;
   return (
     <div className="space-y-1">
