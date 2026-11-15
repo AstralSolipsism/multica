@@ -84,9 +84,12 @@ describe("QuotaSourcesDialog", () => {
     });
     const { user } = setup([], fetcher);
 
-    await user.click(screen.getByRole("button", { name: "Add subscription" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
     expect(screen.getByRole("button", { name: /Zhipu GLM Coding Plan/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /ZenMux/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /DeepSeek API balance/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /OpenCode account/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /OpenCode Jev free channel/ })).toBeInTheDocument();
     expect(screen.queryByText(/Generic HTTP/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Binding target|Mount target/)).not.toBeInTheDocument();
 
@@ -110,6 +113,41 @@ describe("QuotaSourcesDialog", () => {
     expect(screen.queryByRole("button", { name: "Save and verify" })).not.toBeInTheDocument();
   });
 
+  it("creates a jev_free monitor without any credential input", async () => {
+    const created = {
+      ...source,
+      id: "created-free",
+      kind: "jev_free",
+      name: "免费通道",
+      credential_hint: "",
+    };
+    const fetcher = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(created, 201));
+      return Promise.resolve(jsonResponse({ encryption_configured: true, sources: [created] }));
+    });
+    const { user } = setup([], fetcher);
+
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.type(screen.getByLabelText("Name"), "免费通道");
+    await user.click(screen.getByRole("button", { name: /OpenCode Jev free channel/ }));
+    // Credential-free kind: no API key input at all.
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    expect(screen.getByText(/needs no API key/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save and verify" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/me/quota-sources"),
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const post = fetcher.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({
+      kind: "jev_free",
+      name: "免费通道",
+      credential: "",
+      visibility: "private",
+    });
+  });
+
   it.each([
     {
       status: 422,
@@ -125,7 +163,7 @@ describe("QuotaSourcesDialog", () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse(body, status));
     const { user } = setup([], fetcher);
 
-    await user.click(screen.getByRole("button", { name: "Add subscription" }));
+    await user.click(screen.getByRole("button", { name: "Add source" }));
     await user.type(screen.getByLabelText("Name"), "Primary GLM");
     await user.type(screen.getByLabelText("API Key"), "original-secret");
     await user.click(screen.getByRole("button", { name: "Save and verify" }));
@@ -202,7 +240,7 @@ describe("QuotaSourcesDialog", () => {
     expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
     expect(fetcher).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Delete subscription" }));
+    await user.click(screen.getByRole("button", { name: "Delete monitor" }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       expect.stringContaining("/api/me/quota-sources/source-1"),
       expect.objectContaining({ method: "DELETE" }),
@@ -214,7 +252,7 @@ describe("QuotaSourcesDialog", () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({ error: "unavailable" }, 500));
     const { user } = setup(null, fetcher);
 
-    expect(await screen.findByText("Couldn't load subscription quotas.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load quota sources.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   });

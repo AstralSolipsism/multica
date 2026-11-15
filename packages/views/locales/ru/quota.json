@@ -36,8 +36,7 @@
     "source_opencode_free": "OpenCode Zen (бесплатно)",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "Alibaba Cloud Model Studio",
-    "source_self_hosted": "На собственном сервере",
-    "counts": "С момента запуска демона: успешно — {{success}}, с уровнем по умолчанию — {{fallback}}"
+    "source_self_hosted": "На собственном сервере"
   },
   "account_pools": {
     "pool_suffix": "пул",
@@ -57,13 +56,11 @@
     "recovers_in": "восстановление через {{time}}",
     "earliest_recovery": "Ближайшее восстановление через {{time}} (№{{account}})"
   },
-  "glm_title": "Баланс тарифа GLM",
   "glm_window_tokens": "Токены на 5 часов",
   "glm_window_tokens_weekly": "Токены на 7 дней",
   "glm_window_tokens_generic": "Окно токенов",
   "glm_window_time": "Ежемесячные кредиты для инструментов",
   "glm_window_credit": "Кредиты на 5 часов",
   "glm_window_credit_weekly": "Кредиты на 7 дней",
-  "glm_window_credit_generic": "Окно кредитов",
-  "glm_window_fallback": "{{type}}"
+  "glm_window_credit_generic": "Окно кредитов"
 }

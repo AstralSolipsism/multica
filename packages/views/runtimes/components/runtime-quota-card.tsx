@@ -1,10 +1,5 @@
 "use client";
 
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import {
   formatCompactDuration,
@@ -12,16 +7,8 @@ import {
   type QuotaAccountPoolState,
   type QuotaWindowState,
 } from "@multica/core/runtimes";
-import type {
-  Agent,
-  AgentRuntime,
-  RuntimeThinkingAdapt,
-} from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
-import {
-  thinkingAdaptSourceLabel,
-  thinkingAdaptStatusLabel,
-} from "../../common/thinking-adapt";
 import { useQuotaTimeFormatter } from "./quota-time";
 import {
   accountPoolNeedsRelogin,
@@ -205,82 +192,6 @@ export function RuntimeQuotaCard({
             </p>
           </>
         )}
-      </div>
-    </section>
-  );
-}
-
-export function ThinkingAdaptQuotaRow({
-  snapshot,
-}: {
-  snapshot: RuntimeThinkingAdapt;
-}) {
-  const { t } = useT("quota");
-  const { t: tf } = useT("fork-ui");
-  const available = snapshot.status === "available";
-  const source = snapshot.active_source
-    ? thinkingAdaptSourceLabel(snapshot.active_source, t)
-    : null;
-  const detail = available
-    ? [
-        source ?? thinkingAdaptStatusLabel(snapshot, t),
-        snapshot.last_latency_ms != null
-          ? `${snapshot.last_latency_ms}ms`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : thinkingAdaptStatusLabel(snapshot, t);
-  const text = `${tf(($) => $.agents.thinking_adapt.label)} · ${detail}`;
-  const counts = t(($) => $.thinking_adapt.counts, {
-    success: snapshot.decisions_ok ?? 0,
-    fallback: snapshot.decisions_fallback ?? 0,
-  });
-  const dotClass = available
-    ? "bg-success"
-    : snapshot.status === "degraded" || snapshot.status === "unavailable"
-      ? "bg-warning"
-      : "bg-muted-foreground/50";
-
-  const row = (
-    <span
-      tabIndex={0}
-      data-thinking-adapt-status={snapshot.status}
-      aria-label={`${text}. ${counts}`}
-      className="flex max-w-full items-center gap-1.5 rounded-sm text-micro text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span
-        aria-hidden="true"
-        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)}
-      />
-      <span className="min-w-0 truncate">{text}</span>
-    </span>
-  );
-
-  return (
-    <Tooltip>
-      <TooltipTrigger render={row} />
-      <TooltipContent>{counts}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-export function ThinkingAdaptQuotaCard({ snapshot }: { snapshot: RuntimeThinkingAdapt }) {
-  const { t } = useT("quota");
-  const { t: tf } = useT("fork-ui");
-  return (
-    <section className="rounded-lg border bg-card">
-      <h3 className="border-b px-4 py-2.5 text-caption font-semibold">
-        {tf(($) => $.agents.thinking_adapt.label)}
-      </h3>
-      <div className="space-y-2 p-4">
-        <ThinkingAdaptQuotaRow snapshot={snapshot} />
-        <p className="text-micro text-faint-foreground">
-          {t(($) => $.thinking_adapt.counts, {
-            success: snapshot.decisions_ok ?? 0,
-            fallback: snapshot.decisions_fallback ?? 0,
-          })}
-        </p>
       </div>
     </section>
   );

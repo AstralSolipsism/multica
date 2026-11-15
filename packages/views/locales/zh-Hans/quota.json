@@ -33,8 +33,7 @@
     "source_opencode_free": "OpenCode Zen 免费通道",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "阿里云百炼",
-    "source_self_hosted": "自部署",
-    "counts": "自守护进程启动以来：成功 {{success}} 次，回退 {{fallback}} 次"
+    "source_self_hosted": "自部署"
   },
   "account_pools": {
     "pool_suffix": "号池",
@@ -51,13 +50,11 @@
     "recovers_in": "{{time}} 后恢复",
     "earliest_recovery": "最快 {{time}} 后恢复 #{{account}}"
   },
-  "glm_title": "GLM 套餐余量",
   "glm_window_tokens": "5 小时 token",
   "glm_window_tokens_weekly": "7d token",
   "glm_window_tokens_generic": "token 窗口",
   "glm_window_time": "月度工具积分",
   "glm_window_credit": "5 小时积分",
   "glm_window_credit_weekly": "7d 积分",
-  "glm_window_credit_generic": "积分窗",
-  "glm_window_fallback": "{{type}}"
+  "glm_window_credit_generic": "积分窗"
 }

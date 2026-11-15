@@ -198,7 +198,11 @@ export function QuotaSourcesDialog({
                                 </span>
                                 <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption text-muted-foreground">
                                   <span className="font-mono">
-                                    {source.credential_hint ? `•••• ${source.credential_hint}` : "••••••••"}
+                                    {source.kind === "jev_free"
+                                      ? t(($) => $.quota_sources.dialog.no_credential)
+                                      : source.credential_hint
+                                        ? `•••• ${source.credential_hint}`
+                                        : "••••••••"}
                                   </span>
                                   <span>{t(($) => $.quota_sources.visibility[source.visibility === "shared" ? "shared" : "private"])}</span>
                                   {observedAt > 0 && (

@@ -206,8 +206,8 @@ describe("RuntimesPage", () => {
     const add = within(header).getByRole("button", { name: "Add runtime" });
     expect(add).not.toHaveTextContent("Add runtime");
     expect(
-      within(header).getByRole("button", { name: "Subscription quotas" }),
-    ).not.toHaveTextContent("Subscription quotas");
+      within(header).getByRole("button", { name: "Quota & service status" }),
+    ).not.toHaveTextContent("Quota & service status");
     expect(screen.queryByRole("button", { name: /^Offline/ })).not.toBeInTheDocument();
   });
 

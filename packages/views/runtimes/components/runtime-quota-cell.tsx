@@ -22,8 +22,6 @@ export {
 } from "./runtime-quota-account-pools";
 export {
   RuntimeQuotaCard,
-  ThinkingAdaptQuotaCard,
-  ThinkingAdaptQuotaRow,
 } from "./runtime-quota-card";
 export {
   displayRemainingPercent,

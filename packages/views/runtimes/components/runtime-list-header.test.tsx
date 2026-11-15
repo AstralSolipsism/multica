@@ -52,7 +52,7 @@ describe("RuntimeList quota heading", () => {
     expect(screen.getByRole("columnheader", { name: label })).toBeInTheDocument();
   });
 
-  it("uses three columns and puts version plus Adapt under the Runtime name in machine detail", () => {
+  it("uses three columns and puts the version under the Runtime name in machine detail", () => {
     const runtime: AgentRuntime = {
       id: "runtime-1",
       workspace_id: "workspace-1",
@@ -120,7 +120,7 @@ describe("RuntimeList quota heading", () => {
     expect(within(grid).queryByRole("columnheader", { name: "Cost" })).not.toBeInTheDocument();
     expect(within(grid).queryByRole("columnheader", { name: "CLI" })).not.toBeInTheDocument();
     expect(within(grid).getByText("v0.1.33")).toBeInTheDocument();
-    expect(within(grid).getByText("Adapt · OpenCode Zen (free) · 290ms")).toBeInTheDocument();
+    expect(within(grid).queryByText(/Adapt ·/)).not.toBeInTheDocument();
     expect(within(grid).getByText("75%")).toBeInTheDocument();
   });
 });

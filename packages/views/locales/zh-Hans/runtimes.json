@@ -71,21 +71,32 @@
     }
   },
   "quota_sources": {
-    "action": "订阅配额",
+    "action": "全局配额与服务状态",
     "kinds": {
       "glm": "智谱 GLM Coding Plan",
       "zenmux": "ZenMux",
-      "unknown": "订阅"
+      "unknown": "订阅",
+      "deepseek": "DeepSeek API 余额",
+      "opencode": "OpenCode 账户",
+      "jev_free": "OpenCode Jev 免费通道"
     },
     "cards": {
-      "region": "订阅配额",
+      "region": "全局配额与服务状态",
       "tokens_period": "{{period}} token",
       "credits_period": "{{period}}积分",
       "tools_period": "{{period}}工具积分",
       "subscription_period": "{{period}}订阅额度",
       "subscription_window": "订阅额度",
       "generic_window": "配额窗口",
-      "waiting": "等待首次采集"
+      "waiting": "等待首次采集",
+      "balance_available": "可用 · 余额 {{amount}}",
+      "balance_exhausted": "余额耗尽 / 不可用",
+      "topped_up": "充值余额 {{amount}}",
+      "granted": "赠金余额 {{amount}}",
+      "probe_ok": "正常可用 · {{latency}}ms",
+      "probe_account_ok": "账户可用 · {{latency}}ms",
+      "probe_abnormal": "异常",
+      "probe_rate_limited": "已限流"
     },
     "visibility": {
       "private": "仅自己可见",
@@ -94,20 +105,21 @@
       "shared_hint": "仅在有你共享机器的工作区向成员展示。"
     },
     "dialog": {
-      "title": "订阅配额",
-      "description": "管理你的智谱 GLM 和 ZenMux 订阅凭证与卡片。",
+      "title": "全局配额与服务状态",
+      "description": "管理你的订阅窗口、按量充值 API 余额与免费通道健康监控。",
       "loading": "正在加载订阅",
-      "load_failed": "无法加载订阅配额。",
+      "load_failed": "无法加载配额源。",
       "retry": "重试",
-      "empty_title": "还没有订阅配额源",
-      "add": "添加订阅",
-      "auto_refresh": "服务端每 5 分钟采集一次已启用的订阅",
+      "empty_title": "还没有配额源",
+      "add": "添加配额源",
+      "auto_refresh": "服务端每 5 分钟采集一次已启用的监控项",
       "toggle": "启停 {{name}}",
       "refresh": "刷新 {{name}}",
       "refresh_now": "立即刷新",
       "refresh_in": "{{seconds}} 秒后可刷新",
       "edit": "编辑 {{name}}",
-      "delete": "删除 {{name}}"
+      "delete": "删除 {{name}}",
+      "no_credential": "无需凭证"
     },
     "status": {
       "ok": "正常",
@@ -115,9 +127,9 @@
       "disabled": "已停用"
     },
     "form": {
-      "back": "返回订阅列表",
-      "add_title": "添加订阅配额源",
-      "edit_title": "编辑订阅配额源",
+      "back": "返回列表",
+      "add_title": "添加配额源",
+      "edit_title": "编辑配额源",
       "description": "新凭证或接口地址会先通过服务商试采，验证通过后才保存。",
       "kind_section": "1. 渠道",
       "credential_section": "2. 凭证",
@@ -135,7 +147,9 @@
       "credential_required": "请输入 API Key。",
       "cancel": "取消",
       "save": "保存并试采",
-      "saving": "正在试采并保存..."
+      "saving": "正在试采并保存...",
+      "zen_api_key": "Zen API Key",
+      "credential_free": "该免费决策通道无需 API Key，服务端会定期探测可用性与延迟。"
     },
     "errors": {
       "invalid_credential": "服务商拒绝了该凭证，请核对或更换 API Key。",
@@ -144,7 +158,7 @@
       "invalid_base_url": "请使用该渠道支持的公网 HTTPS 接口地址。",
       "unexpected_response": "服务商返回了无法识别的配额响应。",
       "provider_error": "服务商配额采集失败。",
-      "generic": "无法更新订阅，请重试。",
+      "generic": "无法更新配额源，请重试。",
       "encryption_unconfigured": "服务端尚未配置 MULTICA_QUOTA_SOURCE_SECRET_KEY，请管理员配置后再管理订阅凭证。",
       "refresh_cooldown": "刚刚已刷新，请等待 30 秒冷却结束。"
     },
@@ -152,14 +166,14 @@
       "title": "删除“{{name}}”？",
       "description": "对应卡片将不再显示，加密凭证会被销毁。此操作无法撤销。",
       "cancel": "取消",
-      "confirm": "删除订阅",
+      "confirm": "删除监控项",
       "deleting": "删除中..."
     },
     "toasts": {
-      "created": "已添加订阅",
-      "updated": "已更新订阅",
-      "refreshed": "已刷新订阅",
-      "deleted": "已删除订阅"
+      "created": "已添加配额源",
+      "updated": "已更新配额源",
+      "refreshed": "已刷新配额源",
+      "deleted": "已删除配额源"
     }
   },
   "mika_setup": {

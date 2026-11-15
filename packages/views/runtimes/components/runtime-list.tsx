@@ -63,7 +63,7 @@ import {
   pctChange,
 } from "../utils";
 import { runtimeRowLabel } from "./runtime-machines";
-import { RuntimeQuotaCell, ThinkingAdaptQuotaRow } from "./runtime-quota-cell";
+import { RuntimeQuotaCell } from "./runtime-quota-cell";
 import {
   customRuntimeRegistrationFailure,
   isDisabledCustomRuntime,
@@ -173,15 +173,12 @@ function RuntimeNameCell({
   const versionLabel = version
     ? /^\d/.test(version) ? `v${version}` : version
     : null;
-  const thinkingAdapt = runtime.thinking_adapt ?? null;
-  if (!versionLabel && !thinkingAdapt) return name;
+  if (!versionLabel) return name;
   return (
     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       {name}
       <span className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
-        {versionLabel && <span className="shrink-0">{versionLabel}</span>}
-        {versionLabel && thinkingAdapt && <span aria-hidden="true">·</span>}
-        {thinkingAdapt && <ThinkingAdaptQuotaRow snapshot={thinkingAdapt} />}
+        <span className="shrink-0">{versionLabel}</span>
       </span>
     </span>
   );

@@ -34,8 +34,7 @@
     "source_opencode_free": "OpenCode Zen (gratuit)",
     "source_opencode": "OpenCode Zen",
     "source_dashscope": "Alibaba Cloud Model Studio",
-    "source_self_hosted": "Auto-hébergé",
-    "counts": "Depuis le démarrage du daemon : {{success}} réussites, {{fallback}} replis"
+    "source_self_hosted": "Auto-hébergé"
   },
   "account_pools": {
     "pool_suffix": "pool",
@@ -53,13 +52,11 @@
     "recovers_in": "rétablissement dans {{time}}",
     "earliest_recovery": "Rétablissement le plus proche dans {{time}} (#{{account}})"
   },
-  "glm_title": "Solde du forfait GLM",
   "glm_window_tokens": "Jetons sur 5 heures",
   "glm_window_tokens_weekly": "Jetons 7d",
   "glm_window_tokens_generic": "Fenêtre de jetons",
   "glm_window_time": "Crédits d'outils mensuels",
   "glm_window_credit": "Crédits sur 5 heures",
   "glm_window_credit_weekly": "Crédits 7d",
-  "glm_window_credit_generic": "Fenêtre de crédits",
-  "glm_window_fallback": "{{type}}"
+  "glm_window_credit_generic": "Fenêtre de crédits"
 }
