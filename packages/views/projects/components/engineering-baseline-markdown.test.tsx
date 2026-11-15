@@ -6,10 +6,15 @@ import type { WikiLink, WikiTreeSection } from "@multica/core/api";
 
 vi.mock("../../rich-content/rich-code-block", () => ({
   isRichFenceLanguage: (language: string) => language === "mermaid" || language === "html",
+  shouldUpgradeFence: (language: string | undefined, isFenceClosed: boolean) =>
+    (language === "mermaid" || language === "html") && isFenceClosed,
   RichFenceBlock: ({ body }: { body: string }) => <div data-testid="rich-fence">{body}</div>,
   CodeBlockShell: ({ code, children }: { code: string; children?: React.ReactNode }) => <pre data-testid="code-shell">{code}{children}</pre>,
   StaticCodeBody: ({ body }: { body: string }) => <code>{body}</code>,
 }));
+// Bare identifiers route through the shared mention pipeline; without a
+// QueryClient the resolver is stubbed to "unresolved" (plain-text fallback).
+vi.mock("../../issues/hooks", () => ({ useResolveIssueIdentifier: () => null }));
 
 const sections: WikiTreeSection[] = [
   { anchor: "billing-ledger", title: "Billing Ledger", level: 2 },
@@ -145,5 +150,42 @@ describe("WikiMarkdown", () => {
     expect(card).toHaveTextContent("项目概览 / 架构");
     expect(card).toHaveTextContent("架构首段摘要");
     expect(card).toHaveTextContent("v3");
+  });
+
+  it("resolves [[links]] nested in bold, italics and <mark> — any inline depth", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown={"**[[架构]]**、*[[规则]]*、==[[架构]]== 三处都要成芯片。"}
+        links={[
+          link({ raw: "架构", display: "架构", target: "架构", targetSlug: "architecture" }),
+          link({ raw: "规则", display: "规则", target: "规则", targetSlug: "rules" }),
+        ]}
+      />,
+    );
+    expect(document.querySelectorAll(".wiki-link-chip")).toHaveLength(3);
+    expect(document.querySelector("strong .wiki-link-chip")).not.toBeNull();
+    expect(document.querySelector("em .wiki-link-chip")).not.toBeNull();
+    expect(document.querySelector("mark .wiki-link-chip")).not.toBeNull();
+  });
+
+  it("keeps [[OL-10]] whole while bare OL-9 still becomes a mention chip", () => {
+    renderWithI18n(
+      <WikiMarkdown
+        markdown="Fix OL-9 and [[OL-10]] now."
+        links={[link({ raw: "OL-10", display: "OL-10", target: "OL-10", targetSlug: "ol-10" })]}
+      />,
+    );
+    // The wiki link resolved through the page's link data, not the autolinker.
+    expect(document.querySelector('[data-wiki-link="ol-10"]')).not.toBeNull();
+    // The bare identifier went through the shared mention pipeline and kept
+    // its visible text (no [[ mangling anywhere).
+    expect(document.body.textContent).toContain("OL-9");
+    expect(document.body.textContent).not.toContain("[[");
+  });
+
+  it("repairs CJK strong emphasis left literal by CommonMark", () => {
+    renderWithI18n(<WikiMarkdown markdown="采用**「家庭」**的架构" />);
+    expect(document.querySelector("strong")?.textContent).toBe("「家庭」");
+    expect(document.querySelector("[data-wiki-markdown]")?.textContent).not.toContain("**");
   });
 });

@@ -19,7 +19,20 @@ vi.mock("@multica/core/issues/dag/use-dag-data", () => ({
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({ getActorName: (type: string, id: string) => (type === "agent" ? `Agent ${id}` : "Owner") }),
 }));
-vi.mock("../../rich-content", () => ({ RichContent: ({ content }: { content: string }) => <div data-testid="decision-rich-content">{content}</div> }));
+vi.mock("../../rich-content", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../rich-content")>();
+  return { ...actual, RichContent: ({ content }: { content: string }) => <div data-testid="decision-rich-content">{content}</div> };
+});
+vi.mock("../../issues/components/issue-mention-card", () => ({
+  IssueMentionCard: ({ issueId, fallbackLabel }: { issueId: string; fallbackLabel?: string }) => (
+    <span data-testid="issue-mention-card">{fallbackLabel ?? issueId}</span>
+  ),
+}));
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorType, actorId }: { actorType: string; actorId: string }) => (
+    <span data-testid="actor-avatar">{`${actorType}:${actorId}`}</span>
+  ),
+}));
 
 const OWNER = "22222222-2222-4222-8222-222222222222";
 const WS = "11111111-1111-4111-8111-111111111111";

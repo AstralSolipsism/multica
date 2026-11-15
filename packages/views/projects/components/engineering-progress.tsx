@@ -10,6 +10,10 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { AppLink } from "../../navigation";
 import { useStatusLabel } from "../../issues/utils/status-label";
+import { StatusIcon } from "../../issues/components/status-icon";
+import { ActorAvatar } from "../../common/actor-avatar";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
+import { statusCategoryOfKey } from "@multica/core/issues";
 import { isClosedEngineeringNode, type EngineeringStageSummary } from "./engineering-utils";
 
 interface EngineeringProgressProps {
@@ -25,6 +29,7 @@ function EngineeringTaskRow({ node, workspaceSlug, workspaceId }: {
   workspaceId: string;
 }) {
   const statusLabel = useStatusLabel(workspaceId);
+  const { colorOf: statusColorOf, iconOf: statusIconOf } = useIssueStatuses(workspaceId);
   const { getActorName } = useActorName();
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-border/70 py-2.5 last:border-b-0" data-engineering-task={node.identifier}>
@@ -33,8 +38,16 @@ function EngineeringTaskRow({ node, workspaceSlug, workspaceId }: {
         <span className={isClosedEngineeringNode(node) ? "text-muted-foreground" : undefined}>{node.title}</span>
       </AppLink>
       <span className="flex shrink-0 items-center gap-2 text-caption text-muted-foreground">
-        {node.assignee ? <span className="hidden sm:inline">{getActorName(node.assignee.type, node.assignee.id)}</span> : null}
-        <span>{statusLabel(node.status)}</span>
+        {node.assignee ? (
+          <span className="hidden items-center gap-1 sm:inline-flex">
+            <ActorAvatar actorType={node.assignee.type} actorId={node.assignee.id} size="xs" profileLink={false} />
+            {getActorName(node.assignee.type, node.assignee.id)}
+          </span>
+        ) : null}
+        <span className="inline-flex items-center gap-1">
+          <StatusIcon status={node.status} category={statusCategoryOfKey(node.statusCategory)} color={statusColorOf(node.status)} icon={statusIconOf(node.status)} className="size-3.5 shrink-0" />
+          {statusLabel(node.status)}
+        </span>
       </span>
     </li>
   );

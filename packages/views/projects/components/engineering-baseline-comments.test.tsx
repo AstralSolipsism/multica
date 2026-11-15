@@ -17,6 +17,11 @@ vi.mock("../../editor", () => ({
   },
   ReadonlyContent: ({ content }: { content: string }) => <p>{content}</p>,
 }));
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorType, actorId }: { actorType: string; actorId: string }) => (
+    <span data-testid="actor-avatar">{`${actorType}:${actorId}`}</span>
+  ),
+}));
 
 const anchor = { kind: "text" as const, sectionAnchor: "A", sectionTitle: "A", exact: "needle", prefix: "", suffix: "", revisionNumber: 4, start: undefined };
 const thread: WikiThread = { id: "thread", pageId: "page", anchor, location: { state: "section_only", sectionAnchor: "A", start: undefined }, issueId: null, identifier: "", resolvedAt: null, resolvedByType: null, resolvedById: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", section: null, comments: [{ id: "comment", authorType: "member", authorId: "me", bodyMarkdown: "Original body", authorTaskId: null, createdAt: "2026-11-01T00:00:00Z", editedAt: null }] };

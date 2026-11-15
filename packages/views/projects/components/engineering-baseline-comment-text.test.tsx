@@ -12,14 +12,19 @@ vi.mock("../../rich-content/rich-code-block", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../rich-content/rich-code-block")>();
   return { ...actual, RichFenceBlock: ({ body }: { body: string }) => <pre><code>{body}</code></pre> };
 });
+// Bare issue identifiers render their plain-text fallback (no QueryClient here).
+vi.mock("../../issues/hooks", () => ({ useResolveIssueIdentifier: () => null }));
+
+type Fixture = (typeof fixtures)[number] & { links?: { raw: string; display: string; target: string; section?: string; state?: string; target_slug?: string | null }[] };
 
 describe("shared anchors.json: real WikiMarkdown DOM", () => {
-  for (const fixture of fixtures) it(fixture.name, () => {
+  for (const fixture of fixtures as Fixture[]) it(fixture.name, () => {
     const segments = splitCommentSections(fixture.markdown);
-    const links = [
+    const rawLinks: { raw: string; display: string; target: string; section?: string; target_slug?: string | null }[] = fixture.links ?? [
       { raw: "target|Target", display: "Target", target: "target", section: "" },
       { raw: "target#Part|T", display: "T", target: "target", section: "Part" },
-    ].map((l) => ({ ...l, kind: "page" as const, state: "resolved" as const, targetSlug: "target", sectionAnchor: l.section || null, candidates: [] }));
+    ];
+    const links = rawLinks.map((l) => ({ raw: l.raw, display: l.display, target: l.target, section: l.section ?? "", kind: "page" as const, state: "resolved" as const, targetSlug: l.target_slug ?? "target", sectionAnchor: l.section || null, candidates: [] }));
     const meta = new Map([["target", { title: "Preview noise", path: "Path noise", snippet: "Snippet noise", version: 99, updatedAt: "Yesterday" }]]);
     const { container, unmount } = renderWithI18n(<>{segments.map((s) => <div key={s.anchor} data-wiki-comment-section={s.anchor}><WikiMarkdown markdown={s.markdown} links={links} pageMeta={meta} /></div>)}</>);
     const sections = [...container.querySelectorAll<HTMLElement>("[data-wiki-markdown]")].map((el, i) => ({ ...segments[i]!, ...indexWikiCommentText(el) }));

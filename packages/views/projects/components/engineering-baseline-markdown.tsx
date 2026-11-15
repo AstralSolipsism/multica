@@ -1,26 +1,47 @@
 "use client";
 
-// WikiMarkdown: the tree-wiki markdown renderer (OL-1329).
+// WikiMarkdown: the tree-wiki markdown renderer (OL-1329, OL-1373).
 //
-// Renders one page body with react-markdown + remark-gfm. On top of plain
-// markdown it adds:
+// It assembles the SAME single-source readonly pipeline RichContent uses —
+// preprocessMarkdown → highlightToHtml → react-markdown with REMARK_PLUGINS /
+// REHYPE_PLUGINS / markdownUrlTransform / the shared COMPONENTS map — and
+// layers exactly the two wiki concerns on top:
 // - heading ids `s-<anchor>` taken from the tree sections data, so the outline
 //   rail and search jumps address the exact nodes the server indexed;
 // - `[[双链]]` chips resolved through the page's `links` data (resolved links
 //   render as chips with a hover preview card; ambiguous/missing targets render
-//   as dashed chips and missing ones offer one-click creation);
-// - fenced code blocks with a copy button, and mermaid/html fences upgraded to
-//   the shared rich fence block.
-// It deliberately does NOT autolink natural words or annotate source lines —
-// those were retired with the chapter baseline.
+//   as dashed chips and missing ones offer one-click creation), injected
+//   recursively through inline children so `**[[page]]**` works too.
+// Upgraded mermaid/html fences keep their raw source on a
+// `data-wiki-comment-source` wrapper so text-selection comment anchors index
+// the source both sides agree on. There is deliberately NO second plugin set
+// here: every rendering fix lands for chat, issues and the wiki at once.
 
 import { Children, cloneElement, isValidElement, useMemo, useRef, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
+import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@multica/ui/lib/utils";
+import { useConfigStore } from "@multica/core/config";
+import { markdownUrlTransform } from "@multica/ui/markdown";
 import type { WikiLink, WikiTreeSection } from "@multica/core/api";
 import { scanSections } from "@multica/core/projects/wikilink-resolution";
-import { CodeBlockShell, isRichFenceLanguage, RichFenceBlock, StaticCodeBody } from "../../rich-content/rich-code-block";
+import {
+  COMPONENTS,
+  REMARK_PLUGINS,
+  REHYPE_PLUGINS,
+  ClosedFenceContext,
+  RichCode,
+  RichLink,
+  RichPre,
+  computeClosedFences,
+  readFencedCodeChild,
+  shouldUpgradeFence,
+  useClosedFence,
+} from "../../rich-content";
+import { RichTableSourceContext } from "../../rich-content/rich-table";
+import { getTextContent } from "../../rich-content/rich-table-model";
+import { preprocessMarkdown } from "../../editor/utils/preprocess";
+import { highlightToHtml } from "../../editor/utils/highlight-markdown";
 import { useT } from "../../i18n";
 
 export interface WikiLinkTarget {
@@ -107,24 +128,33 @@ function WikiLinkChip({ link, raw, meta, onNavigate, onCreateMissing }: {
   );
 }
 
-/** Inline/fenced code renderer; hoisted so wikilink resolution can skip it. */
-function WikiMarkdownCode({ className, children }: { className?: string; children?: ReactNode }) {
-  const language = typeof className === "string" ? /language-([\w-]+)/.exec(className)?.[1] : undefined;
-  const body = Children.toArray(children).filter((part): part is string => typeof part === "string").join("");
-  if (language && isRichFenceLanguage(language)) {
-    return <div data-wiki-comment-source={body}><RichFenceBlock language={language} body={body} /></div>;
+/**
+ * `pre` override: the shared RichPre decides fence upgrades through the same
+ * ClosedFenceContext gate; the wiki only wraps UPGRADED fences (mermaid/html)
+ * in a `data-wiki-comment-source` carrier so text-selection comment anchors
+ * keep indexing the raw source — the contract the server's
+ * `renderedCommentText` reproduces.
+ */
+function WikiPre({ children }: ComponentPropsWithoutRef<"pre"> & ExtraProps) {
+  const { language, offset } = readFencedCodeChild(children);
+  const fence = useClosedFence(offset);
+  if (shouldUpgradeFence(language, fence != null)) {
+    return <div data-wiki-comment-source={getTextContent(children).replace(/\n$/, "")}><RichPre>{children}</RichPre></div>;
   }
-  if (language) {
-    return <CodeBlockShell language={language} code={body}><StaticCodeBody language={language} body={body} /></CodeBlockShell>;
-  }
-  return <code className={className}>{children}</code>;
+  return <RichPre>{children}</RichPre>;
 }
 
 function isPropsWithChildren(value: unknown): value is { children?: unknown } {
   return typeof value === "object" && value !== null && "children" in value;
 }
 
-/** Replace `[[…]]` inside plain text children with wiki link chips. */
+/** Elements whose children never carry wiki links: code/pre/a and the chips
+ * and entity cards the pipeline already rendered. */
+const WIKI_LINK_STOP_TYPES = new Set<unknown>(["code", "pre", "a", RichCode, RichLink, WikiLinkChip]);
+
+/** Replace `[[…]]` inside plain text children with wiki link chips, at any
+ * inline depth: `**[[page]]**`, `*[[page]]*` and `<mark>[[page]]</mark>` all
+ * resolve, while code, existing links and already-built chips stay put. */
 function withWikiLinks(
   children: ReactNode,
   links: Map<string, WikiLink>,
@@ -138,25 +168,37 @@ function withWikiLinks(
       ? part
       : <WikiLinkChip key={`${index}-${part}`} raw={part} link={links.get(part)} meta={props.pageMeta} onNavigate={props.onNavigate} onCreateMissing={props.onCreateMissing} />);
   };
-  return Children.map(children, (child) => {
-    if (typeof child === "string") return replaceText(child);
-    if (isValidElement(child)) {
-      // Inline code: `[[x]]` inside backticks stays literal code, even when a
-      // same-name link resolves elsewhere on the page.
-      if (child.type === "code" || child.type === WikiMarkdownCode) return child;
-      if (isPropsWithChildren(child.props)) {
-        const inner = child.props.children;
-        if (typeof inner === "string") return cloneElement(child, {}, replaceText(inner));
-      }
+  const visit = (node: ReactNode): ReactNode => {
+    if (typeof node === "string") return replaceText(node);
+    if (Array.isArray(node)) return Children.map(node, visit);
+    if (!isValidElement(node)) return node;
+    if (WIKI_LINK_STOP_TYPES.has(node.type)) return node;
+    if (isPropsWithChildren(node.props)) {
+      const inner = node.props.children;
+      if (typeof inner === "string") return cloneElement(node, {}, replaceText(inner));
+      if (Array.isArray(inner) || isValidElement(inner)) return cloneElement(node, {}, visit(inner));
     }
-    return child;
-  });
+    return node;
+  };
+  return Children.map(children, visit);
 }
-
 
 export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, onCreateMissing, className }: WikiMarkdownProps) {
   const { t } = useT("engineering");
+  const cdnDomain = useConfigStore((s) => s.cdnDomain);
   const linkMap = useMemo(() => new Map((links ?? []).map((link) => [link.raw, link])), [links]);
+
+  // Same preprocessing chain as RichContent, so bare issue identifiers become
+  // mention chips, CDN file cards resolve and `==highlight==` lowers to
+  // <mark> here too. `[[wiki links]]` are protected inside
+  // preprocessIssueIdentifiers, so a `[[OL-123]]` target reaches the chip
+  // resolver below intact.
+  const processed = useMemo(
+    () => highlightToHtml(preprocessMarkdown(markdown, { cdnDomain, autolinkIssueIdentifiers: true })),
+    [markdown, cdnDomain],
+  );
+  const closedFences = useMemo(() => computeClosedFences(processed), [processed]);
+  const tableSource = useMemo(() => ({ source: markdown, rendered: processed }), [markdown, processed]);
 
   // Heading anchors mirror the server's scanHeadings exactly: H1–H3 only,
   // explicit [KEY] prefixes, H3 nesting under its parent, " (2)" dedupe —
@@ -188,10 +230,11 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
         return <Tag>{withWikiLinks(children, linkMap, { pageMeta, onNavigate, onCreateMissing })}</Tag>;
       };
     return {
+      ...COMPONENTS,
       h1: wrap("h1", true), h2: wrap("h2", true), h3: wrap("h3", true),
       h4: wrap("h4", false), h5: wrap("h5", false), h6: wrap("h6", false),
       p: inline("p"), li: inline("li"), blockquote: inline("blockquote"), td: inline("td"), th: inline("th"),
-      code: WikiMarkdownCode,
+      pre: WikiPre,
     };
   }, [headingAnchors, linkMap, pageMeta, onNavigate, onCreateMissing]);
 
@@ -202,7 +245,18 @@ export function WikiMarkdown({ markdown, sections, links, pageMeta, onNavigate, 
       data-wiki-markdown
       aria-label={t(($) => $.wiki.bodyLabel)}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{markdown}</ReactMarkdown>
+      <ClosedFenceContext.Provider value={closedFences}>
+        <RichTableSourceContext.Provider value={tableSource}>
+          <ReactMarkdown
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            urlTransform={markdownUrlTransform}
+            components={components}
+          >
+            {processed}
+          </ReactMarkdown>
+        </RichTableSourceContext.Provider>
+      </ClosedFenceContext.Provider>
     </div>
   );
 }

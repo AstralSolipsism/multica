@@ -1,7 +1,7 @@
 import type { WikiCommentAnchor } from "@multica/core/api";
 
 const blocks = new Set(["P", "BR", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "PRE", "TR", "TD", "TH", "BLOCKQUOTE", "DIV", "UL", "OL", "TABLE", "HR"]);
-const noise = '[data-wiki-link-preview], [data-comment-ignore], .code-block-wrapper > div:first-child, button:not([data-wiki-link]), input, textarea, select, svg, [aria-hidden="true"], [hidden]';
+const noise = '[data-wiki-link-preview], [data-comment-ignore], .code-block-wrapper > div:first-child, button:not([data-wiki-link]), input, textarea, select, svg, [aria-hidden="true"], [hidden], [data-rich-table-chrome], [data-issue-chip-title], .image-error-label';
 interface Point { node: Node; offset: number }
 export interface CommentTextIndex {
   text: string;

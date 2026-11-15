@@ -9,9 +9,12 @@ import type { WikiComment, WikiCommentAnchor, WikiThread } from "@multica/core/a
 import { useWikiCommentAction, type WikiCommentAction } from "@multica/core/projects/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { ArrowLeft, Check, LoaderCircle } from "@multica/ui/icons";
-import { ContentEditor, ReadonlyContent, type ContentEditorRef } from "../../editor";
+import { ContentEditor, type ContentEditorRef } from "../../editor";
+import { RichContent } from "../../rich-content";
 import { useT } from "../../i18n";
 import { blockedShortReasonLabel } from "../../issues/blocked-trigger-copy";
+import { ActorAvatar } from "../../common/actor-avatar";
+import { plainWikiExcerpt } from "./engineering-baseline-excerpt";
 import { useFormatRelativeDate } from "./labels";
 
 export type WikiDiscussion = { mode: "outline" } | { mode: "list" } | { mode: "thread"; id: string; siblings?: string[] } | { mode: "compose"; anchor: WikiCommentAnchor };
@@ -40,17 +43,17 @@ function WikiCommentComposer({ initial = "", busy, onSend, editing = false }: { 
 
 function WikiCommentItem({ comment, own, canDelete, busy, onAction }: { comment: WikiComment; own: boolean; canDelete: boolean; busy: boolean; onAction: (action: WikiCommentAction) => Promise<unknown> }) {
   const { t } = useT("engineering");
-  const { getActorName, getActorInitials } = useActorName();
+  const { getActorName } = useActorName();
   const relative = useFormatRelativeDate();
   const [editing, setEditing] = useState(false), [confirming, setConfirming] = useState(false);
   return <div className="border-b py-3 last:border-0" data-wiki-comment={comment.id}>
     <div className="flex items-center gap-2 text-caption">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro">{getActorInitials(comment.authorType, comment.authorId)}</span>
+      <ActorAvatar actorType={comment.authorType} actorId={comment.authorId} size="md" className="shrink-0" />
       <span className="min-w-0 truncate font-medium">{getActorName(comment.authorType, comment.authorId)}</span>
       {comment.authorType === "agent" ? <span className="text-micro text-muted-foreground">{t(($) => $.wikiComments.agent)}</span> : null}
       <time className="ml-auto whitespace-nowrap text-micro text-muted-foreground" dateTime={comment.createdAt}>{relative(comment.createdAt)}</time>
     </div>
-    {editing ? <WikiCommentComposer initial={comment.bodyMarkdown} busy={busy} editing onSend={async (body) => { await onAction({ kind: "edit", id: comment.id, body }); setEditing(false); }} /> : <ReadonlyContent content={comment.bodyMarkdown} className="mt-2 break-words text-body" />}
+    {editing ? <WikiCommentComposer initial={comment.bodyMarkdown} busy={busy} editing onSend={async (body) => { await onAction({ kind: "edit", id: comment.id, body }); setEditing(false); }} /> : <RichContent content={comment.bodyMarkdown} className="mt-2 break-words text-body" />}
     {comment.editedAt ? <span className="text-micro text-muted-foreground">{t(($) => $.wikiComments.edited)}</span> : null}
     <div className="mt-1 flex flex-wrap gap-1">
       {own ? <Button type="button" size="xs" variant="ghost" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? t(($) => $.wikiComments.cancel) : t(($) => $.wikiComments.edit)}</Button> : null}
@@ -113,7 +116,7 @@ export function WikiCommentsPanel({ workspaceId, projectId, pageId, pageSlug, th
           {thread.location.state === "orphaned" && list[index - 1]?.location.state !== "orphaned" ? <p className="mb-2 mt-4 text-caption font-medium">{t(($) => $.wikiComments.changed)}</p> : null}
           <button type="button" className="mb-2 block w-full rounded-md border p-3 text-left hover:bg-muted/40" onClick={() => onDiscussion({ mode: "thread", id: thread.id })}>
           <span className="block truncate text-caption font-medium">{thread.anchor.sectionTitle || pageSlug}</span>
-          <span className="mt-1 line-clamp-2 text-caption text-muted-foreground">{thread.anchor.exact || thread.comments[0]?.bodyMarkdown}</span>
+          <span className="mt-1 line-clamp-2 text-caption text-muted-foreground">{thread.anchor.exact || plainWikiExcerpt(thread.comments[0]?.bodyMarkdown ?? "")}</span>
           {thread.location.state === "section_only" || thread.location.state === "orphaned" ? <span className="mt-1 block text-micro text-muted-foreground">{t(($) => $.wikiComments.changed)}</span> : null}
           <span className="mt-1 block text-micro">{t(($) => $.wikiComments.count, { count: thread.comments.length })}</span>
         </button></div>)}

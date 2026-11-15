@@ -540,5 +540,142 @@
       "section_anchor": "A",
       "start": 17
     }
+  },
+  {
+    "name": "cjk strong glued to cjk punctuation stays rendered",
+    "markdown": "## Decision\n采用**「家庭中继」**的出口架构 needle",
+    "texts": [
+      {
+        "anchor": "Decision",
+        "title": "Decision",
+        "text": "Decision 采用「家庭中继」的出口架构 needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Decision",
+      "section_title": "Decision",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Decision",
+      "start": 23
+    }
+  },
+  {
+    "name": "cjk strong trailing inner whitespace",
+    "markdown": "## Note\n首先**中文。 **后续说明 needle",
+    "texts": [
+      {
+        "anchor": "Note",
+        "title": "Note",
+        "text": "Note 首先中文。 后续说明 needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Note",
+      "section_title": "Note",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Note",
+      "start": 16
+    }
+  },
+  {
+    "name": "wiki link with issue identifier target",
+    "markdown": "## Links\nSee [[OL-9]] and needle",
+    "links": [
+      {
+        "raw": "OL-9",
+        "display": "OL-9",
+        "target": "OL-9",
+        "section": "",
+        "state": "resolved",
+        "target_slug": "ol-9",
+        "section_anchor": null,
+        "candidates": []
+      }
+    ],
+    "texts": [
+      {
+        "anchor": "Links",
+        "title": "Links",
+        "text": "Links See OL-9 and needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Links",
+      "section_title": "Links",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Links",
+      "start": 19
+    }
+  },
+  {
+    "name": "bare issue identifier keeps plain text",
+    "markdown": "## Refs\nFix OL-9 and needle",
+    "texts": [
+      {
+        "anchor": "Refs",
+        "title": "Refs",
+        "text": "Refs Fix OL-9 and needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Refs",
+      "section_title": "Refs",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Refs",
+      "start": 18
+    }
+  },
+  {
+    "name": "highlight markers drop out of indexed text",
+    "markdown": "## Marks\n==重点说明== needle",
+    "texts": [
+      {
+        "anchor": "Marks",
+        "title": "Marks",
+        "text": "Marks 重点说明 needle"
+      }
+    ],
+    "selector": {
+      "kind": "text",
+      "section_anchor": "Marks",
+      "section_title": "Marks",
+      "exact": "needle",
+      "prefix": "",
+      "suffix": "",
+      "revision_number": 1
+    },
+    "expected": {
+      "state": "anchored",
+      "section_anchor": "Marks",
+      "start": 11
+    }
   }
 ]

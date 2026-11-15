@@ -15,9 +15,21 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 vi.mock("../../rich-content/rich-code-block", () => ({
   isRichFenceLanguage: (language: string) => language === "mermaid" || language === "html",
+  shouldUpgradeFence: (language: string | undefined, isFenceClosed: boolean) =>
+    (language === "mermaid" || language === "html") && isFenceClosed,
   RichFenceBlock: ({ body }: { body: string }) => <div data-testid="rich-fence">{body}</div>,
   CodeBlockShell: ({ code }: { code: string }) => <pre data-testid="code-shell">{code}</pre>,
   StaticCodeBody: ({ body }: { body: string }) => <code>{body}</code>,
+}));
+vi.mock("../../issues/components/issue-mention-card", () => ({
+  IssueMentionCard: ({ issueId, fallbackLabel }: { issueId: string; fallbackLabel?: string }) => (
+    <span data-testid="issue-mention-card">{fallbackLabel ?? issueId}</span>
+  ),
+}));
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorType, actorId }: { actorType: string; actorId: string }) => (
+    <span data-testid="actor-avatar">{`${actorType}:${actorId}`}</span>
+  ),
 }));
 
 const WS = "11111111-1111-4111-8111-111111111111";
@@ -410,5 +422,58 @@ describe("EngineeringBaselineWiki", () => {
     expect(createProjectWikiPage.mock.calls.map((call) => call[2]?.slug)).toEqual(
       ["overview", "domain_rules", "architecture", "exclusions_and_risks"],
     );
+  });
+
+  const SOURCE_ISSUE_ID = "99999999-9999-4999-8999-999999999999";
+
+  it("echoes the bound source issue and re-sends it on a body-only save", async () => {
+    const read = pageRead();
+    read.revision.sourceIssueId = SOURCE_ISSUE_ID;
+    getProjectWikiPage.mockResolvedValue(read);
+    const getIssue = vi.fn(async (id: string) => {
+      if (id === SOURCE_ISSUE_ID) return { id: SOURCE_ISSUE_ID, identifier: "OL-1304", title: "Refund policy" };
+      return undefined;
+    });
+    setApiInstance({ getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage, getIssue } as unknown as ApiClient);
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const sourceInput = await screen.findByTestId("wiki-editor-source-issue");
+    await waitFor(() => expect(sourceInput).toHaveValue("OL-1304"));
+    fireEvent.change(screen.getByTestId("wiki-editor-source"), { target: { value: "# 项目概览\n\n## Rules\n\nNew body." } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
+      WS, PROJECT, "overview",
+      expect.objectContaining({ sourceIssueId: SOURCE_ISSUE_ID }),
+    ));
+  });
+
+  it("saves an explicit null when the source issue is cleared and rejects unknown identifiers", async () => {
+    const read = pageRead();
+    read.revision.sourceIssueId = SOURCE_ISSUE_ID;
+    getProjectWikiPage.mockResolvedValue(read);
+    const getIssue = vi.fn(async (id: string) => {
+      if (id === SOURCE_ISSUE_ID) return { id: SOURCE_ISSUE_ID, identifier: "OL-1304", title: "Refund policy" };
+      return undefined;
+    });
+    setApiInstance({ getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage, getIssue } as unknown as ApiClient);
+    renderWiki();
+    await screen.findByRole("heading", { name: "Rules" });
+    fireEvent.click(screen.getByTestId("wiki-edit-page"));
+    const sourceInput = await screen.findByTestId("wiki-editor-source-issue");
+    await waitFor(() => expect(sourceInput).toHaveValue("OL-1304"));
+    fireEvent.change(screen.getByTestId("wiki-editor-source"), { target: { value: "# 项目概览\n\n## Rules\n\nNew body." } });
+    // An unknown identifier fails the save with a toast, never a write.
+    fireEvent.change(sourceInput, { target: { value: "NOPE-1" } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(getIssue).toHaveBeenCalledWith("NOPE-1"));
+    expect(writeProjectWikiPage).not.toHaveBeenCalled();
+    // Clearing the field sends an explicit null instead of dropping the key.
+    fireEvent.change(sourceInput, { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("wiki-editor-save"));
+    await waitFor(() => expect(writeProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
+      WS, PROJECT, "overview",
+      expect.objectContaining({ sourceIssueId: null }),
+    ));
   });
 });

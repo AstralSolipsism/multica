@@ -174,7 +174,7 @@
     "editPage": "편집",
     "editSection": "이 섹션 편집",
     "metaUpdatedBy": "마지막 수정: {{name}}",
-    "metaSourceIssue": "{{issue}} 기반",
+    "metaSourceIssue": "출처 이슈",
     "historyVersions": "히스토리({{count}})",
     "historyOpen": "히스토리 보기",
     "historyTabTitle": "히스토리",
@@ -293,7 +293,10 @@
     "versionPill": "v{{number}}",
     "treeRenameShortcut": "F2",
     "searchEscKey": "Esc",
-    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}"
+    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}",
+    "toolbarH2Template": "## 제목",
+    "toolbarH3Template": "### 제목",
+    "toolbarTableTemplate": "| 열 | 열 |\n| --- | --- |\n|  |  |"
   },
   "wikiComments": {
     "count": "댓글 ({{count}})",

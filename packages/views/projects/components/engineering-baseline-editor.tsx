@@ -6,12 +6,15 @@
 // renders the three-path conflict panel and never discards the draft.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Bold, Code, Heading2, Heading3, Link, List, ListOrdered, Table2 } from "@multica/ui/icons";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useT } from "../../i18n";
 import { resolveWikiLinks, type WikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import { WikiDiffView } from "./engineering-baseline-diff";
@@ -38,9 +41,11 @@ export interface WikiEditorProps {
   /** Latest published revision number, for the non-blocking "behind" notice. */
   latestRevisionNumber?: number;
   initialMarkdown: string;
+  /** The loaded revision's related-issue binding, echoed into the field. */
+  initialSourceIssueId?: string | null;
   saving: boolean;
   actorName: (type: string, id: string) => string;
-  onSave: (input: { markdown: string; changeSummary: string; sourceIssue: string; baseRevisionNumber: number }) => Promise<WikiSaveOutcome>;
+  onSave: (input: { markdown: string; changeSummary: string; sourceIssue: WikiEditorSourceIssue; baseRevisionNumber: number }) => Promise<WikiSaveOutcome>;
   /** The user rebased the draft onto the conflicted current revision. */
   onRebase?: (baseRevisionNumber: number) => void;
   /** Current published content of the same scope, for the conflict diff and compare view. */
@@ -56,6 +61,17 @@ export interface WikiEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
 }
 
+/**
+ * What a save should do with the page's related-issue binding. "keep" carries
+ * no identifier: the host re-sends the loaded revision's `sourceIssueId`
+ * verbatim, so a body-only edit can never silently drop the binding (OL-1373)
+ * — not even while the echo identifier is still resolving.
+ */
+export type WikiEditorSourceIssue =
+  | { action: "keep" }
+  | { action: "clear" }
+  | { action: "set"; identifier: string };
+
 type ToolAction = "bold" | "code" | "h2" | "h3" | "ul" | "ol" | "codeblock" | "table" | "wikilink";
 
 const TOOLBAR: readonly { action: ToolAction; labelKey: "toolbarBold" | "toolbarCode" | "toolbarH2" | "toolbarH3" | "toolbarUl" | "toolbarOl" | "toolbarCodeBlock" | "toolbarTable" | "toolbarWikilink"; icon: typeof Bold }[] = [
@@ -69,7 +85,12 @@ const TOOLBAR: readonly { action: ToolAction; labelKey: "toolbarBold" | "toolbar
   { action: "table", labelKey: "toolbarTable", icon: Table2 },
   { action: "wikilink", labelKey: "toolbarWikilink", icon: Link },
 ];
-function applyTool(action: ToolAction, textarea: HTMLTextAreaElement | null, setValue: (value: string) => void) {
+function applyTool(
+  action: ToolAction,
+  textarea: HTMLTextAreaElement | null,
+  setValue: (value: string) => void,
+  templates: { h2: string; h3: string; table: string },
+) {
   if (!textarea) return;
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
@@ -85,21 +106,23 @@ function applyTool(action: ToolAction, textarea: HTMLTextAreaElement | null, set
   switch (action) {
     case "bold": return emit(selected ? `**${selected}**` : `****`, 2, selected ? selected.length + 2 : 2);
     case "code": return emit(selected ? `\`${selected}\`` : "``", 1, selected ? selected.length + 1 : 1);
-    case "h2": return emit(selected || "## 标题", 0);
-    case "h3": return emit(selected || "### 标题", 0);
+    case "h2": return emit(selected || templates.h2, 0);
+    case "h3": return emit(selected || templates.h3, 0);
     case "ul": return emit(selected ? `- ${selected}` : "- ", 2);
     case "ol": return emit(selected ? `1. ${selected}` : "1. ", 3);
     case "codeblock": return emit(`\`\`\`\n${selected}\n\`\`\``, 4);
-    case "table": return emit("| 列 | 列 |\n| --- | --- |\n|  |  |", 0);
+    case "table": return emit(templates.table, 0);
     case "wikilink": return emit(selected ? `[[${selected}]]` : "[[]]", 2);
   }
 }
 
 export function WikiEditor(props: WikiEditorProps) {
   const { t } = useT("engineering");
+  const wsId = useWorkspaceId();
   const [value, setValue] = useState(props.initialMarkdown);
   const [summary, setSummary] = useState("");
-  const [sourceIssue, setSourceIssue] = useState("");
+  // null = untouched: the field shows the loaded binding's identifier echo.
+  const [sourceIssueInput, setSourceIssueInput] = useState<string | null>(null);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [conflict, setConflict] = useState<WikiEditorConflictInfo | null>(null);
@@ -111,7 +134,19 @@ export function WikiEditor(props: WikiEditorProps) {
   const [suggestIndex, setSuggestIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const baseSnapshot = useRef(props.initialMarkdown);
-  const dirty = value !== props.initialMarkdown;
+  // Echo of the loaded binding: identifier only, for the input's value.
+  const initialIssueQuery = useQuery({
+    ...issueDetailOptions(wsId, props.initialSourceIssueId ?? ""),
+    enabled: !!props.initialSourceIssueId,
+  });
+  const initialIssueIdentifier = props.initialSourceIssueId ? initialIssueQuery.data?.identifier ?? "" : "";
+  const sourceIssueField = sourceIssueInput ?? initialIssueIdentifier;
+  const sourceIssueChange: WikiEditorSourceIssue = sourceIssueInput === null
+    ? { action: "keep" }
+    : sourceIssueInput.trim() === ""
+      ? { action: "clear" }
+      : { action: "set", identifier: sourceIssueInput.trim() };
+  const dirty = value !== props.initialMarkdown || sourceIssueChange.action !== "keep";
   const draftLinks = useMemo(
     () => resolveWikiLinks(props.linkIndex, props.pageSlug, value),
     [props.linkIndex, props.pageSlug, value],
@@ -187,7 +222,7 @@ export function WikiEditor(props: WikiEditorProps) {
     const outcome = await props.onSave({
       markdown: value,
       changeSummary: summary.trim() || fallback,
-      sourceIssue: sourceIssue.trim(),
+      sourceIssue: sourceIssueChange,
       baseRevisionNumber,
     });
     if (outcome.status === "saved") {
@@ -258,7 +293,11 @@ export function WikiEditor(props: WikiEditorProps) {
                 className="rounded-sm p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label={t(($) => $.wiki[labelKey])}
                 title={t(($) => $.wiki[labelKey])}
-                onClick={() => applyTool(action, textareaRef.current, setValue)}
+                onClick={() => applyTool(action, textareaRef.current, setValue, {
+                  h2: t(($) => $.wiki.toolbarH2Template),
+                  h3: t(($) => $.wiki.toolbarH3Template),
+                  table: t(($) => $.wiki.toolbarTableTemplate),
+                })}
               >
                 <Icon className="size-4" aria-hidden="true" />
               </button>
@@ -363,7 +402,7 @@ export function WikiEditor(props: WikiEditorProps) {
       ) : null}
       <div className="grid gap-2 border-t px-3 py-2 sm:grid-cols-2">
         <Input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={t(($) => $.wiki.editorSummaryPlaceholder)} aria-label={t(($) => $.wiki.editorSummaryLabel)} />
-        <Input value={sourceIssue} onChange={(event) => setSourceIssue(event.target.value)} placeholder={t(($) => $.wiki.editorIssuePlaceholder)} aria-label={t(($) => $.wiki.editorIssueLabel)} />
+        <Input value={sourceIssueField} onChange={(event) => setSourceIssueInput(event.target.value)} placeholder={t(($) => $.wiki.editorIssuePlaceholder)} aria-label={t(($) => $.wiki.editorIssueLabel)} data-testid="wiki-editor-source-issue" />
       </div>
       {conflict ? (
         <div className="border-t border-warning/50 bg-warning/5 px-3 py-3" data-testid="wiki-editor-conflict">

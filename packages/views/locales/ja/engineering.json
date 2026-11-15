@@ -174,7 +174,7 @@
     "editPage": "編集",
     "editSection": "このセクションを編集",
     "metaUpdatedBy": "最終更新者：{{name}}",
-    "metaSourceIssue": "{{issue}} に基づく",
+    "metaSourceIssue": "ソース Issue",
     "historyVersions": "履歴（{{count}}）",
     "historyOpen": "履歴を表示",
     "historyTabTitle": "履歴",
@@ -293,7 +293,10 @@
     "versionPill": "v{{number}}",
     "treeRenameShortcut": "F2",
     "searchEscKey": "Esc",
-    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}"
+    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}",
+    "toolbarH2Template": "## 見出し",
+    "toolbarH3Template": "### 見出し",
+    "toolbarTableTemplate": "| 列 | 列 |\n| --- | --- |\n|  |  |"
   },
   "wikiComments": {
     "count": "コメント ({{count}})",

@@ -11,9 +11,16 @@ function link(overrides: Partial<WikiLink>): WikiLink {
 }
 vi.mock("../../rich-content/rich-code-block", () => ({
   isRichFenceLanguage: (language: string) => language === "mermaid" || language === "html",
+  shouldUpgradeFence: (language: string | undefined, isFenceClosed: boolean) =>
+    (language === "mermaid" || language === "html") && isFenceClosed,
   RichFenceBlock: ({ body }: { body: string }) => <div data-testid="rich-fence">{body}</div>,
   CodeBlockShell: ({ code }: { code: string }) => <pre data-testid="code-shell">{code}</pre>,
   StaticCodeBody: ({ body }: { body: string }) => <code>{body}</code>,
+}));
+vi.mock("../../editor/attachment", () => ({
+  Attachment: ({ attachment }: { attachment: { url?: string; filename?: string; forceKind?: string } }) => (
+    <img src={attachment.url ?? ""} alt={attachment.filename ?? ""} />
+  ),
 }));
 
 describe("WikiDiffView rendered diff", () => {

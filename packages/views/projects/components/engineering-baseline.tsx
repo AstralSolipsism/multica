@@ -23,7 +23,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { ApiError, api, errorCode, WikiConflictSchema, type WikiTreePage } from "@multica/core/api";
-import { issueIdentifierOptions, issueKeys } from "@multica/core/issues/queries";
+import { issueIdentifierOptions } from "@multica/core/issues/queries";
 import { projectWikiPageOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
 import { buildWikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import {
@@ -44,6 +44,9 @@ import { splitCommentSections } from "@multica/core/projects/queries";
 import { wikiThreadsOptions } from "@multica/core/projects/queries";
 import type { WikiCommentAnchor, WikiThread } from "@multica/core/api";
 import { WikiCommentsPanel, type WikiDiscussion } from "./engineering-baseline-comments";
+import { IssueMentionCard } from "../../issues/components/issue-mention-card";
+import { plainWikiExcerpt } from "./engineering-baseline-excerpt";
+import type { WikiEditorSourceIssue } from "./engineering-baseline-editor";
 import { WikiReadingHighlights } from "./engineering-baseline-reading-highlights";
 
 const EMPTY_THREADS: WikiThread[] = [];
@@ -76,8 +79,7 @@ function firstParagraph(markdown: string): string {
     }
     lines.push(trimmed);
   }
-  const text = lines.join(" ");
-  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+  return plainWikiExcerpt(lines.join(" "), 160);
 }
 
 function conflictFromError(cause: unknown): WikiEditorConflictInfo | null {
@@ -94,16 +96,6 @@ function conflictFromError(cause: unknown): WikiEditorConflictInfo | null {
   };
 }
 
-function SourceIssueChip({ workspaceId, issueId }: { workspaceId: string; issueId: string }) {
-  const { t } = useT("engineering");
-  const query = useQuery({
-    queryKey: [...issueKeys.detail(workspaceId, issueId), "identifier"],
-    queryFn: () => api.getIssue(issueId),
-    staleTime: 5 * 60_000,
-  });
-  if (!query.data) return null;
-  return <span className="whitespace-nowrap">· {t(($) => $.wiki.metaSourceIssue, { issue: query.data.identifier })}</span>;
-}
 
 function OutlineRail({ sections, contentKey, className }: { sections: readonly { anchor: string; title: string; level: number }[]; contentKey: string; className?: string }) {
   const { t } = useT("engineering");
@@ -479,13 +471,24 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     return issue?.id;
   };
 
-  const handleSave = async (input: { markdown: string; changeSummary: string; sourceIssue: string; baseRevisionNumber: number }): Promise<WikiSaveOutcome> => {
+  const handleSave = async (input: { markdown: string; changeSummary: string; sourceIssue: WikiEditorSourceIssue; baseRevisionNumber: number }): Promise<WikiSaveOutcome> => {
     if (!selected) return { status: "error" };
     try {
-      const sourceIssueId = input.sourceIssue ? await resolveIssueId(input.sourceIssue) : undefined;
-      if (input.sourceIssue && !sourceIssueId) {
-        toast.error(t(($) => $.wiki.editorIssueInvalid, { issue: input.sourceIssue }));
-        return { status: "error" };
+      // The server writes `source_issue_id` on EVERY save (absent → NULL), so
+      // an untouched binding is re-sent verbatim and a cleared one is sent as
+      // null — a body-only edit can no longer drop the page's source issue.
+      let sourceIssueId: string | null = null;
+      const currentBinding = editor?.scope === "section"
+        ? sectionQuery.data?.revision.sourceIssueId ?? null
+        : read?.revision.sourceIssueId ?? null;
+      if (input.sourceIssue.action === "keep") {
+        sourceIssueId = currentBinding;
+      } else if (input.sourceIssue.action === "set") {
+        sourceIssueId = await resolveIssueId(input.sourceIssue.identifier) ?? null;
+        if (!sourceIssueId) {
+          toast.error(t(($) => $.wiki.editorIssueInvalid, { issue: input.sourceIssue.identifier }));
+          return { status: "error" };
+        }
       }
       await writePage.mutateAsync({
         projectId: props.projectId,
@@ -495,7 +498,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
           ? { section: editor.anchor, contentMarkdown: input.markdown }
           : { contentMarkdown: input.markdown }),
         changeSummary: input.changeSummary,
-        ...(sourceIssueId ? { sourceIssueId } : {}),
+        sourceIssueId,
       });
       toast.success(t(($) => $.wiki.savePublished, { number: input.baseRevisionNumber + 1 }));
       setEditor(null);
@@ -569,12 +572,12 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         title: page.title,
         path: chain.join(" / "),
         version: page.current?.number ?? page.currentRevisionNumber,
-        updatedAt: page.updatedAt,
+        updatedAt: formatRelativeDate(page.updatedAt),
         ...(snippet ? { snippet } : {}),
       }] as const;
     });
     return new Map(entries);
-  }, [pages, linkedSlugs, previewQueries]);
+  }, [pages, linkedSlugs, previewQueries, formatRelativeDate]);
 
   const sectionReader = useMemo(() => {
     if (!read?.contentMarkdown?.trim() || !selected) return null;
@@ -725,7 +728,13 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       name: `${getActorName(selected.current.createdByType, selected.current.createdById)}${selected.current.createdByType === "agent" ? t(($) => $.wiki.actorAgentBadge) : ""}`,
                     })}</span>
                     <span>· <time dateTime={selected.current.createdAt}>{formatRelativeDate(selected.current.createdAt)}</time></span>
-                    {selected.current.sourceIssueId ? <SourceIssueChip workspaceId={wsId} issueId={selected.current.sourceIssueId} /> : null}
+                    {selected.current.sourceIssueId ? (
+                      <>
+                        <span>·</span>
+                        <span>{t(($) => $.wiki.metaSourceIssue)}</span>
+                        <IssueMentionCard issueId={selected.current.sourceIssueId} />
+                      </>
+                    ) : null}
                     <span>·</span>
                     <button type="button" className="underline-offset-2 hover:underline" onClick={() => setHistoryOpen(true)} data-wiki-history-button>
                       {t(($) => $.wiki.historyVersions, { count: selected.revisionCount })}
@@ -743,6 +752,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       baseRevisionNumber={sectionQuery.data.revision.revisionNumber}
                       latestRevisionNumber={sectionQuery.data.revision.revisionNumber}
                       initialMarkdown={sectionQuery.data.sections[0]!.contentMarkdown}
+                      initialSourceIssueId={sectionQuery.data.revision.sourceIssueId}
                       suggestPages={suggestPages}
                       saving={writingPending}
                       actorName={getActorName}
@@ -764,6 +774,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       baseRevisionNumber={read.revision.revisionNumber}
                       latestRevisionNumber={read.revision.revisionNumber}
                       initialMarkdown={read.contentMarkdown ?? ""}
+                      initialSourceIssueId={read.revision.sourceIssueId}
                       suggestPages={suggestPages}
                       saving={writingPending}
                       actorName={getActorName}
@@ -796,7 +807,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                         {read.backlinks.map((backlink) => (
                           <button key={`${backlink.slug}-${backlink.sectionAnchor}`} type="button" className="rounded-md border p-2 text-left hover:bg-muted/50" onClick={() => navigateToPage(backlink.slug, backlink.sectionAnchor || undefined)}>
                             <span className="block font-medium">{backlink.title || backlink.slug}</span>
-                            {backlink.snippet ? <span className="mt-0.5 block truncate text-muted-foreground">{backlink.snippet}</span> : null}
+                            {backlink.snippet ? <span className="mt-0.5 block truncate text-muted-foreground">{plainWikiExcerpt(backlink.snippet)}</span> : null}
                           </button>
                         ))}
                       </div>
@@ -807,7 +818,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                     {read.relatedIssues.length ? (
                       <div className="flex flex-wrap gap-1.5">
                         {read.relatedIssues.map((issue) => (
-                          <span key={issue.id} className="rounded-full border px-2 py-0.5 text-micro" title={issue.title}>{issue.identifier}</span>
+                          <IssueMentionCard key={issue.id} issueId={issue.id} fallbackLabel={issue.identifier} />
                         ))}
                       </div>
                     ) : <p className="text-muted-foreground">{t(($) => $.wiki.relatedIssuesEmpty)}</p>}
