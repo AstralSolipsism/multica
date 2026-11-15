@@ -59,6 +59,8 @@ export function isIssueIdentifier(value: string): boolean {
  *   - HTML tag attributes and `<a>` elements (findHtmlTagRanges)
  *   - detected URLs / emails / file paths (detectLinks)
  *   - dotted filename tails like `ABC-123.ts` and path segments like `FOO-1/bar`
+ *   - `[[wiki links]]` — `[[OL-123]]` / `[[page#OL-123|title]]` stay whole for
+ *     the wiki's own chip resolver; rewriting inside would split the brackets
  */
 export function preprocessIssueIdentifiers(text: string): string {
   // Cheap early-out: no `<UPPER>…-<DIGIT>` shape at all.
@@ -68,6 +70,7 @@ export function preprocessIssueIdentifiers(text: string): string {
   const linkRanges = findMarkdownLinkRanges(text)
   const htmlRanges = findHtmlTagRanges(text, codeRanges)
   const detectedLinks = detectLinks(text)
+  const wikiRanges = findWikiLinkRanges(text)
 
   IDENTIFIER_RE.lastIndex = 0
   let result = ''
@@ -89,6 +92,8 @@ export function preprocessIssueIdentifiers(text: string): string {
     if (htmlRanges.some((r) => rangesOverlap(range, r))) continue
     // Inside a detected URL / email / file path.
     if (detectedLinks.some((l) => rangesOverlap(range, l))) continue
+    // Inside a `[[wiki link]]` — the wiki renderer resolves those itself.
+    if (wikiRanges.some((r) => rangesOverlap(range, r))) continue
 
     // Dotted continuation such as `ABC-123.ts` (filename) or `ABC-123.tar.gz`:
     // a `.` immediately followed by an alphanumeric means the token is part of
@@ -110,4 +115,20 @@ export function preprocessIssueIdentifiers(text: string): string {
   if (lastIndex === 0) return text
   result += text.slice(lastIndex)
   return result
+}
+
+/**
+ * Character ranges of `[[wiki link]]` spans — `[[target]]`,
+ * `[[target#section|display]]`. One line at most: a wiki link never spans
+ * paragraphs, and this pass only needs to keep identifiers inside the brackets
+ * intact, not validate the link grammar.
+ */
+function findWikiLinkRanges(text: string): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = []
+  const re = /\[\[[^\]\n]+\]\]/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return ranges
 }

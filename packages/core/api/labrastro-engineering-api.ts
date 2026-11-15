@@ -65,7 +65,7 @@ const labrastroEngineeringApi = {
     return parseWithFallback<z.infer<typeof WikiWriteResultSchema> | null>(raw, WikiWriteResultSchema, null, { endpoint });
   },
   async writeProjectWikiPage(this: ApiClient, workspaceId: string, projectId: string, page: string, data: {
-    baseRevisionNumber: number; contentMarkdown?: string; section?: string; deleteSection?: string; changeSummary?: string; sourceIssueId?: string;
+    baseRevisionNumber: number; contentMarkdown?: string; section?: string; deleteSection?: string; changeSummary?: string; sourceIssueId?: string | null;
   }) {
     const endpoint = `${baselinePath(projectId)}/pages/${encodeURIComponent(page)}/content`;
     const raw = await clientFetch<unknown>(this, endpoint, { method: "PUT", headers: headers(workspaceId), body: JSON.stringify({

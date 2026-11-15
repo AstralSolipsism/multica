@@ -69,6 +69,7 @@ import {
 } from "../editor/utils/link-handler";
 import { preprocessMarkdown } from "../editor/utils/preprocess";
 import { highlightToHtml } from "../editor/utils/highlight-markdown";
+import { rehypeMathSource } from "./math-source";
 import { AttachmentDownloadProvider } from "../editor/attachment-download-context";
 import {
   EntityAttachmentsProvider,
@@ -102,12 +103,18 @@ export type RichContentPhase = "streaming" | "settled";
 // every highlighted <code>'s innerHTML and collapses an active text selection
 // inside a code block (MUL-3621).
 
-const ClosedFenceContext = createContext<ReadonlyMap<number, ClosedFence>>(
+export const ClosedFenceContext = createContext<ReadonlyMap<number, ClosedFence>>(
   new Map<number, ClosedFence>(),
 );
 
-/** The closed fence at this source offset, or undefined while it is still open. */
-function useClosedFence(offset: number | undefined): ClosedFence | undefined {
+/**
+ * The closed fence at this source offset, or undefined while it is still open.
+ *
+ * Exported for WikiMarkdown, which assembles the SAME pipeline (plugins,
+ * components, fence gate) and only layers wiki concerns (heading anchors,
+ * `[[双链]]` chips) on top — never a second renderer.
+ */
+export function useClosedFence(offset: number | undefined): ClosedFence | undefined {
   const closed = useContext(ClosedFenceContext);
   // An offset-less node cannot be matched to a source fence; refusing to
   // upgrade is the safe direction (source instead of a possibly partial block).
@@ -241,7 +248,7 @@ function ownAttachmentDownloadId(
   }
 }
 
-function RichLink({ href, children }: { href?: string; children?: ReactNode }) {
+export function RichLink({ href, children }: { href?: string; children?: ReactNode }) {
   const slug = useWorkspaceSlug();
   const appOrigin = useAppOrigin();
   const attachmentPublicUrl = useConfigStore((s) => s.attachmentPublicUrl);
@@ -399,7 +406,7 @@ function isMultiLineNode(node: ExtraProps["node"]): boolean {
  * wraps `code` children in a `<pre>` whose monospace/overflow styles clamp a
  * diagram or preview iframe.
  */
-function RichCode({ className, children, node, ...props }: RichCodeProps) {
+export function RichCode({ className, children, node, ...props }: RichCodeProps) {
   const language = /language-(\w+)/.exec(className || "")?.[1];
   const isBlock = isMultiLineNode(node);
   const fence = useClosedFence(nodeStartOffset(node));
@@ -432,7 +439,7 @@ function RichCode({ className, children, node, ...props }: RichCodeProps) {
  * react-markdown hands to a `pre` override. `isValidElement`'s type parameter
  * narrows the child's props, so no cast is needed to reach `node`.
  */
-function readFencedCodeChild(children: ReactNode): {
+export function readFencedCodeChild(children: ReactNode): {
   language?: string;
   offset?: number;
 } {
@@ -452,7 +459,7 @@ function readFencedCodeChild(children: ReactNode): {
  * source offset), not by checking `children.type === MermaidDiagram`, which
  * never matches.
  */
-function RichPre({ children }: RichPreProps) {
+export function RichPre({ children }: RichPreProps) {
   const { language, offset } = readFencedCodeChild(children);
   const isFenceClosed = useClosedFence(offset) != null;
 
@@ -476,7 +483,9 @@ function RichPre({ children }: RichPreProps) {
 // The components map is module-level and static: it never depends on density,
 // phase or the fence gate, so its identity is stable for the lifetime of the
 // app and react-markdown can bail out of unchanged subtrees.
-const COMPONENTS: Partial<Components> = {
+// Exported so page-level renderers (WikiMarkdown) compose the same map with
+// their own overrides instead of forking a second component set.
+export const COMPONENTS: Partial<Components> = {
   a: RichLink,
 
   // Images — unified through <Attachment>. The resolver context provided by
@@ -524,21 +533,22 @@ const COMPONENTS: Partial<Components> = {
 
 // `satisfies` rather than a cast: the plugin lists are still checked against
 // react-markdown's own option types, so a bad plugin tuple fails here instead of
-// being silenced.
-const REMARK_PLUGINS = [
+// being silenced. Exported for WikiMarkdown's shared-pipeline assembly.
+export const REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [
   [remarkMath, { singleDollarTextMath: false }],
   remarkSingleDollarMath,
   remarkBreaks,
   [remarkGfm, { singleTilde: false }],
   remarkCjkFriendly,
   remarkRepairCjkStrongTrailingWhitespace,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+];
 
-const REHYPE_PLUGINS = [
+export const REHYPE_PLUGINS: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
+  rehypeMathSource,
   rehypeKatex,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+];
 
 // Component
 

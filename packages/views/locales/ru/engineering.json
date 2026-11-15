@@ -174,7 +174,7 @@
     "editPage": "Редактировать",
     "editSection": "Редактировать этот раздел",
     "metaUpdatedBy": "Автор последнего обновления: {{name}}",
-    "metaSourceIssue": "По задаче {{issue}}",
+    "metaSourceIssue": "Исходная задача",
     "historyVersions": "История ({{count}})",
     "historyOpen": "Посмотреть историю",
     "historyTabTitle": "История",
@@ -293,7 +293,10 @@
     "versionPill": "v{{number}}",
     "treeRenameShortcut": "F2",
     "searchEscKey": "Esc",
-    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}"
+    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}",
+    "toolbarH2Template": "## Заголовок",
+    "toolbarH3Template": "### Заголовок",
+    "toolbarTableTemplate": "| Столбец | Столбец |\n| --- | --- |\n|  |  |"
   },
   "wikiComments": {
     "count": "Комментарии ({{count}})",

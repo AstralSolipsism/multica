@@ -174,7 +174,7 @@
     "editPage": "編輯",
     "editSection": "編輯本節",
     "metaUpdatedBy": "最後由{{name}}更新",
-    "metaSourceIssue": "依據 {{issue}}",
+    "metaSourceIssue": "來源 Issue",
     "historyVersions": "歷史版本（{{count}}）",
     "historyOpen": "查看歷史版本",
     "historyTabTitle": "歷史版本",
@@ -293,7 +293,10 @@
     "versionPill": "v{{number}}",
     "treeRenameShortcut": "F2",
     "searchEscKey": "Esc",
-    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}"
+    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}",
+    "toolbarH2Template": "## 標題",
+    "toolbarH3Template": "### 標題",
+    "toolbarTableTemplate": "| 列 | 列 |\n| --- | --- |\n|  |  |"
   },
   "wikiComments": {
     "count": "評論 ({{count}})",

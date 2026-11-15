@@ -5,13 +5,17 @@
 // list and processed records were retired with the chapter baseline (OL-1329).
 
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, CircleDot } from "@multica/ui/icons";
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { paths } from "@multica/core/paths";
 import type { Issue, TimelineEntry } from "@multica/core/types";
+import { issueStatusCategory } from "@multica/core/issues";
+import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { useT } from "../../i18n";
 import { AppLink } from "../../navigation";
 import { RichContent } from "../../rich-content";
+import { StatusIcon } from "../../issues/components/status-icon";
 
 export interface EngineeringDecisionTimeline {
   comment: TimelineEntry | null;
@@ -30,6 +34,8 @@ interface EngineeringDecisionsProps {
 
 export function EngineeringDecisions({ workspaceSlug, issues, timelines, reviewStage, onOpenWiki, onReview }: EngineeringDecisionsProps) {
   const { t } = useT("engineering");
+  const wsId = useWorkspaceId();
+  const { colorOf: statusColorOf, iconOf: statusIconOf } = useIssueStatuses(wsId);
   const [expandedIssueId, setExpandedIssueId] = useState<string | null>(null);
   const count = issues.length + (reviewStage === null ? 0 : 1);
   return (
@@ -47,7 +53,7 @@ export function EngineeringDecisions({ workspaceSlug, issues, timelines, reviewS
             <div key={issue.id} className="border-b" data-decision-issue={issue.identifier}>
               <div className="flex items-center gap-2">
                 <button type="button" className="group grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-3 text-left" aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpandedIssueId(expanded ? null : issue.id)}>
-                  <CircleDot className="size-3 text-destructive" aria-hidden="true" />
+                  <StatusIcon status={issue.status} category={issueStatusCategory(issue) ?? undefined} color={statusColorOf(issue.status)} icon={statusIconOf(issue.status)} className="size-3.5 shrink-0" aria-hidden="true" />
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{issue.title}</span>
                     <span className="block text-caption text-muted-foreground">

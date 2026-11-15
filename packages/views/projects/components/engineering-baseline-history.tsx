@@ -23,6 +23,8 @@ import { projectWikiRevisionOptions, projectKeys } from "@multica/core/projects/
 import { diffWikiStructure } from "@multica/core/projects/baseline-wiki-diff";
 import { resolveWikiLinks, type WikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
 import { useActorName } from "@multica/core/workspace/hooks";
+import { ActorAvatar } from "../../common/actor-avatar";
+import { IssueMentionCard } from "../../issues/components/issue-mention-card";
 import { useT } from "../../i18n";
 import { wikiActivityKindKey } from "./engineering-utils";
 import { useFormatRelativeDate } from "./labels";
@@ -115,19 +117,26 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
           const isSelected = revision.revisionNumber === selected;
           const isCurrent = revision.revisionNumber === props.page.currentRevisionNumber;
           return (
-            <button
+            <div
               key={revision.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               className={cn(
                 "mb-1 grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-md border p-2 text-left",
                 isSelected ? "border-border bg-canvas shadow-sm" : "border-transparent hover:bg-muted/50",
               )}
               onClick={() => setSelected(revision.revisionNumber)}
+              onKeyDown={(event) => {
+                // A focused inner chip (issue link) owns its own Enter key.
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setSelected(revision.revisionNumber);
+                }
+              }}
               data-wiki-history-item={revision.revisionNumber}
             >
-              <span className={cn("mt-0.5 grid size-6 shrink-0 place-items-center rounded-xs text-micro", revision.createdByType === "agent" ? "bg-brand/15 text-brand" : "bg-muted text-muted-foreground")}>
-                {revision.createdByType === "agent" ? "AI" : getActorName(revision.createdByType, revision.createdById).slice(0, 1)}
-              </span>
+              <ActorAvatar actorType={revision.createdByType} actorId={revision.createdById} size="sm" profileLink={false} className="mt-0.5 shrink-0" />
               <span className="min-w-0">
                 <span className="block truncate text-body">{revision.changeSummary || t(($) => $.wiki.activityKind[wikiActivityKindKey(revision.revisionKind)])}</span>
                 <span className="mt-0.5 flex flex-wrap items-center gap-1 text-micro text-muted-foreground">
@@ -137,10 +146,14 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
                   <span>{t(($) => $.wiki.activityKind[wikiActivityKindKey(revision.revisionKind)])}</span>
                   <span>· {getActorName(revision.createdByType, revision.createdById)}{revision.createdByType === "agent" ? ` · ${t(($) => $.wiki.actorAgent)}` : ""}</span>
                   <span>· <time dateTime={revision.createdAt}>{formatRelativeDate(revision.createdAt)}</time></span>
-                  {revision.sourceIssueId ? <Badge variant="outline" className="h-4 px-1 text-micro">OL</Badge> : null}
+                  {revision.sourceIssueId ? (
+                    <span onClick={(event) => event.stopPropagation()}>
+                      <IssueMentionCard issueId={revision.sourceIssueId} />
+                    </span>
+                  ) : null}
                 </span>
               </span>
-            </button>
+            </div>
           );
         })}
         {historyQuery.hasNextPage ? (

@@ -17,6 +17,11 @@ vi.mock("../../editor", () => ({
   },
   ReadonlyContent: ({ content }: { content: string }) => <p>{content}</p>,
 }));
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ actorType, actorId }: { actorType: string; actorId: string }) => (
+    <span data-testid="actor-avatar">{`${actorType}:${actorId}`}</span>
+  ),
+}));
 
 const anchor = { kind: "text" as const, sectionAnchor: "A", sectionTitle: "A", exact: "needle", prefix: "", suffix: "", revisionNumber: 4, start: undefined };
 const thread: WikiThread = { id: "thread", pageId: "page", anchor, location: { state: "section_only", sectionAnchor: "A", start: undefined }, issueId: null, identifier: "", resolvedAt: null, resolvedByType: null, resolvedById: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", section: null, comments: [{ id: "comment", authorType: "member", authorId: "me", bodyMarkdown: "Original body", authorTaskId: null, createdAt: "2026-11-01T00:00:00Z", editedAt: null }] };
@@ -73,4 +78,14 @@ it("reopens a resolved thread without a reply composer", async () => {
   expect(screen.queryByLabelText("Draft")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
   await waitFor(() => expect(resolve).toHaveBeenCalledWith("ws", "project", "thread", false));
+});
+
+it("cleans Markdown and mention syntax in section-comment previews", () => {
+  const { container } = renderPanel({ mode: "list" }, [{
+    ...thread,
+    anchor: { ...anchor, kind: "section", exact: "" },
+    comments: [{ ...thread.comments[0]!, bodyMarkdown: "> __重点__ 和 _强调_，请 [@Owner](mention://member/me) 看 [[page|说明]]" }],
+  }]);
+  expect(screen.getByText("重点 和 强调，请 @Owner 看 说明")).toBeVisible();
+  expect(container.textContent).not.toMatch(/mention:\/\/|__|\[\[/);
 });

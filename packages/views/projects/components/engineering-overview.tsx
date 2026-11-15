@@ -29,6 +29,8 @@ import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
+import { ActorAvatar } from "../../common/actor-avatar";
+import { IssueMentionCard } from "../../issues/components/issue-mention-card";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { useFormatRelativeDate } from "./labels";
@@ -67,20 +69,28 @@ function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
   return (
     <div data-testid="wiki-activity">
       {items.map((item) => (
-        <button
+        <div
           key={`${item.pageId}-${item.number}`}
-          type="button"
+          role="button"
+          tabIndex={0}
           className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 text-left last:border-b-0 hover:bg-muted/40"
           onClick={() => {
             // State AND URL: switch to the wiki tab and deep-link the page.
             onOpenWiki();
             navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
           }}
+          onKeyDown={(event) => {
+            // A focused inner chip (issue link) owns its own Enter key.
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpenWiki();
+              navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
+            }
+          }}
           data-testid={item.slug}
         >
-          <span className={cn("grid size-6 shrink-0 place-items-center rounded-xs text-micro", item.createdByType === "agent" ? "bg-brand/15 text-brand" : "bg-muted text-muted-foreground")}>
-            {item.createdByType === "agent" ? "AI" : getActorName(item.createdByType, item.createdById).slice(0, 1)}
-          </span>
+          <ActorAvatar actorType={item.createdByType} actorId={item.createdById} size="sm" profileLink={false} className="shrink-0" />
           <span className="min-w-0">
             <span className="block truncate text-body">
               {getActorName(item.createdByType, item.createdById)}
@@ -92,12 +102,19 @@ function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
             </span>
             <span className="block truncate text-caption text-muted-foreground">
               {item.changeSummary || t(($) => $.wiki.activityNoSummary)}
-              {item.sourceIssueId ? " · OL" : ""}
+              {item.sourceIssueId ? (
+                <>
+                  {" · "}
+                  <span onClick={(event) => event.stopPropagation()}>
+                    <IssueMentionCard issueId={item.sourceIssueId} />
+                  </span>
+                </>
+              ) : null}
               {" · v"}{item.number} · <time dateTime={item.createdAt}>{formatRelativeDate(item.createdAt)}</time>
             </span>
           </span>
           <span className="text-caption text-muted-foreground">{t(($) => $.wiki.versionPill, { number: item.number })}</span>
-        </button>
+        </div>
       ))}
     </div>
   );

@@ -174,7 +174,7 @@
     "editPage": "Edit",
     "editSection": "Edit this section",
     "metaUpdatedBy": "Last updated by {{name}}",
-    "metaSourceIssue": "Per {{issue}}",
+    "metaSourceIssue": "Source issue",
     "historyVersions": "History ({{count}})",
     "historyOpen": "View history",
     "historyTabTitle": "History",
@@ -293,7 +293,10 @@
     "versionPill": "v{{number}}",
     "treeRenameShortcut": "F2",
     "searchEscKey": "Esc",
-    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}"
+    "diffSummary": "+{{added}} / -{{removed}} / ~{{modified}}",
+    "toolbarH2Template": "## Heading",
+    "toolbarH3Template": "### Heading",
+    "toolbarTableTemplate": "| Column | Column |\n| --- | --- |\n|  |  |"
   },
   "wikiComments": {
     "count": "Comments ({{count}})",

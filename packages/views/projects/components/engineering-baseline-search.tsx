@@ -12,6 +12,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { projectWikiSearchOptions } from "@multica/core/projects/queries";
 import type { WikiTreePage } from "@multica/core/api";
 import { useT } from "../../i18n";
+import { plainWikiExcerpt } from "./engineering-baseline-excerpt";
 
 export interface WikiSearchTarget {
   slug: string;
@@ -169,7 +170,7 @@ export function WikiSearchPalette(props: WikiSearchPaletteProps) {
                     <span className="block truncate text-body">
                       {row.group === "section" || row.group === "body" ? `${row.title} › ${row.sectionTitle}` : row.title}
                     </span>
-                    {row.group === "body" && row.snippet ? <span className="block truncate text-caption text-muted-foreground">{row.snippet}</span> : null}
+                    {row.group === "body" && row.snippet ? <span className="block truncate text-caption text-muted-foreground">{plainWikiExcerpt(row.snippet)}</span> : null}
                   </span>
                 </button>
               </div>

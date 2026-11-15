@@ -218,6 +218,12 @@ describe('raw HTML during linkification', () => {
 })
 
 describe('reference definitions during linkification', () => {
+  it.each(['<https://example.com/$id>', '<https://example.com/end$>', '<user@example.com>'])(
+    'preserves the existing autolink %s', (autolink) => {
+      const source = `${autolink} and https://outside.example`
+      expect(preprocessLinks(source)).toBe(`${autolink} and [https://outside.example](https://outside.example)`)
+    },
+  )
   it.each([
     '[shot]: https://cdn.example/chart.png',
     '[shot]: <https://cdn.example/chart(v2).png> "https://title.example"',

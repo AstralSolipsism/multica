@@ -1,7 +1,7 @@
 import type { WikiCommentAnchor } from "@multica/core/api";
 
 const blocks = new Set(["P", "BR", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "PRE", "TR", "TD", "TH", "BLOCKQUOTE", "DIV", "UL", "OL", "TABLE", "HR"]);
-const noise = '[data-wiki-link-preview], [data-comment-ignore], .code-block-wrapper > div:first-child, button:not([data-wiki-link]), input, textarea, select, svg, [aria-hidden="true"], [hidden]';
+const noise = '[data-wiki-link-preview], [data-comment-ignore], .code-block-wrapper > div:first-child, button:not([data-wiki-link]), input, textarea, select, svg, [aria-hidden="true"], [hidden], [data-rich-table-chrome], [data-issue-chip-title], .image-error-label';
 interface Point { node: Node; offset: number }
 export interface CommentTextIndex {
   text: string;
@@ -30,16 +30,17 @@ export function indexWikiCommentText(root: HTMLElement): CommentTextIndex {
     if (!(node instanceof Element) || node.matches(noise)) return;
     // Rendered diagrams/HTML retain the GFM code source as one atomic block.
     // Their preview chrome, SVG labels and iframe contents are not text anchors.
-    const source = node.getAttribute("data-wiki-comment-source");
+    const math = node.getAttribute("data-math-source");
+    const source = math ?? node.getAttribute("data-wiki-comment-source");
     if (source !== null && node.parentNode) {
       const offset = Array.from(node.parentNode.childNodes).indexOf(node);
       const start = { node: node.parentNode, offset }, end = { node: node.parentNode, offset: offset + 1 };
       const normalized = source.replace(/\s+/g, " ").trim();
       if (normalized) {
-        if (text) { text += " "; starts.push(ends.at(-1)!); ends.push(start); }
+        if (text && (math === null || pendingSpace || blocks.has(node.tagName))) { text += " "; starts.push(ends.at(-1)!); ends.push(start); }
         for (let i = 0; i < normalized.length; i++) { text += normalized[i]; starts.push(start); ends.push(end); }
       }
-      pendingSpace = {};
+      pendingSpace = math === null || blocks.has(node.tagName) ? {} : null;
       return;
     }
     const block = blocks.has(node.tagName);
@@ -60,7 +61,13 @@ export function wikiSelectionAnchor(root: HTMLElement, selection: Selection | nu
   const selected = selection.getRangeAt(0);
   const element = selected.startContainer.nodeType === Node.ELEMENT_NODE ? selected.startContainer as Element : selected.startContainer.parentElement;
   const section = element?.closest<HTMLElement>("[data-wiki-comment-section]");
-  if (!section || !root.contains(section) || element?.closest(`${noise}, [data-wiki-comment-source]`)) return null;
+  if (!section || !root.contains(section)) return null;
+  const ignored = `${noise}, [data-wiki-comment-source]`;
+  for (let node = element?.closest(ignored); node; node = node.parentElement?.closest(ignored)) {
+    // KaTeX hides its visual glyphs from screen readers, not from selection.
+    // Only that subtree is exempt; outer hidden regions and UI stay excluded.
+    if (!node.matches('.katex-html[aria-hidden="true"]') || !node.closest("[data-math-source]")) return null;
+  }
   const textRoot = section.querySelector<HTMLElement>("[data-wiki-markdown]");
   if (!textRoot) return null;
   const index = indexWikiCommentText(textRoot);

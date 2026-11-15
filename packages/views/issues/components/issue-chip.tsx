@@ -115,7 +115,10 @@ export function IssueChip({
       <span className="font-medium text-muted-foreground shrink-0">
         {issue.identifier}
       </span>
-      <span className="min-w-0 truncate text-foreground">{issue.title}</span>
+      {/* data-issue-chip-title: preview chrome beyond the identifier text the
+          author wrote. Text-anchoring surfaces (wiki comment selection) skip
+          it so their index matches the server's plain-text render. */}
+      <span data-issue-chip-title="" className="min-w-0 truncate text-foreground">{issue.title}</span>
     </span>
   );
 }
