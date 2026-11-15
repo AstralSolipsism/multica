@@ -1,41 +1,6 @@
 import { z } from "zod";
 import type { AgentRuntime } from "../types";
 
-// Account-level GLM (Zhipu) Coding Plan quota snapshot from the server-side
-// collector. Windows mirror the provider's limit entries (TOKENS_LIMIT 5h
-// token window, TIME_LIMIT monthly tool credits, CREDIT_LIMIT pools).
-// window_minutes is the window's real period (300 = 5h, 10080 = weekly)
-// derived from the provider's unit/number; absent on windows the provider
-// did not label — several windows of one type differ only by it.
-export const GlmQuotaWindowSchema = z.object({
-  type: z.string(),
-  window_minutes: z.number().optional(),
-  used_percent: z.number().optional(),
-  usage: z.number().optional(),
-  current_value: z.number().optional(),
-  remaining: z.number().optional(),
-  resets_at: z.number().optional(),
-});
-export type GlmQuotaWindow = z.infer<typeof GlmQuotaWindowSchema>;
-
-export const GlmQuotaSnapshotSchema = z.object({
-  level: z.string().optional().catch(undefined),
-  // One unreadable provider window must not hide the other balances or
-  // fabricate a healthy quota for the unreadable window.
-  windows: z.array(GlmQuotaWindowSchema.nullable().catch(null))
-    .transform((windows) => windows.filter((window) => window !== null)),
-  observed_at: z.number(),
-});
-export type GlmQuotaSnapshot = z.infer<typeof GlmQuotaSnapshotSchema>;
-
-export const GlmQuotaStatusSchema = z.object({
-  enabled: z.boolean(),
-  quota: GlmQuotaSnapshotSchema.nullable().optional().catch(null),
-  stale: z.boolean().optional().catch(undefined),
-  last_error: z.string().optional().catch(undefined),
-  anchor_device: z.string().optional().catch(undefined),
-});
-export type GlmQuotaStatus = z.infer<typeof GlmQuotaStatusSchema>;
 
 // ---------------------------------------------------------------------------
 // Runtime plan-quota schemas. The snapshot rides along on each runtime
@@ -103,8 +68,40 @@ export const RuntimePlanQuotaSchema = z.object({
   account_pools: z.array(z.unknown()).catch([]).optional(),
 }).loose();
 
-export type QuotaSourceKind = "glm" | "zenmux";
+export type QuotaSourceKind = "glm" | "zenmux" | "deepseek" | "opencode" | "jev_free";
 export type QuotaSourceVisibility = "private" | "shared";
+
+// One currency bucket of a pay-as-you-go account balance (deepseek,
+// opencode). Amounts are nullable so a real 0 stays distinct from "not
+// reported".
+export const QuotaSourceBalanceSchema = z.object({
+  currency: z.string().catch(""),
+  total_balance: z.number().nullable().optional().catch(null),
+  granted_balance: z.number().nullable().optional().catch(null),
+  topped_up_balance: z.number().nullable().optional().catch(null),
+}).loose();
+export type QuotaSourceBalance = z.infer<typeof QuotaSourceBalanceSchema>;
+
+// Free-tier / pay-as-you-go health probe outcome.
+export const QuotaSourceProbeSchema = z.object({
+  available: z.boolean().catch(false),
+  latency_ms: z.number().catch(0),
+  model: z.string().optional().catch(""),
+}).loose();
+export type QuotaSourceProbe = z.infer<typeof QuotaSourceProbeSchema>;
+
+// The persisted quota_source snapshot: the plan-quota shape (windows for
+// subscription kinds) plus the balance and probe payloads the global cards
+// render. Backward compatible — glm/zenmux snapshots parse unchanged.
+export const QuotaSourceSnapshotSchema = RuntimePlanQuotaSchema.extend({
+  available: z.boolean().nullable().optional().catch(null),
+  balances: z.optional(
+    z.array(QuotaSourceBalanceSchema.nullable().catch(null)).catch([])
+      .transform((balances) => balances.filter((balance) => balance !== null)),
+  ),
+  probe: QuotaSourceProbeSchema.nullable().optional().catch(null),
+});
+export type QuotaSourceSnapshot = z.infer<typeof QuotaSourceSnapshotSchema>;
 
 export const QuotaSourceErrorSchema = z.object({
   code: z.string().catch(""),
@@ -132,7 +129,7 @@ export const QuotaSourceSchema = z.object({
   credential_hint: z.string().optional().catch(""),
   enabled: z.boolean().catch(false),
   visibility: z.string().catch("private"),
-  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  quota: QuotaSourceSnapshotSchema.nullable().optional().catch(null),
   last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
   ...quotaSourceTimestamps,
 }).loose();
@@ -145,7 +142,7 @@ export const WorkspaceQuotaSourceSchema = z.object({
   owner_id: z.string().optional().catch(""),
   visibility: z.string().catch("private"),
   is_own: z.boolean().optional().catch(false),
-  quota: RuntimePlanQuotaSchema.nullable().optional().catch(null),
+  quota: QuotaSourceSnapshotSchema.nullable().optional().catch(null),
   last_polled_at: quotaSourceTimestamps.last_polled_at,
   last_error: QuotaSourceErrorSchema.nullable().optional().catch(null),
 }).loose();
@@ -179,7 +176,8 @@ export const EMPTY_WORKSPACE_QUOTA_SOURCE_LIST: WorkspaceQuotaSourceListResponse
 export interface CreateQuotaSourceInput {
   kind: QuotaSourceKind;
   name: string;
-  credential: string;
+  // Credential-free kinds (jev_free) may omit or empty the credential.
+  credential?: string;
   base_url?: string;
   visibility: QuotaSourceVisibility;
 }

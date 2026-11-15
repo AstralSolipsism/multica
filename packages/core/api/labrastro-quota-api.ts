@@ -5,12 +5,10 @@ import { parseWithFallback } from "./schema";
 import {
   EMPTY_QUOTA_SOURCE_LIST,
   EMPTY_WORKSPACE_QUOTA_SOURCE_LIST,
-  GlmQuotaStatusSchema,
   QuotaSourceListResponseSchema,
   QuotaSourceSchema,
   WorkspaceQuotaSourceListResponseSchema,
   type CreateQuotaSourceInput,
-  type GlmQuotaStatus,
   type QuotaSource,
   type QuotaSourceListResponse,
   type UpdateQuotaSourceInput,
@@ -19,12 +17,6 @@ import {
 import { parseConfirmedWrite } from "./labrastro-api-helpers";
 
 const labrastroQuotaApi = {
-  async getGlmQuota(this: ApiClient): Promise<GlmQuotaStatus> {
-    const raw = await clientFetch<unknown>(this, "/api/glm-quota");
-    return parseWithFallback<GlmQuotaStatus>(raw, GlmQuotaStatusSchema, { enabled: false }, {
-      endpoint: "GET /api/glm-quota",
-    });
-  },
 
   async listQuotaSources(this: ApiClient): Promise<QuotaSourceListResponse> {
     const raw = await clientFetch<unknown>(this, "/api/me/quota-sources");

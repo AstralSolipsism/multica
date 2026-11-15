@@ -42,7 +42,7 @@ describe("fork API installation", () => {
     const { ApiClient } = await import("./client");
     expect(typeof new ApiClient("https://example.test").importSkillParsed).toBe("function");
     expect(typeof ApiClient.prototype.getIssueGraph).toBe("function");
-    expect(typeof ApiClient.prototype.getGlmQuota).toBe("function");
+    expect(typeof ApiClient.prototype.listQuotaSources).toBe("function");
     expect(typeof ApiClient.prototype.getLarkTargetCapabilities).toBe("function");
     expect(typeof ApiClient.prototype.createMessageRoute).toBe("function");
     expect(typeof ApiClient.prototype.listIssueTips).toBe("function");
