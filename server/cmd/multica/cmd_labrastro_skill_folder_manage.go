@@ -204,6 +204,9 @@ func runSkillFolderPlacements(cmd *cobra.Command, client *cli.APIClient, args []
 			err = fmt.Errorf("malformed placement response; inspect the tree before retrying")
 		}
 		if err != nil {
+			if cmd.Name() == "detach-skill" {
+				return printSkillOrganizationError(cmd, err)
+			}
 			failure := map[string]any{"skill_id": id, "error": err.Error()}
 			var httpErr *cli.HTTPError
 			if errors.As(err, &httpErr) {

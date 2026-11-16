@@ -229,6 +229,34 @@ func TestLabrastroSkillFolderReadsAndTree(t *testing.T) {
 	}
 }
 
+func TestLabrastroSkillFolderDetachFailure(t *testing.T) {
+	for _, output := range []string{"json", "table"} {
+		t.Run(output, func(t *testing.T) {
+			failure := map[string]any{"code": "forbidden", "error": "only the skill creator or a workspace admin can move or detach it", "retryable": false}
+			calls := serveSkillFolder(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/api/skills":
+					_ = json.NewEncoder(w).Encode(skillManagementSkills())
+				case r.Method == "POST" && r.URL.Path == "/api/skill-placements/"+migrationSkillID+"/detach":
+					w.WriteHeader(http.StatusForbidden)
+					_ = json.NewEncoder(w).Encode(failure)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			out, _, err := executeSkillFolder(t, "detach-skill", "alpha", "--output", output)
+			if err == nil {
+				t.Fatal("detach refusal must exit nonzero")
+			}
+			assertSkillPackageJSON(t, out, failure)
+			if got := calls(); len(got) != 2 {
+				t.Fatalf("unexpected retry: %+v", got)
+			}
+		})
+	}
+}
+
 func TestLabrastroSkillFolderMovePreflightAndPartialFailure(t *testing.T) {
 	for _, mode := range []string{"unknown name", "unknown UUID", "ambiguous skill", "ambiguous folder", "deduplicate", "403", "409", "500", "malformed", "disconnect"} {
 		t.Run(mode, func(t *testing.T) {
