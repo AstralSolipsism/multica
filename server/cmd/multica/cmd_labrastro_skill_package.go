@@ -22,7 +22,7 @@ func init() {
 
 func newSkillPackageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "package", Short: "Import and inspect workspace skill packages"}
-	for _, action := range []string{"import", "list", "get", "rescan"} {
+	for _, action := range []string{"import", "list", "get", "rescan", "dissolve", "delete"} {
 		sub := &cobra.Command{RunE: runSkillPackage, Args: exactArgs(1)}
 		output := "json"
 		switch action {
@@ -33,17 +33,26 @@ func newSkillPackageCmd() *cobra.Command {
 				"Use --dry-run for a read-only preview. " + skillPackageTimeoutHelp
 			sub.Flags().Bool("dry-run", false, "Only preview; do not create or update workspace data")
 		case "rescan":
-			sub.Use = "rescan <package-id>"
+			sub.Use = "rescan <package>"
 			sub.Short = "Preview changes from a package's saved URL and ref"
 			sub.Long = "Preview only unless --apply is supplied. Apply defaults to changed imported skills;\n" +
 				"new skills require --skill or --all. Removed source paths are retained.\n" +
 				skillPackageTimeoutHelp + "\nFailed writes are never retried automatically."
 			sub.Flags().Bool("apply", false, "Apply after a fresh preview")
+			sub.Flags().String("url", "", "Switch the same repository to this branch/tag URL")
 		case "list":
 			sub.Use, sub.Short, sub.Args = "list", "List packages in the workspace", exactArgs(0)
 			output = "table"
+			sub.Flags().Bool("full-id", false, "Show full UUIDs")
+		case "dissolve", "delete":
+			sub.Use = action + " <package>"
+			sub.Short = "Preview and " + action + " a workspace package"
+			sub.Flags().Bool("dry-run", false, "Show affected skills and agent bindings without writing")
+			if action == "delete" {
+				sub.Flags().BoolP("yes", "y", false, "Permanently delete managed skills and their bindings without a prompt")
+			}
 		case "get":
-			sub.Use, sub.Short = "get <package-id>", "Get package metadata and its last applied candidate summary"
+			sub.Use, sub.Short = "get <package>", "Get package metadata and its last applied candidate summary"
 		}
 		if action == "import" || action == "rescan" {
 			sub.Flags().StringArray("skill", nil, "Repository-relative skill directory (repeatable; use an empty string for the repository root)")
@@ -80,16 +89,20 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 			body["all"] = true
 		}
 	}
-	path := "/api/skill-packages"
-	if action == "get" || action == "rescan" {
-		if !uuidRegexp.MatchString(args[0]) {
-			return fmt.Errorf("package-id must be a full UUID")
-		}
-		path += "/" + args[0]
-	}
 	client, err := newAPIClient(cmd)
 	if err != nil {
 		return err
+	}
+	path := "/api/skill-packages"
+	if action == "get" || action == "rescan" || action == "dissolve" || action == "delete" {
+		ref, err := resolveSkillPackageRef(cmd, client, args[0])
+		if err != nil {
+			return err
+		}
+		path += "/" + ref.ID
+	}
+	if action == "dissolve" || action == "delete" {
+		return runSkillPackageRemoval(cmd, client, path)
 	}
 	if action == "list" || action == "get" {
 		result, err := requestSkillPackage(cmd, client, path, nil)
@@ -109,6 +122,10 @@ func runSkillPackage(cmd *cobra.Command, args []string) error {
 	} else {
 		previewPath, applyPath = path+"/rescan", path+"/rescan"
 		body["apply"] = true
+		if cmd.Flags().Changed("url") {
+			url, _ := cmd.Flags().GetString("url")
+			previewBody["url"], body["url"] = url, url
+		}
 	}
 	preview, err := requestSkillPackage(cmd, client, previewPath, previewBody)
 	if err != nil {
@@ -438,7 +455,8 @@ func printSkillPackageTable(cmd *cobra.Command, result map[string]any, kind stri
 		rows := make([][]string, 0, len(packages))
 		for _, item := range packages {
 			p := item.(map[string]any)
-			rows = append(rows, []string{strVal(p, "id"), strVal(p, "owner_repo"), strVal(p, "subdirectory"), strVal(p, "ref"), strVal(p, "source_url")})
+			fullID, _ := cmd.Flags().GetBool("full-id")
+			rows = append(rows, []string{displayID(strVal(p, "id"), kind == "get" || fullID), strVal(p, "owner_repo"), strVal(p, "subdirectory"), strVal(p, "ref"), strVal(p, "source_url")})
 		}
 		cli.PrintTable(w, []string{"ID", "REPOSITORY", "SUBDIRECTORY", "REF", "SOURCE"}, rows)
 		if kind == "get" {

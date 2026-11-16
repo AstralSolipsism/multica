@@ -371,7 +371,7 @@ func TestLabrastroSkillPackageInvalidFlagsMakeNoRequests(t *testing.T) {
 		{"import", skillPackageTestURL, "--output", "yaml"},
 		{"import", skillPackageTestURL, "--dry-run", "--apply"},
 		{"rescan", skillPackageTestID, "--dry-run", "--apply"},
-		{"get", "../skills"}, {"rescan", "not-a-uuid"}, {"list", "extra"}, {"import"},
+		{"list", "extra"}, {"import"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			_, _, err := executeSkillPackage(t, args...)

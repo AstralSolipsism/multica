@@ -1,7 +1,8 @@
-# Importing skills
+# Importing and organizing skills
 
 Use this when the user already provided a skill URL, slug, or a clear intent to
-import a specific skill into the current Labrastro workspace. It does not help you
+import a specific skill into the current Labrastro workspace, or manage its skill
+folders and packages. It does not help you
 decide WHICH skill the user needs — if they only described a capability and no
 URL is known, external search may produce candidates, but importing starts only
 once a URL or concrete target exists.
@@ -9,6 +10,8 @@ once a URL or concrete target exists.
 - [The invariant](#the-invariant)
 - [Supported URL source families](#supported-url-source-families)
 - [Repository skill packages](#repository-skill-packages)
+- [Managing skill folders](#managing-skill-folders)
+- [Copying skill organization between workspaces](#copying-skill-organization-between-workspaces)
 - [Local archive import](#local-archive-import)
 - [Direct URL flow](#direct-url-flow)
 - [Additive add vs replace-all set](#additive-add-vs-replace-all-set)
@@ -102,10 +105,12 @@ is a repository-relative skill directory, repeatable, and mutually exclusive
 with `--all`; use `--skill ''` for a repository-root candidate. Package conflict
 strategies are `skip` (default), `rename`, and `overwrite`. `can_write` governs
 the existing target; false does not prohibit rename into an independent skill.
-Same-source skills already in another package must first be detached on the
-Skills page; the CLI has no detach command.
+Same-source skills already in another package must first be detached with
+`multica skill folder detach-skill <skill>` (or on the Skills page).
 
-Rescan uses the saved URL/ref. Default `--apply` updates only changed imported
+Rescan uses the saved URL/ref. Pass `--url <tree-url>` to preview a branch/tag
+change within the same repository and subdirectory; the URL is also sent when
+applying with `--apply`. Default `--apply` updates only changed imported
 skills; new or detached candidates require `--skill` or `--all`. Explicit
 selectors replace the default selection, so include changed paths too when
 selecting new ones. Disappeared source paths are retained. Reimporting an
@@ -126,6 +131,92 @@ indeterminate and must not be treated as success.
 Single-skill import/refresh can also return `diagnostics` (inside `skill` for
 structured imports); table output displays these source/reference warnings.
 Agent binding remains a separate operation using returned workspace skill IDs.
+
+### Package references and removal
+
+`get`, `rescan`, `dissolve` and `delete` accept a full UUID, a unique UUID prefix
+of at least four hex characters, or a unique `owner/repo`. If a repository has
+root and subdirectory packages, use `owner/repo:subdirectory` (or `owner/repo:`
+for its root); ambiguous references list IDs and sources. `list` defaults to a
+table with short IDs; `--full-id` shows full UUIDs. Single-object commands default
+to JSON, and all commands accept `--output table|json`.
+
+```bash
+multica skill package list --full-id
+multica skill package get owner/repo:skills
+multica skill package rescan owner/repo --url https://github.com/owner/repo/tree/v2
+multica skill package dissolve <package> --dry-run
+multica skill package dissolve <package>
+multica skill package delete <package> --dry-run
+multica skill package delete <package> --yes
+```
+
+Both removal commands fetch and validate `delete-preview`, then submit its
+`preview_id`. `--dry-run` prints the preview without writing. Dissolve removes
+package metadata and managed markers but retains folders, skills and bindings;
+it does not require `can_delete`. Delete permanently removes managed skills and
+their bindings, retaining detached skills and their ancestor folders. If
+`can_delete` is false, it prints the impact and fails without asking for input.
+Otherwise it prompts on stderr with the package, skill count and binding count;
+answer `y`/`yes` or pass `--yes`/`-y`. Other answers abort. Empty non-interactive
+stdin fails with instructions to use `--yes`. No write is retried automatically.
+
+## Managing skill folders
+
+```bash
+multica skill folder tree --full-id
+multica skill folder list --full-id
+multica skill folder get Engineering/Review
+multica skill folder create --name Review --parent Engineering
+multica skill folder update Engineering/Review --name Reviews
+multica skill folder update Engineering/Reviews --parent Other
+multica skill folder update Other/Reviews --root
+multica skill folder delete Reviews
+multica skill folder detach-skill <skill>
+multica skill folder move-skill <skill> <another-skill> --folder Engineering
+multica skill folder move-skill <skill> --root
+```
+
+Folder references (including `--parent` and `--folder`) accept full UUIDs,
+unique UUID prefixes of at least four hex characters, case-sensitive paths from
+the root such as `Engineering/Review`, or workspace-unique folder names. Duplicate
+names report each ID and full path; use a path or full ID to disambiguate. Skill
+references resolve in order: full UUID, exact unique name, unique UUID prefix.
+
+`tree` and `list` default to tables with short IDs (`--full-id` for full UUIDs).
+Tree rows mark package roots `[package]`, managed directories `[managed]`,
+ordinary skills left in package folders `[detached]`, and candidates `[not imported]`.
+Candidates appear in their managed directory, falling back to the package root
+if that directory does not exist. Unclassified skills also show IDs. Tree JSON
+keeps `folders`, `packages`, `placements`, `skills`, and `unclassified_count`;
+list JSON is the `folders` array. `get` returns the folder object; its table also
+shows the full path, kind, parent/package IDs and direct folder/skill counts.
+
+All other commands default to JSON and accept `--output table|json`. Create
+requires `--name`. Update requires a change; omit `--parent`/`--root` to retain
+the parent, use `--root` to move to the root, or `--parent` to move elsewhere
+(the two are mutually exclusive). Delete removes a custom folder and promotes
+its direct folders/skills one level, preserving skill entities. A same-named
+child can take the deleted folder's name; other sibling collisions roll back.
+
+Move requires exactly one of `--folder` or `--root`; root means Unclassified.
+It resolves the destination and **all** skills before writing, including full
+UUIDs, and deduplicates skills in argument order. Unknown/ambiguous inputs cause
+zero writes. Writes then run sequentially and stop at the first failure. Success
+returns `{updated:true,folder_id:<uuid-or-null>,skill_ids:[...]}`. Failure exits
+nonzero with one JSON report (even in table mode): `updated:false`, completed
+`skill_ids`, and `failed` containing the failed `skill_id`, error and, for HTTP
+failures, `status` and the structured server `response`. Completed moves stay
+applied. On a timeout or malformed response the failed item's result is unknown;
+read the tree before explicitly retrying. Detach preserves the folder while
+removing the skill's package/source association and returns
+`{skill_id:<uuid>,updated:true}`.
+
+The server enforces workspace membership and existing creator/admin permissions.
+Package-managed skills must be detached before moving; package internal folders
+cannot be rearranged or used as custom destinations. A package root may be moved
+or renamed by its importer or an admin. Successful organization writes refresh
+open Skills pages through the existing `skill:updated` event.
 
 ## Local archive import
 
