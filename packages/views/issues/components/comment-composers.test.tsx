@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import type { Attachment } from "@multica/core/types";
+import type { AgentSkillSummary, Attachment } from "@multica/core/types";
+import type { Editor } from "@tiptap/core";
 import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../test/i18n";
@@ -14,7 +15,12 @@ import { ReplyInput } from "./reply-input";
 type QuickActionMenuProp = {
   getQuickActions?: () => { id: string; name: string; description?: string }[];
   getQuickActionContent?: (quickActionId: string) => string;
+  getSkills?: (editor: Editor) => AgentSkillSummary[];
 };
+
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: { getState: () => ({ user: { id: "user-1" } }) },
+}));
 
 // Uploads now flow through the module-level coordinator, which calls
 // `api.uploadFile(file, ctx, signal)` (MUL-5181). Tests drive uploads by
@@ -23,6 +29,10 @@ const apiUploadFile = vi.hoisted(() => vi.fn());
 const apiListWorkspaces = vi.hoisted(() => vi.fn());
 const apiListQuickActions = vi.hoisted(() => vi.fn());
 const apiRenderQuickAction = vi.hoisted(() => vi.fn());
+const apiGetIssue = vi.hoisted(() => vi.fn());
+const apiListAgents = vi.hoisted(() => vi.fn());
+const apiListSquads = vi.hoisted(() => vi.fn());
+const apiListMembers = vi.hoisted(() => vi.fn());
 const apiPreviewCommentTriggers = vi.hoisted(() => vi.fn());
 const apiListTasksByIssue = vi.hoisted(() => vi.fn());
 const apiCancelTask = vi.hoisted(() => vi.fn());
@@ -63,6 +73,10 @@ vi.mock("@multica/core/api", () => ({
     listWorkspaces: apiListWorkspaces,
     listQuickActions: apiListQuickActions,
     renderQuickAction: apiRenderQuickAction,
+    getIssue: apiGetIssue,
+    listAgents: apiListAgents,
+    listSquads: apiListSquads,
+    listMembers: apiListMembers,
     previewCommentTriggers: apiPreviewCommentTriggers,
     listTasksByIssue: apiListTasksByIssue,
     cancelTask: apiCancelTask,
@@ -310,6 +324,10 @@ beforeEach(() => {
   apiListWorkspaces.mockReset();
   apiListQuickActions.mockReset();
   apiRenderQuickAction.mockReset();
+  apiGetIssue.mockReset().mockResolvedValue({ id: "issue-1", assignee_type: null, assignee_id: null });
+  apiListAgents.mockReset().mockResolvedValue([]);
+  apiListSquads.mockReset().mockResolvedValue([]);
+  apiListMembers.mockReset().mockResolvedValue([{ user_id: "user-1", role: "member", name: "User" }]);
   apiPreviewCommentTriggers.mockReset();
   apiListTasksByIssue.mockReset();
   apiCancelTask.mockReset();
@@ -402,6 +420,32 @@ describe("quick action `/` menu", () => {
         expect(editorQuickActionMenu.last?.getQuickActionContent?.("qa-1")).toBe("Review this issue");
       });
       expect(apiRenderQuickAction).not.toHaveBeenCalled();
+    });
+
+    it(`resolves Issue assignee skills in the ${composer.name}`, async () => {
+      apiGetIssue.mockResolvedValue({
+        id: "issue-1",
+        assignee_type: "agent",
+        assignee_id: "agent-1",
+      });
+      apiListAgents.mockResolvedValue([{
+        id: "agent-1",
+        archived_at: null,
+        owner_id: null,
+        permission_mode: "public_to",
+        invocation_targets: [{ target_type: "workspace", target_id: null }],
+        skills: [{ id: "skill-1", name: "deploy", description: "Ship changes" }],
+      }]);
+      renderInWorkspace(composer.element);
+      activateComposer(composer.shell);
+      const editor = {
+        state: { doc: { descendants: () => {} } },
+      } as unknown as Editor;
+
+      await waitFor(() => {
+        expect(editorQuickActionMenu.last?.getSkills?.(editor).map((skill) => skill.id))
+          .toEqual(["skill-1"]);
+      });
     });
   }
 });
