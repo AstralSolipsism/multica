@@ -374,3 +374,34 @@ agent's skill assignments:
 multica agent skills add <agent-id> --skill-ids <skill-id> --output json
 multica agent skills list <agent-id> --output json
 ```
+
+
+## Copying skill organization between workspaces
+
+Use this after skill contents have already been synchronized. It migrates the
+saved folder tree, package metadata and placements onto existing target skill
+IDs. It does not refresh upstream sources or change content, support files,
+version history, labels, agent bindings or enabled state. Target-only objects
+remain in place; missing target skills are reported as skipped.
+
+```bash
+multica skill folder tree --output json
+multica skill folder export --output-file skills-organization.json
+multica skill folder migrate --from-file skills-organization.json --dry-run
+multica skill folder migrate --from-file skills-organization.json --apply --preview-id <reviewed-token>
+```
+
+Run export in the source workspace and migrate in the target workspace. Human
+credentials with access to both can instead use `--from-workspace <source-uuid>`
+and `--workspace-id <target-uuid>` on migrate. The same credential must authorize
+both requests; task tokens cannot cross workspaces. Use separately authorized
+export and file transfer when one credential cannot access both.
+
+Migrate previews by default. Inspect `can_apply`, the complete `conflicts`,
+`skipped` placements, target-only counts and each move's `from_path`/`to_path`.
+Any conflict blocks the entire apply. `--apply` without `--preview-id` makes a
+fresh preview and applies only if it has no conflicts. A reviewed token requires
+`--from-file`, expires after 15 minutes and becomes stale if state changes.
+After applying, read `folder tree` and preview again: an unchanged repeat apply
+returns `changed:false`. A failed write is never automatically retried; after a
+timeout or server error, preview again and inspect the state before applying.

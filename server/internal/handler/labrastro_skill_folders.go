@@ -25,6 +25,9 @@ import (
 // RegisterLabrastroSkillRoutes keeps the fork's route surface in one place.
 func (h *Handler) RegisterLabrastroSkillRoutes(r chi.Router) {
 	r.Get("/api/skill-folders", h.LabrastroSkillTree)
+	r.Get("/api/skill-folders/snapshot", h.LabrastroExportSkillOrganization)
+	r.Post("/api/skill-folders/migrate/preview", h.LabrastroPreviewSkillMigration)
+	r.Post("/api/skill-folders/migrate/apply", h.LabrastroApplySkillMigration)
 	r.Post("/api/skill-folders", h.LabrastroCreateFolder)
 	r.Patch("/api/skill-folders/{folderId}", h.LabrastroUpdateFolder)
 	r.Delete("/api/skill-folders/{folderId}", h.LabrastroDeleteFolder)
@@ -81,7 +84,7 @@ func (h *Handler) labrastroSkillActor(w http.ResponseWriter, r *http.Request) (l
 	}
 	return labrastroSkillActor{ws, parseUUID(uid)}, true
 }
-func (h *Handler) labrastroSkillTx(ctx context.Context, a labrastroSkillActor) (pgx.Tx, *db.Queries, db.Member, error) {
+func (h *Handler) labrastroSkillTx(ctx context.Context, a labrastroSkillActor, deferCleanup ...bool) (pgx.Tx, *db.Queries, db.Member, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return nil, nil, db.Member{}, err
@@ -111,9 +114,12 @@ func (h *Handler) labrastroSkillTx(ctx context.Context, a labrastroSkillActor) (
 		tx.Rollback(ctx)
 		return nil, nil, db.Member{}, err
 	}
-	if err = q.LabrastroCleanSkillPlacements(ctx, a.ws); err != nil {
-		tx.Rollback(ctx)
-		return nil, nil, db.Member{}, err
+	// Migration defers cleanup until its plan has writes, preserving a true no-op.
+	if len(deferCleanup) == 0 || !deferCleanup[0] {
+		if err = q.LabrastroCleanSkillPlacements(ctx, a.ws); err != nil {
+			tx.Rollback(ctx)
+			return nil, nil, db.Member{}, err
+		}
 	}
 	return tx, q, m, nil
 }

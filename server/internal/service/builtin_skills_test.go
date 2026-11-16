@@ -749,6 +749,12 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			want: []string{
 				"multica skill package import <url> --dry-run --output json",
 				"multica skill package list --output json",
+				"multica skill folder tree --output json",
+				"multica skill folder export --output-file skills-organization.json",
+				"multica skill folder migrate --from-file skills-organization.json --dry-run",
+				"--apply --preview-id <reviewed-token>",
+				"task tokens cannot cross workspaces",
+				"Any conflict blocks the entire apply",
 				"multica skill package get <package-id> --output json",
 				"multica skill package rescan <package-id> --apply --output json",
 				"/api/skill-packages/preview",

@@ -295,16 +295,17 @@ func (h *Handler) labrastroPackageOperation(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, h.labrastroApplyPackageItems(ctx, r, a, p, scan, selected, req))
 }
 
+type labrastroSkillCandidateSummary struct {
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Digest      string `json:"digest,omitempty"`
+}
+
 func labrastroCandidateCache(candidates []LabrastroSkillCandidate) []byte {
-	type summary struct {
-		Path        string `json:"path"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Digest      string `json:"digest,omitempty"`
-	}
-	rows := []summary{}
+	rows := []labrastroSkillCandidateSummary{}
 	for _, c := range candidates {
-		rows = append(rows, summary{c.Path, c.Name, c.Description, c.Digest})
+		rows = append(rows, labrastroSkillCandidateSummary{c.Path, c.Name, c.Description, c.Digest})
 	}
 	body, _ := json.Marshal(rows)
 	return body

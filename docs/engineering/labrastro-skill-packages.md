@@ -14,7 +14,11 @@ manage custom folders. Package importer or owner/admin permission is needed
 for package mutations. Skill creator or owner/admin permission is separately
 required to adopt, update, move, detach, or delete a skill. Overwriting a skill
 from a different source remains creator-only, including for administrators.
-All 14 new routes reject external-conversation tokens with HTTP 403.
+The original 14 routes plus the three organization migration routes below use
+the existing authentication and workspace-membership boundary. Task tokens
+selecting another workspace receive HTTP 403. OL-1274 retired external
+conversation authorization: migration 9066 revokes those tokens, so they now
+receive HTTP 401 at authentication, rather than the historical route-level 403.
 
 The schemas and inferred types are in
 `packages/core/api/labrastro-skill-schemas.ts`, re-exported by
@@ -22,6 +26,100 @@ The schemas and inferred types are in
 for malformed package/tree/write responses and display an indeterminate
 result, not claim success or automatically repeat a write. Unknown candidate
 states cannot be selected; unknown item statuses make the result unsuccessful.
+
+### Organization snapshots and atomic migration
+
+These endpoints copy organization metadata onto skills already present in the
+target workspace. They never fetch GitHub/skills.sh or change skill IDs, names,
+descriptions, content, config, supporting files, versions, labels or agent
+bindings (including enabled state). Source-only skills are skipped; target-only
+skills, folders, packages and placements are retained.
+
+- `GET /api/skill-folders/snapshot`: export one consistent `REPEATABLE READ READ
+  ONLY` snapshot of the selected workspace.
+- `POST /api/skill-folders/migrate/preview`: accept `{"snapshot": <snapshot>}` and
+  compute a plan in a read-only transaction.
+- `POST /api/skill-folders/migrate/apply`: accept `{"snapshot": <snapshot>,
+  "preview_id": "<token>"}` and atomically apply the reviewed plan.
+
+Snapshot schema version 1 contains `schema_version`, UTC RFC3339 `exported_at`,
+`source_workspace_id`, and three arrays:
+
+| Array | Fields |
+| --- | --- |
+| `folders` | `id`, nullable `parent_id`, `name`, nullable `package_id`, nullable `package_path` |
+| `packages` | `id`, `owner_repo`, `subdirectory`, `source_url`, `ref`, `root_folder_id`, `candidates` (path/name/description/digest summaries) |
+| `placements` | `skill_id`, `folder_id`, nullable `package_id`, nullable `source_path`, `skill: {name, origin, digest}` |
+
+`origin` contains only provenance fields from config, with URL credentials,
+queries and fragments removed. Arbitrary config, body text and bindings are
+never exported. `digest` hashes the existing name/description/content hash and
+sorted support-file hashes. The source workspace ID is informational: target
+requests never query that workspace. Source UUIDs are graph references, not
+IDs to write into the target. Each HTTP request uses exactly one workspace.
+
+POST bodies are limited to 8 MiB, reject unknown fields and trailing JSON.
+Validation requires nonzero unique UUIDs, unique sibling names and package
+paths, an acyclic folder graph, complete local references, valid names and
+repository paths, and exactly one correctly placed root per package. Saved
+URLs must agree with the recorded repository, ref and subdirectory, including
+refs containing slashes, without resolving the ref over the network. Ordinary
+or detached placements may remain in managed folders.
+
+Packages match by case-normalized repository plus subdirectory; custom folders
+match by mapped parent plus name; managed folders match by mapped package plus
+package path. Existing package roots may move or rename only with importer or
+admin permission. Different package URLs/refs block the whole migration;
+candidate-only updates require the same permission and preserve the importer.
+
+Skills match first through an existing package/source-path placement, otherwise
+through normalized GitHub/skills.sh origin (including unambiguous legacy slugs).
+With no origin match, a same-name target without origin must have the same
+digest. A missing skill is `skipped` with `target_skill_missing`. Ambiguous
+matches, different origins/digests, moving another creator's skill, and taking
+a skill from another package/source path are blocking conflicts. Unchanged
+placements require no write permission; changed placements require the skill
+creator or owner/admin permission.
+
+Preview/apply responses contain `can_apply`, `changed`, `summary`, `folders`,
+`packages`, `placements` and `conflicts`. Preview additionally returns
+`preview_id`. Detail rows contain mapped target IDs, original `source_id` (or
+`source_skill_id`) and `action`; placements include `from_folder_id`, `from_path`
+and `to_path`. Actions are `create`, `reuse`, `update`, `place`, `move`,
+`unchanged`, `skipped` or `conflict`. Summary counts use those action names plus
+`conflicts`, `target_only_skills`, `target_only_folders`, `target_only_packages`
+and `target_only_placements`. `changed` becomes true only after a write commits.
+
+Malformed snapshots return 400/422 with `invalid_snapshot`,
+`dangling_reference`, `folder_cycle`, `managed_folder` or `invalid_package_root`.
+Plan conflicts use `folder_name_conflict`, `package_ref_mismatch`,
+`source_mismatch`, `ambiguous_target_skill`, `already_packaged` or `forbidden`.
+A valid token with conflicts returns 409 `migration_conflict` and the full
+report in `plan`. Expired/tampered tokens or changed source/target/permissions
+return 409 `preview_stale`.
+
+The signed preview expires after 15 minutes and binds caller, role, target
+workspace, source snapshot, target state and exact plan. Apply recomputes under
+the existing serializable workspace/member locks and locks changed skills
+before writes. Cleanup is deferred until the plan has actual writes; every
+mutation commits together or rolls back. Empty directories are preserved,
+without pruning either source or target-only directories. A fresh preview and
+repeat apply execute zero write SQL, do not increment package revisions, and
+return `changed:false`. An old token becomes stale after a successful change.
+Successful changes publish one existing `skill:updated` event with
+`organization_migrated:true`; preview and no-op apply publish none. Existing
+clients already invalidate the organization tree on that event.
+
+CLI: `multica skill folder tree` combines the tree with skill metadata to show
+classified skills, unimported candidates and an unclassified count. `export`
+writes JSON to stdout or `--output-file`. `migrate --from-file` or
+`--from-workspace` previews by default; only `--apply` writes. `--preview-id` is
+accepted only with `--apply --from-file`. Source workspace reads reuse the
+current client's credentials and attribution, so task-token isolation also
+applies to those reads. Conflicts print the full report and exit nonzero without
+sending apply. JSON stdout is one document; diagnostics use stderr. Failed
+writes are never retried automatically. After timeout/5xx, inspect a fresh
+preview before another explicit apply.
 
 ### Preview and apply
 
@@ -501,9 +599,10 @@ claim. Single and batch refresh diagnostics live in fork
 `refresh-skill-notices.tsx`, mounted from the upstream dialogs listed above;
 batch results include diagnostic `path`/`target`.
 
-The fork-created `server/cmd/server/testdata/labrastro-external-routes.tsv`
-records the 14 deny-by-default skill-package routes alongside other fork routes.
-It is not an upstream file.
+The former external-route inventory counted 14 skill-package routes. That
+inventory retired with external conversation authorization; the current
+organization endpoints bring this route group to 17. The retirement regression
+is `server/cmd/server/labrastro_conversation_retirement_test.go`.
 
 New fork tests include `apps/web/next.config.test.ts` (60,000 ms and API rewrite),
 the core package API/query tests, tree/model/dialog/picker suites,
