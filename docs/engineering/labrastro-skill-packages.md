@@ -51,12 +51,14 @@ Snapshot schema version 1 contains `schema_version`, UTC RFC3339 `exported_at`,
 | `packages` | `id`, `owner_repo`, `subdirectory`, `source_url`, `ref`, `root_folder_id`, `candidates` (path/name/description/digest summaries) |
 | `placements` | `skill_id`, `folder_id`, nullable `package_id`, nullable `source_path`, `skill: {name, origin, digest}` |
 
-`origin` contains only provenance fields from config, with URL credentials,
-queries and fragments removed. Arbitrary config, body text and bindings are
-never exported. `digest` hashes the existing name/description/content hash and
-sorted support-file hashes. The source workspace ID is informational: target
-requests never query that workspace. Source UUIDs are graph references, not
-IDs to write into the target. Each HTTP request uses exactly one workspace.
+`origin` contains only provenance fields from config, with URL whitespace trimmed
+and credentials, queries and fragments removed. Origins without a type become
+null. Runtime IDs, providers and host-local paths, arbitrary config, body text
+and bindings are never exported. `digest` hashes the existing
+name/description/content hash and sorted support-file hashes. The source
+workspace ID is informational: target requests never query that workspace.
+Source UUIDs are graph references, not IDs to write into the target. Each HTTP
+request uses exactly one workspace.
 
 POST bodies are limited to 8 MiB, reject unknown fields and trailing JSON.
 Validation requires nonzero unique UUIDs, unique sibling names and package
@@ -71,15 +73,26 @@ match by mapped parent plus name; managed folders match by mapped package plus
 package path. Existing package roots may move or rename only with importer or
 admin permission. Different package URLs/refs block the whole migration;
 candidate-only updates require the same permission and preserve the importer.
+Creating a managed subfolder in an existing package also requires importer or
+owner/admin permission. Sibling collisions and cycles are checked against the
+final mapped tree. Apply frees changing sibling names inside the transaction
+before creating folders and placing existing folders at their final locations,
+so renamed or moved roots can vacate names and two package roots can swap names.
 
 Skills match first through an existing package/source-path placement, otherwise
-through normalized GitHub/skills.sh origin (including unambiguous legacy slugs).
-With no origin match, a same-name target without origin must have the same
-digest. A missing skill is `skipped` with `target_skill_missing`. Ambiguous
-matches, different origins/digests, moving another creator's skill, and taking
-a skill from another package/source path are blocking conflicts. Unchanged
+through normalized remote origin. Legacy individual GitHub URLs supply
+repository and path; legacy skills.sh slugs use a known unambiguous path or,
+when no candidate path is known, repository plus slug. ClawHub requires a slug
+or a URL locating a skill.
+Runtime-local and other local origins never supply a cross-name identity.
+Without a remote match, names and digests must agree, and the target must either
+have no origin, share the same local origin type, or have identical normalized
+remote provenance. A missing skill is `skipped` with `target_skill_missing`.
+Ambiguous matches, different origins/digests, moving another creator's skill,
+and taking a skill from another package/source path are blocking conflicts. Unchanged
 placements require no write permission; changed placements require the skill
-creator or owner/admin permission.
+creator or owner/admin permission, plus importer or owner/admin permission for
+an existing destination package (including ordinary placements in its folders).
 
 Preview/apply responses contain `can_apply`, `changed`, `summary`, `folders`,
 `packages`, `placements` and `conflicts`. Preview additionally returns

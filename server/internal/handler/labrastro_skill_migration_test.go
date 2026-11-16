@@ -602,3 +602,240 @@ func TestLabrastroMigrationExistingRootConflicts(t *testing.T) {
 		})
 	}
 }
+
+func TestLabrastroMigrationManagedPackagePermissions(t *testing.T) {
+	for _, mode := range []string{"new folder", "package placement", "detached placement", "package move", "detached move", "unchanged"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newMigrationFixture(t)
+			p := migrationPreview(t, testHandler, f.target, f.snapshot)
+			migrationApply(t, testHandler, f.target, f.snapshot, p.PreviewID, 200)
+			other := f.target.User(t, "importer", uuid.NewString()+"@example.com")
+			f.target.Exec(t, "UPDATE labrastro_skill_package SET created_by=$1 WHERE id=$2", other, p.Packages[0].ID)
+			f.target.Exec(t, "UPDATE member SET role='member' WHERE workspace_id=$1 AND user_id=$2", f.target.WorkspaceID, testUserID)
+			switch mode {
+			case "new folder":
+				pkg := f.snapshot.Packages[0]
+				folderPath := "extra"
+				f.snapshot.Folders = append(f.snapshot.Folders, labrastroMigrationFolder{ID: parseUUID(uuid.NewString()), ParentID: pkg.RootFolderID, Name: "extra", PackageID: pkg.ID, PackagePath: &folderPath})
+			case "package placement", "detached placement", "package move", "detached move":
+				name := "alpha"
+				if strings.HasPrefix(mode, "detached") {
+					name = "detached"
+				}
+				if strings.HasSuffix(mode, "move") {
+					f.target.Exec(t, "UPDATE labrastro_skill_placement SET folder_id=$1 WHERE workspace_id=$2 AND skill_id=$3", p.Packages[0].RootFolderID, f.target.WorkspaceID, f.skills[name])
+				} else {
+					f.target.Exec(t, "DELETE FROM labrastro_skill_placement WHERE workspace_id=$1 AND skill_id=$2", f.target.WorkspaceID, f.skills[name])
+				}
+			}
+			before := migrationRows(t, f.target, true)
+			p = migrationPreview(t, testHandler, f.target, f.snapshot)
+			if mode == "unchanged" {
+				if !p.CanApply || p.Summary["unchanged"] != 3 {
+					t.Fatalf("read-only reuse must remain permitted: %+v", p)
+				}
+				migrationApply(t, testHandler, f.target, f.snapshot, p.PreviewID, 200)
+			} else {
+				if p.CanApply || len(p.Conflicts) != 1 || p.Conflicts[0].Code != "forbidden" {
+					t.Fatalf("non-importer mutated managed package: %+v", p)
+				}
+				migrationApply(t, testHandler, f.target, f.snapshot, p.PreviewID, 409)
+			}
+			if before != migrationRows(t, f.target, true) {
+				t.Fatal("denial or no-op changed metadata")
+			}
+			if mode != "unchanged" {
+				for _, role := range []string{"member", "admin", "owner"} {
+					f.target.Exec(t, "UPDATE member SET role=$1 WHERE workspace_id=$2 AND user_id=$3", role, f.target.WorkspaceID, testUserID)
+					creator := other
+					if role == "member" {
+						creator = testUserID
+					}
+					f.target.Exec(t, "UPDATE labrastro_skill_package SET created_by=$1 WHERE id=$2", creator, p.Packages[0].ID)
+					allowed := migrationPreview(t, testHandler, f.target, f.snapshot)
+					if !allowed.CanApply {
+						t.Fatalf("importer/admin/owner denied (%s): %+v", role, allowed)
+					}
+				}
+				migrationApply(t, testHandler, f.target, f.snapshot, migrationPreview(t, testHandler, f.target, f.snapshot).PreviewID, 200)
+			}
+		})
+	}
+}
+
+func TestLabrastroMigrationIndividualOrigins(t *testing.T) {
+	local := `{"origin":{"type":"runtime_local","runtime_id":"source-runtime","provider":"codex","source_path":"/private/source"}}`
+	localTarget := `{"origin":{"type":"runtime_local","runtime_id":"target-runtime","provider":"claude","source_path":"/private/target"}}`
+	legacySkills := `{"origin":{"type":"skills_sh","owner":"Example","repo":"Skills","skill":"alpha","source_url":"  https://skills.sh/Example/Skills/alpha  "}}`
+	github := `{"origin":{"type":"github","source_url":"  https://github.com/example/skills/tree/main/alpha  "}}`
+	for _, tc := range []struct {
+		name, source, target, targetName, content, code string
+		count                                           int
+	}{
+		{name: "runtime unrelated target preserved", source: local, target: localTarget, targetName: "unrelated", content: "different", code: "target_skill_missing"},
+		{name: "multiple runtime clones", source: local, target: localTarget, count: 2},
+		{name: "runtime changed digest", source: local, target: localTarget, content: "changed", code: "source_mismatch"},
+		{name: "runtime clone without origin", source: local, target: `{}`},
+		{name: "empty origin", source: `{"origin":{}}`, target: `{"origin":{}}`},
+		{name: "individual legacy skills sh", source: legacySkills, target: legacySkills},
+		{name: "legacy skills sh renamed", source: legacySkills, target: legacySkills, targetName: "renamed"},
+		{name: "URL only github", source: github, target: github},
+		{name: "URL only github resolved path", source: github, target: `{"origin":{"type":"github","owner":"example","repo":"skills","path":"alpha"}}`, targetName: "renamed"},
+		{name: "URL only github slash ref", source: `{"origin":{"type":"github","source_url":"https://github.com/example/skills/tree/release/v2/alpha","ref":"release/v2"}}`, target: `{"origin":{"type":"github","owner":"example","repo":"skills","path":"alpha"}}`, targetName: "renamed"},
+		{name: "URL only github inconsistent ref", source: `{"origin":{"type":"github","source_url":"https://github.com/example/skills/tree/main/alpha","ref":"release/v2"}}`, target: `{"origin":{"type":"github","owner":"example","repo":"skills","path":"alpha"}}`, code: "source_mismatch"},
+		{name: "clawhub missing locator", source: `{"origin":{"type":"clawhub"}}`, target: `{"origin":{"type":"clawhub"}}`, targetName: "unrelated", code: "target_skill_missing"},
+		{name: "clawhub slug", source: `{"origin":{"type":"clawhub","slug":"alpha"}}`, target: `{"origin":{"type":"clawhub","slug":"alpha"}}`, targetName: "renamed"},
+		{name: "clawhub URL", source: `{"origin":{"type":"clawhub","source_url":"https://clawhub.ai/example/alpha"}}`, target: `{"origin":{"type":"clawhub","source_url":"https://clawhub.ai/example/alpha"}}`, targetName: "renamed"},
+		{name: "clawhub URL and slug", source: `{"origin":{"type":"clawhub","source_url":"https://clawhub.ai/example/alpha"}}`, target: `{"origin":{"type":"clawhub","slug":"alpha"}}`, targetName: "renamed"},
+		{name: "clawhub homepage is not an identity", source: `{"origin":{"type":"clawhub","source_url":"https://clawhub.ai/"}}`, target: `{"origin":{"type":"clawhub","source_url":"https://clawhub.ai/"}}`, targetName: "unrelated", code: "target_skill_missing"},
+		{name: "different local type", source: local, target: `{"origin":{"type":"archive"}}`, code: "source_mismatch"},
+		{name: "no source origin cannot adopt remote", source: `{}`, target: github, code: "source_mismatch"},
+		{name: "incomplete remote clone", source: `{"origin":{"type":"github","owner":"example","repo":"skills"}}`, target: `{"origin":{"type":"github","owner":"example","repo":"skills"}}`},
+		{name: "incomplete remote changed digest", source: `{"origin":{"type":"github","owner":"example","repo":"skills"}}`, target: `{"origin":{"type":"github","owner":"example","repo":"skills"}}`, content: "changed", code: "source_mismatch"},
+		{name: "different remote origin", source: legacySkills, target: github, code: "source_mismatch"},
+		{name: "unknown local kind", source: `{"origin":{"type":"archive"}}`, target: `{"origin":{"type":"archive"}}`, targetName: "unrelated", code: "target_skill_missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src, dst := labrastroPackageDBFixture(t), labrastroPackageDBFixture(t)
+			folder := src.Insert(t, "labrastro_skill_folder", testutil.Cols{"workspace_id": src.WorkspaceID, "name": "Custom"})
+			keep := dst.Insert(t, "labrastro_skill_folder", testutil.Cols{"workspace_id": dst.WorkspaceID, "name": "Keep"})
+			targetIDs := map[string]string{}
+			for i := 0; i < max(1, tc.count); i++ {
+				name := fmt.Sprintf("skill-%d", i)
+				sid := src.Insert(t, "skill", testutil.Cols{"workspace_id": src.WorkspaceID, "name": name, "content": "body", "created_by": testUserID, "config": tc.source})
+				src.InsertNoID(t, "labrastro_skill_placement", testutil.Cols{"workspace_id": src.WorkspaceID, "skill_id": sid, "folder_id": folder}, "workspace_id=$1 AND skill_id=$2", src.WorkspaceID, sid)
+				targetName, content := name, "body"
+				if tc.targetName != "" {
+					targetName = tc.targetName
+				}
+				if tc.content != "" {
+					content = tc.content
+				}
+				targetIDs[name] = dst.Insert(t, "skill", testutil.Cols{"workspace_id": dst.WorkspaceID, "name": targetName, "content": content, "created_by": testUserID, "config": tc.target})
+				if tc.code == "target_skill_missing" {
+					dst.InsertNoID(t, "labrastro_skill_placement", testutil.Cols{"workspace_id": dst.WorkspaceID, "skill_id": targetIDs[name], "folder_id": keep}, "workspace_id=$1 AND skill_id=$2", dst.WorkspaceID, targetIDs[name])
+				}
+			}
+			var s labrastroOrganizationSnapshot
+			labrastroCall(t, src, testUserID, testHandler.LabrastroExportSkillOrganization, "GET", nil).Want(200).JSON(&s)
+			raw, _ := json.Marshal(s)
+			if strings.Contains(string(raw), "/private/") || strings.Contains(string(raw), "source-runtime") {
+				t.Fatal("export leaked host-local identity")
+			}
+			if tc.name == "empty origin" && s.Placements[0].Skill.Origin != nil {
+				t.Fatal("empty origin must normalize to nil")
+			}
+			before, immutable := migrationRows(t, dst, true), migrationRows(t, dst, false)
+			p := migrationPreview(t, testHandler, dst, s)
+			for _, place := range p.Placements {
+				if place.Code != tc.code || (tc.code == "" && uuidToString(place.SkillID) != targetIDs[place.Skill.Name]) {
+					t.Fatalf("incorrect mapping: %+v", p)
+				}
+			}
+			if tc.code == "source_mismatch" {
+				if p.CanApply {
+					t.Fatal("source mismatch accepted")
+				}
+				migrationApply(t, testHandler, dst, s, p.PreviewID, 409)
+				if before != migrationRows(t, dst, true) {
+					t.Fatal("conflict changed metadata")
+				}
+			} else {
+				if !p.CanApply {
+					t.Fatalf("valid individual imports rejected: %+v", p)
+				}
+				migrationApply(t, testHandler, dst, s, p.PreviewID, 200)
+				if tc.code == "target_skill_missing" && (p.Summary["target_only_skills"] != 1 || p.Summary["target_only_placements"] != 1 || dst.Count(t, "SELECT count(*) FROM labrastro_skill_placement WHERE workspace_id=$1 AND folder_id=$2", dst.WorkspaceID, keep) != 1) {
+					t.Fatal("unrelated target skill was hijacked")
+				}
+			}
+			if immutable != migrationRows(t, dst, false) {
+				t.Fatal("migration changed skill data")
+			}
+		})
+	}
+}
+
+func TestLabrastroMigrationLegacySlugMapping(t *testing.T) {
+	o := labrastroMigrationOriginFromConfig([]byte(`{"origin":{"type":"skills_sh","owner":"example","repo":"skills","source_url":"https://skills.sh/example/skills/alpha"}}`))
+	known := labrastroMigrationOriginFromConfig([]byte(`{"origin":{"type":"github","owner":"example","repo":"skills","path":"tools/alpha"}}`))
+	standalone := labrastroMigrationIdentity(o, nil)
+	if standalone == "" || standalone == labrastroMigrationIdentity(known, nil) {
+		t.Fatal("standalone slug must identify the skill without guessing a repository path")
+	}
+	for _, paths := range [][]string{{"tools/alpha"}, {"tools/alpha", "other/alpha"}} {
+		legacy := map[string]map[string][]string{"example/skills": {"alpha": paths}}
+		got := labrastroMigrationIdentity(o, legacy)
+		if len(paths) == 1 && got != labrastroMigrationIdentity(known, nil) {
+			t.Fatal("unambiguous legacy slug did not resolve to the known path")
+		}
+		if len(paths) > 1 && got != "" {
+			t.Fatal("ambiguous legacy slug must not guess a path or fall back to a global slug identity")
+		}
+	}
+}
+
+func TestLabrastroMigrationReordersExistingRoots(t *testing.T) {
+	for _, mode := range []string{"rename", "move", "swap", "rollback"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newMigrationFixture(t)
+			pkg := f.snapshot.Packages[0]
+			f.source.Exec(t, "UPDATE labrastro_skill_folder SET name='Alpha',parent_id=NULL WHERE id=$1", pkg.RootFolderID)
+			otherPkg := uuid.NewString()
+			otherRoot := f.source.Insert(t, "labrastro_skill_folder", testutil.Cols{"workspace_id": f.source.WorkspaceID, "name": "Beta", "package_id": otherPkg, "package_path": ""})
+			f.source.Insert(t, "labrastro_skill_package", testutil.Cols{"id": otherPkg, "workspace_id": f.source.WorkspaceID, "owner_repo": "example/other", "source_url": "https://github.com/example/other/tree/main", "source_ref": "main", "root_folder_id": otherRoot, "created_by": testUserID})
+			labrastroCall(t, f.source, testUserID, testHandler.LabrastroExportSkillOrganization, "GET", nil).Want(200).JSON(&f.snapshot)
+			p := migrationPreview(t, testHandler, f.target, f.snapshot)
+			migrationApply(t, testHandler, f.target, f.snapshot, p.PreviewID, 200)
+			if mode == "swap" {
+				f.source.Exec(t, "UPDATE labrastro_skill_folder SET name='Temporary' WHERE id=$1", pkg.RootFolderID)
+				f.source.Exec(t, "UPDATE labrastro_skill_folder SET name='Alpha' WHERE id=$1", otherRoot)
+				f.source.Exec(t, "UPDATE labrastro_skill_folder SET name='Beta' WHERE id=$1", pkg.RootFolderID)
+			} else {
+				if mode == "move" {
+					parent := f.source.Insert(t, "labrastro_skill_folder", testutil.Cols{"workspace_id": f.source.WorkspaceID, "name": "New parent"})
+					f.source.Exec(t, "UPDATE labrastro_skill_folder SET parent_id=$1 WHERE id=$2", parent, pkg.RootFolderID)
+				} else {
+					f.source.Exec(t, "UPDATE labrastro_skill_folder SET name='Zeta' WHERE id=$1", pkg.RootFolderID)
+				}
+				f.source.Insert(t, "labrastro_skill_folder", testutil.Cols{"workspace_id": f.source.WorkspaceID, "name": "Alpha"})
+			}
+			labrastroCall(t, f.source, testUserID, testHandler.LabrastroExportSkillOrganization, "GET", nil).Want(200).JSON(&f.snapshot)
+			p = migrationPreview(t, testHandler, f.target, f.snapshot)
+			if !p.CanApply {
+				t.Fatalf("final sibling graph is valid: %+v", p)
+			}
+			h := *testHandler
+			before := migrationRows(t, f.target, true)
+			if mode == "rollback" {
+				constraint := "test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+				f.target.Exec(t, fmt.Sprintf("ALTER TABLE labrastro_skill_folder ADD CONSTRAINT %s CHECK (workspace_id <> '%s'::uuid OR name <> 'Zeta') NOT VALID", constraint, f.target.WorkspaceID))
+				f.target.Cleanup(t, "ALTER TABLE labrastro_skill_folder DROP CONSTRAINT "+constraint)
+				migrationApply(t, &h, f.target, f.snapshot, p.PreviewID, 500)
+				if before != migrationRows(t, f.target, true) {
+					t.Fatal("failed final rename left temporary names or partial creates")
+				}
+				return
+			}
+			immutable := migrationRows(t, f.target, false)
+			migrationApply(t, &h, f.target, f.snapshot, p.PreviewID, 200)
+			for _, folder := range p.Folders {
+				if f.target.Count(t, "SELECT count(*) FROM labrastro_skill_folder WHERE id=$1 AND name=$2 AND parent_id IS NOT DISTINCT FROM $3", folder.ID, folder.Name, folder.ParentID) != 1 {
+					t.Fatalf("folder did not reach final location: %+v", folder)
+				}
+			}
+			before = migrationRows(t, f.target, true)
+			p = migrationPreview(t, &h, f.target, f.snapshot)
+			begins, writes := 0, 0
+			h.TxStarter = labrastroQueryHookStarter{h.TxStarter, func(sql string) {
+				if strings.Contains(sql, "UPDATE ") || strings.Contains(sql, "INSERT INTO") || strings.Contains(sql, "DELETE FROM") {
+					writes++
+				}
+			}, &begins}
+			migrationApply(t, &h, f.target, f.snapshot, p.PreviewID, 200)
+			if writes != 0 || before != migrationRows(t, f.target, true) || immutable != migrationRows(t, f.target, false) {
+				t.Fatal("reordering was not idempotent or changed skill data")
+			}
+		})
+	}
+}

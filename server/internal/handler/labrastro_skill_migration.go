@@ -123,17 +123,24 @@ func labrastroMigrationOriginFromConfig(config []byte) *labrastroMigrationOrigin
 		Origin *labrastroMigrationOrigin `json:"origin"`
 	}
 	_ = json.Unmarshal(config, &v)
-	if v.Origin != nil && v.Origin.SourceURL != "" {
+	return labrastroNormalizeMigrationOrigin(v.Origin)
+}
+func labrastroNormalizeMigrationOrigin(origin *labrastroMigrationOrigin) *labrastroMigrationOrigin {
+	if origin == nil || origin.Type == "" {
+		return nil
+	}
+	o := *origin
+	if o.SourceURL != "" {
 		// Credentials in a hand-edited provenance URL must never be exported.
-		u, err := url.Parse(v.Origin.SourceURL)
+		u, err := url.Parse(strings.TrimSpace(o.SourceURL))
 		if err != nil {
-			v.Origin.SourceURL = ""
+			o.SourceURL = ""
 		} else {
 			u.User, u.RawQuery, u.Fragment = nil, "", ""
-			v.Origin.SourceURL = u.String()
+			o.SourceURL = u.String()
 		}
 	}
-	return v.Origin
+	return &o
 }
 func (h *Handler) labrastroReadOrganization(ctx context.Context, a labrastroSkillActor) (labrastroPackageSnapshot, error) {
 	tx, err := h.TxStarter.Begin(ctx)
@@ -367,10 +374,28 @@ func labrastroMigrationLegacyPaths(s labrastroOrganizationSnapshot) map[string]m
 	return result
 }
 func labrastroMigrationIdentity(o *labrastroMigrationOrigin, legacy map[string]map[string][]string) string {
+	o = labrastroNormalizeMigrationOrigin(o)
 	if o == nil {
 		return ""
 	}
 	if o.Type == "github" || o.Type == "skills_sh" {
+		// Individual imports predating resolved provenance may have only a URL.
+		if o.Type == "github" && o.Path == nil {
+			if spec, err := labrastroParsePackageURL(o.SourceURL); err == nil &&
+				(o.Owner == "" || strings.EqualFold(o.Owner, spec.owner)) &&
+				(o.Repo == "" || strings.EqualFold(o.Repo, spec.repo)) {
+				o.Owner, o.Repo = spec.owner, spec.repo
+				if o.Ref != "" && len(spec.refSegments) > 0 {
+					// Honor stored slash-containing refs without resolving them online.
+					rest := strings.Join(spec.refSegments, "/")
+					if rest != o.Ref && !strings.HasPrefix(rest, o.Ref+"/") {
+						return ""
+					}
+					spec.skillDir = strings.TrimPrefix(strings.TrimPrefix(rest, o.Ref), "/")
+				}
+				o.Path = &spec.skillDir
+			}
+		}
 		if o.Owner == "" || o.Repo == "" {
 			return ""
 		}
@@ -380,13 +405,39 @@ func labrastroMigrationIdentity(o *labrastroMigrationOrigin, legacy map[string]m
 		if p, ok := labrastroSourceIdentity(config, src, legacy[repo]); ok {
 			return repo + "\x00" + p
 		}
+		if o.Type == "skills_sh" && o.Path == nil {
+			owner, repository, slug, err := parseSkillsShParts(o.SourceURL)
+			if err == nil && strings.EqualFold(owner+"/"+repository, repo) && len(legacy[repo][slug]) == 0 {
+				return "skills_sh\x00" + repo + "\x00" + slug
+			}
+		}
 		return ""
 	}
-	// Other provenance kinds can only match identical, nonempty identities.
-	if o.Type == "" {
-		return ""
+	if o.Type == "clawhub" {
+		if o.Slug != "" {
+			return "clawhub\x00" + o.Slug
+		}
+		if source, normalized, err := detectImportSource(o.SourceURL); err == nil && source == sourceClawHub {
+			if slug, err := parseClawHubSlug(normalized); err == nil {
+				return "clawhub\x00" + slug
+			}
+		}
 	}
-	return "origin\x00" + labrastroJSONHash(o)
+	// Local provenance omits host-private identifiers and is never globally unique.
+	return ""
+}
+func labrastroMigrationCompatibleOrigins(source, target *labrastroMigrationOrigin) bool {
+	source, target = labrastroNormalizeMigrationOrigin(source), labrastroNormalizeMigrationOrigin(target)
+	if target == nil {
+		return true
+	}
+	if source == nil || source.Type != target.Type {
+		return false
+	}
+	if _, remote := refreshableOriginSource(source.Type); !remote {
+		return true
+	}
+	return labrastroJSONHash(source) == labrastroJSONHash(target)
 }
 func labrastroMigrationFolderPath(id pgtype.UUID, folders map[pgtype.UUID]labrastroMigrationFolder) string {
 	parts := []string{}
@@ -495,31 +546,41 @@ func labrastroPlanMigration(a labrastroSkillActor, source labrastroOrganizationS
 				}
 				if old.ParentID != item.ParentID || old.Name != item.Name {
 					item.Action = "update"
-					if labrastroRequirePackageOwner(existingPackage, a, target.Member) != nil {
-						conflict("folder", f.ID, "forbidden", "managed folder update requires importer or admin permission")
-					}
 				}
 			}
+			if existingPackage.ID.Valid && item.Action != "reuse" && labrastroRequirePackageOwner(existingPackage, a, target.Member) != nil {
+				conflict("folder", f.ID, "forbidden", "managed folder mutation requires importer or admin permission")
+			}
 		}
-		if occupied.Valid && occupied != item.ID {
-			conflict("folder", f.ID, "folder_name_conflict", "target sibling name is already occupied")
+		if _, exists := originalFolders[item.ID]; exists {
+			usedFolders[item.ID] = true
 		}
+		folders[item.ID] = item.labrastroMigrationFolder
+		folderMap[f.ID] = item.ID
+		plan.Folders = append(plan.Folders, item)
+	}
+	// Validate the complete final graph. Old managed sibling slots may be reused
+	// even when their owners occur later in the source's breadth-first order.
+	bySibling = map[string]pgtype.UUID{}
+	for id, f := range originalFolders {
+		if !usedFolders[id] {
+			bySibling[labrastroMigrationSibling(f.ParentID, f.Name)] = id
+		}
+	}
+	for _, item := range plan.Folders {
+		sibling := labrastroMigrationSibling(item.ParentID, item.Name)
+		if occupied := bySibling[sibling]; occupied.Valid && occupied != item.ID {
+			conflict("folder", item.SourceID, "folder_name_conflict", "target sibling name is already occupied")
+		}
+		bySibling[sibling] = item.ID
 		seen := map[pgtype.UUID]bool{}
 		for parent := item.ParentID; parent.Valid; parent = folders[parent].ParentID {
 			if parent == item.ID || seen[parent] {
-				conflict("folder", f.ID, "folder_cycle", "mapped folder move would create a cycle")
+				conflict("folder", item.SourceID, "folder_cycle", "mapped folder move would create a cycle")
 				break
 			}
 			seen[parent] = true
 		}
-		if old, exists := folders[item.ID]; exists {
-			usedFolders[item.ID] = true
-			delete(bySibling, labrastroMigrationSibling(old.ParentID, old.Name))
-		}
-		folders[item.ID] = item.labrastroMigrationFolder
-		bySibling[sibling] = item.ID
-		folderMap[f.ID] = item.ID
-		plan.Folders = append(plan.Folders, item)
 	}
 	for i := range plan.Packages {
 		plan.Packages[i].RootFolderID = folderMap[plan.Packages[i].RootFolderID]
@@ -577,8 +638,8 @@ func labrastroPlanMigration(a labrastroSkillActor, source labrastroOrganizationS
 			st := matches[0]
 			item.SkillID = st.ID
 			sameOrigin := sourceIdentity != "" && sourceIdentity == identities[st.ID]
-			sameLocal := origins[st.ID] == nil && st.Name == p.Skill.Name && labrastroStateDigest(st) == p.Skill.Digest
-			if !(sameOrigin || sameLocal) || (p.Skill.Origin == nil && origins[st.ID] != nil) {
+			sameLocal := st.Name == p.Skill.Name && labrastroStateDigest(st) == p.Skill.Digest && labrastroMigrationCompatibleOrigins(p.Skill.Origin, origins[st.ID])
+			if !(sameOrigin || sameLocal) {
 				code = "source_mismatch"
 			} else if usedSkills[st.ID] {
 				code = "ambiguous_target_skill"
@@ -596,6 +657,13 @@ func labrastroPlanMigration(a labrastroSkillActor, source labrastroOrganizationS
 					code = "already_packaged"
 				} else if current.FolderID.Valid {
 					item.Action = "move"
+				}
+			}
+			if code == "" && (item.Action == "place" || item.Action == "move") {
+				for _, id := range []pgtype.UUID{item.PackageID, folders[item.FolderID].PackageID} {
+					if pkg := targetPackages[id]; pkg.ID.Valid && labrastroRequirePackageOwner(pkg, a, target.Member) != nil {
+						code = "forbidden"
+					}
 				}
 			}
 		}
@@ -710,7 +778,7 @@ func (h *Handler) labrastroSkillMigration(w http.ResponseWriter, r *http.Request
 	}
 	changed := plan.Summary["create"]+plan.Summary["update"]+plan.Summary["move"]+plan.Summary["place"] > 0
 	if changed {
-		err = labrastroWriteMigration(ctx, q, a, target.Member, plan)
+		err = labrastroWriteMigration(ctx, q, a, target, plan)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -727,7 +795,7 @@ func (h *Handler) labrastroSkillMigration(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, 200, plan)
 }
-func labrastroWriteMigration(ctx context.Context, q *db.Queries, a labrastroSkillActor, m db.Member, plan labrastroMigrationPlan) error {
+func labrastroWriteMigration(ctx context.Context, q *db.Queries, a labrastroSkillActor, target labrastroPackageSnapshot, plan labrastroMigrationPlan) error {
 	// Acquire skill locks in UUID order before any mutation, matching other writers.
 	places := append([]labrastroMigrationPlacementPlan{}, plan.Placements...)
 	sort.Slice(places, func(i, j int) bool { return uuidToString(places[i].SkillID) < uuidToString(places[j].SkillID) })
@@ -739,23 +807,40 @@ func labrastroWriteMigration(ctx context.Context, q *db.Queries, a labrastroSkil
 		if err != nil {
 			return err
 		}
-		if !labrastroCanManage(st.CreatedBy, a, m) {
+		if !labrastroCanManage(st.CreatedBy, a, target.Member) {
 			return labrastroStalePreview()
 		}
 	}
 	if err := q.LabrastroCleanSkillPlacements(ctx, a.ws); err != nil {
 		return err
 	}
+	originalParents := map[pgtype.UUID]pgtype.UUID{}
+	for _, f := range target.Folders {
+		originalParents[f.ID] = f.ParentID
+	}
+	// Free all changing sibling slots before any final names are occupied. The
+	// immediate unique index otherwise rejects swaps and reuse of vacated names.
 	for _, f := range plan.Folders {
-		var err error
-		switch f.Action {
-		case "create":
-			_, err = q.LabrastroCreateSkillFolder(ctx, db.LabrastroCreateSkillFolderParams{ID: f.ID, WorkspaceID: a.ws, ParentID: f.ParentID, Name: f.Name, PackageID: f.PackageID, PackagePath: labrastroMigrationText(f.PackagePath)})
-		case "update":
-			_, err = q.LabrastroUpdateSkillFolder(ctx, db.LabrastroUpdateSkillFolderParams{WorkspaceID: a.ws, ID: f.ID, ParentID: f.ParentID, Name: f.Name})
+		if f.Action == "update" {
+			if _, err := q.LabrastroUpdateSkillFolder(ctx, db.LabrastroUpdateSkillFolderParams{WorkspaceID: a.ws, ID: f.ID, ParentID: originalParents[f.ID], Name: uuid.NewString()}); err != nil {
+				return err
+			}
 		}
-		if err != nil {
-			return err
+	}
+	for _, action := range []string{"create", "update"} {
+		for _, f := range plan.Folders {
+			var err error
+			if f.Action != action {
+				continue
+			}
+			if action == "create" {
+				_, err = q.LabrastroCreateSkillFolder(ctx, db.LabrastroCreateSkillFolderParams{ID: f.ID, WorkspaceID: a.ws, ParentID: f.ParentID, Name: f.Name, PackageID: f.PackageID, PackagePath: labrastroMigrationText(f.PackagePath)})
+			} else {
+				_, err = q.LabrastroUpdateSkillFolder(ctx, db.LabrastroUpdateSkillFolderParams{WorkspaceID: a.ws, ID: f.ID, ParentID: f.ParentID, Name: f.Name})
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, p := range plan.Packages {
