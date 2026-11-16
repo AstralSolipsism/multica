@@ -134,6 +134,49 @@ sending apply. JSON stdout is one document; diagnostics use stderr. Failed
 writes are never retried automatically. After timeout/5xx, inspect a fresh
 preview before another explicit apply.
 
+### Workspace management CLI
+
+Fork commands live in `server/cmd/multica/cmd_labrastro_skill_*.go` and reuse the
+existing authenticated API client and server permission checks. No frontend,
+upstream skill/agent command, schema or query additions are required.
+
+| Command | Contract |
+| --- | --- |
+| `skill folder tree [--full-id]` | Default table; folders and skills show short IDs, package roots `[package]`, internal directories `[managed]`, ordinary placements inside package folders `[detached]`. Unimported candidates use the same common-parent-prefix trimming as `labrastroCandidateFolderPath` / `grayCandidates`, with package-root fallback. JSON remains compatible. |
+| `skill folder list [--full-id]` | GET tree; JSON returns its folders array; default table columns ID, NAME, PATH, KIND (`custom`, `package-root`, `package-managed`). |
+| `skill folder get <folder>` | JSON folder object; table includes full path, parent/package IDs and direct folder/skill counts. |
+| `skill folder create --name <name> [--parent <folder>]` | POST existing folder route after parent resolution. |
+| `skill folder update <folder> [--name <name>] [--parent <folder> \| --root]` | PATCH; parent/root mutually exclusive; root sends `parent_id:""`; omitted parent stays unchanged. No changes is an error. |
+| `skill folder delete <folder>` | DELETE custom folder; promote direct contents, preserving skills. |
+| `skill folder move-skill <skill>... (--folder <folder> \| --root)` | Resolve the destination and all skills, full UUIDs included, before any PUT; deduplicate in argument order. Root sends `folder_id:""`. Stop on first write failure, never retry. |
+| `skill folder detach-skill <skill>` | POST detach; preserve the folder, return `{skill_id,updated:true}`. |
+| `skill folder export` / `migrate` | Existing snapshot and atomic metadata migration contract above; unchanged. |
+| `skill package list [--full-id]` / `get <package>` | Existing JSON; list table uses short IDs by default. |
+| `skill package rescan <package> [--url <url>] [--apply]` | Optional same-repository branch/tag URL is carried in both preview and apply. Existing selection/conflict flags remain supported. |
+| `skill package dissolve <package> [--dry-run]` | Validate delete-preview, then POST its preview_id; dry-run only prints the impact. |
+| `skill package delete <package> [--dry-run] [--yes\|-y]` | Validate delete-preview; refuse can_delete=false without prompting; otherwise require y/yes on stdin or explicit yes flag, then DELETE with preview_id and a fresh timeout. Empty non-interactive stdin errors; other answers abort. |
+
+List/tree default to table; other reads/writes default to JSON. All accept
+`--output json|table` (export remains JSON-only). JSON stdout is one document,
+with prompts and read-only notices on stderr. Package deletion validates
+`deleted`, `dissolved` and `skill_count` before reporting success. Previews expose
+each affected agent-skill binding, not just a distinct agent count.
+
+References resolve full UUIDs, then exact names/sources/paths, then unique hex
+UUID prefixes of at least four characters. Package references support unique
+`owner/repo`, or explicit `owner/repo:subdirectory` (`owner/repo:` for the root).
+Folder names are case-sensitive and must be workspace-unique unless a full
+root-relative path is given. Name/source ambiguities list IDs and full paths;
+prefix ambiguity uses the upstream `--full-id` guidance. Skill names must be
+workspace-unique. The batch move resolver verifies every supplied UUID exists.
+
+Successful moves return `{updated:true,folder_id:<uuid-or-null>,skill_ids:[...]}`.
+Partial failures return nonzero and print a full JSON report even in table mode:
+`{updated:false,folder_id,skill_ids:[<completed>],failed:{skill_id,error,status,response}}`.
+`status` and the original server `response` are included for HTTP errors;
+transport/malformed-response failures leave that item's outcome indeterminate.
+No subsequent items are written and no write is automatically retried.
+
 ### Preview and apply
 
 `POST /api/skill-packages/preview`:
@@ -390,6 +433,14 @@ folders cannot be rearranged or used as destinations for custom content.
 Their paths strip the common parent prefix of all discovered candidates.
 Updated placements prune empty managed folders, preserving any detached skills.
 All tree mutation transactions prevent cycles and enforce workspace scope.
+
+Folder deletion releases the deleted row's sibling name **before** promoting
+its children. A same-named child can take its place; a collision with another
+existing sibling rolls back the whole transaction. Create/update/delete folder
+and move/detach skill publish `skill:updated` with `folder_tree_updated:true`
+only after a successful commit. Dissolution and deletion of an empty package
+publish the same event; nonempty deletion retains its per-skill `skill:deleted`
+events. Rollbacks publish neither.
 
 ### Dissolve and delete
 

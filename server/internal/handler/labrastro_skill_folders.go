@@ -255,6 +255,8 @@ func (h *Handler) LabrastroCreateFolder(w http.ResponseWriter, r *http.Request) 
 		labrastroWriteSkillError(w, err)
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
+	h.publish(protocol.EventSkillUpdated, uuidToString(a.ws), actorType, actorID, map[string]any{"folder_tree_updated": true})
 	writeJSON(w, 201, f)
 }
 func (h *Handler) LabrastroUpdateFolder(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +325,8 @@ func (h *Handler) LabrastroUpdateFolder(w http.ResponseWriter, r *http.Request) 
 		labrastroWriteSkillError(w, err)
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
+	h.publish(protocol.EventSkillUpdated, uuidToString(a.ws), actorType, actorID, map[string]any{"folder_tree_updated": true})
 	writeJSON(w, 200, f)
 }
 func (h *Handler) LabrastroDeleteFolder(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +349,10 @@ func (h *Handler) LabrastroDeleteFolder(w http.ResponseWriter, r *http.Request) 
 	if err == nil && f.PackageID.Valid {
 		err = labrastroSkillError(409, "managed_folder", "use package dissolve or delete for a managed folder")
 	}
+	// Release this name before a same-named child takes its place.
+	if err == nil {
+		err = q.LabrastroDeleteSkillFolder(ctx, db.LabrastroDeleteSkillFolderParams{WorkspaceID: a.ws, ID: id})
+	}
 	if err == nil {
 		err = q.LabrastroPromoteSkillFolders(ctx, db.LabrastroPromoteSkillFoldersParams{WorkspaceID: a.ws, ParentID: id, ParentID_2: f.ParentID})
 	}
@@ -356,15 +364,14 @@ func (h *Handler) LabrastroDeleteFolder(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err == nil {
-		err = q.LabrastroDeleteSkillFolder(ctx, db.LabrastroDeleteSkillFolderParams{WorkspaceID: a.ws, ID: id})
-	}
-	if err == nil {
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
 		labrastroWriteSkillError(w, err)
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
+	h.publish(protocol.EventSkillUpdated, uuidToString(a.ws), actorType, actorID, map[string]any{"folder_tree_updated": true})
 	writeJSON(w, 200, map[string]bool{"deleted": true})
 }
 func (h *Handler) LabrastroMoveSkill(w http.ResponseWriter, r *http.Request) {
@@ -436,6 +443,8 @@ func (h *Handler) labrastroChangeSkillPlacement(w http.ResponseWriter, r *http.R
 		labrastroWriteSkillError(w, err)
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
+	h.publish(protocol.EventSkillUpdated, uuidToString(a.ws), actorType, actorID, map[string]any{"folder_tree_updated": true})
 	writeJSON(w, 200, map[string]bool{"updated": true})
 }
 
@@ -676,8 +685,11 @@ func (h *Handler) labrastroRemovePackage(w http.ResponseWriter, r *http.Request,
 		labrastroWriteSkillError(w, err)
 		return
 	}
+	actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
+	if !deleteSkills || len(ids) == 0 {
+		h.publish(protocol.EventSkillUpdated, uuidToString(a.ws), actorType, actorID, map[string]any{"folder_tree_updated": true})
+	}
 	if deleteSkills {
-		actorType, actorID := h.resolveActor(r, uuidToString(a.user), uuidToString(a.ws))
 		for _, sid := range ids {
 			h.publish(protocol.EventSkillDeleted, uuidToString(a.ws), actorType, actorID, map[string]any{"skill_id": uuidToString(sid)})
 		}

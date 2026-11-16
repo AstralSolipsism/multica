@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 func init() { skillCmd.AddCommand(newSkillFolderCmd()) }
 func newSkillFolderCmd() *cobra.Command {
-	group := &cobra.Command{Use: "folder", Short: "Inspect and migrate skill organization without changing skill contents"}
+	group := &cobra.Command{Use: "folder", Short: "Manage and migrate skill organization without changing skill contents"}
 	for _, action := range []string{"tree", "export", "migrate"} {
 		cmd := &cobra.Command{Use: action, Args: exactArgs(0), RunE: runSkillFolder}
 		output := "json"
@@ -23,6 +24,7 @@ func newSkillFolderCmd() *cobra.Command {
 		case "tree":
 			cmd.Short = "Show folders, packages, placements and unimported candidates"
 			output = "table"
+			cmd.Flags().Bool("full-id", false, "Show full UUIDs")
 		case "export":
 			cmd.Short = "Export the current workspace's organization snapshot"
 			cmd.Flags().String("output-file", "", "Write the JSON snapshot to this file")
@@ -41,6 +43,7 @@ func newSkillFolderCmd() *cobra.Command {
 		cmd.Flags().String("output", output, "Output format: table or json (export: json only)")
 		group.AddCommand(cmd)
 	}
+	addSkillFolderManagement(group)
 	return group
 }
 func runSkillFolder(cmd *cobra.Command, _ []string) error {
@@ -69,27 +72,13 @@ func runSkillFolder(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("source and target workspace must differ")
 	}
 	if cmd.Name() == "tree" {
-		tree, err := requestSkillPackage(cmd, client, "/api/skill-folders", nil)
+		tree, err := readSkillFolderTree(cmd, client)
 		if err != nil {
 			return err
 		}
-		if err := validateSkillFolderResponse(tree, "tree"); err != nil {
+		skills, err := readSkillFolderSkills(cmd, client)
+		if err != nil {
 			return err
-		}
-		// The tree endpoint intentionally contains only organization metadata.
-		ctx, cancel := cli.APIContext(cmd.Context())
-		defer cancel()
-		var skills []map[string]any
-		if err := client.GetJSON(ctx, "/api/skills", &skills); err != nil {
-			return err
-		}
-		if skills == nil {
-			return fmt.Errorf("skill list response must be an array")
-		}
-		for _, s := range skills {
-			if !skillFolderUUID(s["id"], false) || !skillPackageStrings(s, true, "name") {
-				return fmt.Errorf("malformed skill list response")
-			}
 		}
 		tree["skills"] = skills
 		classified := map[string]bool{}
@@ -386,6 +375,7 @@ func printSkillMigration(cmd *cobra.Command, result map[string]any) error {
 }
 func printSkillFolderTree(cmd *cobra.Command, tree map[string]any, skills []map[string]any) {
 	w := cmd.OutOrStdout()
+	fullID, _ := cmd.Flags().GetBool("full-id")
 	names := map[string]string{}
 	for _, s := range skills {
 		names[strVal(s, "id")] = strVal(s, "name")
@@ -408,10 +398,39 @@ func printSkillFolderTree(cmd *cobra.Command, tree map[string]any, skills []map[
 			imported[strVal(p, "package_id")+"\x00"+strVal(p, "source_path")] = true
 		}
 	}
-	packages := map[string]map[string]any{}
+	gray := map[string][]map[string]any{}
+	managed := map[string]string{}
+	for _, v := range tree["folders"].([]any) {
+		f := v.(map[string]any)
+		if f["package_id"] != nil {
+			managed[strVal(f, "package_id")+"\x00"+strVal(f, "package_path")] = strVal(f, "id")
+		}
+	}
 	for _, v := range tree["packages"].([]any) {
 		p := v.(map[string]any)
-		packages[strVal(p, "root_folder_id")] = p
+		candidates := p["candidates"].([]any)
+		prefix := skillFolderCandidatePrefix(candidates)
+		for _, v := range candidates {
+			c := v.(map[string]any)
+			if imported[strVal(p, "id")+"\x00"+strVal(c, "path")] {
+				continue
+			}
+			relative := strings.TrimPrefix(strings.TrimPrefix(skillFolderCandidateParent(strVal(c, "path")), prefix), "/")
+			folder := managed[strVal(p, "id")+"\x00"+relative]
+			if relative == "" || folder == "" {
+				folder = strVal(p, "root_folder_id")
+			}
+			gray[folder] = append(gray[folder], c)
+		}
+	}
+	for _, folders := range children {
+		sort.Slice(folders, func(i, j int) bool { return strVal(folders[i], "name") < strVal(folders[j], "name") })
+	}
+	for _, items := range placements {
+		sort.Slice(items, func(i, j int) bool { return names[strVal(items[i], "skill_id")] < names[strVal(items[j], "skill_id")] })
+	}
+	for _, items := range gray {
+		sort.Slice(items, func(i, j int) bool { return strVal(items[i], "name") < strVal(items[j], "name") })
 	}
 	type entry struct {
 		folder map[string]any
@@ -433,23 +452,24 @@ func printSkillFolderTree(cmd *cobra.Command, tree map[string]any, skills []map[
 		seen[id] = true
 		indent := strings.Repeat("  ", item.depth)
 		mark := ""
-		if f["package_id"] != nil {
+		switch skillFolderKind(f) {
+		case "package-root":
 			mark = " [package]"
+		case "package-managed":
+			mark = " [managed]"
 		}
-		fmt.Fprintf(w, "%s%s%s\n", indent, strVal(f, "name"), mark)
+		fmt.Fprintf(w, "%s%s (%s)%s\n", indent, strVal(f, "name"), displayID(id, fullID), mark)
 		for _, p := range placements[id] {
-			fmt.Fprintf(w, "%s  %s (%s)\n", indent, names[strVal(p, "skill_id")], strVal(p, "skill_id"))
-		}
-		if p := packages[id]; p != nil {
-			for _, v := range p["candidates"].([]any) {
-				c := v.(map[string]any)
-				if !imported[strVal(p, "id")+"\x00"+strVal(c, "path")] {
-					fmt.Fprintf(w, "%s  [not imported] %s (%s)\n", indent, strVal(c, "name"), skillPackageDisplayPath(c))
-				}
+			mark := ""
+			if f["package_id"] != nil && p["package_id"] == nil {
+				mark = " [detached]"
 			}
+			fmt.Fprintf(w, "%s  %s (%s)%s\n", indent, names[strVal(p, "skill_id")], displayID(strVal(p, "skill_id"), fullID), mark)
+		}
+		for _, c := range gray[id] {
+			fmt.Fprintf(w, "%s  [not imported] %s (%s)\n", indent, strVal(c, "name"), skillPackageDisplayPath(c))
 		}
 		kids := children[id]
-		sort.Slice(kids, func(i, j int) bool { return strVal(kids[i], "name") < strVal(kids[j], "name") })
 		next := []entry{}
 		for _, child := range kids {
 			next = append(next, entry{child, item.depth + 1})
@@ -459,7 +479,30 @@ func printSkillFolderTree(cmd *cobra.Command, tree map[string]any, skills []map[
 	fmt.Fprintf(w, "Unclassified: %v\n", tree["unclassified_count"])
 	for _, s := range skills {
 		if !classified[strVal(s, "id")] {
-			fmt.Fprintf(w, "  %s (%s)\n", strVal(s, "name"), strVal(s, "id"))
+			fmt.Fprintf(w, "  %s (%s)\n", strVal(s, "name"), displayID(strVal(s, "id"), fullID))
 		}
 	}
+}
+
+// Mirror the package wire contract: managed paths omit the common candidate parent.
+func skillFolderCandidateParent(candidate string) string {
+	parent := path.Dir(candidate)
+	if parent == "." {
+		return ""
+	}
+	return parent
+}
+
+func skillFolderCandidatePrefix(candidates []any) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	prefix := skillFolderCandidateParent(strVal(candidates[0].(map[string]any), "path"))
+	for _, v := range candidates[1:] {
+		parent := skillFolderCandidateParent(strVal(v.(map[string]any), "path"))
+		for prefix != "" && parent != prefix && !strings.HasPrefix(parent, prefix+"/") {
+			prefix = skillFolderCandidateParent(prefix)
+		}
+	}
+	return prefix
 }

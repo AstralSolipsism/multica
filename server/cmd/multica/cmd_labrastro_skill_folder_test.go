@@ -64,7 +64,7 @@ func serveSkillFolder(t *testing.T, reply func(http.ResponseWriter, *http.Reques
 			t.Error("credentials changed across workspace requests")
 		}
 		var body map[string]any
-		if r.Method == "POST" {
+		if r.Method != "GET" && r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
@@ -215,7 +215,7 @@ func TestLabrastroSkillFolderExportAndTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Engineering [package]", "alpha", "[not imported] gray", "Unclassified: 1", "local-only"} {
+	for _, want := range []string{"Engineering (" + displayID(migrationFolderID, false) + ") [package]", "alpha", "[not imported] gray", "Unclassified: 1", "local-only"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tree missing %q: %s", want, out)
 		}
