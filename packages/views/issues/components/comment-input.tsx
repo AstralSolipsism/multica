@@ -64,7 +64,7 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
   // this composer shows up even while it is mounted.
   // Quick actions in the `/` menu: picking one inserts the cached
   // body so the user can edit before sending, instead of firing immediately.
-  const quickActionMenu = useQuickActionMenu();
+  const quickActionMenu = useQuickActionMenu(issueId);
   const draftKey = `new:${issueId}` as const;
   const [initialDraft] = useState(() =>
     useCommentDraftStore.getState().getDraft(draftKey),
