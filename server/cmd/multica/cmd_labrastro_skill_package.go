@@ -173,6 +173,12 @@ const skillPackageRepreview = "Preview again with 'multica skill package import 
 func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string, body map[string]any) (map[string]any, error) {
 	// Both transport and context must outlive the server's 45s work deadline
 	// so it can return partial results. Each request gets a fresh finite budget.
+	repreview := skillPackageRepreview
+	kind := "Skill package"
+	if strings.HasPrefix(path, "/api/skill-folders") {
+		repreview = "Preview again with multica skill folder migrate, inspect the report, then explicitly apply. No write was retried."
+		kind = "Skill organization"
+	}
 	timeout := cli.AtLeastAPITimeout(60 * time.Second)
 	client.HTTPClient.Timeout = timeout
 	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
@@ -197,10 +203,10 @@ func requestSkillPackage(cmd *cobra.Command, client *cli.APIClient, path string,
 	}
 	writing := body != nil && (strings.HasSuffix(path, "/apply") || body["apply"] == true)
 	if writing && isHTTPError && httpErr.StatusCode == http.StatusConflict {
-		return nil, cli.WithUserMessage("Skill package apply conflict. "+skillPackageRepreview, err)
+		return nil, cli.WithUserMessage(kind+" apply conflict. "+repreview, err)
 	}
 	if writing && (!isHTTPError || httpErr.StatusCode >= 500) {
-		return nil, cli.WithUserMessage(cli.FormatError(err, false)+" The apply result is indeterminate. "+skillPackageRepreview, err)
+		return nil, cli.WithUserMessage(cli.FormatError(err, false)+" The apply result is indeterminate. "+repreview, err)
 	}
 	return nil, err
 }
