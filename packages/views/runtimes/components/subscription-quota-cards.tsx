@@ -149,7 +149,7 @@ function SubscriptionQuotaCard({
   const lastPolledMs = source.last_polled_at ? Date.parse(source.last_polled_at) : NaN;
 
   const observedLine = (
-    <div className="text-muted-foreground">
+    <div className="text-tooltip-foreground/75">
       {interrupted
         ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
         : observedAt > 0
