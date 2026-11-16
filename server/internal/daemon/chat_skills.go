@@ -53,6 +53,15 @@ func activeSlashSkillMatches(message string) []slashSkillMatch {
 	return selected
 }
 
+// memberSkillText pairs an authenticated human-member input with the active
+// matches found inside it. Only the server's own authorship data can put a
+// text here; nothing derived from issue bodies, agent/system comments or
+// legacy payloads without an author type qualifies.
+type memberSkillText struct {
+	text    string
+	matches []slashSkillMatch
+}
+
 func chatSkillMatches(task Task) []slashSkillMatch {
 	if task.ChatSkillMessage == nil {
 		// Legacy servers did not distinguish the sender from the originator.
@@ -66,25 +75,79 @@ func memberSkillTurn(task Task) bool {
 	return task.ChatSessionID != "" && !task.ChatIntro && task.ChatSkillMessage != nil && *task.ChatSkillMessage != "" && task.WakeupID == "" && task.IssueID == "" && task.AutopilotRunID == "" && task.Agent != nil
 }
 
+// issueMemberSkillTurn reports whether this run is a comment-triggered issue
+// task whose explicit skill selections may be honored at all. Wakeups and
+// autopilots carry no member comment intent even when they name a trigger
+// comment, and quick-create/assignment tasks have no comment to trust.
+func issueMemberSkillTurn(task Task) bool {
+	return task.IssueID != "" && task.ChatSessionID == "" && task.WakeupID == "" && task.AutopilotRunID == "" &&
+		task.TriggerCommentID != "" && task.Agent != nil
+}
+
+// memberSkillTexts collects the authenticated member inputs this run may act
+// on, in a stable order: a chat turn contributes its direct member message,
+// an issue turn contributes its human-authored comments — coalesced comments
+// oldest first, then the newest trigger comment. Everything else (agent or
+// system authorship, empty author types from legacy payloads, quoted or
+// code-span links via activeSlashSkillMatches) is filtered before it can
+// reach a SkillInvocation.
+func memberSkillTexts(task Task) []memberSkillText {
+	if memberSkillTurn(task) {
+		return []memberSkillText{{text: *task.ChatSkillMessage, matches: activeSlashSkillMatches(*task.ChatSkillMessage)}}
+	}
+	if !issueMemberSkillTurn(task) {
+		return nil
+	}
+	var texts []memberSkillText
+	for _, cc := range task.CoalescedComments {
+		if cc.AuthorType == "member" && cc.Content != "" {
+			texts = append(texts, memberSkillText{text: cc.Content, matches: activeSlashSkillMatches(cc.Content)})
+		}
+	}
+	if task.TriggerAuthorType == "member" && task.TriggerCommentContent != "" {
+		texts = append(texts, memberSkillText{text: task.TriggerCommentContent, matches: activeSlashSkillMatches(task.TriggerCommentContent)})
+	}
+	return texts
+}
+
+// memberSkillRefs deduplicates the refs of member texts by skill ID, keeping
+// first-seen (chronological) order across the merged comments.
+func memberSkillRefs(texts []memberSkillText) []SlashSkillRef {
+	var matches []slashSkillMatch
+	for _, text := range texts {
+		matches = append(matches, text.matches...)
+	}
+	return uniqueSlashSkillRefs(matches)
+}
+
+// matchesAnySkill reports whether any match in the text earned a selection.
+func matchesAnySkill(matches []slashSkillMatch, selected map[string]bool) bool {
+	for _, match := range matches {
+		if selected[match.ref.ID] {
+			return true
+		}
+	}
+	return false
+}
+
 // buildRuntimePrompt keeps ordinary inputs byte-for-byte unchanged. Only the
 // server's authenticated member input can earn a structured invocation; a
-// human originator on an issue/agent/system task is insufficient.
+// human originator on an agent/system/wakeup task is insufficient.
 func buildRuntimePrompt(task Task, provider string, directories map[string]string, options ...PromptOption) (string, *agent.SkillInvocation) {
-	matches := chatSkillMatches(task)
-	refs := uniqueSlashSkillRefs(matches)
+	texts := memberSkillTexts(task)
+	var refs []SlashSkillRef
+	if len(texts) > 0 {
+		refs = memberSkillRefs(texts)
+	} else if task.ChatSessionID != "" {
+		// Legacy chat hint: refs stay display-only, never an invocation.
+		refs = uniqueSlashSkillRefs(chatSkillMatches(task))
+	}
 	options = append(options, func(o *promptOpts) {
 		o.skillDirectories = directories
 		o.chatSkillRefs = refs
 	})
 	prompt := BuildPrompt(task, provider, options...)
-	if !memberSkillTurn(task) || len(refs) == 0 {
-		return prompt, nil
-	}
-	skillMessage := *task.ChatSkillMessage
-	// Direct chat input is a contiguous suffix of the claimed batch; an older
-	// or inconsistent server payload must not let this field replace user text.
-	start := strings.LastIndex(task.ChatMessage, skillMessage)
-	if start < 0 {
+	if len(texts) == 0 || len(refs) == 0 {
 		return prompt, nil
 	}
 	assigned := make(map[string]SkillData, len(task.Agent.Skills))
@@ -107,14 +170,68 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 	if len(invocation.Skills) == 0 {
 		return prompt, nil
 	}
+	if task.ChatSessionID != "" {
+		return chatRuntimePrompt(task, texts[0], selected, invocation, provider, options...)
+	}
+	return issueRuntimePrompt(task, texts, selected, invocation, provider, options...)
+}
+
+// chatRuntimePrompt finishes a direct chat turn's invocation: the member
+// message is a contiguous part of the claimed batch, and only selected links
+// inside it are stripped before the prompt is rebuilt.
+func chatRuntimePrompt(task Task, source memberSkillText, selected map[string]bool, invocation *agent.SkillInvocation, provider string, options ...PromptOption) (string, *agent.SkillInvocation) {
+	skillMessage := source.text
+	// Direct chat input is a contiguous suffix of the claimed batch; an older
+	// or inconsistent server payload must not let this field replace user text.
+	start := strings.LastIndex(task.ChatMessage, skillMessage)
+	if start < 0 {
+		return BuildPrompt(task, provider, options...), nil
+	}
 	// Strip only selected links in the actual member text. Unknown IDs and
 	// quoted links remain visible, and cannot become a leading CLI command.
-	user := stripSelectedSkillLinks(skillMessage, matches, selected)
+	user := stripSelectedSkillLinks(skillMessage, source.matches, selected)
 	task.ChatMessage = task.ChatMessage[:start] + user + task.ChatMessage[start+len(skillMessage):]
 	invocation.UserMessage = task.ChatMessage
 	invocation.Prompt = BuildPrompt(task, provider, options...)
 	options = append(options, func(o *promptOpts) { o.omitChatMessage = true })
 	invocation.PlatformPrompt = BuildPrompt(task, provider, options...)
+	return invocation.FallbackPrompt(), invocation
+}
+
+// issueRuntimePrompt finishes a comment-triggered issue turn's invocation.
+// Hit links are stripped from the human member comments embedded in the
+// comment prompt, and UserMessage carries those stripped member asks for
+// Claude's trailing slash-command block. PlatformPrompt equals the complete
+// comment prompt: unlike chat there is no separate user-message section to
+// omit, and the issue context, thread metadata and --parent reply routing
+// must survive intact.
+func issueRuntimePrompt(task Task, texts []memberSkillText, selected map[string]bool, invocation *agent.SkillInvocation, provider string, options ...PromptOption) (string, *agent.SkillInvocation) {
+	strip := func(text memberSkillText) string {
+		return stripSelectedSkillLinks(text.text, text.matches, selected)
+	}
+	// The task value is a copy, but its slice fields share the caller's
+	// backing array — the retry path rebuilds from the same task, and a
+	// stripped comment there would hide its links from the second pass.
+	task.CoalescedComments = append([]CoalescedCommentData(nil), task.CoalescedComments...)
+	for i, cc := range task.CoalescedComments {
+		if cc.AuthorType == "member" && cc.Content != "" {
+			matches := activeSlashSkillMatches(cc.Content)
+			task.CoalescedComments[i].Content = stripSelectedSkillLinks(cc.Content, matches, selected)
+		}
+	}
+	if task.TriggerAuthorType == "member" && task.TriggerCommentContent != "" {
+		task.TriggerCommentContent = stripSelectedSkillLinks(task.TriggerCommentContent, activeSlashSkillMatches(task.TriggerCommentContent), selected)
+	}
+	var user []string
+	for _, text := range texts {
+		if !matchesAnySkill(text.matches, selected) {
+			continue
+		}
+		user = append(user, strings.TrimSpace(strip(text)))
+	}
+	invocation.UserMessage = strings.Join(user, "\n\n")
+	invocation.Prompt = BuildPrompt(task, provider, options...)
+	invocation.PlatformPrompt = invocation.Prompt
 	return invocation.FallbackPrompt(), invocation
 }
 

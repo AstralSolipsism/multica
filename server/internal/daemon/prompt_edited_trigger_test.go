@@ -19,7 +19,7 @@ func TestBuildCommentPromptEditedTrigger(t *testing.T) {
 	}
 
 	t.Run("edited on a resumed session", func(t *testing.T) {
-		out := buildCommentPrompt(base, "claude")
+		out := buildCommentPrompt(base, "claude", promptOpts{})
 		for _, want := range []string{
 			"[EDITED COMMENT] A user edited a comment after your previous run in this session started.",
 			"> Now it connects over TLS",
@@ -40,7 +40,7 @@ func TestBuildCommentPromptEditedTrigger(t *testing.T) {
 		task := base
 		task.TriggerCommentEditedAt = ""
 		task.TriggerCommentRevision = 0
-		out := buildCommentPrompt(task, "claude")
+		out := buildCommentPrompt(task, "claude", promptOpts{})
 		if !strings.Contains(out, "[NEW COMMENT] A user just left a new comment.") {
 			t.Errorf("unedited trigger must keep the new-comment header:\n%s", out)
 		}
@@ -58,7 +58,7 @@ func TestBuildCommentPromptEditedTrigger(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			task := base
 			mutate(&task)
-			out := buildCommentPrompt(task, "claude")
+			out := buildCommentPrompt(task, "claude", promptOpts{})
 			if strings.Contains(out, "[EDITED COMMENT]") || strings.Contains(out, "was edited at") {
 				t.Errorf("%s: edit note must only render on a resumed session:\n%s", name, out)
 			}
@@ -80,7 +80,7 @@ func TestBuildCommentPromptEditedCoalescedComment(t *testing.T) {
 		},
 	}
 
-	out := buildCommentPrompt(base, "claude")
+	out := buildCommentPrompt(base, "claude", promptOpts{})
 	for _, want := range []string{
 		"[NEW COMMENT] A user just left a new comment.",
 		"- comment comment-1 (A user) [thread thread-1] [EDITED at 2026-10-26T02:20:00Z, revision 2 — current version]:",
@@ -98,7 +98,7 @@ func TestBuildCommentPromptEditedCoalescedComment(t *testing.T) {
 
 	cold := base
 	cold.PriorSessionID = ""
-	if out := buildCommentPrompt(cold, "claude"); strings.Contains(out, "EDITED") {
+	if out := buildCommentPrompt(cold, "claude", promptOpts{}); strings.Contains(out, "EDITED") {
 		t.Errorf("cold start must not mark edits:\n%s", out)
 	}
 }
