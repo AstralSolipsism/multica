@@ -101,30 +101,37 @@ export function resolveIssueSlashSkills(
  * workspace route, and an enhancement like this must degrade to "no quick
  * actions in the menu", never take the composer down with it.
  */
-export function useQuickActionMenu(issueId?: string) {
+export function useQuickActionMenu(
+  issueId?: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
   const { t } = useT("issues");
   const workspace = useCurrentWorkspace();
   const wsId = workspace?.id ?? "";
-  const hasIssueContext = wsId !== "" && !!issueId;
+  const hasIssueContext = enabled && wsId !== "" && !!issueId;
   const { data } = useQuery({
     ...quickActionListOptions(wsId),
-    enabled: wsId !== "",
+    enabled: enabled && wsId !== "",
   });
   const { data: issue } = useQuery({
     ...issueDetailOptions(wsId, issueId ?? ""),
     enabled: hasIssueContext,
+    refetchOnMount: false,
   });
   const { data: agents } = useQuery({
     ...agentListOptions(wsId),
     enabled: hasIssueContext,
+    refetchOnMount: false,
   });
   const { data: squads } = useQuery({
     ...squadListOptions(wsId),
     enabled: hasIssueContext,
+    refetchOnMount: false,
   });
   const { data: members } = useQuery({
     ...memberListOptions(wsId),
     enabled: hasIssueContext,
+    refetchOnMount: false,
   });
 
   const actions = useMemo(

@@ -62,9 +62,6 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
   const uploadGate = useUploadGate(editorRef);
   // Subscribe to the persisted draft so text written into it from outside
   // this composer shows up even while it is mounted.
-  // Quick actions in the `/` menu: picking one inserts the cached
-  // body so the user can edit before sending, instead of firing immediately.
-  const quickActionMenu = useQuickActionMenu(issueId);
   const draftKey = `new:${issueId}` as const;
   const [initialDraft] = useState(() =>
     useCommentDraftStore.getState().getDraft(draftKey),
@@ -111,6 +108,8 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
       useCommentDraftStore.getState().getUploads(draftKey).length > 0,
     editorRef,
   });
+  // Inactive shells must not mount query observers or duplicate cold reads.
+  const quickActionMenu = useQuickActionMenu(issueId, { enabled: lazy.active });
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,
   });
