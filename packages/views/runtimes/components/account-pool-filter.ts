@@ -50,19 +50,6 @@ export function accountPoolProviderLabel(provider: string): string {
     .join(" ");
 }
 
-export function accountPoolLogoProvider(provider: string): string {
-  switch (provider) {
-    case "kimi-code":
-      return "kimi";
-    case "anthropic":
-      return "claude";
-    case "openai-codex":
-      return "codex";
-    default:
-      return provider;
-  }
-}
-
 export function accountPoolNeedsRelogin(pool: QuotaAccountPoolState): boolean {
   return pool.accounts.length > 0 &&
     pool.accounts.every((account) => account.status === "disabled");

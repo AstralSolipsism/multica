@@ -30,9 +30,12 @@ cross-Runtime deduplication.
   Runtime. `machine-quota-chips.tsx` renders a bordered Runtime capsule with
   its icon/name on the left and its provider or model pools on the right.
   Single-provider CLIs show one summary; Antigravity shows Gemini and Claude +
-  GPT; OMP shows its serving provider pools. A Runtime never splits into
-  pool-level chips. The first eight Runtime capsules wrap naturally and any
-  remainder appears as Runtime capsules in the `+N` hover card.
+  GPT; OMP shows its serving provider pools. Like single-provider and
+  Antigravity summaries, each OMP pool's percentage and mini meter use the
+  aggregate window with the least remaining percentage, never a hard-coded
+  window duration. A Runtime never splits into pool-level chips. The first
+  eight Runtime capsules wrap naturally and any remainder appears as Runtime
+  capsules in the `+N` hover card.
 - **Shared hover — one Runtime, one card.** Hovering an L1 capsule or the L2
   quota cell opens one `QuotaHoverCard` for the whole Runtime. Its header is
   `Runtime · machine`, with collection source and freshness on the right.

@@ -668,6 +668,31 @@ describe("multi-account provider pools (OMP)", () => {
     expect(pool.accounts.map((a) => a.label)).toEqual(["19*", "as*", "de*"]);
   });
 
+  it.each([1, 85])("exposes the tightest aggregate window when 5h used is %s", (used5h) => {
+    const accountWithWeekly = account("ze*", "ok", used5h);
+    accountWithWeekly.windows.push({
+      name: "7d",
+      used_percent: 85,
+      window_minutes: 10080,
+      resets_at: NOW_SEC + 4 * 24 * 3600,
+    });
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "zai",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [accountWithWeekly],
+      },
+    ]))!;
+
+    const pool = evaluatePlanQuotaPools(quota, NOW_MS)!.pools[0]!;
+    expect(pool.windows.map((window) => window.remainingPercent)).toEqual([100 - used5h, 15]);
+    expect(pool.remainingPercent).toBe(15);
+  });
+
   it("OR health: one exhausted account of three does not exhaust the pool", () => {
     const quota = parsePlanQuota(gatewayQuota([
       {
@@ -713,6 +738,7 @@ describe("multi-account provider pools (OMP)", () => {
     ]))!;
     const pools = evaluatePlanQuotaPools(quota, NOW_MS)!;
     expect(pools.pools[0]!.exhausted).toBe(true);
+    expect(pools.pools[0]!.remainingPercent).toBeNull();
     expect(pools.pools[0]!.resumesAt).toBe(NOW_SEC + 4320);
     expect(pools.pools[1]!.exhausted).toBe(false);
     // One healthy pool keeps the runtime usable.
