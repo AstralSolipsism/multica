@@ -560,6 +560,8 @@ export interface QuotaAccountPoolState {
   disabledAccounts: number;
   /** False while at least one account is usable (parallel OR). */
   exhausted: boolean;
+  /** The tightest aggregate window's balance; null when exhausted or unknown. */
+  remainingPercent: number | null;
   /** The pool's recovery time when exhausted: the earliest upcoming reset
    *  among its accounts (null when unknown or not exhausted). */
   resumesAt: number | null;
@@ -734,6 +736,7 @@ function evaluateQuotaAccountPool(
     availableAccounts,
     disabledAccounts,
     exhausted,
+    remainingPercent: exhausted ? null : binding?.remainingPercent ?? null,
     resumesAt,
     resumesAccountIndex,
     tone: exhausted ? "destructive" : quotaTone(binding?.remainingPercent ?? null),

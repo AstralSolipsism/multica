@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { SupportedLocale } from "@multica/core/i18n";
+import type { QuotaAccountPoolState } from "@multica/core/runtimes";
 import type {
   Agent,
   AgentRuntime,
@@ -18,6 +19,7 @@ import {
   RuntimeQuotaCell,
   TONE_BAR_CLASS,
 } from "./runtime-quota-cell";
+import { accountPoolRecoveryText } from "./runtime-quota-utils";
 
 const viewer = vi.hoisted(() => ({ timezone: "Asia/Shanghai" as string | null }));
 
@@ -359,9 +361,21 @@ describe("OMP account pools", () => {
     expect(within(trigger).getByText("Kimi Code")).toBeInTheDocument();
     expect(within(trigger).getByText("Claude")).toBeInTheDocument();
     expect(within(trigger).getByText("62%")).toBeInTheDocument();
-    expect(within(trigger).getByText("72%")).toBeInTheDocument();
+    expect(within(trigger).getByText("60%")).toBeInTheDocument();
     expect(within(trigger).queryByText("Codex")).not.toBeInTheDocument();
     expect(within(trigger).queryByText("Z.AI")).not.toBeInTheDocument();
+  });
+
+  it("uses the tightest OMP pool window for the machine capsule and meter", () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [ompPool("zai", [ompAccount("ze*", "ok", 99, 15)])],
+    });
+    renderChips(runtime);
+
+    const trigger = chipTrigger(/^Omp: Z.AI:/);
+    expect(within(trigger).getByText("15%")).toBeInTheDocument();
+    expect(within(trigger).queryByText("99%")).not.toBeInTheDocument();
+    expect(within(trigger).getByRole("progressbar", { name: "Omp Z.AI", hidden: true })).toHaveAttribute("aria-valuenow", "15");
   });
 
   it("combines serving provider pools and their account tables in one hover card", async () => {
@@ -432,6 +446,27 @@ describe("OMP account pools", () => {
 
     expect(await screen.findByText("Every account in this pool requires re-login.")).toHaveClass("text-warning");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("returns no recovery text for an all-disabled re-login pool", () => {
+    const pool = {
+      id: "zai",
+      accounts: [{ label: "di*", status: "disabled", usable: false, note: "oauth refresh failed", windows: [] }],
+      windows: [],
+      totalAccounts: 1,
+      availableAccounts: 0,
+      disabledAccounts: 1,
+      exhausted: true,
+      remainingPercent: null,
+      resumesAt: NOW_SEC + HOUR,
+      resumesAccountIndex: 0,
+      tone: "warning",
+    } satisfies QuotaAccountPoolState;
+    const t = vi.fn() as unknown as Parameters<typeof accountPoolRecoveryText>[2];
+    const formatTime = vi.fn();
+
+    expect(accountPoolRecoveryText(pool, NOW, t, formatTime)).toBeNull();
+    expect(formatTime).not.toHaveBeenCalled();
   });
 
   it("shows serving pools in details and expands idle pools on demand", async () => {

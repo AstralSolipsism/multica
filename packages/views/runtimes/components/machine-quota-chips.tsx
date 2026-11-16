@@ -195,10 +195,9 @@ function QuotaChipFace({
   let summaries: ChipSummary[];
   if (accountPoolView) {
     summaries = accountPoolView.partition.serving.map((pool) => {
-      const primary = pool.windows.find((window) => window.windowMinutes === 300) ?? pool.windows[0];
       const relogin = accountPoolNeedsRelogin(pool);
       const percent = !relogin && !pool.exhausted && pool.windows.length > 0
-        ? primary?.remainingPercent ?? null
+        ? pool.remainingPercent
         : null;
       const value = relogin
         ? t(($) => $.account_pools.pool_needs_relogin)
