@@ -74,12 +74,12 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 				config.Env["CODEX_HOME"] = home
 				skillParent = filepath.Join(home, "skills")
 			}
-			dir := filepath.Join(skillParent, "ol200-probe")
+			dir := filepath.Join(skillParent, "explicit-probe")
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				t.Fatal(err)
 			}
-			body := "Reply with exactly: OL200_SKILL followed by the platform token and then the user token, separated by spaces. Do not call any tools."
-			skill := "---\nname: ol200-probe\ndescription: Explicit invocation smoke test\ndisable-model-invocation: true\n---\n" + body
+			body := "Reply with exactly: EXPLICIT_SKILL followed by the platform token and then the user token, separated by spaces. Do not call any tools."
+			skill := "---\nname: explicit-probe\ndescription: Explicit invocation smoke test\ndisable-model-invocation: true\n---\n" + body
 			if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skill), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +91,7 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			invocation := &SkillInvocation{PlatformPrompt: "Platform token: PLATFORM_OK", UserMessage: "User token: USER_OK. Apply my selected skill.", Skills: []ExplicitSkill{{Name: "ol200-probe", Directory: dir, Body: body}}}
+			invocation := &SkillInvocation{PlatformPrompt: "Platform token: PLATFORM_OK", UserMessage: "User token: USER_OK. Apply my selected skill.", Skills: []ExplicitSkill{{Name: "explicit-probe", Directory: dir, Body: body}}}
 			invocation.Prompt = invocation.PlatformPrompt + "\nUser message:\n" + invocation.UserMessage
 			wrapper := filepath.Join(root, "runtime-wrapper")
 			writeTestExecutable(t, wrapper, []byte(`#!/usr/bin/env bash
@@ -121,23 +121,23 @@ exit "$result"
 				opts.SystemPrompt = "Runtime brief: preserve the user's request and the platform token."
 			}
 			result := runSkillSmokeTurn(t, ctx, backend, invocation.FallbackPrompt(), opts)
-			if !strings.Contains(result.Output, "OL200_SKILL PLATFORM_OK USER_OK") {
+			if !strings.Contains(result.Output, "EXPLICIT_SKILL PLATFORM_OK USER_OK") {
 				t.Errorf("skill or message context lost: %q", result.Output)
 			}
 			switch provider {
 			case "claude":
-				expanded := skillSmokeEvidence(evidenceRoot, "<command-name>/ol200-probe</command-name>")
+				expanded := skillSmokeEvidence(evidenceRoot, "<command-name>/explicit-probe</command-name>")
 				t.Logf("Claude native command-name evidence: %t", expanded)
 				if !expanded {
 					t.Fatal("no Claude command-name evidence; fallback is not native expansion")
 				}
 			case "codex":
-				if !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<skill>") || !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<name>ol200-probe</name>") {
+				if !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<skill>") || !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<name>explicit-probe</name>") {
 					t.Fatal("no Codex native skill injection in rollout")
 				}
 			case "antigravity":
 				log, _ := os.ReadFile(config.Env["SKILL_SMOKE_LOG"])
-				if !strings.Contains(string(log), `expanded slash command "ol200-probe"`) {
+				if !strings.Contains(string(log), `expanded slash command "explicit-probe"`) {
 					t.Fatal("no agy slash expansion evidence")
 				}
 			}
@@ -218,11 +218,11 @@ func TestKimiNativeSkillRealProbe(t *testing.T) {
 		t.Skip("kimi unavailable")
 	}
 	root := t.TempDir()
-	dir := filepath.Join(root, ".agents", "skills", "ol200-native-probe")
+	dir := filepath.Join(root, ".agents", "skills", "explicit-native-probe")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: ol200-native-probe\ndescription: Explicit native probe\n---\nReply with exactly OL200_NATIVE_OK. Do not use tools.\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: explicit-native-probe\ndescription: Explicit native probe\n---\nReply with exactly EXPLICIT_NATIVE_OK. Do not use tools.\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	backend, err := New("kimi", Config{ExecutablePath: binary, Logger: slog.Default()})
@@ -231,8 +231,8 @@ func TestKimiNativeSkillRealProbe(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
-	result := runSkillSmokeTurn(t, ctx, backend, "/skill:ol200-native-probe Say hello.", ExecOptions{Cwd: root, Timeout: 80 * time.Second, Model: os.Getenv("KIMI_SKILL_SMOKE_MODEL")})
-	if !strings.Contains(result.Output, "OL200_NATIVE_OK") {
+	result := runSkillSmokeTurn(t, ctx, backend, "/skill:explicit-native-probe Say hello.", ExecOptions{Cwd: root, Timeout: 80 * time.Second, Model: os.Getenv("KIMI_SKILL_SMOKE_MODEL")})
+	if !strings.Contains(result.Output, "EXPLICIT_NATIVE_OK") {
 		t.Fatalf("native Kimi skill did not expand: %q", result.Output)
 	}
 }

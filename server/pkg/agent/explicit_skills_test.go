@@ -49,6 +49,25 @@ func TestExplicitSkillsIssueTurnClaudeBlocks(t *testing.T) {
 	}
 }
 
+// TestClaudeSkillCommandBlockSpacing pins the trailing block's shape for
+// capsule-only turns: no trailing space once the member ask strips to
+// nothing, and exactly one separating space for a real ask.
+func TestClaudeSkillCommandBlockSpacing(t *testing.T) {
+	s := &SkillInvocation{
+		PlatformPrompt: "platform",
+		Skills:         []ExplicitSkill{{Name: "review-code", Directory: filepath.Join(t.TempDir(), "review-code"), Body: "BODY"}},
+	}
+	available := map[string]bool{"review-code": true}
+	s.UserMessage = " "
+	if blocks := s.claudeTextBlocks(available); blocks[1] != "/review-code" {
+		t.Fatalf("whitespace-only ask must not leave a trailing space: %q", blocks[1])
+	}
+	s.UserMessage = "  padded ask  "
+	if blocks := s.claudeTextBlocks(available); blocks[1] != "/review-code padded ask" {
+		t.Fatalf("ask must join the command with exactly one space: %q", blocks[1])
+	}
+}
+
 func TestExplicitSkillsProviderInputs(t *testing.T) {
 	s := testSkillInvocation(t)
 	blocks := s.claudeTextBlocks(map[string]bool{"first-multica": true})
