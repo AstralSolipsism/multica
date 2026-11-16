@@ -218,7 +218,10 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
     null;
 
   const q = query.toLowerCase();
-  return rankSkillMatches(activeAgent?.skills ?? [], q)
+  return rankSkillMatches(
+    (activeAgent?.skills ?? []).filter((skill) => skill.enabled !== false),
+    q,
+  )
     .slice(0, MAX_ITEMS)
     .map((s) => ({ id: s.id, label: s.name, description: s.description ?? "" }));
 }
@@ -334,7 +337,8 @@ export function buildBuiltinCommandItems(
   const builtinItems = BUILTIN_COMMANDS.filter((command) =>
     command.label.toLowerCase().startsWith(q),
   );
-  return [...actionItems, ...skillItems, ...builtinItems].slice(0, MAX_ITEMS);
+  const cap = Math.max(0, MAX_ITEMS - builtinItems.length);
+  return [...actionItems, ...skillItems].slice(0, cap).concat(builtinItems);
 }
 
 export interface BuiltinCommandSuggestionOptions {
