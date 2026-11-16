@@ -25,6 +25,30 @@ func testSkillInvocation(t *testing.T) *SkillInvocation {
 	}
 }
 
+// TestExplicitSkillsIssueTurnClaudeBlocks pins the issue-comment shape: the
+// daemon keeps the complete comment prompt as PlatformPrompt (issue context,
+// thread metadata, --parent reply routing) and carries the stripped member
+// comment as UserMessage, so the trailing slash block never drops the reply
+// routing or ships an empty user ask.
+func TestExplicitSkillsIssueTurnClaudeBlocks(t *testing.T) {
+	s := &SkillInvocation{
+		Prompt:      "Issue context\n[NEW COMMENT]\n> please review\nreply with --parent comment-trigger",
+		UserMessage: "please review",
+		Skills: []ExplicitSkill{
+			{Name: "review-code", Directory: filepath.Join(t.TempDir(), "review-code"), Body: "FIRST BODY"},
+			{Name: "second", Directory: filepath.Join(t.TempDir(), "second"), Body: "SECOND BODY"},
+		},
+	}
+	s.PlatformPrompt = s.Prompt
+	blocks := s.claudeTextBlocks(map[string]bool{"review-code": true})
+	if len(blocks) != 2 || blocks[1] != "/review-code please review" {
+		t.Fatalf("trailing block must carry the member ask: %q", blocks)
+	}
+	if !strings.Contains(blocks[0], "--parent comment-trigger") || !strings.Contains(blocks[0], "SECOND BODY") {
+		t.Fatalf("platform block lost routing or injected skill: %q", blocks[0])
+	}
+}
+
 func TestExplicitSkillsProviderInputs(t *testing.T) {
 	s := testSkillInvocation(t)
 	blocks := s.claudeTextBlocks(map[string]bool{"first-multica": true})
