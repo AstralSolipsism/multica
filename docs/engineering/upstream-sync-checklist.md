@@ -64,7 +64,9 @@ lineage, migration evidence and insertion measurements.
   relax source/resource guards or expand exceptions to accept restored upstream
   product branding. Run `pnpm test:brand` and, from `server/`,
   `go test ./internal/branding` alongside the affected platform checks.
-- [ ] Keep absence assertions for marketing/onboarding surfaces. Keep DAG
+- [ ] Keep absence assertions for marketing/onboarding surfaces. In
+  `DashboardLayout`, keep `StarPrompt` unmounted and `SourceBackfillModal`
+  behind the disabled `SHOW_SOURCE_BACKFILL` gate (OL-14). Keep DAG
   stage order, real edges, independent expansion and detail-return viewport
   restoration. Shared Web/Desktop wiring still needs review; Chromium Web
   evidence alone does not establish Desktop packaging or installation behavior.
