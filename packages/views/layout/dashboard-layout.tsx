@@ -5,6 +5,7 @@ import { SidebarProvider } from "@multica/ui/components/ui/sidebar";
 import { AppearanceSync } from "../common/appearance-sync";
 import { ModalRegistry } from "../modals/registry";
 import { SourceBackfillModal } from "../onboarding";
+import { SHOW_SOURCE_BACKFILL } from "../onboarding/labrastro-marketing";
 import { YouShouldKnowProvider } from "../you-should-know";
 import { AppRail } from "./app-rail";
 import { AppBottomBar } from "./bottom-bar";
@@ -67,7 +68,7 @@ export function DashboardLayout({
                   <NavigationProgress />
                   <YouShouldKnowProvider>{children}</YouShouldKnowProvider>
                   <ModalRegistry />
-                  <SourceBackfillModal />
+                  {SHOW_SOURCE_BACKFILL ? <SourceBackfillModal /> : null}
                   {extra}
                 </AppShellCard>
                 <AppBottomBar />

@@ -28,7 +28,9 @@ vi.mock("./workspace-presence-prefetch", () => ({
 vi.mock("../modals/registry", () => ({
   ModalRegistry: () => <div data-testid="modals" />,
 }));
-vi.mock("../onboarding", () => ({ SourceBackfillModal: () => null }));
+vi.mock("../onboarding", () => ({
+  SourceBackfillModal: () => <div data-testid="source-backfill-modal" />,
+}));
 // The provider's own behavior is covered in you-should-know/; here it only
 // marks where the layout mounts it.
 vi.mock("../you-should-know", () => ({
@@ -40,6 +42,15 @@ vi.mock("../you-should-know", () => ({
 import { DashboardLayout } from "./dashboard-layout";
 
 describe("DashboardLayout", () => {
+  it("keeps source backfill unmounted under the fork policy (OL-14)", () => {
+    render(
+      <DashboardLayout>
+        <div />
+      </DashboardLayout>,
+    );
+    expect(screen.queryByTestId("source-backfill-modal")).not.toBeInTheDocument();
+  });
+
   it("mounts the You-should-know provider around the page only (OL-194)", () => {
     render(
       <DashboardLayout extra={<div data-testid="chat" />}>
