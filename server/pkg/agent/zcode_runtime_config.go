@@ -71,14 +71,11 @@ func prepareZcodeRuntimeEnv(executable string, env []string) ([]string, func(), 
 	if script, desktop := zcodeDesktopScript(executable); desktop {
 		executable = script
 	}
+	script := resolveZcodeScript(executable)
 	if zcodeEnvValue(env, zcodePersonalConfigEnv) != "" {
-		return zcodeRuntimeEnv(executable, env), noop, nil
-	}
-	builtin := filepath.Join(filepath.Dir(executable), "..", "config", "provider", "zcode-builtin.json")
-	if !isNodeScriptPath(executable) {
 		return env, noop, nil
 	}
-	if info, err := os.Stat(builtin); err != nil || !info.Mode().IsRegular() {
+	if zcodeBuiltinProviderConfig(script) == "" {
 		return env, noop, nil
 	}
 	base := zcodeEnvValue(env, "ZCODE_DATA_BASE_DIR")
@@ -167,8 +164,12 @@ func prepareZcodeRuntimeEnv(executable string, env []string) ([]string, func(), 
 		if len(headers) > 0 {
 			api["headers"] = headers
 		}
+		accessType := "api-key"
+		if sourceID == "builtin:bigmodel-coding-plan" || sourceID == "builtin:zai-coding-plan" {
+			accessType = "zhipu-coding-plan-api-key"
+		}
 		rule := map[string]any{"providerId": providerID, "config": map[string]any{
-			"group": "standard-personal", "access": map[string]any{"type": "api-key", "apiKey": provider.Options.APIKey},
+			"group": "standard-personal", "access": map[string]any{"type": accessType, "apiKey": provider.Options.APIKey},
 			"api": api, "personalModelIds": ids, "modelOrder": ids,
 		}}
 		if provider.Name != "" {
@@ -202,7 +203,6 @@ func prepareZcodeRuntimeEnv(executable string, env []string) ([]string, func(), 
 		cleanup()
 		return nil, noop, err
 	}
-	env = zcodeRuntimeEnv(executable, env)
 	return append(env, zcodePersonalConfigEnv+"="+file), cleanup, nil
 }
 
