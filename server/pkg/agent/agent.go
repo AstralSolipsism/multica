@@ -26,8 +26,9 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
-	// SkillInvocation is set only for validated member-authored chat choices.
-	// The prompt argument already contains its fallback for other backends.
+	// SkillInvocation is set only for validated member-authored selections
+	// (direct chat messages or issue comments). The prompt argument already
+	// contains its fallback for other backends.
 	SkillInvocation *SkillInvocation
 	// OnPlanQuota observes live provider quota without adding transcript events or
 	// resetting task progress watchdogs. The observer must return promptly and
