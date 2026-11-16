@@ -72,17 +72,15 @@ function resolveThreadSlashTargetIds(
       const squad = squadsById.get(explicit.id);
       return squad && !squad.archived_at ? [squad.leader_id] : [];
     }
-    if (parentId !== root.id) {
-      const ownerIds = (tasks ?? [])
-        .filter((task) => task.trigger_comment_id === root.id)
-        .map((task) => task.agent_id);
-      for (const comment of comments.values()) {
-        if (comment.actor_type === "agent" && threadRoot(comment, comments)?.id === root.id) {
-          ownerIds.push(comment.actor_id);
-        }
+    const ownerIds = (tasks ?? [])
+      .filter((task) => task.trigger_comment_id === root.id)
+      .map((task) => task.agent_id);
+    for (const comment of comments.values()) {
+      if (comment.actor_type === "agent" && threadRoot(comment, comments)?.id === root.id) {
+        ownerIds.push(comment.actor_id);
       }
-      if (ownerIds.length > 0) return ownerIds;
     }
+    if (ownerIds.length > 0) return ownerIds;
   }
 
   if (parent.actor_type === "member") return [];

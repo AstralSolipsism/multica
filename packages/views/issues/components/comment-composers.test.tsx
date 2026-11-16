@@ -405,10 +405,12 @@ describe("quick action `/` menu", () => {
 
   async function replySkillIds({
     timeline,
+    parentId = "comment-1",
     targetMissing = false,
     squads = [],
   }: {
     timeline: unknown[];
+    parentId?: string;
     targetMissing?: boolean;
     squads?: unknown[];
   }) {
@@ -435,7 +437,7 @@ describe("quick action `/` menu", () => {
     const view = renderInWorkspace(
       <ReplyInput
         issueId="issue-1"
-        parentId="comment-1"
+        parentId={parentId}
         avatarType="member"
         avatarId="user-1"
         targetMissing={targetMissing}
@@ -517,6 +519,28 @@ describe("quick action `/` menu", () => {
     };
 
     expect(await replySkillIds({ timeline: [parent] })).toEqual(["parent-agent-skill"]);
+  });
+
+  it("uses the conversation owner when ReplyInput targets a member root", async () => {
+    const root = {
+      type: "comment",
+      id: "root",
+      actor_type: "member",
+      actor_id: "user-2",
+      content: "Please investigate",
+      parent_id: null,
+    };
+    const agentReply = {
+      ...root,
+      id: "agent-reply",
+      actor_type: "agent",
+      actor_id: "parent-agent",
+      content: "Agent answer",
+      parent_id: root.id,
+    };
+
+    expect(await replySkillIds({ timeline: [root, agentReply], parentId: root.id }))
+      .toEqual(["parent-agent-skill"]);
   });
 
   it.each([
