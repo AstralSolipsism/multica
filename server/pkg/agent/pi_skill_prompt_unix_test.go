@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -45,14 +46,15 @@ func TestPiSkillPromptNativeAndFallback(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		files []string
-		args  []string
+		args  [][]string
 	}{
 		{"skill file not in dispatch", nil, nil},
 		{"other files only", []string{filepath.Join(t.TempDir(), "other", "SKILL.md")}, nil},
-		{"skills disabled", []string{skillFile}, []string{"--no-skills"}},
+		{"skills disabled", []string{skillFile}, [][]string{{"--no-skills"}}},
+		{"skills disabled short flag", []string{skillFile}, [][]string{{"-ns"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := s.piSkillPrompt(tc.files, tc.args)
+			got := s.piSkillPrompt(tc.files, tc.args...)
 			if strings.HasPrefix(got, "/skill:") {
 				t.Fatalf("must fall back, got native: %q", got)
 			}
@@ -64,9 +66,9 @@ func TestPiSkillPromptNativeAndFallback(t *testing.T) {
 }
 
 // piSkillStdinProbe runs a backend against a fake CLI that records stdin and
-// emits a minimal successful event stream. builtin mirrors the daemon's
-// Config.BuiltinRuntime for the provider under test.
-func piSkillStdinProbe(t *testing.T, provider string, opts ExecOptions, builtin bool) string {
+// emits a minimal successful event stream. cfg carries the daemon's Config
+// for the provider under test (BuiltinRuntime, LaunchPrefix, ...).
+func piSkillStdinProbe(t *testing.T, provider string, opts ExecOptions, cfg Config) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
@@ -88,12 +90,18 @@ printf '%%s\n' '{"type":"agent_end"}'
 `, stdinPath)
 	fakePath := filepath.Join(dir, provider)
 	writeTestExecutable(t, fakePath, []byte(script))
-	backend, err := ResolveBackend(provider, Config{ExecutablePath: fakePath, Logger: slog.Default(), BuiltinRuntime: builtin})
+	backend, err := ResolveBackend(provider, func() Config {
+		cfg.ExecutablePath = fakePath
+		if cfg.Logger == nil {
+			cfg.Logger = slog.Default()
+		}
+		return cfg
+	}())
 	if err != nil {
 		t.Fatal(err)
 	}
 	prompt := "unused prompt"
-	if (provider == "omp" || !builtin) && opts.SkillInvocation != nil {
+	if (provider == "omp" || !cfg.BuiltinRuntime) && opts.SkillInvocation != nil {
 		// The backend never rewrites the prompt for omp or a custom
 		// protocol-family profile; the daemon hands every non-native runtime
 		// the fallback text up front.
@@ -120,7 +128,7 @@ func TestPiExecuteSendsNativeSkillPromptOnStdin(t *testing.T) {
 		Timeout:         10 * time.Second,
 		SkillInvocation: s,
 		PiSkillPaths:    []string{skillFile},
-	}, true)
+	}, Config{BuiltinRuntime: true})
 	if !strings.HasPrefix(stdin, "/skill:first-multica ") {
 		t.Fatalf("pi must receive the native skill token first: %q", stdin)
 	}
@@ -138,7 +146,7 @@ func TestPiProfileExecuteKeepsInjectionFallback(t *testing.T) {
 		Timeout:         10 * time.Second,
 		SkillInvocation: s,
 		PiSkillPaths:    []string{skillFile},
-	}, false)
+	}, Config{})
 	if strings.HasPrefix(stdin, "/skill:") {
 		t.Fatalf("a custom pi-family profile must not receive the native token: %q", stdin)
 	}
@@ -153,11 +161,87 @@ func TestOmpExecuteKeepsInjectionFallback(t *testing.T) {
 		Timeout:         10 * time.Second,
 		SkillInvocation: s,
 		PiSkillPaths:    []string{skillFile},
-	}, true)
+	}, Config{BuiltinRuntime: true})
 	if strings.HasPrefix(stdin, "/skill:") {
 		t.Fatalf("omp never command-dispatches its stdin prompt; native token must not be sent: %q", stdin)
 	}
 	if !strings.Contains(stdin, "FIRST BODY") || !strings.Contains(stdin, "Platform context") {
 		t.Fatalf("omp must receive the full fallback prompt: %q", stdin)
+	}
+}
+
+// TestPiExecuteDisabledSkillsKeepFallback pins the guard's scope: the native
+// token is suppressed whichever argument group asked Pi not to load skills.
+func TestPiExecuteDisabledSkillsKeepFallback(t *testing.T) {
+	s, skillFile := piSkillInvocation(t)
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		opts ExecOptions
+	}{
+		{"launch prefix", Config{LaunchPrefix: []string{"-ns"}}, ExecOptions{}},
+		{"extra args", Config{}, ExecOptions{ExtraArgs: []string{"--no-skills"}}},
+		{"custom args", Config{}, ExecOptions{CustomArgs: []string{"-ns"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.cfg.BuiltinRuntime = true
+			tc.opts.Timeout = 10 * time.Second
+			tc.opts.SkillInvocation = s
+			tc.opts.PiSkillPaths = []string{skillFile}
+			stdin := piSkillStdinProbe(t, "pi", tc.opts, tc.cfg)
+			if strings.HasPrefix(stdin, "/skill:") {
+				t.Fatalf("disabled skills must keep the fallback: %q", stdin)
+			}
+			if !strings.Contains(stdin, "FIRST BODY") || !strings.Contains(stdin, "Platform context") {
+				t.Fatalf("fallback must carry the full prompt: %q", stdin)
+			}
+		})
+	}
+}
+
+// TestPiExecuteRpcSendsNativeSkillPrompt pins the RPC delivery path: the
+// first initial-prompt command frame carries the same native leading token
+// print mode writes to stdin.
+func TestPiExecuteRpcSendsNativeSkillPrompt(t *testing.T) {
+	s, skillFile := piSkillInvocation(t)
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	framePath := filepath.Join(dir, "initial-prompt.jsonl")
+	script := fmt.Sprintf(`#!/bin/sh
+IFS= read -r frame
+printf '%%s\n' "$frame" > %[1]s
+printf '%%s\n' '{"type":"response","id":"initial-prompt","command":"prompt","success":true,"data":{"disposition":"handled"}}'
+printf '%%s\n' '{"type":"agent_settled"}'
+printf '%%s\n' '{"type":"agent_end"}'
+`, framePath)
+	fakePath := filepath.Join(dir, "pi")
+	writeTestExecutable(t, fakePath, []byte(script))
+	backend, err := ResolveBackend("pi", Config{ExecutablePath: fakePath, Logger: slog.Default(), BuiltinRuntime: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(t.Context(), "unused prompt", ExecOptions{
+		Timeout: 10 * time.Second, SkillInvocation: s, PiSkillPaths: []string{skillFile}, EnableTaskSupplement: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := <-session.Result; result.Status != "completed" {
+		t.Fatalf("result: %+v", result)
+	}
+	raw, err := os.ReadFile(framePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frame struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &frame); err != nil {
+		t.Fatalf("initial-prompt frame: %v (%s)", err, raw)
+	}
+	if frame.ID != "initial-prompt" || frame.Type != "prompt" || !strings.HasPrefix(frame.Message, "/skill:first-multica ") {
+		t.Fatalf("RPC first frame must carry the native skill token: %s", raw)
 	}
 }

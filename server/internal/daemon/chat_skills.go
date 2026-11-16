@@ -136,9 +136,8 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 		o.skillDirectories = directories
 		o.chatSkillRefs = refs
 	})
-	prompt := BuildPrompt(task, provider, options...)
 	if len(texts) == 0 || len(refs) == 0 {
-		return prompt, nil
+		return BuildPrompt(task, provider, options...), nil
 	}
 	assigned := make(map[string]SkillData, len(task.Agent.Skills))
 	for _, skill := range task.Agent.Skills {
@@ -158,7 +157,7 @@ func buildRuntimePrompt(task Task, provider string, directories map[string]strin
 		selected[ref.ID] = true
 	}
 	if len(invocation.Skills) == 0 {
-		return prompt, nil
+		return BuildPrompt(task, provider, options...), nil
 	}
 	if task.ChatSessionID != "" {
 		return chatRuntimePrompt(task, texts[0], selected, invocation, provider, options...)
@@ -197,8 +196,23 @@ func chatRuntimePrompt(task Task, source memberSkillText, selected map[string]bo
 // omit, and the issue context, thread metadata and --parent reply routing
 // must survive intact.
 func issueRuntimePrompt(task Task, texts []memberSkillText, selected map[string]bool, invocation *agent.SkillInvocation, provider string, options ...PromptOption) (string, *agent.SkillInvocation) {
-	strip := func(text memberSkillText) string {
-		return strings.TrimSpace(stripSelectedSkillLinks(text.text, text.matches, selected))
+	// texts pairs every member comment of this run — coalesced comments
+	// oldest first, then the trigger comment — with the matches
+	// memberSkillTexts already found in it, so each comment is stripped
+	// exactly once.
+	var user []string
+	next := 0
+	stripped := func(content string) string {
+		var matches []slashSkillMatch
+		if next < len(texts) {
+			matches = texts[next].matches
+			next++
+		}
+		text := stripSelectedSkillLinks(content, matches, selected)
+		if message := strings.TrimSpace(text); message != "" {
+			user = append(user, message)
+		}
+		return text
 	}
 	// The task value is a copy, but its slice fields share the caller's
 	// backing array — the retry path rebuilds from the same task, and a
@@ -206,28 +220,21 @@ func issueRuntimePrompt(task Task, texts []memberSkillText, selected map[string]
 	task.CoalescedComments = append([]CoalescedCommentData(nil), task.CoalescedComments...)
 	for i, cc := range task.CoalescedComments {
 		if cc.AuthorType == "member" && cc.Content != "" {
-			matches := activeSlashSkillMatches(cc.Content)
-			task.CoalescedComments[i].Content = stripSelectedSkillLinks(cc.Content, matches, selected)
+			task.CoalescedComments[i].Content = stripped(cc.Content)
 		}
 	}
 	if task.TriggerAuthorType == "member" && task.TriggerCommentContent != "" {
-		stripped := stripSelectedSkillLinks(task.TriggerCommentContent, activeSlashSkillMatches(task.TriggerCommentContent), selected)
-		if strings.TrimSpace(stripped) == "" {
+		content := stripped(task.TriggerCommentContent)
+		if strings.TrimSpace(content) == "" {
 			// A pure skill-capsule comment strips to nothing. The comment
 			// prompt treats an empty trigger body as "server could not fetch
 			// it", which would silently drop the comment header, edit notes
 			// and every coalesced comment — so keep the section alive with a
 			// placeholder instead.
-			stripped = ""
+			content = ""
 			options = append(options, func(o *promptOpts) { o.triggerCommentStripped = true })
 		}
-		task.TriggerCommentContent = stripped
-	}
-	var user []string
-	for _, text := range texts {
-		if stripped := strip(text); stripped != "" {
-			user = append(user, stripped)
-		}
+		task.TriggerCommentContent = content
 	}
 	invocation.UserMessage = strings.Join(user, "\n\n")
 	invocation.Prompt = BuildPrompt(task, provider, options...)

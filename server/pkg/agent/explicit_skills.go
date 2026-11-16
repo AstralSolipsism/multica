@@ -36,13 +36,9 @@ func injectExplicitSkills(prompt string, skills []ExplicitSkill) string {
 	return b.String()
 }
 
-// FallbackPrompt is also sent to providers that do not support native user
-// invocation: Hermes ACP, Kimi, and the protocol families with no user-level
-// explicit-skill entry on the wire — zcode's app-server carries session/send
-// `content` as plain user text with no command grammar, and dsh's versioned
-// JSONL protocol has a bare `prompt` field. omp (oh-my-pi) removed Pi's
-// /skill: expansion and never dispatches its stdin prompt as a command, so it
-// stays here too. No runtime lookup is required for any of them.
+// FallbackPrompt carries the selection to providers without a native
+// user-level skill invocation: the complete prompt with every selected
+// skill injected inline.
 func (s *SkillInvocation) FallbackPrompt() string {
 	return injectExplicitSkills(s.Prompt, s.Skills)
 }
@@ -51,9 +47,15 @@ func (s *SkillInvocation) claudeTextBlocks(available map[string]bool) []string {
 	if len(s.Skills) == 0 || !available[s.Skills[0].Name] {
 		return []string{s.FallbackPrompt()}
 	}
+	// A capsule-only member text strips to nothing and must not leave a
+	// trailing space; a real ask joins the command with exactly one.
+	command := "/" + s.Skills[0].Name
+	if message := strings.TrimSpace(s.UserMessage); message != "" {
+		command += " " + message
+	}
 	return []string{
 		injectExplicitSkills(s.PlatformPrompt, s.Skills[1:]),
-		"/" + s.Skills[0].Name + " " + s.UserMessage,
+		command,
 	}
 }
 
@@ -125,11 +127,10 @@ func (s *SkillInvocation) antigravityPrompt(supported bool) string {
 //
 // omp (oh-my-pi) shares this backend but removed that expansion: its print
 // mode never dispatches the stdin prompt as a command, so a `/skill:` prefix
-// would reach the model as literal text (verified against omp 18.20.2 — the
-// initial stdin message is passed to session.prompt untouched). omp and every
-// skill file missing from this dispatch therefore keep the injection fallback.
-func (s *SkillInvocation) piSkillPrompt(skillFiles []string, customArgs []string) string {
-	if len(s.Skills) == 0 || piSkillsDisabled(customArgs) {
+// would reach the model as literal text. omp and every skill file missing
+// from this dispatch therefore keep the injection fallback.
+func (s *SkillInvocation) piSkillPrompt(skillFiles []string, args ...[]string) string {
+	if len(s.Skills) == 0 || piSkillsDisabled(args...) {
 		return s.FallbackPrompt()
 	}
 	want := filepath.Clean(filepath.Join(s.Skills[0].Directory, "SKILL.md"))
@@ -141,15 +142,17 @@ func (s *SkillInvocation) piSkillPrompt(skillFiles []string, customArgs []string
 	return s.FallbackPrompt()
 }
 
-// piSkillsDisabled reports whether custom args asked Pi not to load skills.
-// Pi still merges the daemon's `--skill` paths under --no-skills, but a user
-// who disabled skills must not receive a native skill command; the plain
-// injection fallback carries the selection instead, matching how a disabled
-// antigravity falls back.
-func piSkillsDisabled(args []string) bool {
-	for _, arg := range args {
-		if arg == "--no-skills" {
-			return true
+// piSkillsDisabled reports whether any argument group — launch prefix, extra
+// or custom args — asked Pi not to load skills. Pi still merges the daemon's
+// `--skill` paths under --no-skills, but a user who disabled skills must not
+// receive a native skill command; the plain injection fallback carries the
+// selection instead, matching how a disabled antigravity falls back.
+func piSkillsDisabled(args ...[]string) bool {
+	for _, group := range args {
+		for _, arg := range group {
+			if arg == "--no-skills" || arg == "-ns" {
+				return true
+			}
 		}
 	}
 	return false

@@ -480,7 +480,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	// unexpanded token would reach the model as literal text. Both keep the
 	// fallback prompt; only the built-in pi binary earns the native one.
 	if label == "pi" && b.cfg.BuiltinRuntime && opts.SkillInvocation != nil {
-		prompt = opts.SkillInvocation.piSkillPrompt(opts.PiSkillPaths, opts.CustomArgs)
+		prompt = opts.SkillInvocation.piSkillPrompt(opts.PiSkillPaths, b.cfg.LaunchPrefix, opts.ExtraArgs, opts.CustomArgs)
 	}
 	cmd, _, _ := b.cfg.commandAt(execName).execVia(processCtx, choosePiInvocation, lookedUp, args, b.cfg.Logger)
 	cmd.Cancel = func() error { return nil }

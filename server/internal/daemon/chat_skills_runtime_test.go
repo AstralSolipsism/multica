@@ -28,24 +28,24 @@ func TestRunTaskExplicitSkillFirstTurnAndFreshRetry(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	capture := t.TempDir()
-	t.Setenv("OL200_CAPTURE", capture)
+	t.Setenv("SKILL_CAPTURE", capture)
 	fake := filepath.Join(t.TempDir(), "claude-fixture")
 	writeTestExecutable(t, fake, []byte(`#!/bin/sh
 case "$*" in *--version*) echo '2.1.292'; exit 0;; esac
 attempt=1
-if [ -f "$OL200_CAPTURE/count" ]; then
-  attempt=$(cat "$OL200_CAPTURE/count")
+if [ -f "$SKILL_CAPTURE/count" ]; then
+  attempt=$(cat "$SKILL_CAPTURE/count")
   attempt=$((attempt + 1))
 fi
-printf '%s' "$attempt" > "$OL200_CAPTURE/count"
-printf '%s\n' "$@" > "$OL200_CAPTURE/args-$attempt"
+printf '%s' "$attempt" > "$SKILL_CAPTURE/count"
+printf '%s\n' "$@" > "$SKILL_CAPTURE/args-$attempt"
 IFS= read -r input
 case "$input" in
   *'"type":"control_request"'*)
     printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"multica-supplement-initialize","response":{"commands":[{"name":"review-code","description":"Bound skill (project)"}]}}}'
     IFS= read -r input;;
 esac
-printf '%s\n' "$input" > "$OL200_CAPTURE/input-$attempt.json"
+printf '%s\n' "$input" > "$SKILL_CAPTURE/input-$attempt.json"
 case "$*" in
   *--resume*) printf '%s\n' 'No conversation found with session ID: skill-session-1' >&2
     printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true}';;
