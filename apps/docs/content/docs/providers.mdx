@@ -128,3 +128,43 @@ For creating and binding skills, see [Skills](/skills).
 ZCode uses its native NDJSON `app-server` protocol for session creation, resumption, cancellation, model discovery, thinking levels, and MCP. Tasks run in yolo mode without interactive tool approval. Reasoning choices come from the runtime model catalog; creating an agent preserves the selected model's default level.
 
 On macOS the daemon also discovers ZCode Desktop's bundled CLI; Node.js must be installed. On Linux it discovers ZCode Desktop and runs the bundled CLI without opening a desktop window; no separate Node.js installation or manual environment configuration is needed. Enabled desktop API-key/Coding Plan connections are imported into a process-private temporary provider configuration, which is removed on exit without changing the original files. Start Plan identity tokens are not API keys and this account-authentication path is not supported. Configure a working API connection in ZCode Desktop if discovery returns no models.
+
+### Headless Linux and containers
+
+Symlinks to `zcode.cjs` / `zcode.mjs` and small shell launchers with an absolute script path are supported. These Node script installations require Node.js on PATH. Imported BigModel and Z.ai Coding Plan connections retain `zhipu-coding-plan-api-key`, allowing ZCode to apply its client request signing.
+
+Without Desktop, configure an ordinary provider in `~/.zcode/v2/provider_config.json`. This example uses the bundled BigModel Coding Plan template; use `zai-api` for Z.ai. Replace the placeholder with a Coding Plan API key and merge these entries with any existing configuration:
+
+```json
+{
+  "schemaVersion": 1,
+  "config": {
+    "providerOrder": ["personal:bigmodel"],
+    "providerConfigRules": {
+      "providerRules": [{
+        "providerId": "personal:bigmodel",
+        "templateId": "bigmodel-api",
+        "config": {
+          "group": "standard-personal",
+          "access": {
+            "type": "zhipu-coding-plan-api-key",
+            "apiKey": "YOUR_CODING_PLAN_API_KEY"
+          }
+        }
+      }]
+    },
+    "modelConfigRules": {
+      "providerModelRules": [],
+      "manualProviderModelRules": []
+    },
+    "defaultModelSelection": {
+      "providerId": "personal:bigmodel",
+      "modelId": "GLM-5.3"
+    }
+  }
+}
+```
+
+Keep this file private (`chmod 600 ~/.zcode/v2/provider_config.json`). If `ZCODE_DATA_BASE_DIR` is already configured, use its `.zcode/v2` directory instead. An explicit `ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` remains authoritative. Existing native provider rules and the default model selection are preserved during Desktop import.
+
+CLI login alone is insufficient for `app-server`: it does not initialize the standalone account credential service. Multica does not decrypt or import `credentials.json`, whose encryption depends on ZCode's credential store. Configure a provider as above instead of selecting an `account:*` provider that requires host-supplied account state. Start Plan remains unsupported.
