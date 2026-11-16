@@ -120,16 +120,6 @@ func memberSkillRefs(texts []memberSkillText) []SlashSkillRef {
 	return uniqueSlashSkillRefs(matches)
 }
 
-// matchesAnySkill reports whether any match in the text earned a selection.
-func matchesAnySkill(matches []slashSkillMatch, selected map[string]bool) bool {
-	for _, match := range matches {
-		if selected[match.ref.ID] {
-			return true
-		}
-	}
-	return false
-}
-
 // buildRuntimePrompt keeps ordinary inputs byte-for-byte unchanged. Only the
 // server's authenticated member input can earn a structured invocation; a
 // human originator on an agent/system/wakeup task is insufficient.
@@ -200,14 +190,15 @@ func chatRuntimePrompt(task Task, source memberSkillText, selected map[string]bo
 
 // issueRuntimePrompt finishes a comment-triggered issue turn's invocation.
 // Hit links are stripped from the human member comments embedded in the
-// comment prompt, and UserMessage carries those stripped member asks for
+// comment prompt, and UserMessage carries every member ask of the run —
+// including coalesced member comments that carried no skill link — for
 // Claude's trailing slash-command block. PlatformPrompt equals the complete
 // comment prompt: unlike chat there is no separate user-message section to
 // omit, and the issue context, thread metadata and --parent reply routing
 // must survive intact.
 func issueRuntimePrompt(task Task, texts []memberSkillText, selected map[string]bool, invocation *agent.SkillInvocation, provider string, options ...PromptOption) (string, *agent.SkillInvocation) {
 	strip := func(text memberSkillText) string {
-		return stripSelectedSkillLinks(text.text, text.matches, selected)
+		return strings.TrimSpace(stripSelectedSkillLinks(text.text, text.matches, selected))
 	}
 	// The task value is a copy, but its slice fields share the caller's
 	// backing array — the retry path rebuilds from the same task, and a
@@ -220,14 +211,23 @@ func issueRuntimePrompt(task Task, texts []memberSkillText, selected map[string]
 		}
 	}
 	if task.TriggerAuthorType == "member" && task.TriggerCommentContent != "" {
-		task.TriggerCommentContent = stripSelectedSkillLinks(task.TriggerCommentContent, activeSlashSkillMatches(task.TriggerCommentContent), selected)
+		stripped := stripSelectedSkillLinks(task.TriggerCommentContent, activeSlashSkillMatches(task.TriggerCommentContent), selected)
+		if strings.TrimSpace(stripped) == "" {
+			// A pure skill-capsule comment strips to nothing. The comment
+			// prompt treats an empty trigger body as "server could not fetch
+			// it", which would silently drop the comment header, edit notes
+			// and every coalesced comment — so keep the section alive with a
+			// placeholder instead.
+			stripped = ""
+			options = append(options, func(o *promptOpts) { o.triggerCommentStripped = true })
+		}
+		task.TriggerCommentContent = stripped
 	}
 	var user []string
 	for _, text := range texts {
-		if !matchesAnySkill(text.matches, selected) {
-			continue
+		if stripped := strip(text); stripped != "" {
+			user = append(user, stripped)
 		}
-		user = append(user, strings.TrimSpace(strip(text)))
 	}
 	invocation.UserMessage = strings.Join(user, "\n\n")
 	invocation.Prompt = BuildPrompt(task, provider, options...)

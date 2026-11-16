@@ -146,6 +146,7 @@ type promptOpts struct {
 	skillDirectories            map[string]string
 	omitChatMessage             bool
 	chatSkillRefs               []SlashSkillRef
+	triggerCommentStripped      bool
 	worktreeBranch              string
 	worktreeBase                string
 	worktreeCommitsAllLeftovers bool
@@ -503,7 +504,12 @@ func buildCommentPrompt(task Task, provider string, opts promptOpts) string {
 	// A real resume: the latest turn's session comes back. Shared by the
 	// edited-comment notes (MUL-8218) and the reading pointers below.
 	resumed := task.PriorSessionID != "" && !task.PriorSessionResumeUnavailable
-	if task.TriggerCommentContent != "" {
+	// An empty TriggerCommentContent normally means the server could not
+	// fetch the trigger body. triggerCommentStripped marks the other way it
+	// empties: the comment held only explicit skill links, consumed by the
+	// invocation below. The section must still render — headers, edit notes
+	// and every coalesced comment hang off it.
+	if task.TriggerCommentContent != "" || opts.triggerCommentStripped {
 		authorLabel := "A user"
 		if task.TriggerAuthorType == "system" {
 			authorLabel = "The platform"
@@ -524,7 +530,11 @@ func buildCommentPrompt(task Task, provider string, opts promptOpts) string {
 		} else {
 			fmt.Fprintf(&b, "[NEW COMMENT] %s just left a new comment. Focus on THIS comment — do not confuse it with previous ones:\n\n", authorLabel)
 		}
-		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
+		quote := task.TriggerCommentContent
+		if quote == "" {
+			quote = "(explicit skill selection only — the selected link was consumed by the skill invocation)"
+		}
+		fmt.Fprintf(&b, "> %s\n\n", quote)
 		if editedSinceResume {
 			b.WriteString(buildEditedTriggerNote(task))
 		}
@@ -905,9 +915,10 @@ func buildChatPrompt(task Task, opts promptOpts) string {
 
 // explicitSkillSelectionBlock renders the validated member skill selections
 // for a turn prompt. Shared by the chat and comment prompt builders so both
-// surfaces name skills identically, by materialized directory name. A ref
-// whose skill is not bound to this agent, or has no materialized directory,
-// renders nothing — an unknown id in user text must not announce a skill.
+// surfaces name skills identically, by materialized directory name when the
+// daemon recorded one and by the agent's skill name otherwise. A ref whose
+// skill is not bound to this agent renders nothing — an unknown id in user
+// text must not announce a skill.
 func explicitSkillSelectionBlock(task Task, refs []SlashSkillRef, directories map[string]string) string {
 	if task.Agent == nil || len(task.Agent.Skills) == 0 || len(refs) == 0 {
 		return ""

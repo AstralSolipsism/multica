@@ -64,8 +64,9 @@ func TestPiSkillPromptNativeAndFallback(t *testing.T) {
 }
 
 // piSkillStdinProbe runs a backend against a fake CLI that records stdin and
-// emits a minimal successful event stream.
-func piSkillStdinProbe(t *testing.T, provider string, opts ExecOptions) string {
+// emits a minimal successful event stream. builtin mirrors the daemon's
+// Config.BuiltinRuntime for the provider under test.
+func piSkillStdinProbe(t *testing.T, provider string, opts ExecOptions, builtin bool) string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
@@ -87,14 +88,15 @@ printf '%%s\n' '{"type":"agent_end"}'
 `, stdinPath)
 	fakePath := filepath.Join(dir, provider)
 	writeTestExecutable(t, fakePath, []byte(script))
-	backend, err := ResolveBackend(provider, Config{ExecutablePath: fakePath, Logger: slog.Default()})
+	backend, err := ResolveBackend(provider, Config{ExecutablePath: fakePath, Logger: slog.Default(), BuiltinRuntime: builtin})
 	if err != nil {
 		t.Fatal(err)
 	}
 	prompt := "unused prompt"
-	if provider == "omp" && opts.SkillInvocation != nil {
-		// omp never rewrites the prompt itself; the daemon hands every
-		// non-native runtime the fallback text up front.
+	if (provider == "omp" || !builtin) && opts.SkillInvocation != nil {
+		// The backend never rewrites the prompt for omp or a custom
+		// protocol-family profile; the daemon hands every non-native runtime
+		// the fallback text up front.
 		prompt = opts.SkillInvocation.FallbackPrompt()
 	}
 	session, err := backend.Execute(t.Context(), prompt, opts)
@@ -118,12 +120,30 @@ func TestPiExecuteSendsNativeSkillPromptOnStdin(t *testing.T) {
 		Timeout:         10 * time.Second,
 		SkillInvocation: s,
 		PiSkillPaths:    []string{skillFile},
-	})
+	}, true)
 	if !strings.HasPrefix(stdin, "/skill:first-multica ") {
 		t.Fatalf("pi must receive the native skill token first: %q", stdin)
 	}
 	if !strings.Contains(stdin, "Platform context") || !strings.Contains(stdin, "SECOND BODY") {
 		t.Fatalf("pi prompt lost platform text or injected skills: %q", stdin)
+	}
+}
+
+// TestPiProfileExecuteKeepsInjectionFallback pins the custom-profile gate: a
+// protocol-family profile is not the vendor's binary, so its "/skill:" grammar
+// is unverified and the native token must never be sent.
+func TestPiProfileExecuteKeepsInjectionFallback(t *testing.T) {
+	s, skillFile := piSkillInvocation(t)
+	stdin := piSkillStdinProbe(t, "pi", ExecOptions{
+		Timeout:         10 * time.Second,
+		SkillInvocation: s,
+		PiSkillPaths:    []string{skillFile},
+	}, false)
+	if strings.HasPrefix(stdin, "/skill:") {
+		t.Fatalf("a custom pi-family profile must not receive the native token: %q", stdin)
+	}
+	if !strings.Contains(stdin, "FIRST BODY") || !strings.Contains(stdin, "Platform context") {
+		t.Fatalf("the profile must receive the full fallback prompt: %q", stdin)
 	}
 }
 
@@ -133,7 +153,7 @@ func TestOmpExecuteKeepsInjectionFallback(t *testing.T) {
 		Timeout:         10 * time.Second,
 		SkillInvocation: s,
 		PiSkillPaths:    []string{skillFile},
-	})
+	}, true)
 	if strings.HasPrefix(stdin, "/skill:") {
 		t.Fatalf("omp never command-dispatches its stdin prompt; native token must not be sent: %q", stdin)
 	}

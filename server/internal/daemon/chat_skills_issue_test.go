@@ -154,6 +154,100 @@ func TestBuildRuntimePromptIssueMissingInstallation(t *testing.T) {
 	}
 }
 
+// TestBuildRuntimePromptIssuePureCapsuleTrigger pins the skill-capsule-only
+// comment: stripping its link must not collapse the comment section the way a
+// server fetch failure does — the header, placeholder quote and every
+// coalesced comment still render, and the earlier member ask survives into
+// UserMessage.
+func TestBuildRuntimePromptIssuePureCapsuleTrigger(t *testing.T) {
+	dirs := issueSkillDirs(t)
+	task := issueSkillTask("[/review](slash://skill/one)")
+	task.CoalescedComments = []CoalescedCommentData{
+		{ID: "c-earlier", ThreadID: "c-earlier", AuthorType: "member", Content: "Please check the Safari login redirect bug"},
+	}
+	prompt, invocation := buildRuntimePrompt(task, "claude", dirs)
+	if invocation == nil || len(invocation.Skills) != 1 {
+		t.Fatalf("pure capsule must still select: %+v", invocation)
+	}
+	for _, want := range []string{
+		"[NEW COMMENT]", "(explicit skill selection only",
+		"Please check the Safari login redirect bug",
+		"--parent c-earlier", "Explicitly selected skills:\n- review-code\n",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q: %s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "slash://skill") {
+		t.Errorf("acted-on link must be stripped everywhere: %s", prompt)
+	}
+	if invocation.UserMessage != "Please check the Safari login redirect bug" {
+		t.Fatalf("UserMessage must carry the earlier member ask: %q", invocation.UserMessage)
+	}
+	if !strings.Contains(invocation.PlatformPrompt, "Please check the Safari login redirect bug") {
+		t.Fatalf("PlatformPrompt lost the coalesced member ask: %q", invocation.PlatformPrompt)
+	}
+}
+
+// TestBuildRuntimePromptIssuePureCapsuleEditedTrigger keeps the edited-comment
+// notice alive when a resumed session's trigger was edited down to a bare
+// capsule.
+func TestBuildRuntimePromptIssuePureCapsuleEditedTrigger(t *testing.T) {
+	dirs := issueSkillDirs(t)
+	task := issueSkillTask("[/review](slash://skill/one)")
+	task.PriorSessionID = "session-1"
+	task.TriggerCommentEditedAt = "2026-11-16T09:00:00Z"
+	prompt, invocation := buildRuntimePrompt(task, "claude", dirs)
+	if invocation == nil {
+		t.Fatal("pure capsule must still select")
+	}
+	if !strings.Contains(prompt, "[EDITED COMMENT]") || !strings.Contains(prompt, "was edited at") {
+		t.Errorf("edited-trigger notice lost: %s", prompt)
+	}
+	if !strings.Contains(prompt, "(explicit skill selection only") {
+		t.Errorf("placeholder quote lost: %s", prompt)
+	}
+	if invocation.UserMessage != "" {
+		t.Fatalf("no member ask text exists; UserMessage=%q", invocation.UserMessage)
+	}
+}
+
+// TestBuildRuntimePromptIssueUserMessageJoinsMemberTexts covers the join: a
+// capsule-only coalesced comment contributes nothing (no blank segment) and a
+// member comment without any link still reaches UserMessage.
+func TestBuildRuntimePromptIssueUserMessageJoinsMemberTexts(t *testing.T) {
+	dirs := issueSkillDirs(t)
+	task := issueSkillTask("[/two](slash://skill/two) please review")
+	task.CoalescedComments = []CoalescedCommentData{
+		{ID: "c1", AuthorType: "member", Content: "[/first](slash://skill/one)"},
+		{ID: "c2", AuthorType: "member", Content: "and double-check the tests"},
+	}
+	_, invocation := buildRuntimePrompt(task, "claude", dirs)
+	if invocation == nil {
+		t.Fatal("selection missing")
+	}
+	if invocation.UserMessage != "and double-check the tests\n\nplease review" {
+		t.Fatalf("UserMessage must join member asks without blank segments: %q", invocation.UserMessage)
+	}
+}
+
+// TestBuildRuntimePromptIssuePureCapsuleAlone verifies the bare single-comment
+// case: the invocation still exists and the placeholder keeps the comment
+// section from collapsing.
+func TestBuildRuntimePromptIssuePureCapsuleAlone(t *testing.T) {
+	dirs := issueSkillDirs(t)
+	prompt, invocation := buildRuntimePrompt(issueSkillTask("[/review](slash://skill/one)"), "claude", dirs)
+	if invocation == nil || invocation.UserMessage != "" {
+		t.Fatalf("invocation=%+v UserMessage=%q", invocation, invocation.UserMessage)
+	}
+	if !strings.Contains(prompt, "[NEW COMMENT]") || !strings.Contains(prompt, "(explicit skill selection only") {
+		t.Errorf("comment section collapsed: %s", prompt)
+	}
+	if !strings.Contains(prompt, "Explicitly selected skills:\n- review-code\n") {
+		t.Errorf("selection list missing: %s", prompt)
+	}
+}
+
 func TestMemberSkillTextsChatGateUnchanged(t *testing.T) {
 	// A chat task on an issue-less run keeps exactly one member text; an
 	// issue task never consults ChatSkillMessage even when a stale server
