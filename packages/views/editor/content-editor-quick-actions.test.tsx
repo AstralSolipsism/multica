@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
+import type { PropsWithChildren } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, Issue, ListQuickActionsResponse, MemberWithUser, QuickAction } from "@multica/core/types";
 import { quickActionKeys } from "@multica/core/quick-actions";
@@ -168,6 +169,54 @@ async function type(editor: Editor, text: string) {
 }
 
 const menuItem = () => screen.queryByRole("button", { name: "/delayed-feedback" });
+
+describe("quick action menu query lifecycle", () => {
+  function renderMenu(client: QueryClient, enabled: boolean) {
+    return renderHook(() => useQuickActionMenu("issue-1", { enabled }), {
+      wrapper: ({ children }: PropsWithChildren) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+  }
+
+  it("disables every query while the composer is a static shell", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const { unmount } = renderMenu(client, false);
+
+    const queries = client.getQueryCache().getAll();
+    const observers = queries.flatMap((query) => query.observers);
+    expect(observers).toHaveLength(5);
+    expect(observers.every((observer) => observer.options.enabled === false)).toBe(true);
+    expect(listQuickActions).not.toHaveBeenCalled();
+    expect(getIssue).not.toHaveBeenCalled();
+    expect(listAgents).not.toHaveBeenCalled();
+    expect(listSquads).not.toHaveBeenCalled();
+    expect(listMembers).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("disables mount refetches for active Issue context queries", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const { unmount } = renderMenu(client, true);
+
+    const keys = [
+      issueKeys.detail("ws", "issue-1"),
+      workspaceKeys.agents("ws"),
+      workspaceKeys.squads("ws"),
+      workspaceKeys.members("ws"),
+    ];
+    for (const queryKey of keys) {
+      const query = client.getQueryCache().find({ queryKey, exact: true });
+      const observers = query?.observers ?? [];
+      expect(observers).toHaveLength(1);
+      expect(observers[0]?.options.enabled).toBe(true);
+      expect(observers[0]?.options.refetchOnMount).toBe(false);
+    }
+    unmount();
+  });
+});
 
 describe("comment quick-action catalog updates in the real editor", () => {
   it.each(["", "agent", "squad"])(

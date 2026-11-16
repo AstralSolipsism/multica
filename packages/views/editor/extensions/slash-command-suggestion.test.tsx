@@ -116,6 +116,24 @@ describe("slash command suggestion items", () => {
     expect(items(qc).map((i) => i.label)).toEqual(["deploy", "review"]);
   });
 
+  it("filters paused skills from the active agent", () => {
+    chatState.selectedAgentId = "agent-1";
+    const qc = fakeQc({
+      members: [{ user_id: "u1", name: "Alice", role: "member" }],
+      agents: [
+        agent({
+          id: "agent-1",
+          skills: [
+            { id: "paused", name: "paused", description: "", enabled: false },
+            { id: "active", name: "active", description: "", enabled: true },
+          ],
+        }),
+      ],
+    });
+
+    expect(items(qc).map((item) => item.id)).toEqual(["active"]);
+  });
+
   it("filters skills by name case-insensitively", () => {
     chatState.selectedAgentId = "agent-1";
     const qc = fakeQc({
@@ -581,6 +599,18 @@ describe("buildBuiltinCommandItems", () => {
     expect(result).toHaveLength(20);
     expect(result[0]?.id).toBe("skill:named");
     expect(result.every((item) => item.id.startsWith("skill:"))).toBe(true);
+  });
+
+  it.each(["", "n", "no"])("reserves /note for query %j with 25 matching skills", (query) => {
+    const skills = Array.from({ length: 25 }, (_, index) => ({
+      id: `skill-${index}`,
+      name: `skill-${index}`,
+      description: "note",
+    }));
+
+    const result = buildBuiltinCommandItems(query, [], skills);
+    expect(result).toHaveLength(20);
+    expect(result.at(-1)?.id).toBe("note");
   });
 
   it("includes /note while the query is a prefix of the label", () => {

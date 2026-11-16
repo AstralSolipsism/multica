@@ -137,7 +137,11 @@ function ReplyInput({
       (draftKey ? useCommentDraftStore.getState().getUploads(draftKey).length > 0 : false),
     editorRef,
   });
-  const quickActionMenu = useQuickActionMenu(issueId, { enabled: lazy.active });
+  const quickActionMenu = useQuickActionMenu(issueId, {
+    enabled: lazy.active,
+    parentId: previewParentId,
+    targetMissing,
+  });
   useImperativeHandle(handleRef, () => ({ focus: () => lazy.activate() }), [lazy]);
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: lazy.uploadOrQueue,

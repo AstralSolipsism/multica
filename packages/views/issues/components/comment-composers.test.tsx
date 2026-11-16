@@ -5,7 +5,9 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { AgentSkillSummary, Attachment } from "@multica/core/types";
 import type { Editor } from "@tiptap/core";
-import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
+import { issueKeys } from "@multica/core/issues/queries";
+import { workspaceKeys } from "@multica/core/workspace/queries";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { renderWithI18n } from "../../test/i18n";
 import { CommentInput, type CommentInputRef } from "./comment-input";
@@ -366,13 +368,14 @@ describe("quick action `/` menu", () => {
       ],
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return renderWithI18n(
+    const view = renderWithI18n(
       <QueryClientProvider client={queryClient}>
         {/* useQuickActionMenu resolves the workspace from the slug context; without
             it the catalog query stays disabled and every menu reads as empty. */}
         <WorkspaceSlugProvider slug="acme">{ui}</WorkspaceSlugProvider>
       </QueryClientProvider>,
     );
+    return { ...view, queryClient };
   }
 
   // Both composers post to the same issue, so `/` must offer the same catalog in
@@ -399,6 +402,62 @@ describe("quick action `/` menu", () => {
       ),
     },
   ];
+
+  async function replySkillIds({
+    timeline,
+    parentId = "comment-1",
+    targetMissing = false,
+    squads = [],
+  }: {
+    timeline: unknown[];
+    parentId?: string;
+    targetMissing?: boolean;
+    squads?: unknown[];
+  }) {
+    const agentIds = [
+      "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "parent-agent",
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "root-leader",
+    ];
+    apiGetIssue.mockResolvedValue({
+      id: "issue-1",
+      assignee_type: "agent",
+      assignee_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    });
+    apiListAgents.mockResolvedValue(agentIds.map((id) => ({
+      id,
+      archived_at: null,
+      owner_id: null,
+      permission_mode: "public_to",
+      invocation_targets: [{ target_type: "workspace", target_id: null }],
+      skills: [{ id: `${id}-skill`, name: id, description: "" }],
+    })));
+    apiListSquads.mockResolvedValue(squads);
+    const view = renderInWorkspace(
+      <ReplyInput
+        issueId="issue-1"
+        parentId={parentId}
+        avatarType="member"
+        avatarId="user-1"
+        targetMissing={targetMissing}
+        onSubmit={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+    view.queryClient.setQueryData(issueKeys.timeline("issue-1"), timeline);
+    activateComposer("reply-composer-shell");
+    await waitFor(() => {
+      expect(view.queryClient.getQueryData(issueKeys.detail("ws-1", "issue-1"))).toBeDefined();
+      expect(view.queryClient.getQueryData(workspaceKeys.agents("ws-1"))).toHaveLength(agentIds.length);
+      if (squads.length) {
+        expect(view.queryClient.getQueryData(workspaceKeys.squads("ws-1"))).toHaveLength(squads.length);
+      }
+    });
+    const editor = { state: { doc: { descendants: () => {} } } } as unknown as Editor;
+    const ids = editorQuickActionMenu.last?.getSkills?.(editor).map((skill) => skill.id) ?? [];
+    expect(apiListTasksByIssue).not.toHaveBeenCalled();
+    return ids;
+  }
 
   for (const composer of composers) {
     it(`offers the workspace's active quick actions in the ${composer.name}`, async () => {
@@ -448,6 +507,95 @@ describe("quick action `/` menu", () => {
       });
     });
   }
+
+  it("uses the parent comment agent's skills in ReplyInput", async () => {
+    const parent = {
+      type: "comment",
+      id: "comment-1",
+      actor_type: "agent",
+      actor_id: "parent-agent",
+      content: "Agent answer",
+      parent_id: null,
+    };
+
+    expect(await replySkillIds({ timeline: [parent] })).toEqual(["parent-agent-skill"]);
+  });
+
+  it("uses the conversation owner when ReplyInput targets a member root", async () => {
+    const root = {
+      type: "comment",
+      id: "root",
+      actor_type: "member",
+      actor_id: "user-2",
+      content: "Please investigate",
+      parent_id: null,
+    };
+    const agentReply = {
+      ...root,
+      id: "agent-reply",
+      actor_type: "agent",
+      actor_id: "parent-agent",
+      content: "Agent answer",
+      parent_id: root.id,
+    };
+
+    expect(await replySkillIds({ timeline: [root, agentReply], parentId: root.id }))
+      .toEqual(["parent-agent-skill"]);
+  });
+
+  it.each([
+    {
+      name: "agent",
+      content: "[@Root](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) [@Assignee](mention://agent/cccccccc-cccc-cccc-cccc-cccccccccccc)",
+      squads: [],
+      expected: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa-skill",
+    },
+    {
+      name: "squad",
+      content: "[@Team](mention://squad/dddddddd-dddd-dddd-dddd-dddddddddddd) [@Assignee](mention://agent/cccccccc-cccc-cccc-cccc-cccccccccccc)",
+      squads: [{ id: "dddddddd-dddd-dddd-dddd-dddddddddddd", leader_id: "root-leader", archived_at: null }],
+      expected: "root-leader-skill",
+    },
+  ])("uses the first root $name mention in ReplyInput", async ({ content, squads, expected }) => {
+    const root = {
+      type: "comment",
+      id: "root",
+      actor_type: "member",
+      actor_id: "user-2",
+      content,
+      parent_id: null,
+    };
+    const reply = { ...root, id: "comment-1", content: "Reply", parent_id: root.id };
+
+    expect(await replySkillIds({ timeline: [root, reply], squads })).toEqual([expected]);
+  });
+
+  it("keeps member-to-member ReplyInput threads silent", async () => {
+    const root = {
+      type: "comment",
+      id: "root",
+      actor_type: "member",
+      actor_id: "user-2",
+      content: "Question",
+      parent_id: null,
+    };
+    const reply = { ...root, id: "comment-1", content: "Reply", parent_id: root.id };
+
+    expect(await replySkillIds({ timeline: [root, reply] })).toEqual([]);
+  });
+
+  it("returns no ReplyInput skills when the target is missing", async () => {
+    const parent = {
+      type: "comment",
+      id: "comment-1",
+      actor_type: "agent",
+      actor_id: "parent-agent",
+      content: "Agent answer",
+      parent_id: null,
+    };
+
+    expect(await replySkillIds({ timeline: [parent], targetMissing: true })).toEqual([]);
+  });
 });
 
 /**
