@@ -220,11 +220,11 @@ test.describe("Comments", () => {
     await page.keyboard.type("reply via padding");
     await expect(replyPM).toContainText("reply via padding");
 
-    // With content the toolbar strip (pb-9) appears: blank arrow, buttons pointer.
+    // The shared toolbar stays below the editor: blank arrow, buttons pointer.
     const replyColumn = page.getByTestId("reply-text-surface").locator(":scope > div");
-    // pb-9 and the send button's enabled state both follow the debounced
-    // onUpdate (100ms) — wait for the layout, don't race it.
-    await expect(replyColumn).toHaveClass(/pb-9/);
+    const replySendBtn = replyColumn.locator("button:has(svg.icon-arrow-up)").first();
+    // The send button follows the debounced onUpdate (100ms).
+    await expect(replySendBtn).toBeEnabled();
     await replyColumn.evaluate((el) => el.scrollIntoView({ block: "center" }));
     const colBox = await boxOf(replyColumn);
     const stripBlank = await probe(colBox.x + colBox.width / 2, colBox.y + colBox.height - 6);
@@ -235,10 +235,9 @@ test.describe("Comments", () => {
     ).toContain(stripBlank!.cursor);
     const replyAttachBox = await boxOf(replyColumn.locator("button:has(svg.icon-paperclip)").first());
     expect((await probe(replyAttachBox.x + replyAttachBox.width / 2, replyAttachBox.y + replyAttachBox.height / 2))!.cursor).toBe("pointer");
-    const replySendBtn = replyColumn.locator("button:has(svg.icon-arrow-up)").first();
-    // `disabled` lifts on the debounced onUpdate (100ms) — wait, don't race it.
-    await expect(replySendBtn).toBeEnabled();
     const replySendBox = await boxOf(replySendBtn);
+    const replyTextBox = await boxOf(replyPM);
+    expect(replySendBox.y, "reply toolbar must not overlap the editor").toBeGreaterThanOrEqual(replyTextBox.y + replyTextBox.height);
     expect((await probe(replySendBox.x + replySendBox.width / 2, replySendBox.y + replySendBox.height / 2))!.cursor).toBe("pointer");
   });
 

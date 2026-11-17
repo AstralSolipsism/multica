@@ -100,7 +100,7 @@ export function ComposerToolbar({
 }) {
   return (
     <div
-      className={cn("flex h-9 items-center gap-1", className)}
+      className={cn("flex h-9 cursor-default items-center gap-1", className)}
       onMouseDown={keepFocus}
     >
       {hasRecipients && (
