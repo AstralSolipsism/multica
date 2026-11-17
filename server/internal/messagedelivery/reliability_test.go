@@ -400,7 +400,7 @@ func (f *failingDeliveryRead) Query(ctx context.Context, sql string, args ...any
 
 func TestWorkerPersonalAndTeamGateReadFailuresRetry(t *testing.T) {
 	for _, tc := range []struct{ kind, name string }{
-		{RouteSourceInbox, "GetInboxItem"}, {RouteSourceInbox, "GetMemberByUserAndWorkspace"},
+		{RouteSourceInbox, "GetInboxItemInWorkspace"}, {RouteSourceInbox, "GetMemberByUserAndWorkspace"},
 		{RouteSourceInbox, "ListNotificationPreferencesByUsers"},
 		{RouteSourceActivity, "GetProjectInWorkspace"},
 		{RouteSourceActivity, "GetActivity"}, {RouteSourceActivity, "GetIssue"},

@@ -59,6 +59,7 @@ export default [
           "**/vitest.config.*",
           "**/vite.config.*",
           "**/electron.vite.config.*",
+          "**/.storybook/**",
           "**/eslint.config.*",
           "**/scripts/**",
           "**/src/main/**",

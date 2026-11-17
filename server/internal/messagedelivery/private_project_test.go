@@ -36,11 +36,18 @@ func TestPrivateProjectTeamRoutes(t *testing.T) {
 	for _, scope := range []string{RouteSourceActivity, RouteSourceComment} {
 		t.Run(scope, func(t *testing.T) {
 			fx := newSourceFixture(t, "private-team-"+scope)
+			privateMessageMember(t, fx.project, testUID)
 			resetSourceScanCursors(t)
 			testFx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", fx.project)
 			testFx.Exec(t, "UPDATE issue SET project_id=$2 WHERE id=$1", fx.issue, fx.project)
 			wide := fx.teamRoute(t, "wide", scope, "oc_public", nil)
 			fx.approveTeam(t, scope, "oc_public")
+			event := "status_changed"
+			if scope == RouteSourceComment {
+				event = "comment"
+			}
+			testFx.Exec(t, "UPDATE member SET role='admin' WHERE workspace_id=$1 AND user_id=$2", testWSID, fx.memberB)
+			stale := fx.teamRoute(t, "stale-scoped", scope, "oc_public", testutil.Cols{"project_id": fx.project, "updated_by": fx.memberB, "event_types": []string{event}})
 			// The same destination can have an explicit private-project route;
 			// the broad rule must not win dedup selection over that scoped rule.
 			scoped := fx.teamRoute(t, "scoped", scope, "oc_public", testutil.Cols{"project_id": fx.project})
@@ -58,7 +65,7 @@ func TestPrivateProjectTeamRoutes(t *testing.T) {
 			if errs := s.decideSourcesErr(t.Context()); len(errs) > 0 {
 				t.Fatal(errs)
 			}
-			if countSourceDecisions(t, source) != 1 || testFx.Count(t, "SELECT count(*) FROM labrastro_message_delivery WHERE route_id=$1", wide) != 0 || testFx.Count(t, "SELECT count(*) FROM labrastro_message_delivery WHERE route_id=$1 AND status='queued'", scoped) != 1 {
+			if countSourceDecisions(t, source) != 1 || testFx.Count(t, "SELECT count(*) FROM labrastro_message_delivery WHERE route_id IN ($1, $2)", wide, stale) != 0 || testFx.Count(t, "SELECT count(*) FROM labrastro_message_delivery WHERE route_id=$1 AND status='queued'", scoped) != 1 {
 				t.Fatal("private event reached a broad rule or missed the explicit project rule")
 			}
 			processPrivateMessage(t, s, sourceDeliveryID(t, source))
@@ -152,6 +159,7 @@ func TestPrivateProjectAutopilotRouteAuthority(t *testing.T) {
 	for _, revoke := range []string{"recipient", "authorizer", "previous_recipient"} {
 		t.Run(revoke, func(t *testing.T) {
 			project := testFx.Project(t, "private autopilot", testutil.Cols{"visibility": "private"})
+			privateMessageMember(t, project, testUID)
 			user := testFx.User(t, "private route member", "private-route-"+project+"@test.invalid")
 			testFx.Member(t, testWSID, user, "member")
 			fx := newMDFixture(t, "private-run-"+revoke, testutil.Cols{"project_id": project, "created_by_id": user})
@@ -267,5 +275,113 @@ func TestPrivateProjectInboxRevokedAfterCandidateRead(t *testing.T) {
 	}
 	if snapshot != (contentSnapshot{}) || source != (sourceRef{}) {
 		t.Fatalf("unauthorized decision retained private content: %s / %s", content, ref)
+	}
+}
+
+func TestPrivateProjectTeamRouteRequiresProjectMembers(t *testing.T) {
+	for _, scope := range []string{RouteSourceActivity, RouteSourceComment} {
+		t.Run(scope, func(t *testing.T) {
+			fx := newSourceFixture(t, "private-config-"+scope)
+			testFx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", fx.project)
+			s := newTestService(&fakeSender{}, nil)
+			member := loadMember(t)
+			member.WorkspaceID = mustUUID(testWSID)
+			in := SourceRouteInput{Scope: scope, ProjectID: fx.project, InstallationID: fx.install, TargetType: TargetGroup, TargetChatID: "oc_private_config"}
+			target, err := s.ResolveSourceTargetForApproval(t.Context(), member.WorkspaceID, scope, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ApproveSourceTarget(t.Context(), member.WorkspaceID, scope, member, target); !errors.Is(err, ErrAuthorizationLost) {
+				t.Fatalf("non-member owner approved private project: %v", err)
+			}
+			privateMessageMember(t, fx.project, testUID)
+			approval, err := s.ApproveSourceTarget(t.Context(), member.WorkspaceID, scope, member, target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testFx.Cleanup(t, "DELETE FROM labrastro_message_approved_target WHERE id=$1", approval.ID)
+			route, err := s.CreateSourceRoute(t.Context(), member, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			testFx.Exec(t, "UPDATE member SET role='admin' WHERE workspace_id=$1 AND user_id=$2", testWSID, fx.memberB)
+			outsider, err := s.Queries.GetMemberByUserAndWorkspace(t.Context(), db.GetMemberByUserAndWorkspaceParams{WorkspaceID: member.WorkspaceID, UserID: mustUUID(fx.memberB)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.UpdateSourceRoute(t.Context(), route, outsider, route.Revision, in); !errors.Is(err, ErrAuthorizationLost) {
+				t.Fatalf("non-member admin edited private route: %v", err)
+			}
+			in.TargetChatID = "oc_private_new"
+			fx.approveTeam(t, scope, in.TargetChatID, fx.project)
+			if _, err := s.CreateSourceRoute(t.Context(), outsider, in); !errors.Is(err, ErrAuthorizationLost) {
+				t.Fatalf("non-member admin created private route: %v", err)
+			}
+		})
+	}
+}
+
+func TestPrivateProjectTeamSendRechecksBothPrincipals(t *testing.T) {
+	for _, scope := range []string{RouteSourceActivity, RouteSourceComment} {
+		for _, revoke := range []string{"authorizer", "approver"} {
+			t.Run(scope+"/"+revoke, func(t *testing.T) {
+				fx := newSourceFixture(t, "private-principals-"+scope+revoke)
+				resetSourceScanCursors(t)
+				testFx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", fx.project)
+				testFx.Exec(t, "UPDATE issue SET project_id=$2 WHERE id=$1", fx.issue, fx.project)
+				testFx.Exec(t, "UPDATE member SET role='admin' WHERE workspace_id=$1 AND user_id=$2", testWSID, fx.memberB)
+				privateMessageMember(t, fx.project, testUID)
+				privateMessageMember(t, fx.project, fx.memberB)
+				fx.teamRoute(t, "scoped", scope, "oc_principals", testutil.Cols{"project_id": fx.project, "updated_by": fx.memberB})
+				fx.approveTeam(t, scope, "oc_principals", fx.project)
+				var source string
+				if scope == RouteSourceActivity {
+					source = fx.activity(t, fx.issue, "status_changed", `{"from":"todo","to":"done"}`)
+				} else {
+					source = fx.comment(t, fx.issue, "private body")
+				}
+				sender := &fakeSender{}
+				s := newTestService(sender, nil)
+				if errs := s.decideSourcesErr(t.Context()); len(errs) > 0 {
+					t.Fatal(errs)
+				}
+				id := sourceDeliveryID(t, source)
+				principal := fx.memberB
+				if revoke == "approver" {
+					principal = testUID
+				}
+				testFx.Exec(t, "DELETE FROM project_member WHERE project_id=$1 AND user_id=$2", fx.project, principal)
+				processPrivateMessage(t, s, id)
+				status, _, code, _ := deliveryStatus(t, id)
+				if status != DeliveryStatusCancelled || code != ErrorCodeAuthorizationLost || sender.count() != 0 {
+					t.Fatalf("revoked %s sent: %s/%s calls=%d", revoke, status, code, sender.count())
+				}
+				route, err := s.Queries.GetLabrastroMessageRoute(t.Context(), db.GetLabrastroMessageRouteParams{ID: mustUUID(fx.routes[0]), WorkspaceID: mustUUID(testWSID)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := s.gateTestSendSource(t.Context(), db.LabrastroMessageDelivery{WorkspaceID: mustUUID(testWSID), SourceProjectID: mustUUID(fx.project), RequestedBy: mustUUID(principal)}, route)
+				if out == nil || out.errorCode != ErrorCodeAuthorizationLost {
+					t.Fatalf("non-member diagnostic passed: %+v", out)
+				}
+			})
+		}
+	}
+}
+
+func TestPrivateProjectInboxOwnerHasNoBypass(t *testing.T) {
+	fx := newSourceFixture(t, "private-inbox-owner")
+	resetSourceScanCursors(t)
+	testFx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", fx.project)
+	testFx.Exec(t, "UPDATE issue SET project_id=$2 WHERE id=$1", fx.issue, fx.project)
+	fx.bindMember(t, testUID, "ou_private_owner")
+	fx.personalRoute(t, "owner", testUID, nil)
+	item := fx.inboxItem(t, testUID, "status_changed", fx.issue)
+	s := newTestService(&fakeSender{}, nil)
+	if errs := s.decideSourcesErr(t.Context()); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if countSourceDecisions(t, item) != 0 {
+		t.Fatal("non-member owner remained an inbox candidate")
 	}
 }

@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Folder, X } from "@multica/ui/icons";
+import { Archive, Folder, X } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 import { ShimmerText } from "@multica/ui/components/common/shimmer-text";
@@ -34,10 +34,12 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { PANEL_ROW_CLASS, PanelList, PanelSection, isPathWithin, panelRowAnchor, panelRowStateClass } from "../panel-nav";
 import { useDragClickGuard } from "../use-drag-click-guard";
+import { PinnedSectionSettings, SECTION_SETTINGS_REVEAL_CLASS } from "./sidebar-settings";
 import {
   ISSUE_ROW_LINK_CLASS,
   IssueAgentBadge,
   IssueUnreadDot,
+  PrivateProjectLock,
   SIDEBAR_SHIMMER_CLASS,
   SidebarIssueStatus,
   issueRowMenuOpenClass,
@@ -48,7 +50,6 @@ import {
 // Stable empty default: an inline `= []` on useQuery is a new reference every
 // render while the query is disabled, which re-fires the sync effect below.
 const EMPTY_PINS: PinnedItem[] = [];
-const PINNED_PREVIEW_LIMIT = 5;
 
 function pinHref(p: WorkspacePaths, pin: PinnedItem): string {
   return pin.item_type === "issue" ? p.issueDetail(pin.item_id) : p.projectDetail(pin.item_id);
@@ -96,7 +97,8 @@ export function usePanelPins(
 
   const visible = localPinnedWsId === (wsId ?? null) ? localPinned : EMPTY_PINS;
   const expanded = expandedWsId === (wsId ?? null);
-  const displayed = expanded ? visible : visible.slice(0, PINNED_PREVIEW_LIMIT);
+  const limit = useSidebarTreeStore((s) => s.pinnedLimit);
+  const displayed = expanded ? visible : visible.slice(0, limit);
   const isPinActive = (pin: PinnedItem) =>
     pin.item_type === "issue"
       ? pin.item_id === currentIssueId
@@ -109,6 +111,7 @@ export function usePanelPins(
     visible,
     displayed,
     expanded,
+    limit,
     isActivePinnedRoute,
     isPinActive,
     setExpanded: (next: boolean) => setExpandedWsId(next ? wsId ?? null : null),
@@ -126,7 +129,7 @@ export function PinnedSection({ pins, wsId }: { pins: PanelPins; wsId: string })
   const deletePin = useDeletePin();
   const reorderPins = useReorderPins();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-  const { visible, displayed, expanded, setExpanded, setLocalPinned, isDraggingRef, viewPins, isPinActive } = pins;
+  const { visible, displayed, expanded, limit, setExpanded, setLocalPinned, isDraggingRef, viewPins, isPinActive } = pins;
   const collapsed = useSidebarTreeStore((s) => s.pinnedCollapsed);
   const setCollapsed = useSidebarTreeStore((s) => s.setPinnedCollapsed);
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
@@ -162,6 +165,7 @@ export function PinnedSection({ pins, wsId }: { pins: PanelPins; wsId: string })
       label={t(($) => $.sidebar.pinned_label)}
       collapsed={collapsed}
       onCollapsedChange={setCollapsed}
+      action={<PinnedSectionSettings className={SECTION_SETTINGS_REVEAL_CLASS} />}
     >
       <DndContext
         sensors={sensors}
@@ -185,7 +189,7 @@ export function PinnedSection({ pins, wsId }: { pins: PanelPins; wsId: string })
           </PanelList>
         </SortableContext>
       </DndContext>
-      {visible.length > PINNED_PREVIEW_LIMIT && (
+      {visible.length > limit && (
         <button
           type="button"
           aria-expanded={expanded}
@@ -194,7 +198,7 @@ export function PinnedSection({ pins, wsId }: { pins: PanelPins; wsId: string })
         >
           {expanded
             ? t(($) => $.sidebar.show_fewer_pins)
-            : t(($) => $.sidebar.show_more_pins, { count: visible.length - PINNED_PREVIEW_LIMIT })}
+            : t(($) => $.sidebar.show_more_pins, { count: visible.length - limit })}
         </button>
       )}
     </PanelSection>
@@ -210,6 +214,7 @@ function SortablePinItem({
   active,
   running = false,
   unread = false,
+  labelSuffix,
   trailing,
   issue,
 }: {
@@ -223,6 +228,8 @@ function SortablePinItem({
   running?: boolean;
   /** Brightens the label while the issue has an unread agent result. */
   unread?: boolean;
+  /** Right after the label, which truncates before it. */
+  labelSuffix?: React.ReactNode;
   trailing?: React.ReactNode;
   /** A pinned issue's row opens the issue context menu on right-click. */
   issue?: Issue;
@@ -250,12 +257,15 @@ function SortablePinItem({
         aria-current={active ? "page" : undefined}
         className={cn(ISSUE_ROW_LINK_CLASS, "gap-2.5")}
       >
-        <ShimmerText
-          active={running}
-          className={cn("min-w-0 flex-1 truncate", SIDEBAR_SHIMMER_CLASS, unread && "text-foreground")}
-        >
-          {label}
-        </ShimmerText>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <ShimmerText
+            active={running}
+            className={cn("min-w-0 truncate", SIDEBAR_SHIMMER_CLASS, unread && "text-foreground")}
+          >
+            {label}
+          </ShimmerText>
+          {labelSuffix}
+        </span>
         {/* Holds the same right-edge slot as a tree row's avatars, and yields
             it to the unpin button on hover. */}
         {trailing && (
@@ -317,6 +327,7 @@ function PinRow({
   onUnpin: () => void;
   wsId: string;
 }) {
+  const { t: tProjects } = useT("projects");
   const isIssue = pin.item_type === "issue";
   const open = useSpacePanelOpen();
   const agents = useIssueAgentState(wsId, isIssue ? pin.item_id : "", open);
@@ -376,6 +387,16 @@ function PinRow({
       onUnpin={onUnpin}
       label={project.title}
       active={active}
+      labelSuffix={project.visibility === "private" && <PrivateProjectLock />}
+      trailing={
+        project.archived_at ? (
+          <Archive
+            role="img"
+            aria-label={tProjects(($) => $.archive.badge)}
+            className="size-3 shrink-0 text-muted-foreground"
+          />
+        ) : undefined
+      }
       iconNode={
         project.icon ? <ProjectIcon project={project} size="md" /> : <Folder className="size-4 shrink-0" />
       }

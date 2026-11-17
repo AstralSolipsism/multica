@@ -153,7 +153,7 @@ func (s *Service) sourceTargetApproved(ctx context.Context, workspaceID pgtype.U
 }
 
 func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, scope string, projectID, installationID pgtype.UUID, targetKey string) error {
-	_, err := q.GetActiveLabrastroMessageSourceApprovedTarget(ctx, db.GetActiveLabrastroMessageSourceApprovedTargetParams{
+	approval, err := q.GetActiveLabrastroMessageSourceApprovedTarget(ctx, db.GetActiveLabrastroMessageSourceApprovedTargetParams{
 		WorkspaceID:    workspaceID,
 		SourceKind:     scope,
 		ProjectID:      projectID,
@@ -165,6 +165,9 @@ func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pg
 	}
 	if err != nil {
 		return &TargetUnverifiableError{Detail: "check approval: " + err.Error()}
+	}
+	if err := projectAuthority(ctx, q, workspaceID, projectID, approval.ApprovedBy); err != nil {
+		return err
 	}
 	return nil
 }
@@ -196,6 +199,9 @@ func (s *Service) withSourceRouteWrite(ctx context.Context, workspaceID pgtype.U
 		}
 		if adminRequired && acting.Role != "owner" && acting.Role != "admin" {
 			return ErrAuthorizationLost
+		}
+		if err := projectAuthority(ctx, q, workspaceID, target.projectID, acting.UserID); err != nil {
+			return err
 		}
 		if scope == RouteSourceInbox && acting.UserID != target.userID {
 			return &RouteNotSelfError{}
@@ -287,7 +293,10 @@ func (s *Service) sourceRouteAuthority(ctx context.Context, route db.LabrastroMe
 	if route.SourceKind == RouteSourceInbox && route.TargetUserID != member.UserID {
 		return &RouteNotSelfError{}
 	}
-	return s.sourceScopeAuthority(ctx, member, route.SourceKind)
+	if err := s.sourceScopeAuthority(ctx, member, route.SourceKind); err != nil {
+		return err
+	}
+	return projectAuthority(ctx, s.Queries, member.WorkspaceID, route.ProjectID, member.UserID)
 }
 
 // UpdateSourceRoute edits a personal/team route under optimistic

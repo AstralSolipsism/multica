@@ -90,6 +90,24 @@ func TestMessageSourceRoutes_ProjectApprovalFiltersAndVisibility(t *testing.T) {
 			if send.Delivery.Status != "sent" || send.Delivery.SourceScope.String != scope || send.Delivery.SourceProjectID != parseUUID(project) {
 				t.Fatalf("project-scoped test send did not use source consent: %+v", send.Delivery)
 			}
+			dbfx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", project)
+			for _, visible := range []bool{false, true} {
+				if visible {
+					dbfx.InsertNoID(t, "project_member", testutil.Cols{"workspace_id": testWorkspaceID, "project_id": project, "user_id": testUserID}, "project_id=$1 AND user_id=$2", project, testUserID)
+				}
+				var listed struct {
+					Routes []db.LabrastroMessageRoute `json:"routes"`
+				}
+				testutil.Call(t, testHandler.ListMessageSourceRoutes,
+					newRequest("GET", "/api/message-routes?source_kind="+scope, nil)).Want(http.StatusOK).JSON(&listed)
+				found := false
+				for _, route := range listed.Routes {
+					found = found || route.ID == parseUUID(created.Route.ID)
+				}
+				if found != visible {
+					t.Fatalf("private route visible=%v for project member=%v", found, visible)
+				}
+			}
 			plain := plainMember(t, "source-list-"+scope)
 			testutil.Call(t, testHandler.ListMessageSourceRoutes,
 				newRequestAs(plain, "GET", "/api/message-routes?source_kind="+scope, nil)).Want(http.StatusForbidden)

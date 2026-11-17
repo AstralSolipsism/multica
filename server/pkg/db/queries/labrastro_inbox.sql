@@ -7,6 +7,7 @@ WITH active AS MATERIALIZED (
     FROM inbox_item i
     WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
       AND i.archived = false
+      AND (i.snoozed_until IS NULL OR i.snoozed_until <= now())
       AND (sqlc.narg('hidden_project_ids')::uuid[] IS NULL OR i.issue_id IS NULL OR NOT EXISTS (
           SELECT 1 FROM issue hidden_issue
           WHERE hidden_issue.id = i.issue_id

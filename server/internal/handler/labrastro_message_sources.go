@@ -157,7 +157,17 @@ func (h *Handler) ListMessageSourceRoutes(w http.ResponseWriter, r *http.Request
 		writeMessageDeliveryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"routes": routes})
+	hidden, ok := h.requestHiddenProjects(w, r, util.UUIDToString(workspaceID))
+	if !ok {
+		return
+	}
+	visible := make([]db.LabrastroMessageRoute, 0, len(routes))
+	for _, route := range routes {
+		if hidden.CanSeeProject(route.ProjectID) {
+			visible = append(visible, route)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"routes": visible})
 }
 
 // CreateMessageSourceRoute: POST /api/message-routes
