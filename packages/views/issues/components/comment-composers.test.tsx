@@ -427,6 +427,7 @@ describe("quick action `/` menu", () => {
     });
     apiListAgents.mockResolvedValue(agentIds.map((id) => ({
       id,
+      runtime_id: "runtime-1",
       archived_at: null,
       owner_id: null,
       permission_mode: "public_to",
@@ -482,6 +483,7 @@ describe("quick action `/` menu", () => {
     });
 
     it(`resolves Issue assignee skills in the ${composer.name}`, async () => {
+      apiPreviewCommentTriggers.mockResolvedValue({ agents: [], blocked: [] });
       apiGetIssue.mockResolvedValue({
         id: "issue-1",
         assignee_type: "agent",
@@ -489,6 +491,7 @@ describe("quick action `/` menu", () => {
       });
       apiListAgents.mockResolvedValue([{
         id: "agent-1",
+        runtime_id: "runtime-1",
         archived_at: null,
         owner_id: null,
         permission_mode: "public_to",
@@ -505,6 +508,10 @@ describe("quick action `/` menu", () => {
         expect(editorQuickActionMenu.last?.getSkills?.(editor).map((skill) => skill.id))
           .toEqual(["skill-1"]);
       });
+
+      fireEvent.change(screen.getByTestId("editor"), { target: { value: "draft" } });
+      await waitFor(() => expect(apiPreviewCommentTriggers).toHaveBeenCalled());
+      await waitFor(() => expect(editorQuickActionMenu.last?.getSkills?.(editor)).toEqual([]));
     });
   }
 
