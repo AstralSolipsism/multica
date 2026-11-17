@@ -17,8 +17,12 @@ func TestLabrastroPrivateProjectTipListAndState(t *testing.T) {
 	user := f.User(t, "tip outsider", uuid.NewString()+"@test.invalid")
 	f.Member(t, f.WorkspaceID, user, "member")
 	tip := f.tip(t, "secret topic")
-	if len(f.list(t, true, false, user)) != 0 || len(f.list(t, true, false, testUserID)) != 1 {
+	if len(f.list(t, true, false, user)) != 0 || len(f.list(t, true, false, testUserID)) != 0 {
 		t.Fatal("active list did not respect private project membership")
+	}
+	f.InsertNoID(t, "project_member", testutil.Cols{"workspace_id": f.WorkspaceID, "project_id": project, "user_id": testUserID}, "project_id=$1 AND user_id=$2", project, testUserID)
+	if len(f.list(t, true, false, testUserID)) != 1 {
+		t.Fatal("project member owner lost active tip")
 	}
 	state := func(id string, want int) string {
 		return testutil.Call(t, f.h.LabrastroSetTipState, asUser(f.request("POST", map[string]any{"state": "known"}, "tipId", id), user)).Want(want).Text()
@@ -95,6 +99,7 @@ func TestLabrastroPrivateProjectTipChatRejectsUnprivilegedAgentOwner(t *testing.
 	f.Exec(t, "UPDATE issue SET project_id=$2 WHERE id=$1", f.issue, project)
 	owner := f.User(t, "external agent owner", uuid.NewString()+"@test.invalid")
 	f.Member(t, f.WorkspaceID, owner, "member")
+	f.InsertNoID(t, "project_member", testutil.Cols{"workspace_id": f.WorkspaceID, "project_id": project, "user_id": testUserID}, "project_id=$1 AND user_id=$2", project, testUserID)
 	f.Exec(t, "UPDATE agent SET owner_id=$2, visibility='workspace',permission_mode='public_to' WHERE id=$1", f.agent, owner)
 	f.InsertNoID(t, "agent_invocation_target", testutil.Cols{"agent_id": f.agent, "target_type": "workspace", "target_id": f.WorkspaceID}, "agent_id=$1", f.agent)
 	tip := f.tip(t, "owner must not receive")

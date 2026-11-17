@@ -98,6 +98,7 @@ func TestLabrastroPrivateProjectTipChat(t *testing.T) {
 	f.Exec(t, `UPDATE agent SET visibility='workspace',permission_mode='public_to' WHERE id=$1`, f.agent)
 	f.InsertNoID(t, "agent_invocation_target", testutil.Cols{"agent_id": f.agent, "target_type": "workspace", "target_id": f.WorkspaceID}, "agent_id=$1", f.agent)
 	project := f.Project(t, "Private tip", testutil.Cols{"visibility": "private"})
+	f.InsertNoID(t, "project_member", testutil.Cols{"workspace_id": f.WorkspaceID, "project_id": project, "user_id": testUserID}, "project_id=$1 AND user_id=$2", project, testUserID)
 	f.Exec(t, "UPDATE issue SET project_id=$2 WHERE id=$1", f.issue, project)
 	user := f.User(t, "Tip member", uuid.NewString()+"@test.invalid")
 	f.Member(t, f.WorkspaceID, user, "member")
