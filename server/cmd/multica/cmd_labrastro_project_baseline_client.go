@@ -97,6 +97,13 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	action := cmd.Name()
+	if action == "lint" && mustString(cmd, "dir") != "" {
+		pages, err := baselineLintReadDir(mustString(cmd, "dir"))
+		if err != nil {
+			return err
+		}
+		return baselineLintPrint(cmd, pages)
+	}
 	var content string
 	if action == "create" || action == "write" && mustString(cmd, "delete-section") == "" {
 		if path := mustString(cmd, "content-file"); path != "" {
@@ -121,6 +128,9 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		if lookupErr != nil {
+			if action == "lint" {
+				return baselineFailure(1, "%s", baselineRequestError(lookupErr, false))
+			}
 			return baselineRequestError(lookupErr, false)
 		}
 		return baselineFailure(2, "%s", err)
@@ -153,6 +163,8 @@ func runLabrastroProjectBaseline(cmd *cobra.Command, args []string) error {
 		return baselineActivity(ctx, cmd, client, base)
 	case "search":
 		return baselineSearch(ctx, cmd, client, base, args[1])
+	case "lint":
+		return baselineLintOnline(ctx, cmd, client, base)
 	case "export":
 		return baselineExport(ctx, cmd, client, base)
 	}

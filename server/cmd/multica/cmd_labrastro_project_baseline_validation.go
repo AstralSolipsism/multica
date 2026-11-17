@@ -22,7 +22,7 @@ func baselineValidate(cmd *cobra.Command) error {
 		"write": {"text", "json"}, "rename": {"text", "json"}, "move": {"text", "json"},
 		"archive": {"text", "json"}, "restore": {"text", "json"}, "history": {"text", "json"},
 		"diff": {"text", "json"}, "rollback": {"text", "json"}, "activity": {"text", "json"},
-		"search": {"text", "json"}, "export": {"text", "json"},
+		"search": {"text", "json"}, "export": {"text", "json"}, "lint": {"text", "json"},
 	}
 	if !contains(valid[action], output) {
 		return baselineFailure(2, "unsupported --output format")

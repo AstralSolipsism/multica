@@ -209,21 +209,29 @@ var wikiMarkdownParser = goldmark.New(goldmark.WithParserOptions(parser.WithAuto
 // Unmatched brackets arrive as separate sibling Text nodes, so adjacent text is
 // joined and every structural node boundary flushes the buffer.
 func ExtractWikiLinks(content string) []string {
+	var out []string
+	extractWikiLinks(content, func(raw string, _ int) { out = append(out, raw) })
+	return out
+}
+
+// Offsets let read-only diagnostics use the same AST exclusions as backlinks.
+func extractWikiLinks(content string, visit func(raw string, offset int)) {
 	if !strings.Contains(content, "[[") {
-		return nil
+		return
 	}
 	source := []byte(content)
 	doc := wikiMarkdownParser.Parser().Parse(text.NewReader(source))
-	var out []string
 	var buf strings.Builder
+	var offsets []int
 	flush := func() {
 		if buf.Len() == 0 {
 			return
 		}
-		for _, m := range wikiLinkTextPattern.FindAllStringSubmatch(buf.String(), -1) {
-			out = append(out, m[1])
+		for _, m := range wikiLinkTextPattern.FindAllStringSubmatchIndex(buf.String(), -1) {
+			visit(buf.String()[m[2]:m[3]], offsets[m[0]])
 		}
 		buf.Reset()
+		offsets = offsets[:0]
 	}
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
@@ -231,7 +239,15 @@ func ExtractWikiLinks(content string) []string {
 		}
 		switch n.Kind() {
 		case ast.KindText, ast.KindString:
-			buf.WriteString(string(n.Text(source)))
+			value := n.Text(source)
+			start := 0
+			if node, ok := n.(*ast.Text); ok {
+				start = node.Segment.Start
+			}
+			buf.Write(value)
+			for i := range value {
+				offsets = append(offsets, start+i)
+			}
 		case ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindCodeSpan:
 			flush()
 			return ast.WalkSkipChildren, nil
@@ -241,7 +257,6 @@ func ExtractWikiLinks(content string) []string {
 		return ast.WalkContinue, nil
 	})
 	flush()
-	return out
 }
 
 // LinksFor resolves every link on one page.
