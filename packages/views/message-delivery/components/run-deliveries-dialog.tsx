@@ -53,7 +53,7 @@ export function RunDeliveriesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-xl max-h-[85%] overflow-y-auto">
         <DialogTitle>{t(($) => $.deliveries.run_dialog.title)}</DialogTitle>
         <div className="space-y-1 pt-1">
           {query.isLoading ? (

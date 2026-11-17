@@ -220,7 +220,7 @@ Si un thème masque ou casse une partie de l'interface pendant que vous travaill
 Le vérificateur fonctionne aussi sans installer le dépôt, depuis un clone partiel et Node 22.18 ou plus récent. Les agents reçoivent les mêmes commandes dans leur skill Multica intégré :
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/multica-ai/multica.git multica-themes
+git clone --depth 1 --filter=blob:none --sparse https://github.com/AstralSolipsism/multica.git multica-themes
 git -C multica-themes sparse-checkout set docs scripts packages/core packages/ui
 node multica-themes/scripts/theme-check.mjs path/to/paper
 ```

@@ -85,6 +85,8 @@ vi.mock("@multica/views/layout", () => ({
   CompactNavSheet: () => null,
   GlobalShortcuts: () => <div data-testid="global-shortcuts" />,
   NavigationProgress: () => <div data-testid="navigation-progress" />,
+  NewIssueButton: () => null,
+  SearchButton: () => null,
   ShellRouteDataPrefetch: ({ children }: { children: ReactNode }) => <>{children}</>,
   SpacePanel: () => <div data-testid="space-panel" />,
   useAppShell: () => ({ hasPanel: true }),

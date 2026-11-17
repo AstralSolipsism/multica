@@ -869,7 +869,7 @@ describe("handleInboxNew", () => {
     expect(showNotification).not.toHaveBeenCalled();
     await vi.waitFor(() =>
       expect(invalidate).toHaveBeenCalledWith(
-        expect.objectContaining({ queryKey: inboxKeys.all("ws-a") }),
+        expect.objectContaining({ queryKey: inboxKeys.list("ws-a") }),
       ),
     );
 

@@ -105,7 +105,7 @@ export function QuotaSourcesDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
+        <DialogContent className="flex max-h-[92%] flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
           {view.name === "form" ? (
             <QuotaSourceForm
               key={view.source?.id ?? "new"}

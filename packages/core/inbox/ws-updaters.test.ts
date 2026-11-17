@@ -503,7 +503,7 @@ describe("onInboxIssuesDeleted", () => {
 });
 
 describe("incremental inbox events", () => {
-  it("updates a ready list without refetching and preserves the newest comment anchor across out-of-order events", async () => {
+  it("updates a ready list without refetching and preserves the oldest unread comment anchor across out-of-order events", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     const anchor = makeItem("anchor", "issue-a", { details: { comment_id: "old-comment" } });
     const queryFn = vi.fn(async () => [anchor]);
@@ -521,7 +521,7 @@ describe("incremental inbox events", () => {
       // A duplicate creation event must not overwrite a later read-state patch.
       await onInboxNew(qc, wsId, newest);
       const visible = deduplicateInboxItems(observer.getCurrentResult().data!);
-      expect(visible).toEqual([{ ...newest, read: false, details: { comment_id: "new-comment" } }]);
+      expect(visible).toEqual([{ ...newest, read: false, details: { comment_id: "old-comment" } }]);
       expect(qc.getQueryState(inboxKeys.archived(wsId))?.isInvalidated).toBe(true);
       expect(qc.getQueryState(options.queryKey)?.isInvalidated).toBe(false);
     }

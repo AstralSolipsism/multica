@@ -1838,13 +1838,6 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
     // A cold composer activates and focuses through its draft subscription.
     composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
   }, [id]);
-  const newComments = useNewCommentsWhileAway(timeline, {
-    ready: !timelineLoading,
-    away: jumpToLatest.visible,
-    userId: user?.id,
-    resetKey: id,
-  });
-
   const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
   const enteringRunIds = useNewRunIds(id, commentTasks);
   const previousCommentRuns = useRef(new Map<string, CommentRun[]>());

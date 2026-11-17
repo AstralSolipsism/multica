@@ -220,7 +220,7 @@ If a theme hides or breaks part of the interface while you work on it, open the 
 The checker also runs without installing the repository, from a sparse clone and Node 22.18 or newer. Agents get the same commands from their built-in Multica skill:
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/multica-ai/multica.git multica-themes
+git clone --depth 1 --filter=blob:none --sparse https://github.com/AstralSolipsism/multica.git multica-themes
 git -C multica-themes sparse-checkout set docs scripts packages/core packages/ui
 node multica-themes/scripts/theme-check.mjs path/to/paper
 ```

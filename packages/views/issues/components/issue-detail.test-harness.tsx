@@ -141,6 +141,10 @@ vi.mock("../../navigation", async () => {
   const Ctx = React.createContext<any>(null);
   testNavigation.Ctx = Ctx;
   return {
+    // Real hold hook (pure React) used by the Work panel's issue header.
+    ...(await vi.importActual<typeof import("../../navigation/use-held-until-arrival")>(
+      "../../navigation/use-held-until-arrival",
+    )),
     AppLink: ({ children, href, ...props }: any) => (
       <a href={href} {...props}>
         {children}

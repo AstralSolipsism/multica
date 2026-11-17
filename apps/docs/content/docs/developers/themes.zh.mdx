@@ -220,7 +220,7 @@ pnpm theme:preview path/to/paper --out preview   # preview/light.png 和 preview
 检查器也可以不安装仓库，用稀疏克隆和 Node 22.18 或更高版本直接运行。智能体内置的 Multica skill 里也是这些命令：
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/multica-ai/multica.git multica-themes
+git clone --depth 1 --filter=blob:none --sparse https://github.com/AstralSolipsism/multica.git multica-themes
 git -C multica-themes sparse-checkout set docs scripts packages/core packages/ui
 node multica-themes/scripts/theme-check.mjs path/to/paper
 ```

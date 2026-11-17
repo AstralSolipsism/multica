@@ -323,13 +323,16 @@ const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncesto
  * The app rail: workspaces, New issue and search, the four spaces in the
  * user's order (drag to reorder), then help, settings and the account. It
  * sits on the app shell, outside the content card, and stays put while the
- * panel beside it collapses.
+ * panel beside it collapses. Desktop passes `globalActions={false}`: its
+ * title bar carries New issue and search.
  */
 export function AppRail({
   topSlot,
+  globalActions = true,
   className,
 }: {
   topSlot?: React.ReactNode;
+  globalActions?: boolean;
   className?: string;
 }) {
   const { t } = useT("layout");
@@ -401,10 +404,14 @@ export function AppRail({
     >
       {topSlot}
       <RailWorkspaces />
-      <div className="my-2 flex flex-col items-center gap-1">
-        <NewIssueButton className={RAIL_ICON_BUTTON_CLASS} tooltipSide="right" />
-        <SearchButton className={RAIL_ICON_BUTTON_CLASS} tooltipSide="right" />
-      </div>
+      {globalActions ? (
+        <div className="my-2 flex flex-col items-center gap-1">
+          <NewIssueButton className={RAIL_ICON_BUTTON_CLASS} tooltipSide="right" />
+          <SearchButton className={RAIL_ICON_BUTTON_CLASS} tooltipSide="right" />
+        </div>
+      ) : (
+        <div className="h-2 shrink-0" />
+      )}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}

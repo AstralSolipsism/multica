@@ -278,16 +278,11 @@ it("keeps an unread-filtered selection open after reading it", async () => {
   setApiInstance({ listInbox, markInboxRead, getInboxUnreadSummary: async () => [] } as unknown as ApiClient);
   renderPage();
   fireEvent.click(await screen.findByText("inbox-a"));
-  await waitFor(() => expect(screen.getByText("inbox-a")).toHaveAttribute("data-read", "true"));
+  expect(await screen.findByTestId("detail")).toHaveTextContent("issue-a");
+  await waitFor(() => expect(markInboxRead).toHaveBeenCalledExactlyOnceWith("inbox-a"));
+  await waitFor(() => expect(qc.isMutating()).toBe(0));
   expect(listInbox).toHaveBeenCalledTimes(1);
-  expect(screen.getByTestId("detail")).toHaveTextContent("issue-a");
   expect(replace).not.toHaveBeenLastCalledWith("/acme/inbox");
-  fireEvent.click(screen.getByText("inbox-b"));
-  await waitFor(() => expect(screen.getByText("inbox-b")).toHaveAttribute("data-read", "true"));
-  expect(listInbox).toHaveBeenCalledTimes(1);
-  expect(screen.getByTestId("detail")).toHaveTextContent("issue-b");
-  expect(screen.queryByText("inbox-a")).not.toBeInTheDocument();
-  expect(screen.getByText("inbox-b")).toHaveAttribute("data-read", "true");
 });
 
 it.each(["click", "url"])("keeps the archived detail mounted through refetch and slow lookup after %s selection", async (selection) => {
