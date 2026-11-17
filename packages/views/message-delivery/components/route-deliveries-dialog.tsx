@@ -102,7 +102,7 @@ export function RouteDeliveriesDialog({
           onOpenChange(o);
         }}
       >
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85%] overflow-y-auto">
         <DialogTitle>{t(($) => $.deliveries.route_dialog.title)}</DialogTitle>
         <div className="space-y-3 pt-1">
           <div className="flex items-center justify-between gap-3">

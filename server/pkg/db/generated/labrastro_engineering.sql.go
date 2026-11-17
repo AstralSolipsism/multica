@@ -910,7 +910,7 @@ func (q *Queries) LabrastroLockEngineeringMember(ctx context.Context, arg Labras
 }
 
 const labrastroLockEngineeringProject = `-- name: LabrastroLockEngineeringProject :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id, visibility FROM project WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id, visibility, archived_at, archived_by_type, archived_by_id FROM project WHERE workspace_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LabrastroLockEngineeringProjectParams struct {
@@ -940,6 +940,9 @@ func (q *Queries) LabrastroLockEngineeringProject(ctx context.Context, arg Labra
 		&i.CreatorType,
 		&i.CreatorID,
 		&i.Visibility,
+		&i.ArchivedAt,
+		&i.ArchivedByType,
+		&i.ArchivedByID,
 	)
 	return i, err
 }
@@ -997,7 +1000,7 @@ func (q *Queries) LabrastroPutEngineering(ctx context.Context, arg LabrastroPutE
 }
 
 const labrastroReadEngineeringProject = `-- name: LabrastroReadEngineeringProject :one
-SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id, visibility FROM project WHERE workspace_id = $1 AND id = $2 FOR SHARE
+SELECT id, workspace_id, title, description, icon, status, lead_type, lead_id, created_at, updated_at, priority, start_date, due_date, workflow_id, creator_type, creator_id, visibility, archived_at, archived_by_type, archived_by_id FROM project WHERE workspace_id = $1 AND id = $2 FOR SHARE
 `
 
 type LabrastroReadEngineeringProjectParams struct {
@@ -1026,6 +1029,9 @@ func (q *Queries) LabrastroReadEngineeringProject(ctx context.Context, arg Labra
 		&i.CreatorType,
 		&i.CreatorID,
 		&i.Visibility,
+		&i.ArchivedAt,
+		&i.ArchivedByType,
+		&i.ArchivedByID,
 	)
 	return i, err
 }

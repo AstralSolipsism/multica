@@ -260,7 +260,7 @@ function DeliveryDetailDialog({
     <SharedDeliveryDetailDialog
       open={open}
       onOpenChange={onOpenChange}
-      className="max-w-2xl max-h-[85vh] overflow-y-auto"
+      className="max-w-2xl max-h-[85%] overflow-y-auto"
       variant="webhook"
       title={t(($) => $.deliveries.detail.title)}
       status={{

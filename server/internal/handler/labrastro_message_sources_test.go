@@ -17,6 +17,7 @@ import (
 
 	messagedelivery "github.com/multica-ai/multica/server/internal/messagedelivery"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -89,6 +90,24 @@ func TestMessageSourceRoutes_ProjectApprovalFiltersAndVisibility(t *testing.T) {
 			testutil.Call(t, testHandler.TestMessageSourceRoute, req).Want(http.StatusOK).JSON(&send)
 			if send.Delivery.Status != "sent" || send.Delivery.SourceScope.String != scope || send.Delivery.SourceProjectID != parseUUID(project) {
 				t.Fatalf("project-scoped test send did not use source consent: %+v", send.Delivery)
+			}
+			dbfx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", project)
+			for _, visible := range []bool{false, true} {
+				if visible {
+					dbfx.InsertNoID(t, "project_member", testutil.Cols{"workspace_id": testWorkspaceID, "project_id": project, "user_id": testUserID}, "project_id=$1 AND user_id=$2", project, testUserID)
+				}
+				var listed struct {
+					Routes []db.LabrastroMessageRoute `json:"routes"`
+				}
+				testutil.Call(t, testHandler.ListMessageSourceRoutes,
+					newRequest("GET", "/api/message-routes?source_kind="+scope, nil)).Want(http.StatusOK).JSON(&listed)
+				found := false
+				for _, route := range listed.Routes {
+					found = found || route.ID == parseUUID(created.Route.ID)
+				}
+				if found != visible {
+					t.Fatalf("private route visible=%v for project member=%v", found, visible)
+				}
 			}
 			plain := plainMember(t, "source-list-"+scope)
 			testutil.Call(t, testHandler.ListMessageSourceRoutes,
@@ -444,5 +463,142 @@ func TestMessageEventCatalog_ReturnsCatalogForMembers(t *testing.T) {
 	}
 	if len(catalog.Team) != 2 {
 		t.Fatalf("team catalog = %+v", catalog.Team)
+	}
+}
+
+func TestMessageSourceRoutes_PrivateProjectAccessAcrossEndpoints(t *testing.T) {
+	for _, scope := range []string{"activity", "comment"} {
+		t.Run(scope, func(t *testing.T) {
+			fx := newSourceHTTPFixture(t, "private-access-"+scope)
+			project := dbfx.Project(t, "private source access")
+			dbfx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", project)
+			dbfx.InsertNoID(t, "project_member", testutil.Cols{
+				"workspace_id": testWorkspaceID, "project_id": project, "user_id": testUserID,
+			}, "project_id=$1 AND user_id=$2", project, testUserID)
+			payload := map[string]any{
+				"source_kind": scope, "project_id": project, "installation_id": fx.installID,
+				"target_type": "group", "target_chat_id": "oc_private_http_" + scope,
+			}
+			var approved struct {
+				Target db.LabrastroMessageApprovedTarget `json:"approved_target"`
+			}
+			testutil.Call(t, testHandler.ApproveMessageSourceTarget,
+				newRequest("POST", "/api/message-approved-targets", payload)).Want(http.StatusCreated).JSON(&approved)
+			var created sourceRouteResponse
+			testutil.Call(t, testHandler.CreateMessageSourceRoute,
+				newRequest("POST", "/api/message-routes", payload)).Want(http.StatusCreated).JSON(&created)
+			deliveryIDs := make([]string, 0, 2)
+			for _, status := range []string{"queued", "failed"} {
+				deliveryIDs = append(deliveryIDs, dbfx.Insert(t, "labrastro_message_delivery", testutil.Cols{
+					"id": testutil.Raw("gen_random_uuid()"), "workspace_id": testWorkspaceID, "route_id": created.Route.ID,
+					"source_ref_id": testutil.Raw("gen_random_uuid()"), "dedup_key": created.Route.ID + status,
+					"source_kind": scope, "source_scope": scope, "source_project_id": project,
+					"status": status, "content_snapshot": `{"body":"private HTTP comment"}`, "target_snapshot": "{}",
+					"installation_id": fx.installID, "target_key": approved.Target.TargetKey,
+				}))
+			}
+			// Leave one workspace approval visible to prove filtering is selective.
+			delete(payload, "project_id")
+			var public struct {
+				Target db.LabrastroMessageApprovedTarget `json:"approved_target"`
+			}
+			testutil.Call(t, testHandler.ApproveMessageSourceTarget,
+				newRequest("POST", "/api/message-approved-targets", payload)).Want(http.StatusCreated).JSON(&public)
+			payload["project_id"] = project
+			payload["expected_revision"] = created.Route.Revision
+			payload["enabled"] = false
+			admin := plainMember(t, "private-source-admin-"+scope)
+			dbfx.Exec(t, "UPDATE member SET role='admin' WHERE workspace_id=$1 AND user_id=$2", testWorkspaceID, admin)
+			dbfx.Exec(t, "DELETE FROM project_member WHERE project_id=$1 AND user_id=$2", project, testUserID)
+			for _, actor := range []struct{ label, user string }{{"removed_owner", testUserID}, {"non_member_admin", admin}} {
+				t.Run(actor.label, func(t *testing.T) {
+					var targets struct {
+						Rows []db.LabrastroMessageApprovedTarget `json:"approved_targets"`
+					}
+					testutil.Call(t, testHandler.ListMessageSourceApprovedTargets,
+						newRequestAs(actor.user, "GET", "/api/message-approved-targets", nil)).Want(http.StatusOK).JSON(&targets)
+					foundPublic := false
+					for _, row := range targets.Rows {
+						if row.ID == approved.Target.ID {
+							t.Fatal("non-member can enumerate private approval")
+						}
+						foundPublic = foundPublic || row.ID == public.Target.ID
+					}
+					if !foundPublic {
+						t.Fatal("workspace approval disappeared")
+					}
+					endpoints := []struct {
+						method, suffix string
+						handler        http.HandlerFunc
+					}{
+						{"PUT", "", testHandler.UpdateMessageSourceRoute},
+						{"POST", "/enable", testHandler.SetMessageSourceRouteEnabled},
+						{"POST", "/test-send", testHandler.TestMessageSourceRoute},
+						{"GET", "/message-deliveries", testHandler.ListMessageRouteDeliveries},
+						{"GET", "/message-deliveries/" + deliveryIDs[1], testHandler.GetMessageRouteDelivery},
+						{"POST", "/message-deliveries/" + deliveryIDs[1] + "/retry", testHandler.RetryMessageRouteDelivery},
+						{"DELETE", "", testHandler.DeleteMessageSourceRoute},
+					}
+					for _, endpoint := range endpoints {
+						for _, id := range []string{created.Route.ID, "00000000-0000-0000-0000-000000000001"} {
+							req := withURLParams(newRequestAs(actor.user, endpoint.method, "/api/message-routes/"+id+endpoint.suffix, payload), "routeId", id, "deliveryId", deliveryIDs[1])
+							res := testutil.Call(t, endpoint.handler, req).Want(http.StatusNotFound)
+							var body struct {
+								Code string `json:"code"`
+							}
+							res.JSON(&body)
+							if body.Code != "route_not_found" || strings.Contains(res.Body.String(), "private HTTP comment") {
+								t.Fatalf("hidden route response: %s", res.Body.String())
+							}
+						}
+					}
+					// Disabled routes must not reveal their state through test-send.
+					dbfx.Exec(t, "UPDATE labrastro_message_route SET enabled=false WHERE id=$1", created.Route.ID)
+					req := withURLParams(newRequestAs(actor.user, "POST", "/api/message-routes/"+created.Route.ID+"/test-send", nil), "routeId", created.Route.ID)
+					testutil.Call(t, testHandler.TestMessageSourceRoute, req).Want(http.StatusNotFound)
+					dbfx.Exec(t, "UPDATE labrastro_message_route SET enabled=true WHERE id=$1", created.Route.ID)
+					targetID := util.UUIDToString(approved.Target.ID)
+					req = withURLParams(newRequestAs(actor.user, "DELETE", "/api/message-approved-targets/"+targetID, nil), "targetId", targetID)
+					testutil.Call(t, testHandler.RevokeMessageSourceTarget, req).Want(http.StatusNotFound)
+					calls := httpVerifier.calls.Load()
+					for _, targetType := range []string{"group", "topic"} {
+						payload["target_type"], payload["target_message_id"] = targetType, "om_private_anchor"
+						for _, endpoint := range []http.HandlerFunc{testHandler.CreateMessageSourceRoute, testHandler.ApproveMessageSourceTarget} {
+							var previous string
+							for _, id := range []string{project, "00000000-0000-0000-0000-000000000001"} {
+								payload["project_id"] = id
+								res := testutil.Call(t, endpoint, newRequestAs(actor.user, "POST", "/api/message-routes", payload)).Want(http.StatusBadRequest)
+								if previous != "" && previous != res.Body.String() {
+									t.Fatalf("hidden vs missing project responses differ: %s / %s", previous, res.Body.String())
+								}
+								previous = res.Body.String()
+							}
+						}
+					}
+					payload["project_id"], payload["target_type"] = project, "group"
+					if httpVerifier.calls.Load() != calls {
+						t.Fatal("unauthorized request contacted Feishu")
+					}
+				})
+			}
+			if n := dbfx.Count(t, "SELECT count(*) FROM labrastro_message_route WHERE id=$1 AND enabled AND revision=$2", created.Route.ID, created.Route.Revision); n != 1 {
+				t.Fatal("denied operation changed route")
+			}
+			if n := dbfx.Count(t, "SELECT count(*) FROM labrastro_message_approved_target WHERE id=$1 AND revoked_at IS NULL", approved.Target.ID); n != 1 {
+				t.Fatal("denied revoke changed approval")
+			}
+			for i, status := range []string{"queued", "failed"} {
+				if n := dbfx.Count(t, "SELECT count(*) FROM labrastro_message_delivery WHERE id=$1 AND status=$2", deliveryIDs[i], status); n != 1 {
+					t.Fatal("denied operation changed delivery")
+				}
+			}
+			// Rejoining restores access to the frozen snapshot.
+			dbfx.Exec(t, "INSERT INTO project_member (workspace_id,project_id,user_id) VALUES ($1,$2,$3)", testWorkspaceID, project, testUserID)
+			req := withURLParams(newRequest("GET", "/api/message-routes/"+created.Route.ID+"/message-deliveries/"+deliveryIDs[0], nil), "routeId", created.Route.ID, "deliveryId", deliveryIDs[0])
+			res := testutil.Call(t, testHandler.GetMessageRouteDelivery, req).Want(http.StatusOK)
+			if !strings.Contains(res.Body.String(), "private HTTP comment") {
+				t.Fatal("project member cannot read snapshot")
+			}
+		})
 	}
 }

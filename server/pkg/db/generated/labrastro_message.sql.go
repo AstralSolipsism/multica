@@ -1742,7 +1742,12 @@ WHERE al.action IN ('status_changed', 'assignee_changed')
         AND d.target_key = rt.target_key
   )
 ORDER BY al.id, rt.installation_id, rt.target_key,
-    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
+    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL
+     AND NOT EXISTS (
+         SELECT 1 FROM project p WHERE p.id = rt.project_id AND p.visibility = 'private'
+           AND (NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id AND pm.user_id = rt.updated_by)
+             OR NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id AND pm.user_id = approval.approved_by))
+     )) DESC NULLS LAST,
     ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR al.action = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
 LIMIT $5
 `
@@ -1942,7 +1947,12 @@ WHERE c.type = 'comment'
         AND d.target_key = rt.target_key
   )
 ORDER BY c.id, rt.installation_id, rt.target_key,
-    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL) DESC NULLS LAST,
+    (((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) AND route_authorizer.role IN ('owner', 'admin') AND approval.id IS NOT NULL
+     AND NOT EXISTS (
+         SELECT 1 FROM project p WHERE p.id = rt.project_id AND p.visibility = 'private'
+           AND (NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id AND pm.user_id = rt.updated_by)
+             OR NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id AND pm.user_id = approval.approved_by))
+     )) DESC NULLS LAST,
     ((rt.project_id IS NULL OR rt.project_id = iss.project_id) AND (cardinality(rt.event_types) = 0 OR c.type = ANY(rt.event_types))) DESC NULLS LAST, rt.created_at, rt.id
 LIMIT $5
 `
@@ -2410,8 +2420,6 @@ LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.recipient_type = 'member'
   AND (iss.project_id IS NULL OR NOT EXISTS (
       SELECT 1 FROM project p WHERE p.id = iss.project_id AND p.visibility = 'private'
-      AND NOT EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = i.workspace_id
-                      AND m.user_id = i.recipient_id AND m.role IN ('owner', 'admin'))
       AND NOT EXISTS (SELECT 1 FROM project_member pm WHERE pm.project_id = p.id
                       AND pm.user_id = i.recipient_id)
   ))

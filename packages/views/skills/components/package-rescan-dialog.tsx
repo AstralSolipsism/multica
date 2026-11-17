@@ -98,7 +98,7 @@ export function RescanPackageDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex h-[32rem] max-h-[85svh] max-w-lg flex-col">
+      <DialogContent className="flex h-[32rem] max-h-[85%] max-w-lg flex-col">
         <DialogHeader>
           <DialogTitle className="text-body">
             {t(($) => $.rescan.dialog_title)}

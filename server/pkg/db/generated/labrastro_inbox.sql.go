@@ -17,6 +17,7 @@ WITH active AS MATERIALIZED (
     FROM inbox_item i
     WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3
       AND i.archived = false
+      AND (i.snoozed_until IS NULL OR i.snoozed_until <= now())
       AND ($4::uuid[] IS NULL OR i.issue_id IS NULL OR NOT EXISTS (
           SELECT 1 FROM issue hidden_issue
           WHERE hidden_issue.id = i.issue_id
@@ -36,7 +37,7 @@ WITH active AS MATERIALIZED (
     UNION
     SELECT id FROM anchors
 )
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section,
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section, i.snoozed_until, i.snoozed_at,
        iss.status AS issue_status,
        iss.priority AS issue_priority,
        iss.project_id AS issue_project_id,
@@ -76,6 +77,8 @@ type ListGroupedInboxItemsRow struct {
 	ActorID           pgtype.UUID        `json:"actor_id"`
 	Details           []byte             `json:"details"`
 	Section           pgtype.Text        `json:"section"`
+	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozedAt         pgtype.Timestamptz `json:"snoozed_at"`
 	IssueStatus       pgtype.Text        `json:"issue_status"`
 	IssuePriority     pgtype.Text        `json:"issue_priority"`
 	IssueProjectID    pgtype.UUID        `json:"issue_project_id"`
@@ -119,6 +122,8 @@ func (q *Queries) ListGroupedInboxItems(ctx context.Context, arg ListGroupedInbo
 			&i.ActorID,
 			&i.Details,
 			&i.Section,
+			&i.SnoozedUntil,
+			&i.SnoozedAt,
 			&i.IssueStatus,
 			&i.IssuePriority,
 			&i.IssueProjectID,

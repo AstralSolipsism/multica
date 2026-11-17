@@ -1146,6 +1146,7 @@ export function IssueFilterMenu({
       viewBaseline,
     ) > 0;
   const fixedTitle = viewBaseline ? t(($) => $.filters.in_view) : undefined;
+  const relationsFixed = (viewBaseline?.relation.size ?? 0) > 0;
   const { chips: allChips } = useFilterChips(showDateFilter ? dateFilter : null, onDateFilterChange, viewBaseline);
   const chips = showRelation ? allChips : allChips.filter((chip) => chip.key !== "relation");
   const chipByKey = new Map(chips.map((chip) => [chip.key, chip]));
@@ -1432,10 +1433,12 @@ export function IssueFilterMenu({
                 {triggerValue("relation")}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-auto min-w-52">
-                <FilterOperatorSwitch dimension="relation" />
+                {/* A view defined by relations owns the whole dimension:
+                    another value would widen it, not narrow it. */}
+                {!relationsFixed && <FilterOperatorSwitch dimension="relation" />}
                 {ISSUE_RELATION_FILTERS.map((relation) => {
                   const checked = relationFilters.includes(relation);
-                  const fixed = viewBaseline?.relation.has(relation) === true;
+                  const fixed = relationsFixed;
                   const Icon = RELATION_ICONS[relation];
                   return (
                     <DropdownMenuCheckboxItem
@@ -1626,6 +1629,7 @@ export function IssueFilterMenu({
     if (!viewBaseline) return false;
     if (value === "none" && field === "assignee") return viewBaseline.includeNoAssignee;
     if (value === "none" && field === "project") return viewBaseline.includeNoProject;
+    if (field === "relation" && relationsFixed) return true;
     return viewBaseline[field].has(value);
   };
   const sectionKeys = [

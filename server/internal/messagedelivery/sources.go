@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/notify"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -81,7 +82,11 @@ func ValidSourceEventTypes(scope string, types []string) bool {
 
 // resolveSourceTarget validates the source/filter scope, delegates destination
 // verification to the shared pipeline, then checks consent for the exact scope.
-func (s *Service) resolveSourceTarget(ctx context.Context, workspaceID pgtype.UUID, scope string, in SourceRouteInput, requireApproval bool) (resolvedTarget, error) {
+func (s *Service) resolveSourceTarget(ctx context.Context, member db.Member, scope string, in SourceRouteInput, requireApproval bool) (resolvedTarget, error) {
+	workspaceID := member.WorkspaceID
+	if err := s.sourceScopeAuthority(ctx, member, scope); err != nil {
+		return resolvedTarget{}, err
+	}
 	if !IsSourceRouteScope(scope) {
 		return resolvedTarget{}, &InvalidRouteError{Field: "source_kind"}
 	}
@@ -100,6 +105,12 @@ func (s *Service) resolveSourceTarget(ctx context.Context, workspaceID pgtype.UU
 		projectID, err = util.ParseUUID(in.ProjectID)
 		if err != nil {
 			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
+		}
+		// Reject hidden and missing projects identically before any external probe.
+		if err := projectAuthority(ctx, s.Queries, workspaceID, projectID, member.UserID); errors.Is(err, ErrAuthorizationLost) {
+			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
+		} else if err != nil {
+			return resolvedTarget{}, err
 		}
 		if _, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID}); errors.Is(err, pgx.ErrNoRows) {
 			return resolvedTarget{}, &InvalidRouteError{Field: "project_id"}
@@ -135,14 +146,14 @@ func (s *Service) resolveSourceTarget(ctx context.Context, workspaceID pgtype.UU
 
 // ResolveSourceTarget validates a source-route payload the way a save
 // would (including the approval requirement).
-func (s *Service) ResolveSourceTarget(ctx context.Context, workspaceID pgtype.UUID, scope string, in SourceRouteInput) (resolvedTarget, error) {
-	return s.resolveSourceTarget(ctx, workspaceID, scope, in, true)
+func (s *Service) ResolveSourceTarget(ctx context.Context, member db.Member, scope string, in SourceRouteInput) (resolvedTarget, error) {
+	return s.resolveSourceTarget(ctx, member, scope, in, true)
 }
 
 // ResolveSourceTargetForApproval skips the approval lookup — an approval
 // cannot require itself.
-func (s *Service) ResolveSourceTargetForApproval(ctx context.Context, workspaceID pgtype.UUID, scope string, in SourceRouteInput) (resolvedTarget, error) {
-	return s.resolveSourceTarget(ctx, workspaceID, scope, in, false)
+func (s *Service) ResolveSourceTargetForApproval(ctx context.Context, member db.Member, scope string, in SourceRouteInput) (resolvedTarget, error) {
+	return s.resolveSourceTarget(ctx, member, scope, in, false)
 }
 
 // sourceTargetApproved checks active consent for the exact project range
@@ -153,7 +164,7 @@ func (s *Service) sourceTargetApproved(ctx context.Context, workspaceID pgtype.U
 }
 
 func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pgtype.UUID, scope string, projectID, installationID pgtype.UUID, targetKey string) error {
-	_, err := q.GetActiveLabrastroMessageSourceApprovedTarget(ctx, db.GetActiveLabrastroMessageSourceApprovedTargetParams{
+	approval, err := q.GetActiveLabrastroMessageSourceApprovedTarget(ctx, db.GetActiveLabrastroMessageSourceApprovedTargetParams{
 		WorkspaceID:    workspaceID,
 		SourceKind:     scope,
 		ProjectID:      projectID,
@@ -165,6 +176,9 @@ func sourceTargetApprovedWith(ctx context.Context, q *db.Queries, workspaceID pg
 	}
 	if err != nil {
 		return &TargetUnverifiableError{Detail: "check approval: " + err.Error()}
+	}
+	if err := projectAuthority(ctx, q, workspaceID, projectID, approval.ApprovedBy); err != nil {
+		return err
 	}
 	return nil
 }
@@ -196,6 +210,9 @@ func (s *Service) withSourceRouteWrite(ctx context.Context, workspaceID pgtype.U
 		}
 		if adminRequired && acting.Role != "owner" && acting.Role != "admin" {
 			return ErrAuthorizationLost
+		}
+		if err := projectAuthority(ctx, q, workspaceID, target.projectID, acting.UserID); err != nil {
+			return err
 		}
 		if scope == RouteSourceInbox && acting.UserID != target.userID {
 			return &RouteNotSelfError{}
@@ -233,10 +250,7 @@ func (s *Service) withSourceRouteWrite(ctx context.Context, workspaceID pgtype.U
 // (resolved by the HTTP layer) is stamped as creator AND first updater;
 // inbox routes additionally pin them as the sole legal target.
 func (s *Service) CreateSourceRoute(ctx context.Context, member db.Member, in SourceRouteInput) (db.LabrastroMessageRoute, error) {
-	if err := s.sourceScopeAuthority(ctx, member, in.Scope); err != nil {
-		return db.LabrastroMessageRoute{}, err
-	}
-	target, err := s.resolveSourceTarget(ctx, member.WorkspaceID, in.Scope, in, true)
+	target, err := s.resolveSourceTarget(ctx, member, in.Scope, in, true)
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
@@ -287,7 +301,10 @@ func (s *Service) sourceRouteAuthority(ctx context.Context, route db.LabrastroMe
 	if route.SourceKind == RouteSourceInbox && route.TargetUserID != member.UserID {
 		return &RouteNotSelfError{}
 	}
-	return s.sourceScopeAuthority(ctx, member, route.SourceKind)
+	if err := s.sourceScopeAuthority(ctx, member, route.SourceKind); err != nil {
+		return err
+	}
+	return projectAuthority(ctx, s.Queries, member.WorkspaceID, route.ProjectID, member.UserID)
 }
 
 // UpdateSourceRoute edits a personal/team route under optimistic
@@ -298,7 +315,7 @@ func (s *Service) UpdateSourceRoute(ctx context.Context, route db.LabrastroMessa
 	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
-	target, err := s.resolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, in, true)
+	target, err := s.resolveSourceTarget(ctx, member, route.SourceKind, in, true)
 	if err != nil {
 		return db.LabrastroMessageRoute{}, err
 	}
@@ -383,7 +400,17 @@ func (s *Service) ApproveSourceTarget(ctx context.Context, workspaceID pgtype.UU
 
 // RevokeSourceTarget soft-revokes one team approval and cancels the
 // not-yet-started sends against the frozen target in the SAME transaction.
-func (s *Service) RevokeSourceTarget(ctx context.Context, workspaceID pgtype.UUID, scope string, target db.LabrastroMessageApprovedTarget) (int, error) {
+func (s *Service) RevokeSourceTarget(ctx context.Context, member db.Member, target db.LabrastroMessageApprovedTarget) (int, error) {
+	workspaceID, scope := member.WorkspaceID, target.SourceKind
+	if target.WorkspaceID != workspaceID || scope == RouteSourceInbox {
+		return 0, ErrAuthorizationLost
+	}
+	if err := s.sourceScopeAuthority(ctx, member, scope); err != nil {
+		return 0, err
+	}
+	if err := projectAuthority(ctx, s.Queries, workspaceID, target.ProjectID, member.UserID); err != nil {
+		return 0, err
+	}
 	cancelled := 0
 	err := s.withParentLock(ctx, workspaceID, func(q *db.Queries) error {
 		revoked, err := q.RevokeLabrastroMessageSourceTarget(ctx, db.RevokeLabrastroMessageSourceTargetParams{
@@ -415,20 +442,48 @@ func (s *Service) RevokeSourceTarget(ctx context.Context, workspaceID pgtype.UUI
 	return cancelled, err
 }
 
-// ListSourceApprovedTargets returns the workspace's active team approvals.
-func (s *Service) ListSourceApprovedTargets(ctx context.Context, workspaceID pgtype.UUID) ([]db.LabrastroMessageApprovedTarget, error) {
-	rows, err := s.Queries.ListLabrastroMessageSourceApprovedTargets(ctx, workspaceID)
-	if rows == nil {
-		rows = []db.LabrastroMessageApprovedTarget{}
+// ListSourceApprovedTargets returns active team approvals visible to the actor.
+func (s *Service) ListSourceApprovedTargets(ctx context.Context, member db.Member) ([]db.LabrastroMessageApprovedTarget, error) {
+	if err := s.sourceScopeAuthority(ctx, member, RouteSourceActivity); err != nil {
+		return nil, err
 	}
-	return rows, err
+	hidden, err := projectaccess.ForPrincipals(ctx, s.Queries, member.WorkspaceID, member.UserID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.Queries.ListLabrastroMessageSourceApprovedTargets(ctx, member.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]db.LabrastroMessageApprovedTarget, 0, len(rows))
+	for _, row := range rows {
+		if hidden.CanSeeProject(row.ProjectID) {
+			visible = append(visible, row)
+		}
+	}
+	return visible, nil
 }
 
 // ---- records ----
 
+func (s *Service) sourceRouteIDAuthority(ctx context.Context, member db.Member, routeID pgtype.UUID) error {
+	route, err := s.Queries.GetLabrastroMessageRoute(ctx, db.GetLabrastroMessageRouteParams{ID: routeID, WorkspaceID: member.WorkspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrRouteNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return s.sourceRouteAuthority(ctx, route, member)
+}
+
 // ListRouteDeliveries returns the record page for one personal/team route.
 // Rows are the projection (no snapshots), same as the automation listing.
-func (s *Service) ListRouteDeliveries(ctx context.Context, workspaceID, routeID pgtype.UUID, status *string, limit, offset int32) ([]db.ListLabrastroMessageDeliveriesByRouteRow, error) {
+func (s *Service) ListRouteDeliveries(ctx context.Context, member db.Member, routeID pgtype.UUID, status *string, limit, offset int32) ([]db.ListLabrastroMessageDeliveriesByRouteRow, error) {
+	if err := s.sourceRouteIDAuthority(ctx, member, routeID); err != nil {
+		return nil, err
+	}
+	workspaceID := member.WorkspaceID
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -448,7 +503,11 @@ func (s *Service) ListRouteDeliveries(ctx context.Context, workspaceID, routeID 
 // RetryRouteDelivery re-queues a failed/uncertain delivery of ONE route —
 // using the shared retry transition after checking the immutable route
 // identity. A delivery from another route (or workspace) is not found.
-func (s *Service) RetryRouteDelivery(ctx context.Context, workspaceID, routeID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, error) {
+func (s *Service) RetryRouteDelivery(ctx context.Context, member db.Member, routeID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, error) {
+	if err := s.sourceRouteIDAuthority(ctx, member, routeID); err != nil {
+		return db.LabrastroMessageDelivery{}, err
+	}
+	workspaceID := member.WorkspaceID
 	d, err := s.Queries.GetLabrastroMessageDelivery(ctx, db.GetLabrastroMessageDeliveryParams{
 		ID: deliveryID, WorkspaceID: workspaceID,
 	})
@@ -466,7 +525,11 @@ func (s *Service) RetryRouteDelivery(ctx context.Context, workspaceID, routeID, 
 
 // GetSourceDelivery loads one record with its receipt ledger for a source
 // route. The delivery must belong to the route in the path.
-func (s *Service) GetSourceDelivery(ctx context.Context, workspaceID, routeID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, []db.LabrastroMessageReceipt, error) {
+func (s *Service) GetSourceDelivery(ctx context.Context, member db.Member, routeID, deliveryID pgtype.UUID) (db.LabrastroMessageDelivery, []db.LabrastroMessageReceipt, error) {
+	if err := s.sourceRouteIDAuthority(ctx, member, routeID); err != nil {
+		return db.LabrastroMessageDelivery{}, nil, err
+	}
+	workspaceID := member.WorkspaceID
 	d, receipts, err := s.GetDeliveryRecords(ctx, workspaceID, deliveryID)
 	if err != nil {
 		return db.LabrastroMessageDelivery{}, nil, err
@@ -485,7 +548,7 @@ func (s *Service) TestSourceSend(ctx context.Context, route db.LabrastroMessageR
 	if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
 		return db.LabrastroMessageDelivery{}, err
 	}
-	if _, err := s.ResolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, sourceRouteInputFromRoute(route)); err != nil {
+	if _, err := s.ResolveSourceTarget(ctx, member, route.SourceKind, sourceRouteInputFromRoute(route)); err != nil {
 		return db.LabrastroMessageDelivery{}, err
 	}
 	return s.executeTestSend(ctx, route, member)

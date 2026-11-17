@@ -26,6 +26,7 @@ func TestGroupedInboxKeepsLatestRowAndCommentAnchor(t *testing.T) {
 	// Neither archived rows nor another recipient may supply an anchor.
 	for _, cols := range []testutil.Cols{
 		{"archived": true}, {"recipient_id": uuid.NewString()}, {"recipient_type": "agent"},
+		{"snoozed_until": base.Add(time.Hour), "snoozed_at": base},
 	} {
 		row := testutil.Cols{"workspace_id": ws, "recipient_id": testUserID, "recipient_type": "member",
 			"issue_id": issue, "type": "new_comment", "severity": "info", "title": "excluded",

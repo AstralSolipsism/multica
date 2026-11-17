@@ -268,11 +268,10 @@ describe("HTML block inside a chat conversation", () => {
 
     // Flip the theme the way the app does: a class change on <html> bumps
     // useThemeVersion, and the rebuilt document picks up the new computed
-    // tokens — here a different font on the host, exactly what a real theme
-    // switch delivers through inheritance.
+    // color scheme from the host.
     const host = frame.closest<HTMLElement>("div.contents")!;
     expect(host).not.toBeNull();
-    host.style.fontFamily = "DarkThemeFont";
+    host.style.colorScheme = "dark";
     act(() => { document.documentElement.className = "theme-dark"; });
     await waitFor(() => expect(inlineFrame().getAttribute("srcdoc")).not.toBe(srcDocBefore));
 

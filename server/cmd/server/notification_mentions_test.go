@@ -93,8 +93,8 @@ func TestNotification_MalformedMemberMentionPreservesValidRecipients(t *testing.
 				t.Fatalf("got %d inbox:new events, want 1", len(inboxEvents))
 			}
 			item := inboxEvents[0].Payload.(map[string]any)["item"].(map[string]any)
-			priority, ok := item["issue_priority"].(*string)
-			if !ok || priority == nil || *priority != "high" {
+			priority, ok := item["issue_priority"].(string)
+			if !ok || priority != "high" {
 				t.Fatalf("inbox:new must carry the current issue priority: %+v", item)
 			}
 			if item["recipient_id"] != recipientID || item["type"] != "mentioned" || item["issue_status"] != "todo" {
@@ -109,5 +109,5 @@ func TestNotifyMentionedMembersOnlyMalformedIDs(t *testing.T) {
 	// no valid recipients, neither the database nor the bus is needed.
 	notifyMentionedMembers(nil, nil, events.Event{},
 		parseMentions("[@Bad](mention://member/deadbeef) [@Bad all](mention://member/all)"),
-		"", "", "", "", nil, nil)
+		"", "", "", "", "", nil, nil)
 }

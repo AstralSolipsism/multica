@@ -203,10 +203,9 @@ export type PersonalEventTypeKey =
   | "priority_changed"
   | "start_date_changed"
   | "due_date_changed"
-  | "task_completed"
   | "task_failed"
-  | "agent_blocked"
-  | "agent_completed";
+  | "reaction_added"
+  | "app_action_result";
 
 export function personalEventTypeKey(type: string): PersonalEventTypeKey | null {
   switch (type) {
@@ -219,10 +218,9 @@ export function personalEventTypeKey(type: string): PersonalEventTypeKey | null 
     case "priority_changed":
     case "start_date_changed":
     case "due_date_changed":
-    case "task_completed":
     case "task_failed":
-    case "agent_blocked":
-    case "agent_completed":
+    case "reaction_added":
+    case "app_action_result":
       return type;
     default:
       return null;

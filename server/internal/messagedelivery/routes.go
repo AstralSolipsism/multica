@@ -107,7 +107,7 @@ func (s *Service) setRouteEnabled(ctx context.Context, route db.LabrastroMessage
 		if route.SourceKind == RouteSourceRun {
 			target, err = s.ResolveTarget(ctx, route.WorkspaceID, route.AutopilotID, routeInput(route))
 		} else {
-			target, err = s.ResolveSourceTarget(ctx, route.WorkspaceID, route.SourceKind, sourceRouteInputFromRoute(route))
+			target, err = s.ResolveSourceTarget(ctx, member, route.SourceKind, sourceRouteInputFromRoute(route))
 		}
 		if err != nil {
 			return updated, err

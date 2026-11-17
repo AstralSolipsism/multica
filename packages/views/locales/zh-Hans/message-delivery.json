@@ -185,10 +185,9 @@
     "priority_changed": "优先级变更",
     "start_date_changed": "开始日期变更",
     "due_date_changed": "截止日期变更",
-    "task_completed": "智能体运行完成",
     "task_failed": "智能体运行失败",
-    "agent_blocked": "智能体受阻",
-    "agent_completed": "智能体完成"
+    "reaction_added": "添加了表情反应",
+    "app_action_result": "应用操作结果"
   },
   "team_event": {
     "status_changed": "任务状态变更",

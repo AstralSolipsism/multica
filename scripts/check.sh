@@ -93,7 +93,7 @@ pnpm typecheck || { EXIT_CODE=1; exit 1; }
 # --------------------------------------------------------------------------
 echo ""
 echo "==> [2/5] TypeScript unit tests..."
-pnpm test || { EXIT_CODE=1; exit 1; }
+pnpm test:full || { EXIT_CODE=1; exit 1; }
 
 # --------------------------------------------------------------------------
 # Step 3: Go tests

@@ -185,10 +185,9 @@
     "priority_changed": "우선순위 변경",
     "start_date_changed": "시작일 변경",
     "due_date_changed": "마감일 변경",
-    "task_completed": "에이전트 실행 완료",
     "task_failed": "에이전트 실행 실패",
-    "agent_blocked": "에이전트 차단됨",
-    "agent_completed": "에이전트 완료"
+    "reaction_added": "반응 추가됨",
+    "app_action_result": "앱 작업 결과"
   },
   "team_event": {
     "status_changed": "태스크 상태 변경",

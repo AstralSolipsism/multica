@@ -163,11 +163,8 @@ waitForWriter:
 }
 
 func TestDependencyOrdinaryWritesPreserveConcurrentNullableChanges(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		name := "single"
-		if batch {
-			name = "batch"
-		}
+	for _, name := range []string{"single", "batch", "batch-with-labels"} {
+		batch := name != "single"
 		t.Run(name, func(t *testing.T) {
 			h, fx := dependencyFixture(t)
 			oldParent := dependencyIssue(t, fx, "Old parent")
@@ -207,7 +204,11 @@ func TestDependencyOrdinaryWritesPreserveConcurrentNullableChanges(t *testing.T)
 			if batch {
 				updates["status"] = "in_progress"
 				var result struct{ Updated int }
-				testutil.Call(t, writer.BatchUpdateIssues, dependencyRequest(fx, http.MethodPost, "", map[string]any{"issue_ids": []string{child}, "updates": updates}, "jwt")).Want(http.StatusOK).JSON(&result)
+				body := map[string]any{"issue_ids": []string{child}, "updates": updates}
+				if name == "batch-with-labels" {
+					body["labels"] = map[string]any{"clear": true}
+				}
+				testutil.Call(t, writer.BatchUpdateIssues, dependencyRequest(fx, http.MethodPost, "", body, "jwt")).Want(http.StatusOK).JSON(&result)
 				if result.Updated != 1 {
 					t.Fatalf("batch updated %d issues", result.Updated)
 				}
@@ -295,6 +296,7 @@ func TestDependencyBatchReparentRejectsInheritedCycle(t *testing.T) {
 	var result struct{ Updated int }
 	testutil.Call(t, h.BatchUpdateIssues, dependencyRequest(fx, http.MethodPost, "", map[string]any{
 		"issue_ids": []string{b1, free}, "updates": map[string]any{"parent_issue_id": b, "title": "Accepted batch edit"},
+		"labels": map[string]any{"clear": true},
 	}, "jwt")).Want(http.StatusOK).JSON(&result)
 	if result.Updated != 1 {
 		t.Fatalf("batch must skip the inherited cycle and apply the valid entry: %+v", result)

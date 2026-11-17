@@ -94,7 +94,7 @@ describe("IssueDetailRoute comment-hash handoff", () => {
     setApiInstance({
       getIssue: vi.fn((id: string) =>
         Promise.resolve(
-          id === ISSUE_B ? issue(ISSUE_B, "TRS-135") : issue(ISSUE_A, "TRS-134"),
+          id === ISSUE_B || id === "TRS-135" ? issue(ISSUE_B, "TRS-135") : issue(ISSUE_A, "TRS-134"),
         ),
       ),
     } as unknown as ApiClient);
@@ -105,7 +105,7 @@ describe("IssueDetailRoute comment-hash handoff", () => {
 
   it("hands the adapter's #comment-… fragment to IssueDetail", async () => {
     const qc = newQueryClient();
-    render(renderRoute(ISSUE_A, "#comment-c1", qc));
+    render(renderRoute("TRS-134", "#comment-c1", qc));
 
     await waitFor(() => expect(issueDetailProps.current?.issueId).toBe(ISSUE_A));
     expect(issueDetailProps.current?.highlightCommentId).toBe("c1");
@@ -130,25 +130,21 @@ describe("IssueDetailRoute comment-hash handoff", () => {
 
   it("follows a same-page push that only changes the fragment", async () => {
     const qc = newQueryClient();
-    const { rerender } = render(renderRoute(ISSUE_A, "#comment-c1", qc));
+    const { rerender } = render(renderRoute("TRS-134", "#comment-c1", qc));
     await waitFor(() => expect(issueDetailProps.current?.highlightCommentId).toBe("c1"));
 
-    rerender(renderRoute(ISSUE_A, "#comment-c2", qc));
+    rerender(renderRoute("TRS-134", "#comment-c2", qc));
 
     await waitFor(() => expect(issueDetailProps.current?.highlightCommentId).toBe("c2"));
-    // The canonical rewrite (routeId is still the UUID here) must carry the
-    // NEW fragment, not the one the previous push had.
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-c2"),
-    );
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("follows a cross-page push to another issue's comment", async () => {
     const qc = newQueryClient();
-    const { rerender } = render(renderRoute(ISSUE_A, "#comment-c1", qc));
+    const { rerender } = render(renderRoute("TRS-134", "#comment-c1", qc));
     await waitFor(() => expect(issueDetailProps.current?.issueId).toBe(ISSUE_A));
 
-    rerender(renderRoute(ISSUE_B, "#comment-b9", qc));
+    rerender(renderRoute("TRS-135", "#comment-b9", qc));
 
     await waitFor(() => expect(issueDetailProps.current?.issueId).toBe(ISSUE_B));
     expect(issueDetailProps.current?.highlightCommentId).toBe("b9");
@@ -156,12 +152,12 @@ describe("IssueDetailRoute comment-hash handoff", () => {
 
   it("drops the highlight when the destination URL carries no fragment", async () => {
     const qc = newQueryClient();
-    const { rerender } = render(renderRoute(ISSUE_A, "#comment-c1", qc));
+    const { rerender } = render(renderRoute("TRS-134", "#comment-c1", qc));
     await waitFor(() => expect(issueDetailProps.current?.highlightCommentId).toBe("c1"));
 
     // Push from the #comment page to another issue WITHOUT a fragment: the
     // stale fragment must not leak into the new page's highlight.
-    rerender(renderRoute(ISSUE_B, "", qc));
+    rerender(renderRoute("TRS-135", "", qc));
 
     await waitFor(() => expect(issueDetailProps.current?.issueId).toBe(ISSUE_B));
     expect(issueDetailProps.current?.highlightCommentId).toBeUndefined();

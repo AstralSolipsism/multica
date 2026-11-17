@@ -87,9 +87,9 @@
     "jsdom": "catalog:",
     "micromark-extension-math": "catalog:",
     "micromark-util-types": "^2.0.2",
-    "remark-parse": "^11.0.0",
+    "remark-parse": "catalog:",
     "typescript": "catalog:",
-    "unified": "^11.0.5",
+    "unified": "catalog:",
     "vitest": "catalog:"
   }
 }

@@ -133,7 +133,7 @@ func TestSourceAssignmentRetryKeepsFrozenTransition(t *testing.T) {
 	if errs := s.decideSourcesErr(ctx); len(errs) != 0 {
 		t.Fatal(errs)
 	}
-	if _, err := s.RetryRouteDelivery(ctx, frozen.WorkspaceID, frozen.RouteID, frozen.ID); err != nil {
+	if _, err := s.RetryRouteDelivery(ctx, loadMember(t), frozen.RouteID, frozen.ID); err != nil {
 		t.Fatal(err)
 	}
 	sender.fn = nil
@@ -314,7 +314,7 @@ func TestSourceProjectConsentRemainsFrozenAfterRouteEdit(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if n, err := s.RevokeSourceTarget(ctx, member.WorkspaceID, kind, approval); err != nil || n != 1 {
+					if n, err := s.RevokeSourceTarget(ctx, member, approval); err != nil || n != 1 {
 						t.Fatalf("revoke frozen project: cancelled=%d err=%v", n, err)
 					}
 					if sourceRecord(t, s, freshID).Status != DeliveryStatusQueued || sourceRecord(t, s, sourceID).Status != DeliveryStatusCancelled {
@@ -428,7 +428,7 @@ func TestSourceDisableRollsBackWhenCancellationFails(t *testing.T) {
 				in.Enabled = &enabled
 				_, err = s.UpdateSourceRoute(ctx, route, member, route.Revision, in)
 			case "delete":
-				err = s.DeleteRoute(ctx, route)
+				err = s.DeleteRoute(ctx, route, loadMember(t))
 			}
 			if err == nil || !strings.Contains(err.Error(), "synthetic source cancellation failure") {
 				t.Fatalf("cancellation failure not propagated: %v", err)

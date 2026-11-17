@@ -106,7 +106,7 @@ export function WikiSearchPalette(props: WikiSearchPaletteProps) {
   let lastGroup = "";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-foreground/30 pt-[12vh]" onClick={() => props.onOpenChange(false)} data-wiki-search-mask>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-foreground/30 pt-[max(12vh,env(safe-area-inset-top))] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]" onClick={() => props.onOpenChange(false)} data-wiki-search-mask>
       <div
         className="w-[min(560px,calc(100%-2rem))] rounded-lg border bg-canvas shadow-lg"
         onClick={(event) => event.stopPropagation()}

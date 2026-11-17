@@ -6,9 +6,9 @@ remain acceptance criteria. A clean merge is insufficient. The external
 conversation boundary of [upstream-sync-20261002.md](upstream-sync-20261002.md)
 was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
-Current upstream baseline: **v0.9.0**, commit
-`8cd8a2db978d532d8627c78cd29f05deab6c6f17`.
-The [2026-11-15 sync record](upstream-sync-20261115.md) records the merge
+Current upstream baseline: **v0.10.0**, commit
+`2fcb424b72b024f65161809081009063846ea44d`.
+The [2026-11-17 sync record](upstream-sync-20261117.md) records the merge
 lineage, migration evidence and insertion measurements.
 
 ## Migration identity and execution order
@@ -122,7 +122,7 @@ an upstream insertion requires updating this ledger in the same PR.
 "Expected lines" uses one mechanical metric: added lines vs the recorded
 upstream base that mention an engineering/baseline identifier
 (`git diff -U0 <base> HEAD -- <file>`), using base
-`8cd8a2db978d532d8627c78cd29f05deab6c6f17` (v0.9.0). Table total: **54 lines**
+`2fcb424b72b024f65161809081009063846ea44d` (v0.10.0). Table total: **54 lines**
 (51 existing + 3 carrier plugs). Exclude the unrelated YSK documentation
 reference in `events.ts` and tab persistence's `tabStorage?.setBaseline`.
 The path builder has two identifier-bearing lines; the old ledger's nine

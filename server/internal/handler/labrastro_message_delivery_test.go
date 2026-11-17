@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +45,13 @@ func (s *mdSender) Send(ctx context.Context, req messagedelivery.SendRequest) (m
 // mdVerifier is the HTTP suite's target verifier; tests flip unreachable to
 // exercise the save-time refusal contract (review R1).
 type mdVerifier struct {
+	calls       atomic.Int32
 	unreachable bool
 	mismatch    bool
 }
 
 func (v *mdVerifier) VerifyGroupTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) error {
+	v.calls.Add(1)
 	if v.unreachable {
 		return fmt.Errorf("%w: bot not in chat", messagedelivery.ErrTargetUnreachable)
 	}
@@ -56,6 +59,7 @@ func (v *mdVerifier) VerifyGroupTarget(ctx context.Context, req messagedelivery.
 }
 
 func (v *mdVerifier) VerifyTopicTarget(ctx context.Context, req messagedelivery.VerifyTargetRequest) (string, error) {
+	v.calls.Add(1)
 	if v.mismatch {
 		return "", fmt.Errorf("%w: anchor lives elsewhere", messagedelivery.ErrTargetAnchorMismatch)
 	}

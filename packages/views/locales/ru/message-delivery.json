@@ -185,10 +185,9 @@
     "priority_changed": "Приоритет изменён",
     "start_date_changed": "Дата начала изменена",
     "due_date_changed": "Срок выполнения изменён",
-    "task_completed": "Запуск агента завершён",
     "task_failed": "Запуск агента завершился сбоем",
-    "agent_blocked": "Агент заблокирован",
-    "agent_completed": "Агент завершил работу"
+    "reaction_added": "Реакция",
+    "app_action_result": "Результат действия приложения"
   },
   "team_event": {
     "status_changed": "Статус задачи изменён",

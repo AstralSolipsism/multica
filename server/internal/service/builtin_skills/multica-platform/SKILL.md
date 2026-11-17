@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Labrastro platform actions beyond the runtime brief: issue and PR contracts, sub-issues, prerequisites and complete graphs, charts and files in comments, mentions, agents, squads, autopilots, projects, runtimes, local environments, skill import. Not for the product code you are working on."
+description: "Use for Labrastro platform actions this brief does not fully cover: issue and PR contracts, sub-issues, prerequisites, batch changes, saved views, charts and files, mentions, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes. Not for product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -20,7 +20,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 | Open | When the task is about |
 |---|---|
 | `references/pull-requests.md` | Pull requests: issue linking, code-change handoff, merge status, and reading a linked PR's state |
-| `references/issues.md` | Issues: custom properties, status side effects, who else is running, wakeups (events, conditions, timers, check-ins), charts vs attached files in a comment |
+| `references/issues.md` | Issues: saved views (reading, creating, changing), custom properties, status side effects, who else is running, wakeups (events, conditions, timers, check-ins), charts vs attached files in a comment |
+| `references/batch-changes.md` | Changing many issues at once (`issue batch update`, `issue delete <id>... --dry-run`): label and property operations, per-issue results, dry runs |
 | `references/sub-issues.md` | Sub-issues: whether to split an issue at all, `todo` vs `backlog` children, serial chains, stages and the parent wakeups they drive |
 | `references/issue-dependencies.md` | Informational prerequisites, relation editing and complete dependency graphs; these do not gate execution |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing; steering another agent's running turn (`comment add --steer`) |
@@ -31,6 +32,7 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/environments.md` | Local environments in the issue sidebar: writing `.multica/environments.toml`, `multica env start` / `stop` / `list`, detected servers |
 | `references/skill-import.md` | Importing skills; managing skill folders, placements and packages; exporting or migrating skill organization |
+| `references/themes.md` | Building or changing a Labrastro app theme: the format, the checker, delivering to Desktop's themes folder or as a `.zip` |
 
 Open what the task needs. A single-domain task usually needs one; a task that
 crosses domains needs each domain it touches — creating a squad, assigning it an

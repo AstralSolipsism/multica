@@ -364,6 +364,8 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 		"references/runtimes.md":           "runtime",
 		"references/skill-import.md":       "skill import",
 		"references/environments.md":       "local environment",
+		"references/batch-changes.md":      "batch",
+		"references/themes.md":             "theme",
 	}
 
 	skill, ok := findSkill(t, PlatformSkillName)
@@ -439,6 +441,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"references/runtimes.md",
 				"references/environments.md",
 				"references/skill-import.md",
+				"references/themes.md",
 				// Invariants deduplicated out of the eight merged bodies. Each
 				// was repeated in most of them; the router is now their only
 				// home, so losing one here loses it everywhere.
@@ -475,6 +478,8 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				// by editing the PR, and an integration problem is not — an
 				// agent that keeps editing burns deliveries on a no-op.
 				"editing the title re-runs the scan",
+				"multica issue pull-requests link <issue-id> <pr-url>",
+				"`unlink <issue-id> <pr>`",
 				"stop editing the PR blind",
 				"whether the installation is bound to this workspace",
 				"redelivered once the receiving side is fixed",
@@ -742,6 +747,25 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Project resources are durable and affect future tasks",
 				"github_repo.resource_ref.url",
 				"resource_ref.ref",
+			},
+		},
+		{
+			// MUL-9248: theme knowledge ships here instead of riding in a
+			// per-request prompt, so any agent can build one from any chat
+			// or issue. The checker gate and the two delivery paths are what
+			// make a delivered theme installable; losing either strands it.
+			file: "references/themes.md",
+			want: []string{
+				"docs/theming.md",
+				"scripts/theme-check.mjs",
+				"Deliver only when it reports **0 errors**",
+				"~/Library/Application Support/Labrastro/themes",
+				"%APPDATA%\\Labrastro\\themes",
+				"~/.config/Labrastro/themes",
+				"does not switch to it",
+				"every save to the theme in use applies",
+				"**Import theme**",
+				"multica attachment upload <path>",
 			},
 		},
 		{

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyNotificationPreferencePatch,
   deriveNotificationPreferencePatch,
+  notificationPreferenceValue,
   rollbackNotificationPreferencePatch,
 } from "./patch";
 
@@ -67,8 +68,8 @@ describe("notification preference patches", () => {
   });
 
   it("carries the you_should_know group like any other preference", () => {
-    // Same regression shape as mentions: dropping the key from
-    // NOTIFICATION_GROUP_KEYS would silently send an empty patch.
+    // Same regression shape as mentions: dropping the key from the defaults
+    // would silently send an empty patch.
     expect(
       deriveNotificationPreferencePatch(
         {},
@@ -96,6 +97,25 @@ describe("notification preference patches", () => {
         { you_should_know: "muted" },
         {},
       ),
+    ).toEqual({});
+  });
+
+  it("treats a missing others_issues as key updates, not all", () => {
+    expect(notificationPreferenceValue({}, "others_issues")).toBe("key_updates");
+    expect(
+      deriveNotificationPreferencePatch({}, { others_issues: "all" }),
+    ).toEqual({ others_issues: "all" });
+    expect(
+      deriveNotificationPreferencePatch({ others_issues: "all" }, {}),
+    ).toEqual({ others_issues: "key_updates" });
+    expect(
+      applyNotificationPreferencePatch({ comments: "muted" }, { others_issues: "all" }),
+    ).toEqual({ comments: "muted", others_issues: "all" });
+    expect(
+      applyNotificationPreferencePatch({ others_issues: "all" }, { others_issues: "key_updates" }),
+    ).toEqual({});
+    expect(
+      rollbackNotificationPreferencePatch({ others_issues: "all" }, { others_issues: "all" }, {}),
     ).toEqual({});
   });
 

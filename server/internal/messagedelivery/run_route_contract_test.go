@@ -103,7 +103,7 @@ func TestRunDisableRollsBackWhenCancellationFails(t *testing.T) {
 					_, err := s.UpdateRoute(ctx, route, loadMember(t), route.Revision, in)
 					return err
 				default:
-					return s.DeleteRoute(ctx, route)
+					return s.DeleteRoute(ctx, route, loadMember(t))
 				}
 			}
 			s.Tx = sourceCancelFailureStarter{testPool}
@@ -152,7 +152,7 @@ func TestRunDecisionRejectsStaleRouteCandidate(t *testing.T) {
 			in := s.decisionInputFromSource(c.Autopilot, c.LabrastroMessageRoute, sourceFactsFromRun(c.AutopilotRun))
 			switch operation {
 			case "delete":
-				err = s.DeleteRoute(ctx, route)
+				err = s.DeleteRoute(ctx, route, loadMember(t))
 			case "edit":
 				edit := routeInput(route)
 				edit.Conditions = ConditionFailure

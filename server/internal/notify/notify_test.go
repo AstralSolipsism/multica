@@ -1,6 +1,9 @@
 package notify
 
-import "testing"
+import (
+	"github.com/multica-ai/multica/server/internal/inbox"
+	"testing"
+)
 
 // The catalog is the drift guard between the inbox listeners and the
 // delivery module: these tests pin the contract both sides depend on.
@@ -19,7 +22,9 @@ func TestPreferenceGroupForType(t *testing.T) {
 		{"new_comment", GroupComments, true},
 		{"mentioned", GroupMentions, true},
 		{"due_date_changed", GroupUpdates, true},
-		{"agent_blocked", GroupAgentActivity, true},
+		{"reaction_added", GroupReactions, true},
+		{"app_action_result", GroupAgentActivity, true},
+		{"agent_blocked", "", false},
 		{"totally_unknown", "", false},
 	} {
 		group, ok := PreferenceGroupForType(tc.notifType)
@@ -71,5 +76,27 @@ func TestStatusLabel(t *testing.T) {
 	}
 	if StatusLabel("custom_release_train") != "custom_release_train" {
 		t.Errorf("custom status must pass through, got %q", StatusLabel("custom_release_train"))
+	}
+}
+
+func TestInboxTypesMatchRegistry(t *testing.T) {
+	want := map[string]string{}
+	for _, typ := range inbox.Types() {
+		if group, _ := inbox.Group(typ); group != "" {
+			want[typ] = group
+		}
+	}
+	for _, entry := range InboxTypes() {
+		group, ok := want[entry.Type]
+		if !ok || group != entry.Group {
+			t.Errorf("unexpected catalog entry: %+v", entry)
+		}
+		if !IsMuted(map[string]string{entry.Group: "muted"}, entry.Type) {
+			t.Errorf("catalog entry %s cannot be muted", entry.Type)
+		}
+		delete(want, entry.Type)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing inbox types: %v", want)
 	}
 }

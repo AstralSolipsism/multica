@@ -216,6 +216,12 @@ func (s *Service) gateTestSendSource(ctx context.Context, d db.LabrastroMessageD
 	if route.SourceKind != RouteSourceInbox && member.Role != "owner" && member.Role != "admin" {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
 	}
+
+	if err := projectAuthority(ctx, s.Queries, d.WorkspaceID, d.SourceProjectID, d.RequestedBy); errors.Is(err, ErrAuthorizationLost) {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member cannot access source project")
+	} else if err != nil {
+		return s.retryGate(d.ID, "check authorizer project access failed", err)
+	}
 	return nil
 }
 
@@ -229,7 +235,7 @@ func (s *Service) gateInboxSource(ctx context.Context, d db.LabrastroMessageDeli
 	if !d.SourceRefID.Valid {
 		return rejectGate(DeliveryStatusFailed, ErrorCodeSendRejected, "personal delivery without a source record")
 	}
-	item, err := s.Queries.GetInboxItem(ctx, d.SourceRefID)
+	item, err := s.Queries.GetInboxItemInWorkspace(ctx, db.GetInboxItemInWorkspaceParams{ID: d.SourceRefID, WorkspaceID: d.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeSourceMissing, "inbox item no longer exists")
 	}
@@ -302,6 +308,12 @@ func (s *Service) gateTeamSource(ctx context.Context, d db.LabrastroMessageDeliv
 	}
 	if authorizer.Role != "owner" && authorizer.Role != "admin" {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member no longer holds workspace admin")
+	}
+
+	if err := projectAuthority(ctx, s.Queries, d.WorkspaceID, issue.ProjectID, route.UpdatedBy); errors.Is(err, ErrAuthorizationLost) {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "authorizing member cannot access source project")
+	} else if err != nil {
+		return s.retryGate(d.ID, "check authorizer project access failed", err)
 	}
 	return nil
 }
@@ -403,6 +415,9 @@ func (s *Service) deliveryTargetApproved(ctx context.Context, d db.LabrastroMess
 // consent, and queued siblings are cancelled by the revoke path with the
 // same reason.
 func (s *Service) refuseApproval(d db.LabrastroMessageDelivery, err error) *gateResult {
+	if errors.Is(err, ErrAuthorizationLost) {
+		return rejectGate(DeliveryStatusCancelled, ErrorCodeAuthorizationLost, "approving member cannot access source project")
+	}
 	var notApproved *TargetNotApprovedError
 	if errors.As(err, &notApproved) {
 		return rejectGate(DeliveryStatusCancelled, ErrorCodeTargetNotApproved, err.Error())
