@@ -9,9 +9,12 @@ import (
 func newLabrastroProjectBaselineCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "baseline", Short: "Read and write the project baseline wiki tree"}
 	cmd.AddCommand(newLabrastroBaselineCommentCmd())
-	actions := []string{"tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "search", "export"}
+	actions := []string{"tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "search", "export", "lint"}
 	for _, action := range actions {
-		sub := &cobra.Command{Use: actionUsage(action), Args: func(_ *cobra.Command, args []string) error {
+		sub := &cobra.Command{Use: actionUsage(action), Args: func(cmd *cobra.Command, args []string) error {
+			if action == "lint" {
+				return baselineLintArgs(cmd, args)
+			}
 			if action == "search" {
 				if len(args) != 2 {
 					return baselineFailure(2, "exactly one project ID and one query string are required")
@@ -125,6 +128,10 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 		case "search":
 			sub.Short = "Full-text search over page titles and bodies"
 			sub.Flags().String("limit", "", "Result count (max 50)")
+		case "lint":
+			sub.Short = "Check links, Mermaid boundaries and boundary gates without writing"
+			sub.Flags().String("dir", "", "Read exported Markdown pages inside the current directory (instead of project ID)")
+			sub.Flags().String("page", "", "Only report this page and its parent/child boundary diagnostics")
 		case "export":
 			sub.Short = "Export pages as Markdown files with YAML headers"
 			sub.Flags().String("dir", "./docs/baseline", "Directory for <slug>.md files")
@@ -158,6 +165,8 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 
 func actionUsage(action string) string {
 	switch action {
+	case "lint":
+		return "lint [<project-id>] [--dir <local-export-dir>]"
 	case "search":
 		return "search <project-id> <query>"
 	case "tree", "get", "create", "write", "rename", "move", "archive", "restore", "history", "diff", "rollback", "activity", "export":
