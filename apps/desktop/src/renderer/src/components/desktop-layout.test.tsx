@@ -88,6 +88,7 @@ vi.mock("@multica/views/search", () => ({
 }));
 vi.mock("@multica/views/chat", () => ({ FloatingChat: () => null }));
 vi.mock("@/platform/chat-session-handoff", () => ({ DesktopChatSessionBridge: () => null }));
+vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => null }));
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
 vi.mock("./window-overlay", () => ({ WindowOverlay: () => null }));
 
@@ -156,7 +157,7 @@ describe("DesktopShell sidebar trigger", () => {
   it("keeps exactly one trigger and tells page headers not to add another", () => {
     const { container, getByTestId, queryByRole } = renderShell();
 
-    expect(container.querySelectorAll("[data-slot='sidebar-trigger']")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-sidebar='trigger']")).toHaveLength(1);
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-external-trigger",
       "true",
@@ -167,7 +168,7 @@ describe("DesktopShell sidebar trigger", () => {
     expect(mainTopBar).toHaveStyle({ paddingLeft: "144px" });
 
     fireEvent.click(
-      container.querySelector('[data-slot="sidebar-trigger"]')!,
+      container.querySelector('[data-sidebar="trigger"]')!,
     );
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-sidebar-state",

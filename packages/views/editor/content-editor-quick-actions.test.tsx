@@ -71,7 +71,6 @@ function makeAgent(id: string, skills: Agent["skills"]): Agent {
     invocation_targets: [{ target_type: "workspace", target_id: null }],
   } as Agent;
 }
-
 beforeEach(() => {
   listQuickActions.mockReset().mockResolvedValue({ quick_actions: [] });
   renderQuickAction.mockReset().mockResolvedValue("Rendered feedback");

@@ -61,11 +61,11 @@ describe("LabelPicker trigger semantics", () => {
   it("retains native buttons for empty and custom triggers across selection changes", () => {
     const error = vi.spyOn(console, "error");
     const { rerender } = renderWithI18n(<LabelPicker selectedIds={[]} />);
-    expect(document.querySelector('[data-slot="popover-trigger"]')?.tagName).toBe("BUTTON");
+    expect(document.querySelector('[data-trigger="popover"]')?.tagName).toBe("BUTTON");
     rerender(<LabelPicker selectedIds={["bug"]} />);
-    expect(document.querySelector('[data-slot="popover-trigger"]')?.tagName).toBe("DIV");
+    expect(document.querySelector('[data-trigger="popover"]')?.tagName).toBe("DIV");
     rerender(<LabelPicker selectedIds={["bug"]} triggerRender={<button type="button" />} />);
-    expect(document.querySelector('[data-slot="popover-trigger"]')?.tagName).toBe("BUTTON");
+    expect(document.querySelector('[data-trigger="popover"]')?.tagName).toBe("BUTTON");
     expect(screen.queryByRole("button", { name: "Remove label Bug" })).not.toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
   });

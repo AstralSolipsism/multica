@@ -47,6 +47,7 @@ import type { Workspace } from "@multica/core/types";
 import { AvatarUploadControl } from "../../common/avatar-upload-control";
 import { useNavigation } from "../../navigation";
 import { DeleteWorkspaceDialog } from "./delete-workspace-dialog";
+import { PrivateProjectsSection } from "./private-projects-section";
 import { useT } from "../../i18n";
 import {
   SettingsCard,
@@ -482,6 +483,8 @@ export function WorkspaceTab() {
       {/* You should know — fork feature; own section so upstream edits to the
           general card stay untouched. */}
       <YouShouldKnowWorkspaceSection canManage={canManageWorkspace} />
+
+      {membersFetched && isOwner ? <PrivateProjectsSection /> : null}
 
       {/* Danger Zone — gated on the member query settling so the owner-only
           Delete button and the sole-owner Leave guidance don't flash in

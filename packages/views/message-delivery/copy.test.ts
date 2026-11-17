@@ -150,15 +150,17 @@ describe("event label keys", () => {
       "priority_changed",
       "start_date_changed",
       "due_date_changed",
-      "task_completed",
       "task_failed",
-      "agent_blocked",
-      "agent_completed",
+      "reaction_added",
+      "app_action_result",
     ] as const;
     for (const type of types) {
       expect(personalEventTypeKey(type)).toBe(type);
     }
     expect(personalEventTypeKey("future_type")).toBeNull();
+    for (const removed of ["task_completed", "agent_blocked", "agent_completed"]) {
+      expect(personalEventTypeKey(removed)).toBeNull();
+    }
   });
 
   it("maps the team-event whitelist", () => {

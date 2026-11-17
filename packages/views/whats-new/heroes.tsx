@@ -104,7 +104,7 @@ function MenuItem({ icon, active, children }: { icon: ReactNode; active?: boolea
 
 /** Names in the art: proper nouns that read the same in every locale. */
 const SAMPLE = {
-  author: "Multica",
+  author: "Labrastro",
   machine: "MacBook Pro",
   webApp: "Web app",
   desktopApp: "Desktop app",

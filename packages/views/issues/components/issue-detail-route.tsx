@@ -5,6 +5,7 @@ import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { parseCommentHighlightHash } from "../comment-deep-link";
+import { useInboxSelectionStore } from "@multica/core/inbox/selection-store";
 import { useNavigation } from "../../navigation";
 import { IssueDetail, IssueDetailSkeleton, IssueNotFound, IssueLoadError } from "./issue-detail";
 import { IssuePeekHost } from "./issue-peek";
@@ -90,9 +91,14 @@ export function useCanonicalIssueUrl(
  *    `window.location.hash` is always empty; the adapter's hash comes from
  *    the tab URL and is frame-accurate.
  */
-function useCommentHighlightHash(): { hash: string; commentId?: string } {
+export function parseAppRequestHighlightHash(hash: string): string | undefined {
+  const match = /^#app-request-([A-Za-z0-9_-]+)$/.exec(hash);
+  return match?.[1];
+}
+
+function useHighlightHash(): { hash: string; commentId?: string; appRequestId?: string } {
   const { hash } = useNavigation();
-  return { hash, commentId: parseCommentHighlightHash(hash) };
+  return { hash, commentId: parseCommentHighlightHash(hash), appRequestId: parseAppRequestHighlightHash(hash) };
 }
 
 /**
@@ -111,11 +117,18 @@ export function IssueDetailRoute({ routeId, onDelete, deliverable }: IssueDetail
   const {
     canonicalId, issue, isResolving, notFound, loadFailed, isRetrying, retry, hasLoaded,
   } = useCanonicalIssue(wsId, routeId);
-  const highlight = useCommentHighlightHash();
+  const highlight = useHighlightHash();
+  const landingToken = useInboxSelectionStore((s) =>
+    s.landing && s.landing.issueId === canonicalId ? s.landing.token : 0,
+  );
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
 
   useCanonicalIssueUrl(routeId, issue?.identifier, highlight.hash, deliverable);
+  // A UUID or differently-cased address is about to be rewritten, which mounts
+  // a new page (a new route segment on web). Landing here would scroll a page
+  // that is about to go, and record the landing as done for the next one.
+  const landsHere = routeId === issue?.identifier;
 
   // Once the link has opened its file and the viewer has closed (or the file
   // is missing), the address becomes the plain issue page. A replace: Back
@@ -149,7 +162,9 @@ export function IssueDetailRoute({ routeId, onDelete, deliverable }: IssueDetail
         issueId={canonicalId}
         skipInitialRefetch={hasLoaded}
         onDelete={onDelete}
-        highlightCommentId={highlight.commentId}
+        highlightCommentId={landsHere ? highlight.commentId : undefined}
+        highlightAppRequestId={landsHere ? highlight.appRequestId : undefined}
+        highlightRequestToken={landingToken}
         openDeliverable={deliverable}
         onDeliverableLinkDone={deliverable ? onDeliverableLinkDone : undefined}
       />

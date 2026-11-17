@@ -185,10 +185,9 @@
     "priority_changed": "優先度の変更",
     "start_date_changed": "開始日の変更",
     "due_date_changed": "期限日の変更",
-    "task_completed": "エージェントの実行完了",
     "task_failed": "エージェントの実行失敗",
-    "agent_blocked": "エージェントがブロック",
-    "agent_completed": "エージェント完了"
+    "reaction_added": "リアクションあり",
+    "app_action_result": "アプリ操作の結果"
   },
   "team_event": {
     "status_changed": "タスクのステータス変更",

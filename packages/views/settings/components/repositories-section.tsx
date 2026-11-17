@@ -53,7 +53,6 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { toast } from "sonner";
-import type { TFunction } from "i18next";
 import {
   useInfiniteQuery,
   useQuery,
@@ -132,29 +131,6 @@ interface RepositoryDraft {
   description: string;
 }
 
-/** Copy for the install callback's `github_error`. Retrying cannot fix the
- * codes that refuse the binding, so they say what can; the suspended and
- * unverifiable ones also name the Configure-page dead end their retry hits:
- * the refused installation stays on GitHub, so reinstalling is the way back. */
-function githubCallbackErrorMessage(
-  code: string,
-  t: TFunction<"settings">,
-  tForkUi: TFunction<"fork-ui">,
-): string {
-  switch (code) {
-    case "not_authorized":
-      return tForkUi(($) => $.settings.repositories.github_error_not_authorized);
-    case "unknown_installation":
-      return tForkUi(($) => $.settings.repositories.github_error_unknown_installation);
-    case "installation_suspended":
-      return tForkUi(($) => $.settings.repositories.github_error_installation_suspended);
-    case "verification_unavailable":
-      return tForkUi(($) => $.settings.repositories.github_error_verification_unavailable);
-    default:
-      return t(($) => $.repositories.github_connect_failed);
-  }
-}
-
 /**
  * The repositories agents may clone and push to. Rows are read-only; adding
  * and editing happen in a dialog that saves on confirm, so a half-typed URL
@@ -162,7 +138,6 @@ function githubCallbackErrorMessage(
  */
 export function RepositoriesSection({ connection }: { connection: ReturnType<typeof useConnectGitHub> }) {
   const { t } = useT("settings");
-  const { t: tForkUi } = useT("fork-ui");
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -299,14 +274,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
 
     handledCallback.current = callbackKey;
     if (githubError) {
-      const message = githubCallbackErrorMessage(githubError, t, tForkUi);
-      // These two spell out a recovery path the user gets to see only once;
-      // sonner's default duration would dismiss them mid-read.
-      if (githubError === "installation_suspended" || githubError === "verification_unavailable") {
-        toast.error(message, { duration: Infinity, closeButton: true });
-      } else {
-        toast.error(message);
-      }
+      toast.error(t(($) => $.repositories.github_connect_failed));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       const installationID = navigation.searchParams.get("github_installation") ?? githubInstallations[0]!.id;
       if (githubInstallations.some((installation) => installation.id === installationID)) {
@@ -333,7 +301,6 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
     githubInstallationsPending,
     navigation,
     t,
-    tForkUi,
   ]);
 
   useEffect(() => {

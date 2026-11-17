@@ -25,6 +25,7 @@ import {
 } from "@multica/views/layout";
 import { SearchCommand } from "@multica/views/search";
 import { FloatingChat } from "@multica/views/chat";
+import { WhatsNewDeck } from "@multica/views/whats-new";
 import { WorkspaceSlugProvider, useCurrentWorkspace } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
 import {
@@ -304,6 +305,7 @@ export function DesktopShell() {
                     <NavigationProgress />
                     <TabContent />
                     {slug && <FloatingChat />}
+                    {slug && <WhatsNewDeck />}
                   </MainCanvas>
                   {slug && <AppBottomBar />}
                 </div>

@@ -98,6 +98,10 @@ vi.mock("@multica/views/you-should-know", () => ({
   ),
 }));
 
+vi.mock("@multica/views/voice", () => ({
+  VoiceWorkspaceWords: () => null,
+}));
+
 vi.mock("@/stores/tab-store", () => ({
   useTabStore: Object.assign(() => null, {
     getState: () => ({ validateWorkspaceSlugs: vi.fn() }),

@@ -185,10 +185,9 @@
     "priority_changed": "Priority changed",
     "start_date_changed": "Start date changed",
     "due_date_changed": "Due date changed",
-    "task_completed": "Agent run completed",
     "task_failed": "Agent run failed",
-    "agent_blocked": "Agent blocked",
-    "agent_completed": "Agent completed"
+    "reaction_added": "Reaction added",
+    "app_action_result": "App action result"
   },
   "team_event": {
     "status_changed": "Issue status changed",

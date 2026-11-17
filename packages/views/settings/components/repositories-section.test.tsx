@@ -887,38 +887,14 @@ describe("RepositoriesSection", () => {
     expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=repositories");
   });
 
-  // Retrying cannot fix a refused binding or a missing installation, so these
-  // codes get their own advice; any other code keeps the generic retry. The
-  // two that spell out a recovery path stay until dismissed — they are the
-  // only place the user reads it.
-  it.each([
-    ["not_authorized", enForkUi.settings.repositories.github_error_not_authorized, undefined],
-    [
-      "unknown_installation",
-      enForkUi.settings.repositories.github_error_unknown_installation,
-      undefined,
-    ],
-    [
-      "installation_suspended",
-      enForkUi.settings.repositories.github_error_installation_suspended,
-      { duration: Infinity, closeButton: true },
-    ],
-    [
-      "verification_unavailable",
-      enForkUi.settings.repositories.github_error_verification_unavailable,
-      { duration: Infinity, closeButton: true },
-    ],
-    ["persist_failed", "Could not connect GitHub. Try again.", undefined],
-  ])("explains the %s install callback error", async (code, message, toastOptions) => {
-    searchParamsRef.current = new URLSearchParams(`tab=github&github_error=${code}`);
+  it("uses the generic install callback failure", async () => {
+    searchParamsRef.current = new URLSearchParams("tab=github&github_error=persist_failed");
 
     render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
 
     await waitFor(() => expect(mockToastError).toHaveBeenCalled());
     expect(mockToastError).toHaveBeenCalledTimes(1);
-    const [actualMessage, actualOptions] = mockToastError.mock.calls[0] as [string, unknown];
-    expect(actualMessage).toBe(message);
-    expect(actualOptions).toEqual(toastOptions);
+    expect(mockToastError).toHaveBeenCalledWith("Could not connect GitHub. Try again.");
     expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=github");
     expect(screen.queryByRole("heading", { name: "Choose GitHub repositories" })).toBeNull();
   });
