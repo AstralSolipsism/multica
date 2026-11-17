@@ -153,8 +153,8 @@ two mutation-output calls. Attachment rewriting remains three upstream
 
 ## Validation and review handoff
 
-Go 1.27.3; Node 24.21.0; pnpm 10.28.2; Playwright 1.58.2 Chromium;
-Linux 5.15.0-157. All Go tests use the task-local PG17 database and the
+Initial validation: Go 1.27.3; Node 24.21.0; pnpm 10.28.2; Playwright 1.58.2
+Chromium; Linux 5.15.0-157. All Go tests use the task-local PG17 database and the
 repository's agent-CLI guard; no real-agent smoke tests run.
 
 - All 110 Go packages are covered: 94 pass, 15 contain no tests, and the
@@ -196,7 +196,8 @@ the script, selected tests, assertions and timeout are unchanged.
 for the complete `bash scripts/test-retained-e2e.sh` command** (browser phase
 1.9 minutes). It runs from a clean isolated checkout of `cecb2621928c1e7177f1f5b48545269aab0a2976`,
 without root/Web dotenv overrides, against a recreated empty PG17 database.
-Only sync documentation follows that tested commit. PostgreSQL is stopped
+The subsequent changes cover sync documentation and the release configuration
+corrections recorded below; application code is unchanged. PostgreSQL is stopped
 with `pg_ctl stop`; test servers, listeners and temporary checkouts are cleaned
 before handoff. Evidence is attached to OL-1417 rather than committed.
 
@@ -204,6 +205,38 @@ This container has no DISPLAY/WAYLAND_DISPLAY. The explicit issue exception
 permits delivery without graphical UI screenshots; only the requested retained
 browser gate and its failure diagnosis run. Desktop packaging, native mobile
 rendering, production deployment and release publication are not claimed.
+
+### First-review release corrections
+
+Review of `73ac6278a960009ee54e38bfd2d887b0faabf67a` found two release
+contract regressions. The upstream GitHub changelog and `englishJoin` template
+were incompatible with the offline single-tag candidate fixture. Removing
+them restores `.goreleaser.yml` exactly to the fork's M1 first-parent version;
+`release.disable: true`, both CLI archive names and existing filters remain.
+`RELEASING.md` now documents `candidate.py` as the candidate-note writer.
+The fork's shared `setup-candidate` action also moves from `~1.27.3` to
+`~1.27.4`, matching CI, release verification and the Docker builder. All ten
+candidate jobs use this action; the release contract explicitly includes it
+when raising the security floor.
+
+Rework validation uses Go 1.27.4, GoReleaser 2.12.2, Python 3.12.14,
+Node 24.21.0, pnpm 10.28.2 and QEMU 7.2.22:
+
+- `python3 scripts/candidate.test.py` passes in **49.82 seconds**, with GitHub,
+  GitLab and Gitea token variables removed. The existing synthetic fixture
+  builds all 12 CLI archives and verifies complete assembly, 32 job-failure
+  gates, identity/checksum/feed failures, draft-writer failures and traversal
+  rejection. An initial 60-second cold run was incomplete; the complete
+  rerun uses a new temporary fixture and warm build caches, with no test edits.
+- `GOTOOLCHAIN=go1.27.4 go tool govulncheck ./...` reports
+  **No vulnerabilities found** in 9.56 seconds.
+- `goreleaser check` and `git diff --check` pass. Parsing the release YAML
+  confirms all ten candidate jobs share the corrected Go floor.
+- `pnpm test:scripts`: **180/181**, 17.90 seconds; the sole failure remains
+  the previously accepted missing Docker executable in the Compose test.
+
+These are append-only fixes to the reviewed branch. The synthetic candidate
+test does not publish a Release or supply production candidate evidence.
 
 ## Deployment handoff
 
