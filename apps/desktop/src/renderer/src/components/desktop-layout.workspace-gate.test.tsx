@@ -122,7 +122,7 @@ vi.mock("@multica/views/chat", () => ({
 vi.mock("@/platform/chat-session-handoff", () => ({
   DesktopChatSessionBridge: () => <div data-testid="chat-session-bridge" />,
 }));
-vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => null }));
+vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => <div data-testid="whats-new-deck" /> }));
 
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
 vi.mock("./window-overlay", () => ({ WindowOverlay: () => null }));
@@ -176,6 +176,7 @@ describe("DesktopShell workspace gating", () => {
     expect(queryByTestId("modal-registry")).not.toBeNull();
     expect(queryByTestId("floating-chat")).not.toBeNull();
     expect(queryByTestId("chat-session-bridge")).not.toBeNull();
+    expect(queryByTestId("whats-new-deck")).not.toBeNull();
     expect(queryByRole("status", { name: /loading workspace/i })).toBeNull();
   });
 
@@ -185,6 +186,7 @@ describe("DesktopShell workspace gating", () => {
     const { container, getByRole, getByTestId, queryByTestId } = renderShell();
 
     expect(queryByTestId("app-rail")).toBeNull();
+    expect(queryByTestId("whats-new-deck")).toBeNull();
     expect(
       container.querySelectorAll("[data-sidebar='trigger']"),
     ).toHaveLength(0);
@@ -212,6 +214,7 @@ describe("DesktopShell workspace gating", () => {
     expect(queryByTestId("modal-registry")).toBeNull();
     expect(queryByTestId("floating-chat")).toBeNull();
     expect(queryByTestId("chat-session-bridge")).toBeNull();
+    expect(queryByTestId("whats-new-deck")).toBeNull();
     expect(queryByTestId("tab-content")).not.toBeNull();
   });
 
@@ -244,5 +247,6 @@ describe("DesktopShell workspace gating", () => {
 
     expect(queryByTestId("app-rail")).toBeNull();
     expect(queryByTestId("search-command")).toBeNull();
+    expect(queryByTestId("whats-new-deck")).toBeNull();
   });
 });

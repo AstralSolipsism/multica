@@ -9,6 +9,21 @@ it always runs and requires both aggregates to succeed, rejecting failed,
 cancelled, skipped or missing results. The release workflow also has a `backend`
 job, so its skipped packaging result must not be mistaken for the CI gate.
 
+## Local unit test entries
+
+`pnpm test` is the bounded local contract suite. It runs the shared branding,
+YSK, notification, Inbox, comment-composer, engineering-navigation and shell
+contracts in parallel with one Vitest worker per package, plus the complete
+Mobile Vitest suite. Keep this default entry under one minute; do not raise individual
+test timeouts or use cache hits to claim the budget.
+
+`pnpm test:full` preserves the original unsharded Core, Views, Desktop, Web, UI
+and Docs run for extended validation. `scripts/check.sh` calls this full entry.
+CI remains authoritative for full coverage: `frontend-test` runs every package
+except Docs, Mobile and Views, while both `frontend-views-test` shards run the
+complete Views suite. The bounded default is a fast development gate, never a
+replacement for the full CI or release/sync evidence.
+
 ## Go formatting
 
 `backend-format` runs on the backend scope and feeds `backend`. It executes

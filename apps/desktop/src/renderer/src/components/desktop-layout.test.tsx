@@ -88,7 +88,7 @@ vi.mock("@multica/views/search", () => ({
 }));
 vi.mock("@multica/views/chat", () => ({ FloatingChat: () => null }));
 vi.mock("@/platform/chat-session-handoff", () => ({ DesktopChatSessionBridge: () => null }));
-vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => null }));
+vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => <div data-testid="whats-new-deck" /> }));
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
 vi.mock("./window-overlay", () => ({ WindowOverlay: () => null }));
 
@@ -158,6 +158,7 @@ describe("DesktopShell sidebar trigger", () => {
     const { container, getByTestId, queryByRole } = renderShell();
 
     expect(container.querySelectorAll("[data-sidebar='trigger']")).toHaveLength(1);
+    expect(getByTestId("whats-new-deck")).toBeInTheDocument();
     expect(getByTestId("page-content")).toHaveAttribute(
       "data-external-trigger",
       "true",
@@ -176,6 +177,15 @@ describe("DesktopShell sidebar trigger", () => {
     );
     expect(mainTopBar).toHaveStyle({ paddingLeft: "144px" });
     expect(queryByRole("status", { name: /loading workspace/i })).toBeNull();
+  });
+
+  it("leaves theme backdrop painting to the sidebar wrapper", () => {
+    const { container } = renderShell();
+    const wrapper = container.querySelector('[data-slot="sidebar-wrapper"]');
+
+    expect(wrapper).toHaveClass("bg-app-shell");
+    expect(wrapper?.parentElement).toHaveClass("flex", "h-screen");
+    expect(wrapper?.parentElement).not.toHaveClass("bg-app-shell");
   });
 
   it("keeps full clearance for compact layouts in either sidebar state", () => {
