@@ -93,8 +93,8 @@ func TestNotification_MalformedMemberMentionPreservesValidRecipients(t *testing.
 				t.Fatalf("got %d inbox:new events, want 1", len(inboxEvents))
 			}
 			item := inboxEvents[0].Payload.(map[string]any)["item"].(map[string]any)
-			priority, ok := item["issue_priority"].(*string)
-			if !ok || priority == nil || *priority != "high" {
+			priority, ok := item["issue_priority"].(string)
+			if !ok || priority != "high" {
 				t.Fatalf("inbox:new must carry the current issue priority: %+v", item)
 			}
 			if item["recipient_id"] != recipientID || item["type"] != "mentioned" || item["issue_status"] != "todo" {

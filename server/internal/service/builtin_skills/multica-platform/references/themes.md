@@ -1,6 +1,6 @@
 # Themes
 
-A Multica theme restyles the Multica app, on Desktop and on the web, through
+A Labrastro theme restyles the Labrastro app, on Desktop and on the web, through
 public CSS variables. A user can ask for one anywhere: a chat, an issue, a
 comment. This is the contract for building one and handing it over.
 
@@ -59,11 +59,11 @@ Desktop watches a themes folder in its user data:
 
 | System | Themes folder |
 |---|---|
-| macOS | `~/Library/Application Support/Multica/themes` |
-| Windows | `%APPDATA%\Multica\themes` |
-| Linux | `$XDG_CONFIG_HOME/Multica/themes` (default `~/.config/Multica/themes`) |
+| macOS | `~/Library/Application Support/Labrastro/themes` |
+| Windows | `%APPDATA%\Labrastro\themes` |
+| Linux | `$XDG_CONFIG_HOME/Labrastro/themes` (default `~/.config/Labrastro/themes`) |
 
-- **Desktop on this computer** (the `Multica` folder above exists): write the
+- **Desktop on this computer** (the `Labrastro` folder above exists): write the
   theme into `<themes folder>/<id>/`, creating `themes` if needed. Desktop
   lists it once it passes the checks but does not switch to it: tell the user
   to pick it once under Settings → Appearance → Theme. From then on every
