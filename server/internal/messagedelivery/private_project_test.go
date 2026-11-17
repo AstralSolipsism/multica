@@ -3,11 +3,13 @@ package messagedelivery
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -285,16 +287,26 @@ func TestPrivateProjectTeamRouteRequiresProjectMembers(t *testing.T) {
 			testFx.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", fx.project)
 			s := newTestService(&fakeSender{}, nil)
 			member := loadMember(t)
-			member.WorkspaceID = mustUUID(testWSID)
 			in := SourceRouteInput{Scope: scope, ProjectID: fx.project, InstallationID: fx.install, TargetType: TargetGroup, TargetChatID: "oc_private_config"}
-			target, err := s.ResolveSourceTargetForApproval(t.Context(), member.WorkspaceID, scope, in)
+			verifier := s.Verifier.(*fakeVerifier)
+			var invalid *InvalidRouteError
+			if _, err := s.ResolveSourceTargetForApproval(t.Context(), member, scope, in); !errors.As(err, &invalid) || invalid.Field != "project_id" {
+				t.Fatalf("non-member owner resolved private target: %v", err)
+			}
+			if verifier.calls.Load() != 0 {
+				t.Fatal("unauthorized resolution contacted Feishu")
+			}
+			privateMessageMember(t, fx.project, testUID)
+			target, err := s.ResolveSourceTargetForApproval(t.Context(), member, scope, in)
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Removal between resolution and save must still be refused.
+			testFx.Exec(t, "DELETE FROM project_member WHERE project_id=$1 AND user_id=$2", fx.project, testUID)
 			if _, err := s.ApproveSourceTarget(t.Context(), member.WorkspaceID, scope, member, target); !errors.Is(err, ErrAuthorizationLost) {
-				t.Fatalf("non-member owner approved private project: %v", err)
+				t.Fatalf("removed owner approved private project: %v", err)
 			}
-			privateMessageMember(t, fx.project, testUID)
+			testFx.Exec(t, "INSERT INTO project_member (workspace_id, project_id, user_id) VALUES ($1,$2,$3)", testWSID, fx.project, testUID)
 			approval, err := s.ApproveSourceTarget(t.Context(), member.WorkspaceID, scope, member, target)
 			if err != nil {
 				t.Fatal(err)
@@ -304,18 +316,102 @@ func TestPrivateProjectTeamRouteRequiresProjectMembers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var deliveries []pgtype.UUID
+			for _, status := range []string{DeliveryStatusQueued, DeliveryStatusFailed} {
+				id := testFx.Insert(t, "labrastro_message_delivery", testutil.Cols{
+					"id": testutil.Raw("gen_random_uuid()"), "workspace_id": testWSID, "route_id": route.ID,
+					"installation_id": fx.install, "target_key": route.TargetKey,
+					"dedup_key": fx.project + status, "source_kind": scope, "source_scope": scope,
+					"source_ref_id": testutil.Raw("gen_random_uuid()"), "source_project_id": fx.project,
+					"status": status, "content_snapshot": `{"body":"private comment"}`, "target_snapshot": "{}",
+				})
+				deliveries = append(deliveries, mustUUID(id))
+			}
 			testFx.Exec(t, "UPDATE member SET role='admin' WHERE workspace_id=$1 AND user_id=$2", testWSID, fx.memberB)
 			outsider, err := s.Queries.GetMemberByUserAndWorkspace(t.Context(), db.GetMemberByUserAndWorkspaceParams{WorkspaceID: member.WorkspaceID, UserID: mustUUID(fx.memberB)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.UpdateSourceRoute(t.Context(), route, outsider, route.Revision, in); !errors.Is(err, ErrAuthorizationLost) {
-				t.Fatalf("non-member admin edited private route: %v", err)
+			checks := []struct {
+				name string
+				call func() error
+			}{
+				{"update", func() error {
+					_, err := s.UpdateSourceRoute(t.Context(), route, outsider, route.Revision, in)
+					return err
+				}},
+				{"disable", func() error {
+					_, err := s.SetSourceRouteEnabled(t.Context(), route, outsider, false, route.Revision)
+					return err
+				}},
+				{"enable", func() error {
+					_, err := s.SetSourceRouteEnabled(t.Context(), route, outsider, true, route.Revision)
+					return err
+				}},
+				{"test_send", func() error { _, err := s.TestSourceSend(t.Context(), route, outsider); return err }},
+				{"list_deliveries", func() error { _, err := s.ListRouteDeliveries(t.Context(), outsider, route.ID, nil, 50, 0); return err }},
+				{"get_delivery", func() error {
+					_, _, err := s.GetSourceDelivery(t.Context(), outsider, route.ID, deliveries[0])
+					return err
+				}},
+				{"retry", func() error {
+					_, err := s.RetryRouteDelivery(t.Context(), outsider, route.ID, deliveries[1])
+					return err
+				}},
+				{"delete", func() error { return s.DeleteRoute(t.Context(), route, outsider) }},
+				{"revoke", func() error { _, err := s.RevokeSourceTarget(t.Context(), outsider, approval); return err }},
 			}
+			for _, check := range checks {
+				t.Run(check.name, func(t *testing.T) {
+					if err := check.call(); !errors.Is(err, ErrAuthorizationLost) {
+						t.Fatalf("non-member admin %s: %v", check.name, err)
+					}
+				})
+			}
+			rows, err := s.ListSourceApprovedTargets(t.Context(), outsider)
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("private approvals visible to non-member: %+v, %v", rows, err)
+			}
+			calls := verifier.calls.Load()
 			in.TargetChatID = "oc_private_new"
-			fx.approveTeam(t, scope, in.TargetChatID, fx.project)
-			if _, err := s.CreateSourceRoute(t.Context(), outsider, in); !errors.Is(err, ErrAuthorizationLost) {
+			if _, err := s.CreateSourceRoute(t.Context(), outsider, in); !errors.As(err, &invalid) || invalid.Field != "project_id" {
 				t.Fatalf("non-member admin created private route: %v", err)
+			}
+			if verifier.calls.Load() != calls {
+				t.Fatal("unauthorized create contacted Feishu")
+			}
+			fresh := loadRoute(t, util.UUIDToString(route.ID))
+			if !fresh.Enabled || fresh.Revision != route.Revision {
+				t.Fatalf("denied operation changed route: %+v", fresh)
+			}
+			for i, id := range deliveries {
+				status, _, _, _ := deliveryStatus(t, util.UUIDToString(id))
+				if status != []string{DeliveryStatusQueued, DeliveryStatusFailed}[i] {
+					t.Fatalf("denied operation changed delivery: %s", status)
+				}
+			}
+			// The same admin gains access only after joining the project.
+			privateMessageMember(t, fx.project, fx.memberB)
+			rows, err = s.ListSourceApprovedTargets(t.Context(), outsider)
+			if err != nil || len(rows) != 1 || rows[0].ID != approval.ID {
+				t.Fatalf("member approval list: %+v, %v", rows, err)
+			}
+			records, err := s.ListRouteDeliveries(t.Context(), outsider, route.ID, nil, 50, 0)
+			if err != nil || len(records) != 2 {
+				t.Fatalf("member delivery list: %+v, %v", records, err)
+			}
+			d, _, err := s.GetSourceDelivery(t.Context(), outsider, route.ID, deliveries[0])
+			if err != nil || !strings.Contains(string(d.ContentSnapshot), "private comment") {
+				t.Fatalf("member snapshot missing: %+v, %v", d, err)
+			}
+			if _, err := s.RetryRouteDelivery(t.Context(), outsider, route.ID, deliveries[1]); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.RevokeSourceTarget(t.Context(), outsider, approval); err != nil || n != 2 {
+				t.Fatalf("member revoke: cancelled=%d err=%v", n, err)
+			}
+			if err := s.DeleteRoute(t.Context(), route, outsider); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -131,7 +131,35 @@ func (h *Handler) loadMessageSourceRoute(w http.ResponseWriter, r *http.Request,
 		writeErrorCode(w, http.StatusNotFound, "route_not_found", "message route not found")
 		return db.LabrastroMessageRoute{}, false
 	}
+	hidden, ok := h.requestHiddenProjects(w, r, util.UUIDToString(workspaceID))
+	if !ok {
+		return db.LabrastroMessageRoute{}, false
+	}
+	if !hidden.CanSeeProject(route.ProjectID) {
+		writeErrorCode(w, http.StatusNotFound, "route_not_found", "message route not found")
+		return db.LabrastroMessageRoute{}, false
+	}
 	return route, true
+}
+
+// Check all request principals before target verification can contact Feishu.
+func (h *Handler) requireMessageSourceProject(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, projectID string) bool {
+	if projectID == "" {
+		return true
+	}
+	id, ok := parseUUIDOrBadRequest(w, projectID, "project id")
+	if !ok {
+		return false
+	}
+	hidden, ok := h.requestHiddenProjects(w, r, util.UUIDToString(workspaceID))
+	if !ok {
+		return false
+	}
+	if !hidden.CanSeeProject(id) {
+		writeMessageDeliveryError(w, &messagedelivery.InvalidRouteError{Field: "project_id"})
+		return false
+	}
+	return true
 }
 
 // ListMessageSourceRoutes: GET /api/message-routes?source_kind=
@@ -202,6 +230,9 @@ func (h *Handler) CreateMessageSourceRoute(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			return
 		}
+		if !h.requireMessageSourceProject(w, r, workspaceID, req.ProjectID) {
+			return
+		}
 		route, err := h.MessageDelivery.CreateSourceRoute(r.Context(), member, in)
 		if err != nil {
 			writeMessageDeliveryError(w, err)
@@ -252,6 +283,9 @@ func (h *Handler) UpdateMessageSourceRoute(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			return
 		}
+	}
+	if !h.requireMessageSourceProject(w, r, workspaceID, req.ProjectID) {
+		return
 	}
 	updated, err := h.MessageDelivery.UpdateSourceRoute(r.Context(), route, member, *req.ExpectedRevision, in)
 	if err != nil {
@@ -304,10 +338,11 @@ func (h *Handler) DeleteMessageSourceRoute(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route); !ok {
+	member, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route)
+	if !ok {
 		return
 	}
-	if err := h.MessageDelivery.DeleteRoute(r.Context(), route); err != nil {
+	if err := h.MessageDelivery.DeleteRoute(r.Context(), route, member); err != nil {
 		writeMessageDeliveryError(w, err)
 		return
 	}
@@ -378,7 +413,8 @@ func (h *Handler) ListMessageRouteDeliveries(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route); !ok {
+	member, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route)
+	if !ok {
 		return
 	}
 	var status *string
@@ -386,7 +422,7 @@ func (h *Handler) ListMessageRouteDeliveries(w http.ResponseWriter, r *http.Requ
 		status = &v
 	}
 	limit, offset := messageDeliveryPaging(r)
-	rows, err := h.MessageDelivery.ListRouteDeliveries(r.Context(), workspaceID, route.ID, status, limit, offset)
+	rows, err := h.MessageDelivery.ListRouteDeliveries(r.Context(), member, route.ID, status, limit, offset)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -412,14 +448,15 @@ func (h *Handler) GetMessageRouteDelivery(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route); !ok {
+	member, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route)
+	if !ok {
 		return
 	}
 	deliveryID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "deliveryId"), "delivery id")
 	if !ok {
 		return
 	}
-	d, receipts, err := h.MessageDelivery.GetSourceDelivery(r.Context(), workspaceID, route.ID, deliveryID)
+	d, receipts, err := h.MessageDelivery.GetSourceDelivery(r.Context(), member, route.ID, deliveryID)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -446,14 +483,15 @@ func (h *Handler) RetryMessageRouteDelivery(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route); !ok {
+	member, ok := h.requireMessageSourceMemberForRoute(w, r, util.UUIDToString(workspaceID), route)
+	if !ok {
 		return
 	}
 	deliveryID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "deliveryId"), "delivery id")
 	if !ok {
 		return
 	}
-	d, err := h.MessageDelivery.RetryRouteDelivery(r.Context(), workspaceID, route.ID, deliveryID)
+	d, err := h.MessageDelivery.RetryRouteDelivery(r.Context(), member, route.ID, deliveryID)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -495,7 +533,10 @@ func (h *Handler) ApproveMessageSourceTarget(w http.ResponseWriter, r *http.Requ
 			"source_kind must be activity or comment; personal targets use the member binding")
 		return
 	}
-	target, err := h.MessageDelivery.ResolveSourceTargetForApproval(r.Context(), workspaceID, req.SourceKind, messagedelivery.SourceRouteInput{
+	if !h.requireMessageSourceProject(w, r, workspaceID, req.ProjectID) {
+		return
+	}
+	target, err := h.MessageDelivery.ResolveSourceTargetForApproval(r.Context(), member, req.SourceKind, messagedelivery.SourceRouteInput{
 		Scope:           req.SourceKind,
 		ProjectID:       req.ProjectID,
 		InstallationID:  req.InstallationID,
@@ -526,15 +567,26 @@ func (h *Handler) ListMessageSourceApprovedTargets(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceAdmin(w, r, util.UUIDToString(workspaceID)); !ok {
+	member, ok := h.requireMessageSourceAdmin(w, r, util.UUIDToString(workspaceID))
+	if !ok {
 		return
 	}
-	rows, err := h.MessageDelivery.ListSourceApprovedTargets(r.Context(), workspaceID)
+	rows, err := h.MessageDelivery.ListSourceApprovedTargets(r.Context(), member)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"approved_targets": rows})
+	hidden, ok := h.requestHiddenProjects(w, r, util.UUIDToString(workspaceID))
+	if !ok {
+		return
+	}
+	visible := make([]db.LabrastroMessageApprovedTarget, 0, len(rows))
+	for _, row := range rows {
+		if hidden.CanSeeProject(row.ProjectID) {
+			visible = append(visible, row)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approved_targets": visible})
 }
 
 // RevokeMessageSourceTarget: DELETE /api/message-approved-targets/{targetId}
@@ -545,14 +597,15 @@ func (h *Handler) RevokeMessageSourceTarget(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if _, ok := h.requireMessageSourceAdmin(w, r, util.UUIDToString(workspaceID)); !ok {
+	member, ok := h.requireMessageSourceAdmin(w, r, util.UUIDToString(workspaceID))
+	if !ok {
 		return
 	}
 	targetID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "targetId"), "approved target id")
 	if !ok {
 		return
 	}
-	rows, err := h.MessageDelivery.ListSourceApprovedTargets(r.Context(), workspaceID)
+	rows, err := h.MessageDelivery.ListSourceApprovedTargets(r.Context(), member)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return
@@ -564,11 +617,15 @@ func (h *Handler) RevokeMessageSourceTarget(w http.ResponseWriter, r *http.Reque
 			break
 		}
 	}
-	if found == nil {
+	hidden, ok := h.requestHiddenProjects(w, r, util.UUIDToString(workspaceID))
+	if !ok {
+		return
+	}
+	if found == nil || !hidden.CanSeeProject(found.ProjectID) {
 		writeErrorCode(w, http.StatusNotFound, "route_not_found", "approved target not found")
 		return
 	}
-	cancelled, err := h.MessageDelivery.RevokeSourceTarget(r.Context(), workspaceID, found.SourceKind, *found)
+	cancelled, err := h.MessageDelivery.RevokeSourceTarget(r.Context(), member, *found)
 	if err != nil {
 		writeMessageDeliveryError(w, err)
 		return

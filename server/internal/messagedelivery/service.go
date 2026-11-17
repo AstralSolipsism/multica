@@ -452,7 +452,12 @@ func (s *Service) SetRouteEnabled(ctx context.Context, route db.LabrastroMessage
 // DeleteRoute removes the rule and cancels its queued sends. Decisions
 // already made (sent/failed/...) keep their snapshots and receipts for
 // audit — deleting a rule never rewrites history.
-func (s *Service) DeleteRoute(ctx context.Context, route db.LabrastroMessageRoute) error {
+func (s *Service) DeleteRoute(ctx context.Context, route db.LabrastroMessageRoute, member db.Member) error {
+	if route.SourceKind != RouteSourceRun {
+		if err := s.sourceRouteAuthority(ctx, route, member); err != nil {
+			return err
+		}
+	}
 	return s.withParentLock(ctx, route.WorkspaceID, func(q *db.Queries) error {
 		// Delete takes the row lock before cancelling: all decisions hold
 		// SHARE on this row until insertion, so no late candidate can escape.

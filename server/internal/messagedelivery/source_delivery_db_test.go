@@ -66,7 +66,7 @@ func TestSourceDeliveryPagesOrderTiesWithinScope(t *testing.T) {
 	status := DeliveryStatusSent
 	svc := newTestService(nil, nil)
 	for offset := int32(0); offset < 9; offset += 3 {
-		rows, err := svc.ListRouteDeliveries(context.Background(), mustUUID(testWSID), mustUUID(routeID), &status, 3, offset)
+		rows, err := svc.ListRouteDeliveries(context.Background(), loadMember(t), mustUUID(routeID), &status, 3, offset)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -541,7 +541,7 @@ func TestSourceApprovals_RevocationCancelsQueuedAndBlocksSend(t *testing.T) {
 	var approvalID string
 	testFx.QueryRow(t, `SELECT id FROM labrastro_message_approved_target WHERE workspace_id = $1::uuid AND source_kind = 'activity' AND target_key = 'group:oc_team_revoke' AND revoked_at IS NULL`, testWSID).Scan(&approvalID)
 	approval := loadApprovedTarget(t, approvalID)
-	cancelled, err := s.RevokeSourceTarget(ctx, uuidOf(t, testWSID), RouteSourceActivity, approval)
+	cancelled, err := s.RevokeSourceTarget(ctx, loadMember(t), approval)
 	if err != nil || cancelled != 1 {
 		t.Fatalf("revoke: cancelled=%d err=%v", cancelled, err)
 	}
@@ -781,4 +781,40 @@ func loadApprovedTarget(t testing.TB, id string) db.LabrastroMessageApprovedTarg
 	}
 	t.Fatal("approved target not found")
 	return db.LabrastroMessageApprovedTarget{}
+}
+
+func TestSourceTeamRouteMemberCannotDisable(t *testing.T) {
+	for _, scope := range []string{RouteSourceActivity, RouteSourceComment} {
+		t.Run(scope, func(t *testing.T) {
+			fx := newSourceFixture(t, "member-disable-"+scope)
+			resetSourceScanCursors(t)
+			fx.approveTeam(t, scope, "oc_member_disable")
+			routeID := fx.teamRoute(t, "enabled", scope, "oc_member_disable", nil)
+			var sourceID string
+			if scope == RouteSourceActivity {
+				sourceID = fx.activity(t, fx.issue, "status_changed", `{"from":"todo","to":"done"}`)
+			} else {
+				sourceID = fx.comment(t, fx.issue, "queued team comment")
+			}
+			s := newTestService(nil, nil)
+			if errs := s.decideSourcesErr(t.Context()); len(errs) != 0 {
+				t.Fatal(errs)
+			}
+			route := loadRoute(t, routeID)
+			member := db.Member{WorkspaceID: mustUUID(testWSID), UserID: mustUUID(fx.memberB), Role: "member"}
+			if _, err := s.SetSourceRouteEnabled(t.Context(), route, member, false, route.Revision); !errors.Is(err, ErrAuthorizationLost) {
+				t.Fatalf("ordinary member disabled team route: %v", err)
+			}
+			fresh := loadRoute(t, routeID)
+			if !fresh.Enabled || fresh.Revision != route.Revision || sourceRecord(t, s, sourceID).Status != DeliveryStatusQueued {
+				t.Fatal("denied disable changed route or cancelled queued delivery")
+			}
+			if _, err := s.SetSourceRouteEnabled(t.Context(), route, loadMember(t), false, route.Revision); err != nil {
+				t.Fatal(err)
+			}
+			if loadRoute(t, routeID).Enabled || sourceRecord(t, s, sourceID).Status != DeliveryStatusCancelled {
+				t.Fatal("authorized disable did not stop route and queued delivery")
+			}
+		})
+	}
 }

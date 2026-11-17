@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -349,6 +350,7 @@ func newTestService(sender Sender, syncer RunSyncer) *Service {
 // group/topic routes without a transport; tests of the verifier itself
 // swap it out.
 type fakeVerifier struct {
+	calls      atomic.Int32
 	groupErr   error
 	topicErr   error
 	topicChat  string // defaults to echoing the declared chat
@@ -356,10 +358,12 @@ type fakeVerifier struct {
 }
 
 func (f *fakeVerifier) VerifyGroupTarget(ctx context.Context, req VerifyTargetRequest) error {
+	f.calls.Add(1)
 	return f.groupErr
 }
 
 func (f *fakeVerifier) VerifyTopicTarget(ctx context.Context, req VerifyTargetRequest) (string, error) {
+	f.calls.Add(1)
 	f.sawTopicID = req.MessageID
 	if f.topicErr != nil {
 		return "", f.topicErr

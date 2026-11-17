@@ -273,7 +273,7 @@ func (h *Handler) SetMessageRouteEnabled(w http.ResponseWriter, r *http.Request)
 
 // DeleteMessageRoute: DELETE /api/autopilots/{id}/message-routes/{routeId}
 func (h *Handler) DeleteMessageRoute(w http.ResponseWriter, r *http.Request) {
-	ap, ok := h.requireMessageRouteAccess(w, r)
+	ap, member, ok := h.requireMessageRouteAccessWithMember(w, r)
 	if !ok {
 		return
 	}
@@ -281,7 +281,7 @@ func (h *Handler) DeleteMessageRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.MessageDelivery.DeleteRoute(r.Context(), route); err != nil {
+	if err := h.MessageDelivery.DeleteRoute(r.Context(), route, member); err != nil {
 		writeMessageDeliveryError(w, err)
 		return
 	}

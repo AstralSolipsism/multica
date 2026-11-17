@@ -720,7 +720,7 @@ func loadRoute(t testing.TB, id string) db.LabrastroMessageRoute {
 }
 
 func loadMember(t testing.TB) db.Member {
-	return db.Member{UserID: uuidOf(t, testUID)}
+	return db.Member{WorkspaceID: uuidOf(t, testWSID), UserID: uuidOf(t, testUID)}
 }
 
 func futureRouteUpdate(t testing.TB, routeID string, d time.Duration) {
