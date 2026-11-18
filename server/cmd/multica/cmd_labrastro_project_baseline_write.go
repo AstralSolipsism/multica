@@ -90,20 +90,53 @@ func baselineWrite(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	if json.Unmarshal(raw, &written) != nil || written.Page.ID == "" || written.Revision.ID == "" {
 		return baselineFailure(1, "invalid baseline write response")
 	}
-	// The page write is authoritative and already committed. Print it before
-	// uploading so a failed canvas upload still tells the caller which revision
-	// the body landed on.
-	if err := baselinePrintWriteResult(cmd, raw, "written"); err != nil {
-		return err
+	// The page write is authoritative and already committed. Emit it first so a
+	// failed canvas upload still reports which revision the body landed on.
+	jsonOutput := mustString(cmd, "output") == "json"
+	if !jsonOutput {
+		if err := baselinePrintWriteResult(cmd, raw, "written"); err != nil {
+			return err
+		}
 	}
+	uploaded := make([]cli.AttachmentResponse, 0, len(attachments))
+	var failures []baselineAttachmentFailure
 	for _, attachment := range attachments {
 		att, err := client.UploadBaselinePageAttachment(ctx, attachment.data, attachment.filename, written.Page.ID, written.Revision.ID)
 		if err != nil {
-			return baselineFailure(1, "%s v%d written, but uploading %s failed: %s", written.Page.Slug, written.Revision.Number, attachment.filename, baselineUploadError(err))
+			failures = append(failures, baselineAttachmentFailure{Filename: attachment.filename, Error: baselineUploadError(err)})
+			// Progress and per-file errors go to stderr; stdout stays a single
+			// machine-readable result.
+			fmt.Fprintf(cmd.ErrOrStderr(), "attachment %s: upload failed (%s)\n", attachment.filename, baselineUploadError(err))
+			continue
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "attachment: %s (%d bytes) → %s\n", att.Filename, att.SizeBytes, att.ID)
+		uploaded = append(uploaded, att)
+		if jsonOutput {
+			continue
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "attachment: %s (%d bytes) → %s\n", att.Filename, att.SizeBytes, att.ID)
+	}
+	if jsonOutput {
+		var result map[string]any
+		if err := json.Unmarshal(raw, &result); err != nil || result == nil {
+			return baselineFailure(1, "invalid baseline write response")
+		}
+		result["attachments"] = uploaded
+		if len(failures) > 0 {
+			result["attachment_errors"] = failures
+		}
+		if err := cli.PrintJSON(cmd.OutOrStdout(), result); err != nil {
+			return err
+		}
+	}
+	if len(failures) > 0 {
+		return baselineFailure(1, "%s v%d written, but %d of %d attachments failed to upload; re-run with --output json for details", written.Page.Slug, written.Revision.Number, len(failures), len(attachments))
 	}
 	return nil
+}
+
+type baselineAttachmentFailure struct {
+	Filename string `json:"filename"`
+	Error    string `json:"error"`
 }
 
 func baselineUploadError(err error) string {

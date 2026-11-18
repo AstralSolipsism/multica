@@ -20,6 +20,7 @@ WHERE workspace_id = $2
   AND comment_id IS NULL
   AND chat_message_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
 RETURNING id
 `
 
@@ -61,6 +62,7 @@ WHERE workspace_id = $1
   AND comment_id IS NULL
   AND chat_message_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
 `
 
 type CountUnboundChatAttachmentsForTaskParams struct {
@@ -536,6 +538,7 @@ WHERE workspace_id = $3
   AND comment_id IS NULL
   AND chat_message_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND (
     chat_session_id IS NULL
     OR chat_session_id = $2
@@ -595,6 +598,7 @@ WHERE workspace_id = $3
   ))
   AND comment_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY($4::uuid[])
 `
 
@@ -622,6 +626,7 @@ WITH linked AS (
   WHERE attachment.workspace_id = $2
     AND attachment.issue_id IS NULL
     AND attachment.source_context_id IS NULL
+    AND attachment.baseline_page_id IS NULL
     AND attachment.id = ANY($3::uuid[])
   RETURNING attachment.issue_id
 ), bumped_issue AS (
@@ -1125,6 +1130,64 @@ func (q *Queries) ListAttachmentsBySourceContext(ctx context.Context, arg ListAt
 	return items, nil
 }
 
+const listBaselineAttachmentURLsByProject = `-- name: ListBaselineAttachmentURLsByProject :many
+SELECT a.url FROM attachment a
+JOIN project_baseline_page p ON p.id = a.baseline_page_id
+WHERE a.workspace_id = $1 AND p.project_id = $2
+`
+
+type ListBaselineAttachmentURLsByProjectParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+}
+
+// Collected before deletion so the handler can remove the stored objects after
+// the metadata transaction commits.
+func (q *Queries) ListBaselineAttachmentURLsByProject(ctx context.Context, arg ListBaselineAttachmentURLsByProjectParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBaselineAttachmentURLsByProject, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		items = append(items, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBaselineAttachmentURLsByWorkspace = `-- name: ListBaselineAttachmentURLsByWorkspace :many
+SELECT url FROM attachment
+WHERE workspace_id = $1 AND baseline_page_id IS NOT NULL
+`
+
+func (q *Queries) ListBaselineAttachmentURLsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBaselineAttachmentURLsByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		items = append(items, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSourceContextAttachmentURLsByWorkspace = `-- name: ListSourceContextAttachmentURLsByWorkspace :many
 SELECT url FROM attachment
 WHERE workspace_id = $1
@@ -1314,6 +1377,7 @@ WHERE workspace_id = $1
   AND issue_id = $2
   AND comment_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY($3::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -1357,6 +1421,7 @@ SELECT id FROM attachment
 WHERE workspace_id = $1
   AND issue_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY($2::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -1402,6 +1467,7 @@ WHERE workspace_id = $1
   AND chat_message_id IS NULL
   AND task_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY($2::uuid[])
 ORDER BY id
 FOR UPDATE
@@ -1435,6 +1501,21 @@ func (q *Queries) LockUnboundAttachmentsForCommentLink(ctx context.Context, arg 
 	return items, nil
 }
 
+const lockWorkspaceForAttachmentUpload = `-- name: LockWorkspaceForAttachmentUpload :one
+SELECT id FROM workspace WHERE id = $1 FOR SHARE
+`
+
+// Uploads that bind to an engineering-baseline page serialize with workspace
+// deletion: the delete holds this row FOR UPDATE, so either the upload commits
+// first (and its row is seen by the teardown snapshot) or it waits and then
+// finds the page gone.
+func (q *Queries) LockWorkspaceForAttachmentUpload(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForAttachmentUpload, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const replaceCommentAttachments = `-- name: ReplaceCommentAttachments :execrows
 UPDATE attachment
 SET comment_id = CASE
@@ -1443,6 +1524,7 @@ SET comment_id = CASE
 END
 WHERE issue_id = $2
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND (
     (comment_id = $1 AND NOT id = ANY($3::uuid[]))
     OR (comment_id IS NULL AND id = ANY($3::uuid[]))

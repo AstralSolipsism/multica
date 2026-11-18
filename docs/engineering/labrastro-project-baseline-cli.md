@@ -37,6 +37,12 @@ Lint uses the read-only exit contract [below](#read-only-lint).
 | `lint [<pid>]` | check links, architecture diagrams and boundary gates | `--dir <export-dir>` (instead of pid), `--page <slug>`, `--output text\|json` |
 | `export <pid>` | export `<slug>.md` files with YAML headers into `--dir`, or one `--single-file` | `--dir ./docs/baseline`, `--single-file <path>` |
 
+`--attachment` results are reported on stderr in text mode; with
+`--output json` the write response grows `attachments` (the uploaded
+attachment objects) and, when some uploads fail, `attachment_errors`
+(`filename`, `error`). Stdout stays a single JSON object even on partial
+failure; the command exits 1 and names the failed files.
+
 `--content-file` reads a regular file inside the current directory only
 (`filepath.IsLocal` + `os.OpenRoot`, in-directory symlinks allowed), capped at
 64 KiB of NUL-free UTF-8. `--attachment` uses the same directory confinement

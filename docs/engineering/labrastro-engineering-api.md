@@ -97,6 +97,15 @@ this owner) and optional `baseline_revision_id`; both must belong to the
 project the caller can see, and the revision must belong to that page. Other
 owner fields (`issue_id`, `comment_id`, `task_id`, …) remain unchanged.
 
+A page artifact has exactly one owner: `baseline_page_id` cannot be combined
+with `issue_id`, `comment_id`, `chat_session_id` or `task_id`, and the
+Issue/Chat/Comment claim queries all exclude page-bound rows, so a private
+wiki artifact cannot be adopted by another entity. Uploads take the workspace
+share lock, then the project row, then revalidate the page and revision in the
+same transaction as the insert — serialized with project/workspace deletion.
+Deletion collects the stored URLs before the metadata transaction and removes
+the objects after it commits.
+
 `GET /baseline/pages/{page}` returns every artifact ever bound to the page,
 oldest first. Readers resolve a fence by bare filename against the newest
 upload, exactly like Issue and Chat; the same-name row with the latest

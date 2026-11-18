@@ -619,6 +619,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// GC classify the row consistently before it gains a message id.
 			params.ChatSessionID = task.ChatSessionID
 		}
+		// One upload has exactly one owner. A mixed row would let an Issue or
+		// Chat claim a private wiki artifact (or the reverse), so refuse it
+		// before anything is stored.
+		if params.BaselinePageID.Valid && (params.IssueID.Valid || params.CommentID.Valid || params.ChatSessionID.Valid || params.TaskID.Valid) {
+			writeError(w, http.StatusBadRequest, "baseline_page_id cannot be combined with issue_id, comment_id, chat_session_id or task_id")
+			return
+		}
 
 		if dimensions, ok := imagemetadata.DimensionsFromReader(file); ok {
 			params.Width = pgtype.Int4{Int32: dimensions.Width, Valid: true}
@@ -640,7 +647,8 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		params.Url = link
 
 		var att db.CreateAttachmentRow
-		if params.CommentID.Valid {
+		switch {
+		case params.CommentID.Valid:
 			// A comment attachment is written under the comment's lock, so a
 			// delete that commits while the object uploaded cannot leave it on
 			// a tombstone. A refused upload takes its stored object with it.
@@ -654,7 +662,24 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
-		} else {
+		case params.BaselinePageID.Valid:
+			att, err = h.createBaselinePageAttachment(r.Context(), r, params, baselinePage.ProjectID)
+			if err != nil {
+				// The page (or its project/revision) disappeared or was archived
+				// while the bytes uploaded; never leave an unreachable object.
+				h.deleteS3Objects(r.Context(), []string{link})
+				if writeRequestCancellation(w, r, err) {
+					return
+				}
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(w, http.StatusForbidden, "invalid baseline_page_id")
+					return
+				}
+				slog.Error("failed to create baseline attachment record", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to create attachment record")
+				return
+			}
+		default:
 			att, err = wakeupWrite(h, r, func(q *db.Queries) (db.CreateAttachmentRow, error) {
 				return q.CreateAttachment(r.Context(), params)
 			})
@@ -723,6 +748,49 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		"id":       id.String(),
 		"url":      link,
 		"filename": header.Filename,
+	})
+}
+
+// createBaselinePageAttachment writes a page-owned attachment under the same
+// lock order as engineering writes and project deletion: workspace share lock,
+// project row, then a fresh page/revision revalidation. An upload that races a
+// deletion therefore either commits before the teardown snapshot or fails with
+// pgx.ErrNoRows after the page is gone, instead of leaving an orphan row.
+func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Request, params db.CreateAttachmentParams, projectID pgtype.UUID) (db.CreateAttachmentRow, error) {
+	return wakeupWrite(h, r, func(q *db.Queries) (db.CreateAttachmentRow, error) {
+		if _, err := q.LockWorkspaceForAttachmentUpload(ctx, params.WorkspaceID); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if _, err := q.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
+			WorkspaceID: params.WorkspaceID,
+			ID:          projectID,
+		}); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		page, err := q.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{
+			WorkspaceID: params.WorkspaceID,
+			ID:          params.BaselinePageID,
+		})
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if page.ArchivedAt.Valid || page.ProjectID != projectID {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		if params.BaselineRevisionID.Valid {
+			revision, err := q.LabrastroGetBaselineRevision(ctx, db.LabrastroGetBaselineRevisionParams{
+				WorkspaceID: params.WorkspaceID,
+				ProjectID:   projectID,
+				ID:          params.BaselineRevisionID,
+			})
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			if revision.PageID != page.ID {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+		}
+		return q.CreateAttachment(ctx, params)
 	})
 }
 

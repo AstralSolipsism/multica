@@ -1,3 +1,10 @@
+-- name: LockWorkspaceForAttachmentUpload :one
+-- Uploads that bind to an engineering-baseline page serialize with workspace
+-- deletion: the delete holds this row FOR UPDATE, so either the upload commits
+-- first (and its row is seen by the teardown snapshot) or it waits and then
+-- finds the page gone.
+SELECT id FROM workspace WHERE id = $1 FOR SHARE;
+
 -- name: CreateAttachment :one
 WITH inserted AS (
   INSERT INTO attachment (
@@ -41,6 +48,17 @@ ORDER BY created_at ASC;
 SELECT * FROM attachment
 WHERE baseline_page_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC, id ASC;
+
+-- name: ListBaselineAttachmentURLsByProject :many
+-- Collected before deletion so the handler can remove the stored objects after
+-- the metadata transaction commits.
+SELECT a.url FROM attachment a
+JOIN project_baseline_page p ON p.id = a.baseline_page_id
+WHERE a.workspace_id = sqlc.arg(workspace_id) AND p.project_id = sqlc.arg(project_id);
+
+-- name: ListBaselineAttachmentURLsByWorkspace :many
+SELECT url FROM attachment
+WHERE workspace_id = sqlc.arg(workspace_id) AND baseline_page_id IS NOT NULL;
 
 -- name: ListAttachmentsByComment :many
 SELECT * FROM attachment
@@ -116,6 +134,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   ))
   AND comment_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[]);
 
 -- name: ReplaceCommentAttachments :execrows
@@ -126,6 +145,7 @@ SET comment_id = CASE
 END
 WHERE issue_id = $2
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND (
     (comment_id = $1 AND NOT id = ANY(sqlc.arg(attachment_ids)::uuid[]))
     OR (comment_id IS NULL AND id = ANY(sqlc.arg(attachment_ids)::uuid[]))
@@ -140,6 +160,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND comment_id IS NULL
   AND chat_message_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND (
     chat_session_id IS NULL
     OR chat_session_id = sqlc.arg(chat_session_id)
@@ -172,7 +193,8 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id IS NULL
   AND comment_id IS NULL
   AND chat_message_id IS NULL
-  AND source_context_id IS NULL;
+  AND source_context_id IS NULL
+  AND baseline_page_id IS NULL;
 
 -- name: BindChatAttachmentsToMessage :many
 -- Bind a chat agent's task-scoped attachments to the assistant reply it just
@@ -187,6 +209,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND comment_id IS NULL
   AND chat_message_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
 RETURNING id;
 
 -- name: ListAttachmentsByChatMessage :many
@@ -210,6 +233,7 @@ SELECT id FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
 ORDER BY id
 FOR UPDATE;
@@ -226,6 +250,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND chat_message_id IS NULL
   AND task_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
 ORDER BY id
 FOR UPDATE;
@@ -243,6 +268,7 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id = sqlc.arg(issue_id)
   AND comment_id IS NULL
   AND source_context_id IS NULL
+  AND baseline_page_id IS NULL
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
 ORDER BY id
 FOR UPDATE;
@@ -263,6 +289,7 @@ WITH linked AS (
   WHERE attachment.workspace_id = sqlc.arg(workspace_id)
     AND attachment.issue_id IS NULL
     AND attachment.source_context_id IS NULL
+    AND attachment.baseline_page_id IS NULL
     AND attachment.id = ANY(sqlc.arg(attachment_ids)::uuid[])
   RETURNING attachment.issue_id
 ), bumped_issue AS (

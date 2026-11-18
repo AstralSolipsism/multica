@@ -830,6 +830,14 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to stop project notification routes")
 		return
 	}
+	baselineAttachmentURLs, err := qtx.ListBaselineAttachmentURLsByProject(r.Context(), db.ListBaselineAttachmentURLsByProjectParams{
+		WorkspaceID: project.WorkspaceID,
+		ProjectID:   project.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list project attachment objects")
+		return
+	}
 	if err := deleteProjectEngineering(r.Context(), qtx, project.WorkspaceID, project.ID); err != nil {
 		writeEngineeringError(w, err)
 		return
@@ -859,6 +867,7 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit project delete")
 		return
 	}
+	h.deleteS3Objects(r.Context(), baselineAttachmentURLs)
 	h.publish(protocol.EventProjectDeleted, workspaceID, "member", userID, map[string]any{"project_id": uuidToString(project.ID)})
 	w.WriteHeader(http.StatusNoContent)
 }

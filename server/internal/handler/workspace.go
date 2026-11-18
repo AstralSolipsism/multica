@@ -1209,6 +1209,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	var sourceContextAttachmentURLs []string
 	var sourceContextIntentURLs []string
+	var baselineAttachmentURLs []string
 
 	// SET LOCAL is transaction-scoped, so pgxpool hands this connection back
 	// out with the default (unbounded) lock_timeout after COMMIT / ROLLBACK.
@@ -1244,6 +1245,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if sourceContextIntentURLs, err = qtx.ListSourceContextObjectIntentURLsByWorkspace(r.Context(), requester.WorkspaceID); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "list source context pending objects", err)
+		return
+	}
+	if baselineAttachmentURLs, err = qtx.ListBaselineAttachmentURLsByWorkspace(r.Context(), requester.WorkspaceID); err != nil {
+		failWorkspaceDelete(w, r, workspaceID, "list baseline attachment objects", err)
 		return
 	}
 
@@ -1473,7 +1478,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	for _, runtimeID := range runtimeIDs {
 		h.NotifyRuntimeGone(uuidToString(runtimeID))
 	}
-	h.deleteS3Objects(r.Context(), append(sourceContextAttachmentURLs, sourceContextIntentURLs...))
+	h.deleteS3Objects(r.Context(), append(append(sourceContextAttachmentURLs, sourceContextIntentURLs...), baselineAttachmentURLs...))
 
 	slog.Info("workspace deleted", append(logger.RequestAttrs(r), "workspace_id", workspaceID)...)
 	h.publish(protocol.EventWorkspaceDeleted, workspaceID, "member", requestUserID(r), map[string]any{

@@ -225,34 +225,47 @@ func (h *Handler) requireAssigneeCanAccessProject(w http.ResponseWriter, r *http
 }
 
 // attachmentInHiddenProject reports whether an attachment belongs to an issue,
-// or to a comment on an issue, in one of the hidden projects. A comment
-// attachment need not carry its issue id, so the comment answers for it.
+// to a comment on an issue, or to an engineering-baseline page in one of the
+// hidden projects. Every owner that resolves is checked: a row that carries
+// more than one owner (legacy mixed rows) must not become readable through the
+// more permissive one.
 func (h *Handler) attachmentInHiddenProject(ctx context.Context, hidden projectaccess.Hidden, att db.Attachment) (bool, error) {
 	if hidden.Empty() {
 		return false, nil
 	}
-	var projectID pgtype.UUID
-	var err error
-	switch {
-	case att.IssueID.Valid:
-		projectID, err = h.Queries.GetIssueProjectID(ctx, att.IssueID)
-	case att.CommentID.Valid:
-		projectID, err = h.Queries.GetCommentIssueProjectID(ctx, att.CommentID)
-	case att.BaselinePageID.Valid:
-		// A wiki-page artifact inherits the project that owns the page.
-		var page db.ProjectBaselinePage
-		page, err = h.Queries.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{WorkspaceID: att.WorkspaceID, ID: att.BaselinePageID})
-		projectID = page.ProjectID
-	default:
-		return false, nil
+	hiddenProject := func(projectID pgtype.UUID) bool { return !hidden.CanSeeProject(projectID) }
+	if att.IssueID.Valid {
+		projectID, err := h.Queries.GetIssueProjectID(ctx, att.IssueID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
+		if err == nil && hiddenProject(projectID) {
+			return true, nil
+		}
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+	if att.CommentID.Valid {
+		projectID, err := h.Queries.GetCommentIssueProjectID(ctx, att.CommentID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
+		if err == nil && hiddenProject(projectID) {
+			return true, nil
+		}
 	}
-	if err != nil {
-		return false, err
+	if att.BaselinePageID.Valid {
+		page, err := h.Queries.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{WorkspaceID: att.WorkspaceID, ID: att.BaselinePageID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			// A page-bound row whose page is gone is an orphan; never expose it.
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if hiddenProject(page.ProjectID) {
+			return true, nil
+		}
 	}
-	return !hidden.CanSeeProject(projectID), nil
+	return false, nil
 }
 
 // requireAttachmentVisible 404s an attachment on an issue (or a comment on an
