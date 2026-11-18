@@ -62,7 +62,7 @@ function setup(
 }
 
 async function fillNewSource(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText("Name"), "ZenMux Pro");
+  await user.type(screen.getByLabelText(/^Name/), "ZenMux Pro");
   await user.click(screen.getByRole("button", { name: /ZenMux/ }));
   await user.type(screen.getByLabelText("Management API Key"), "zenmux-secret-key");
   await user.click(screen.getByRole("radio", { name: /Shared/ }));
@@ -128,7 +128,7 @@ describe("QuotaSourcesDialog", () => {
     const { user } = setup([], fetcher);
 
     await user.click(screen.getByRole("button", { name: "Add source" }));
-    await user.type(screen.getByLabelText("Name"), "免费通道");
+    await user.type(screen.getByLabelText(/^Name/), "免费通道");
     await user.click(screen.getByRole("button", { name: /OpenCode Jev free channel/ }));
     // Credential-free kind: no API key input at all.
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
@@ -164,12 +164,12 @@ describe("QuotaSourcesDialog", () => {
     const { user } = setup([], fetcher);
 
     await user.click(screen.getByRole("button", { name: "Add source" }));
-    await user.type(screen.getByLabelText("Name"), "Primary GLM");
+    await user.type(screen.getByLabelText(/^Name/), "Primary GLM");
     await user.type(screen.getByLabelText("API Key"), "original-secret");
     await user.click(screen.getByRole("button", { name: "Save and verify" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(expected);
-    expect(screen.getByLabelText("Name")).toHaveValue("Primary GLM");
+    expect(screen.getByLabelText(/^Name/)).toHaveValue("Primary GLM");
     expect(screen.getByLabelText("API Key")).toHaveValue("original-secret");
     expect(screen.getByRole("button", { name: "Save and verify" })).toBeInTheDocument();
   });
@@ -255,5 +255,156 @@ describe("QuotaSourcesDialog", () => {
     expect(await screen.findByText("Couldn't load quota sources.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  });
+
+  it("defaults a new OpenCode source to pay-as-you-go and swaps the credential field with the query type", async () => {
+    const created = {
+      ...source,
+      id: "created-oc",
+      kind: "opencode",
+      name: "OpenCode",
+      opencode_mode: "payg" as const,
+      workspace_id: "wrk_abc",
+      credential_hint: "xyz9",
+    };
+    const fetcher = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(created, 201));
+      return Promise.resolve(jsonResponse({ encryption_configured: true, sources: [created] }));
+    });
+    const { user } = setup([], fetcher);
+
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.click(screen.getByRole("button", { name: /OpenCode account/ }));
+
+    // Default mode: pay-as-you-go balance.
+    expect(screen.getByRole("radio", { name: /Pay-as-you-go balance/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Go subscription quota/ })).not.toBeChecked();
+    expect(screen.getByLabelText("Session Cookie")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace ID (optional)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Zen API Key")).not.toBeInTheDocument();
+
+    // Switching to Go swaps Cookie/workspace for the Zen API key.
+    await user.click(screen.getByRole("radio", { name: /Go subscription quota/ }));
+    expect(screen.getByLabelText("Zen API Key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Session Cookie")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace ID (optional)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Pay-as-you-go balance/ }));
+    await user.type(screen.getByLabelText("Session Cookie"), "__Host-console_session=cookie-xyz");
+    await user.type(screen.getByLabelText("Workspace ID (optional)"), "wrk_abc");
+    await user.click(screen.getByRole("button", { name: "Save and verify" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/me/quota-sources"),
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const post = fetcher.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({
+      kind: "opencode",
+      name: "OpenCode",
+      credential: "__Host-console_session=cookie-xyz",
+      visibility: "private",
+      opencode_mode: "payg",
+      workspace_id: "wrk_abc",
+    });
+  });
+
+  it("reveals field guidance only when the OpenCode help icon is hovered", async () => {
+    const { user } = setup([], vi.fn());
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.click(screen.getByRole("button", { name: /OpenCode account/ }));
+
+    expect(screen.queryByText(/Sign in at https:\/\/opencode\.ai/)).not.toBeInTheDocument();
+    await user.hover(screen.getByRole("button", { name: "How to get Session Cookie" }));
+    expect(await screen.findByText(/Sign in at https:\/\/opencode\.ai/)).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: "How to get Workspace ID (optional)" }));
+    expect(await screen.findByText(/default workspace/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Go subscription quota/ }));
+    await user.hover(screen.getByRole("button", { name: "How to get Zen API Key" }));
+    expect(await screen.findByText(/API Keys section/)).toBeInTheDocument();
+  });
+
+  it("creates an OpenCode Go source with the Zen API key and no workspace field", async () => {
+    const created = {
+      ...source,
+      id: "created-oc-go",
+      kind: "opencode",
+      name: "OpenCode",
+      opencode_mode: "go" as const,
+    };
+    const fetcher = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(created, 201));
+      return Promise.resolve(jsonResponse({ encryption_configured: true, sources: [created] }));
+    });
+    const { user } = setup([], fetcher);
+
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.click(screen.getByRole("button", { name: /OpenCode account/ }));
+    await user.click(screen.getByRole("radio", { name: /Go subscription quota/ }));
+    await user.type(screen.getByLabelText("Zen API Key"), "sk-zen-123456");
+    await user.click(screen.getByRole("button", { name: "Save and verify" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/me/quota-sources"),
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const post = fetcher.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({
+      kind: "opencode",
+      name: "OpenCode",
+      credential: "sk-zen-123456",
+      visibility: "private",
+      opencode_mode: "go",
+    });
+  });
+
+  it("falls back to the channel's short default name when the optional name is left blank", async () => {
+    const created = { ...source, id: "created-ds", kind: "deepseek", name: "DeepSeek" };
+    const fetcher = vi.fn().mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(created, 201));
+      return Promise.resolve(jsonResponse({ encryption_configured: true, sources: [created] }));
+    });
+    const { user } = setup([], fetcher);
+
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    await user.click(screen.getByRole("button", { name: /DeepSeek API balance/ }));
+    // No name typed.
+    await user.type(screen.getByLabelText("API Key"), "sk-deepseek-123456");
+    await user.click(screen.getByRole("button", { name: "Save and verify" }));
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/api/me/quota-sources"),
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const post = fetcher.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({
+      kind: "deepseek",
+      name: "DeepSeek",
+      credential: "sk-deepseek-123456",
+      visibility: "private",
+    });
+  });
+
+  it("edits a legacy OpenCode API-key source in Go mode and requires a Cookie after switching", async () => {
+    const legacy: QuotaSource = {
+      ...source,
+      id: "source-legacy-oc",
+      kind: "opencode",
+      name: "OpenCode",
+      credential_hint: "3f9a",
+    };
+    const { user } = setup([legacy]);
+    await user.click(screen.getByRole("button", { name: "Edit OpenCode" }));
+
+    // Legacy rows carry no mode; they stay in the historical Go mode.
+    expect(screen.getByRole("radio", { name: /Go subscription quota/ })).toBeChecked();
+    expect(screen.getByLabelText("Saved credential (masked)")).toHaveValue("•••• •••• •••• 3f9a");
+
+    await user.click(screen.getByRole("radio", { name: /Pay-as-you-go balance/ }));
+    // The two modes use different secrets: the Cookie input opens empty.
+    expect(screen.getByLabelText("Session Cookie")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Session Cookie")).toHaveValue("");
   });
 });

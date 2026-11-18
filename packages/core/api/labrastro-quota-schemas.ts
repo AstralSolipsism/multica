@@ -70,6 +70,9 @@ export const RuntimePlanQuotaSchema = z.object({
 
 export type QuotaSourceKind = "glm" | "zenmux" | "deepseek" | "opencode" | "jev_free";
 export type QuotaSourceVisibility = "private" | "shared";
+// How an opencode source queries the account: the console billing API with a
+// session Cookie ("payg") or the Zen Go-subscription usage API ("go").
+export type QuotaSourceOpenCodeMode = "payg" | "go";
 
 // One currency bucket of a pay-as-you-go account balance (deepseek,
 // opencode). Amounts are nullable so a real 0 stays distinct from "not
@@ -79,6 +82,9 @@ export const QuotaSourceBalanceSchema = z.object({
   total_balance: z.number().nullable().optional().catch(null),
   granted_balance: z.number().nullable().optional().catch(null),
   topped_up_balance: z.number().nullable().optional().catch(null),
+  // Last-30-day spend for pay-as-you-go accounts; absent when the provider
+  // did not report it.
+  spend_30d: z.number().nullable().optional().catch(null),
 }).loose();
 export type QuotaSourceBalance = z.infer<typeof QuotaSourceBalanceSchema>;
 
@@ -131,6 +137,11 @@ export const QuotaSourceSchema = z.object({
   name: z.string().catch(""),
   base_url: z.string().nullable().optional().catch(null),
   credential_hint: z.string().optional().catch(""),
+  // OpenCode query mode and optional workspace, persisted inside the sealed
+  // credential envelope. Older backends omit them; the form falls back to
+  // "go" for an existing source.
+  opencode_mode: z.enum(["payg", "go"]).optional().catch(undefined),
+  workspace_id: z.string().optional().catch(""),
   enabled: z.boolean().catch(false),
   visibility: z.string().catch("private"),
   quota: QuotaSourceSnapshotSchema.nullable().optional().catch(null),
@@ -179,11 +190,15 @@ export const EMPTY_WORKSPACE_QUOTA_SOURCE_LIST: WorkspaceQuotaSourceListResponse
 
 export interface CreateQuotaSourceInput {
   kind: QuotaSourceKind;
+  // Optional: the server falls back to the channel's short default name.
   name: string;
   // Credential-free kinds (jev_free) may omit or empty the credential.
   credential?: string;
   base_url?: string;
   visibility: QuotaSourceVisibility;
+  // opencode only.
+  opencode_mode?: QuotaSourceOpenCodeMode;
+  workspace_id?: string;
 }
 
 export interface UpdateQuotaSourceInput {
@@ -192,6 +207,9 @@ export interface UpdateQuotaSourceInput {
   base_url?: string;
   enabled?: boolean;
   visibility?: QuotaSourceVisibility;
+  // opencode only: omit to keep the stored value, send "" to clear.
+  opencode_mode?: QuotaSourceOpenCodeMode;
+  workspace_id?: string;
 }
 
 // Machine-level CPU/memory sample. `stale` is computed by the server at read

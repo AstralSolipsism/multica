@@ -42,6 +42,25 @@ export function quotaSourceRequiresCredential(kind: string): boolean {
   return kind !== "jev_free";
 }
 
+// Short channel name used when the optional name field is left blank. Kept in
+// sync with quotasource.DefaultName on the server.
+export function quotaSourceDefaultName(kind: string): string {
+  switch (kind) {
+    case "glm":
+      return "GLM";
+    case "zenmux":
+      return "ZenMux";
+    case "deepseek":
+      return "DeepSeek";
+    case "opencode":
+      return "OpenCode";
+    case "jev_free":
+      return "Jev Free";
+    default:
+      return "Subscription";
+  }
+}
+
 export function QuotaSourceIcon({
   kind,
   className,

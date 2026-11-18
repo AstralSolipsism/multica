@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { QuotaSourceBalance, WorkspaceQuotaSource } from "@multica/core/api";
 import {
   formatCompactDuration,
@@ -9,8 +10,7 @@ import {
   type QuotaTone,
   type QuotaWindowState,
 } from "@multica/core/runtimes";
-import { AlertCircle, Globe, Lock } from "@multica/ui/icons";
-import { Badge } from "@multica/ui/components/ui/badge";
+import { AlertCircle } from "@multica/ui/icons";
 import {
   Tooltip,
   TooltipContent,
@@ -27,7 +27,6 @@ import {
 import {
   QuotaSourceIcon,
   quotaSourceErrorLabel,
-  quotaSourceKindLabel,
 } from "./quota-source-shared";
 
 type QuotaT = ReturnType<typeof useT<"quota">>["t"];
@@ -47,12 +46,23 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   JPY: "¥",
 };
 
+function currencySymbol(currency: string): string {
+  return CURRENCY_SYMBOLS[currency.toUpperCase()] ?? `${currency} `;
+}
+
 // "¥48.50" for known currency codes, "CNY 48.50" for anything else. A null
 // total renders an em dash (provider reported the bucket but no amount).
-function formatBalanceAmount(balance: QuotaSourceBalance): string {
-  const symbol = CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `;
-  const amount = balance.total_balance == null ? "—" : balance.total_balance.toFixed(2);
+// Exhausted balances clamp to zero on the card surface so a stale negative
+// provider figure never reads as spendable money.
+function formatBalanceAmount(balance: QuotaSourceBalance, exhausted = false): string {
+  const symbol = currencySymbol(balance.currency);
+  const amount = exhausted ? "0.00" : balance.total_balance == null ? "—" : balance.total_balance.toFixed(2);
   return `${symbol}${amount}`;
+}
+
+function formatRawBalanceAmount(balance: QuotaSourceBalance): string {
+  const symbol = currencySymbol(balance.currency);
+  return `${symbol}${balance.total_balance == null ? "—" : balance.total_balance.toFixed(2)}`;
 }
 
 function balanceExhausted(
@@ -62,7 +72,6 @@ function balanceExhausted(
   if (quota?.available === false || quota?.status === "limited") return true;
   return balance.total_balance != null && balance.total_balance <= 0;
 }
-
 
 export function subscriptionQuotaWindows(
   source: Pick<WorkspaceQuotaSource, "quota">,
@@ -103,9 +112,24 @@ export function subscriptionWindowLabel(
       return period
         ? tRuntimes(($) => $.quota_sources.cards.subscription_period, { period })
         : tRuntimes(($) => $.quota_sources.cards.subscription_window);
+    case "opencode":
+      // Go windows: "5h" / "7d" / "30d" read better than the raw id.
+      return period ?? tRuntimes(($) => $.quota_sources.cards.subscription_window);
     default:
       return window.name || period || tRuntimes(($) => $.quota_sources.cards.generic_window);
   }
+}
+
+// Short surface label for a compact window chip ("5h", "7d", "30d").
+function compactWindowLabel(
+  window: QuotaWindowState,
+  t: QuotaT,
+  tRuntimes: RuntimesT,
+): string {
+  return (
+    formatQuotaWindowLabel(window.windowMinutes, t) ??
+    subscriptionWindowLabel(window, t, tRuntimes)
+  );
 }
 
 export function SubscriptionQuotaCards({
@@ -118,7 +142,10 @@ export function SubscriptionQuotaCards({
   const { t } = useT("runtimes");
   if (!sources?.length) return null;
   return (
-    <section aria-label={t(($) => $.quota_sources.cards.region)} className="flex flex-col gap-2">
+    <section
+      aria-label={t(($) => $.quota_sources.cards.region)}
+      className="flex flex-wrap items-center gap-2"
+    >
       {sources.map((source) => (
         <SubscriptionQuotaCard key={source.id} source={source} now={now} />
       ))}
@@ -143,195 +170,242 @@ function SubscriptionQuotaCard({
   const observedAt = quota?.observed_at ?? 0;
   const interrupted = observedAt > 0 && isCollectorObservationInterrupted(observedAt, now);
   const muted = interrupted || (!!source.last_error && balances.length === 0 && !probe);
-  const shared = source.visibility === "shared";
-  // The free-channel monitor shows its own colored state pill instead of
-  // the muted treatment when polling fails.
-  const lastPolledMs = source.last_polled_at ? Date.parse(source.last_polled_at) : NaN;
+  const errorLabel = source.last_error ? quotaSourceErrorLabel(source.last_error.code, t) : null;
+  // A probe pill already states the failure; otherwise a compact "Error"
+  // marker hints at it and the full reason stays in the tooltip.
+  const errorConveyed = !!probe || (source.kind === "jev_free" && !!source.last_error);
+  const surfaceError = errorLabel && !errorConveyed ? errorLabel : null;
+  const observedLabel = observedAt > 0
+    ? interrupted
+      ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
+      : tQuota(($) => $.observed_ago, {
+          time: formatCompactDuration(now - observedAt * 1000),
+        })
+    : null;
 
-  const observedLine = (
-    <div className="text-tooltip-foreground/75">
-      {interrupted
-        ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
-        : observedAt > 0
-          ? tQuota(($) => $.observed_ago, {
-              time: formatCompactDuration(now - observedAt * 1000),
-            })
-          : null}
-    </div>
-  );
+  // Surface value: money balance, subscription windows, or a probe latency.
+  // The last-updated time and the breakdown stay inside the tooltip.
+  const surface: ReactNode[] = [];
+  if (balances.length > 0) {
+    for (const [index, balance] of balances.entries()) {
+      const exhausted = balanceExhausted(quota, balance);
+      surface.push(
+        <span
+          key={`${balance.currency}-${index}`}
+          className={cn(
+            "text-caption tabular-nums",
+            muted
+              ? "text-muted-foreground"
+              : exhausted
+                ? "text-destructive"
+                : "text-success",
+          )}
+        >
+          {exhausted
+            ? t(($) => $.quota_sources.cards.balance_chip_exhausted, {
+                amount: formatBalanceAmount(balance, true),
+              })
+            : formatBalanceAmount(balance)}
+        </span>,
+      );
+    }
+  } else if (windows.length > 0) {
+    surface.push(
+      <span key="windows" className="flex flex-wrap items-center gap-1">
+        {windows.map((window, index) => {
+          const label = compactWindowLabel(window, tQuota, t);
+          const percent = window.remainingPercent == null
+            ? "—"
+            : `${Math.max(0, Math.round(window.remainingPercent))}%`;
+          return (
+            <span
+              key={`${window.name}-${window.windowMinutes ?? "unknown"}-${index}`}
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-micro tabular-nums",
+                muted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[quotaTone(window.remainingPercent)],
+              )}
+            >
+              {t(($) => $.quota_sources.cards.window_chip, { label, percent })}
+            </span>
+          );
+        })}
+      </span>,
+    );
+  } else if (probe) {
+    const tone = probe.available === false
+      ? "destructive"
+      : source.last_error
+        ? source.last_error.code === "rate_limited" ? "warning" : "destructive"
+        : interrupted
+          ? null
+          : "ok";
+    surface.push(
+      <span
+        key="probe"
+        className={cn(
+          "rounded-full px-1.5 py-0.5 text-micro tabular-nums",
+          tone ? CHIP_TONE_CLASS[tone] : "bg-muted text-muted-foreground",
+        )}
+      >
+        {probe.available === false
+          ? source.kind === "jev_free"
+            ? t(($) => $.quota_sources.cards.probe_abnormal)
+            : t(($) => $.quota_sources.cards.balance_exhausted)
+          : source.last_error
+            ? t(($) => $.quota_sources.cards[source.last_error?.code === "rate_limited" ? "probe_rate_limited" : "probe_abnormal"])
+            : t(($) => $.quota_sources.cards.probe_latency, { latency: probe.latency_ms })}
+      </span>,
+    );
+  } else if (source.kind === "jev_free" && source.last_error) {
+    surface.push(
+      <span
+        key="probe-error"
+        className={cn(
+          "rounded-full px-1.5 py-0.5 text-micro",
+          CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"],
+        )}
+      >
+        {source.last_error.code === "rate_limited"
+          ? t(($) => $.quota_sources.cards.probe_rate_limited)
+          : t(($) => $.quota_sources.cards.probe_abnormal)}
+      </span>,
+    );
+  } else {
+    surface.push(
+      <span key="waiting" className="text-caption text-muted-foreground">
+        {t(($) => $.quota_sources.cards.waiting)}
+      </span>,
+    );
+  }
+
+  const details: ReactNode[] = [];
+  for (const [index, balance] of balances.entries()) {
+    const exhausted = balanceExhausted(quota, balance);
+    details.push(
+      <div key={`balance-${index}`} className="space-y-0.5">
+        <div>
+          {t(($) => $.quota_sources.cards.available_balance, {
+            amount: formatRawBalanceAmount(balance),
+          })}
+        </div>
+        {balance.spend_30d != null && (
+          <div className="text-tooltip-foreground/80">
+            {t(($) => $.quota_sources.cards.spend_30d, {
+              amount: `${currencySymbol(balance.currency)}${balance.spend_30d.toFixed(2)}`,
+            })}
+          </div>
+        )}
+        {balance.topped_up_balance != null && (
+          <div className="text-tooltip-foreground/80">
+            {t(($) => $.quota_sources.cards.topped_up, {
+              amount: `${currencySymbol(balance.currency)}${balance.topped_up_balance.toFixed(2)}`,
+            })}
+          </div>
+        )}
+        {balance.granted_balance != null && (
+          <div className="text-tooltip-foreground/80">
+            {t(($) => $.quota_sources.cards.granted, {
+              amount: `${currencySymbol(balance.currency)}${balance.granted_balance.toFixed(2)}`,
+            })}
+          </div>
+        )}
+        {exhausted && (
+          <div className="text-destructive">
+            {t(($) => $.quota_sources.cards.balance_exhausted)}
+          </div>
+        )}
+      </div>,
+    );
+  }
+  for (const [index, window] of windows.entries()) {
+    const label = subscriptionWindowLabel(window, tQuota, t);
+    const remaining = window.remainingPercent == null
+      ? tQuota(($) => $.unknown)
+      : tQuota(($) => $.remaining, {
+          percent: Math.max(0, Math.round(window.remainingPercent)),
+        });
+    const reset = quotaWindowResetText(window, now, tQuota, formatTime);
+    details.push(
+      <div key={`window-${window.name}-${index}`}>
+        <div>{label} · {remaining}</div>
+        {reset && <div className="text-tooltip-foreground/80">{reset}</div>}
+      </div>,
+    );
+  }
+  if (probe) {
+    details.push(
+      <div key="probe-detail">
+        {probe.available === false
+          ? t(($) => $.quota_sources.cards.probe_abnormal)
+          : t(($) => $.quota_sources.cards.probe_status_ok)}
+        {` · ${t(($) => $.quota_sources.cards.probe_latency, { latency: probe.latency_ms })}`}
+      </div>,
+    );
+  }
+  if (errorLabel) {
+    details.push(
+      <div key="error" className="text-destructive">
+        {errorLabel}
+      </div>,
+    );
+  }
+  if (observedLabel) {
+    details.push(
+      <div key="observed" className="text-tooltip-foreground/80">
+        {observedLabel}
+      </div>,
+    );
+  }
+
+  const ariaLabel = [
+    source.name,
+    ...balances.map((balance) => formatBalanceAmount(balance, balanceExhausted(quota, balance))),
+    ...windows.map((window) => {
+      const percent = window.remainingPercent == null ? "—" : `${Math.max(0, Math.round(window.remainingPercent))}%`;
+      return `${compactWindowLabel(window, tQuota, t)} ${percent}`;
+    }),
+    probe ? `${probe.latency_ms}ms` : "",
+    errorLabel ?? "",
+  ].filter(Boolean).join(" · ");
 
   return (
-    <article className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-card px-3 py-2.5">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <QuotaSourceIcon kind={source.kind} />
-        <span className="max-w-64 truncate text-body font-medium">{source.name}</span>
-        <span className="text-caption text-muted-foreground">
-          {quotaSourceKindLabel(source.kind, t)}
-        </span>
-        <Badge variant="secondary" className="gap-1 font-normal">
-          {shared ? <Globe aria-hidden="true" /> : <Lock aria-hidden="true" />}
-          {shared
-            ? t(($) => $.quota_sources.visibility.shared)
-            : t(($) => $.quota_sources.visibility.private)}
-        </Badge>
-        {source.last_error && (
-          <Badge variant="destructive" className="gap-1 font-normal">
-            <AlertCircle aria-hidden="true" />
-            {quotaSourceErrorLabel(source.last_error.code, t)}
-          </Badge>
-        )}
-        {interrupted && (
-          <span className="text-caption tabular-nums text-muted-foreground">
-            {quotaInterruptedText(observedAt, now, tQuota, formatTime)}
-          </span>
-        )}
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5">
-        {windows.map((window, index) => {
-          const label = subscriptionWindowLabel(window, tQuota, t);
-          const reset = quotaWindowResetText(window, now, tQuota, formatTime);
-          const tone = quotaTone(window.remainingPercent);
-          const remaining = window.remainingPercent == null
-            ? tQuota(($) => $.unknown)
-            : tQuota(($) => $.remaining, { percent: Math.max(0, Math.round(window.remainingPercent)) });
-          return (
-            <Tooltip key={`${window.name}-${window.windowMinutes ?? "unknown"}-${index}`}>
-              <TooltipTrigger
-                render={
-                  <span
-                    aria-label={[label, remaining, reset].filter(Boolean).join(" · ")}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption",
-                      muted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[tone],
-                    )}
-                  >
-                    <span className="text-muted-foreground">{label}</span>
-                    <span className="tabular-nums">{remaining}</span>
-                  </span>
-                }
-              />
-              <TooltipContent>
-                <div className="space-y-0.5 text-caption">
-                  <div>{label} · {remaining}</div>
-                  {reset && <div>{reset}</div>}
-                  {observedAt > 0 && observedLine}
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          );
-        })}
-
-        {balances.map((balance, index) => {
-          const exhausted = balanceExhausted(quota, balance);
-          const amount = formatBalanceAmount(balance);
-          const line = exhausted
-            ? t(($) => $.quota_sources.cards.balance_exhausted)
-            : t(($) => $.quota_sources.cards.balance_available, { amount });
-          const breakdown = [
-            balance.topped_up_balance != null
-              ? t(($) => $.quota_sources.cards.topped_up, {
-                  amount: `${CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `}${balance.topped_up_balance.toFixed(2)}`,
-                })
-              : null,
-            balance.granted_balance != null
-              ? t(($) => $.quota_sources.cards.granted, {
-                  amount: `${CURRENCY_SYMBOLS[balance.currency.toUpperCase()] ?? `${balance.currency} `}${balance.granted_balance.toFixed(2)}`,
-                })
-              : null,
-          ].filter(Boolean);
-          return (
-            <Tooltip key={`${balance.currency}-${index}`}>
-              <TooltipTrigger
-                render={
-                  <span
-                    tabIndex={0}
-                    aria-label={[line, ...breakdown].filter(Boolean).join(" · ")}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      muted ? "bg-muted text-muted-foreground" : CHIP_TONE_CLASS[exhausted ? "destructive" : "ok"],
-                    )}
-                  >
-                    <span className="text-muted-foreground">{balance.currency}</span>
-                    <span>{line}</span>
-                  </span>
-                }
-              />
-              <TooltipContent>
-                <div className="space-y-0.5 text-caption">
-                  <div>{line}</div>
-                  {breakdown.map((entry) => (
-                    <div key={entry}>{entry}</div>
-                  ))}
-                  {observedAt > 0 && observedLine}
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          );
-        })}
-
-        {windows.length === 0 && balances.length === 0 && probe && (
-          <span
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <article
+            tabIndex={0}
+            aria-label={ariaLabel}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption tabular-nums",
-              probe.available === false
-                ? CHIP_TONE_CLASS.destructive
-                : source.last_error
-                  ? CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"]
-                  : interrupted
-                    ? "bg-muted text-muted-foreground"
-                    : CHIP_TONE_CLASS.ok,
+              "inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+              !source.enabled && "opacity-60",
             )}
           >
-            {probe.available === false
-              // A parsed unavailable probe (402 / Insufficient balance)
-              // outranks last_error: never render "healthy" text with a
-              // destructive style.
-              ? source.kind === "jev_free"
-                ? t(($) => $.quota_sources.cards.probe_abnormal)
-                : t(($) => $.quota_sources.cards.balance_exhausted)
-              : source.last_error
-                ? t(($) => $.quota_sources.cards[source.last_error?.code === "rate_limited" ? "probe_rate_limited" : "probe_abnormal"])
-                : source.kind === "jev_free"
-                  ? t(($) => $.quota_sources.cards.probe_ok, { latency: probe.latency_ms })
-                  : t(($) => $.quota_sources.cards.probe_account_ok, { latency: probe.latency_ms })}
-          </span>
-        )}
-
-        {windows.length === 0 && balances.length === 0 && !probe && source.kind === "jev_free" && source.last_error && (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-caption",
-              CHIP_TONE_CLASS[source.last_error.code === "rate_limited" ? "warning" : "destructive"],
+            <QuotaSourceIcon kind={source.kind} className="size-4" />
+            <span className="max-w-40 truncate text-caption font-medium">
+              {source.name}
+            </span>
+            {surfaceError && (
+              <span className="flex items-center gap-0.5 text-micro text-destructive">
+                <AlertCircle aria-hidden="true" className="size-3" />
+                {t(($) => $.quota_sources.cards.error_short)}
+              </span>
             )}
-          >
-            {source.last_error.code === "rate_limited"
-              ? t(($) => $.quota_sources.cards.probe_rate_limited)
-              : t(($) => $.quota_sources.cards.probe_abnormal)}
-          </span>
-        )}
-
-        {source.kind === "jev_free" && source.last_error && Number.isFinite(lastPolledMs) && (
-          <span className="text-micro tabular-nums text-faint-foreground">
-            {tQuota(($) => $.observed_ago, {
-              time: formatCompactDuration(now - lastPolledMs),
-            })}
-          </span>
-        )}
-
-        {windows.length === 0 && balances.length === 0 && !probe && !source.last_error && source.kind !== "jev_free" && (
-          <span className="text-caption text-muted-foreground">
-            {t(($) => $.quota_sources.cards.waiting)}
-          </span>
-        )}
-        {observedAt > 0 && !interrupted && source.kind !== "jev_free" && (
-          <span className="text-micro tabular-nums text-faint-foreground">
-            {tQuota(($) => $.observed_ago, {
-              time: formatCompactDuration(now - observedAt * 1000),
-            })}
-          </span>
-        )}
-      </div>
-    </article>
+            {interrupted && !surfaceError && (
+              <span className="text-micro text-warning">
+                {tQuota(($) => $.collection_interrupted)}
+              </span>
+            )}
+            <span className="text-muted-foreground">·</span>
+            <span className="flex min-w-0 items-center gap-1">{surface}</span>
+          </article>
+        }
+      />
+      <TooltipContent className="block max-w-sm">
+        <div className="space-y-1 text-caption">
+          <div className="font-medium">{source.name}</div>
+          {details}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
