@@ -181,10 +181,34 @@ func TestOpenCodePayAsYouGoZeroBalanceIsLimited(t *testing.T) {
 	quota, err := fetchWith(t, OpenCodeDriver{}, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/console/api/billing/status":
-			_, _ = io.WriteString(w, `{"balanceMicroCents":-25000000}`)
+			_, _ = io.WriteString(w, `{"balanceMicroCents":"0"}`)
 		case "/console/api/usage/summary":
 			// The auxiliary request failing must not fail the collection.
 			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, EncodeOpenCodeCredential(OpenCodeModePayAsYouGo, "wrk_abc", "__Host-console_session=abc"))
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	// Exact zero is a real, exhausted balance: `> 0` must stay strict.
+	if quota.Status != protocol.PlanQuotaStatusLimited || quota.Available == nil || *quota.Available {
+		t.Fatalf("status/available = %s/%v", quota.Status, quota.Available)
+	}
+	if len(quota.Balances) != 1 || quota.Balances[0].TotalBalance == nil || *quota.Balances[0].TotalBalance != 0 {
+		t.Fatalf("balance = %+v, want a preserved 0", quota.Balances)
+	}
+	if quota.Balances[0].Spend30d != nil {
+		t.Fatalf("failed usage summary must not fabricate spend: %v", *quota.Balances[0].Spend30d)
+	}
+}
+
+func TestOpenCodePayAsYouGoNegativeBalanceIsPreserved(t *testing.T) {
+	quota, err := fetchWith(t, OpenCodeDriver{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/console/api/billing/status":
+			_, _ = io.WriteString(w, `{"balanceMicroCents":-25000000}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -196,10 +220,30 @@ func TestOpenCodePayAsYouGoZeroBalanceIsLimited(t *testing.T) {
 		t.Fatalf("status/available = %s/%v", quota.Status, quota.Available)
 	}
 	if len(quota.Balances) != 1 || quota.Balances[0].TotalBalance == nil || *quota.Balances[0].TotalBalance != -0.25 {
-		t.Fatalf("balance = %+v", quota.Balances)
+		t.Fatalf("balance = %+v, want -0.25 preserved", quota.Balances)
 	}
-	if quota.Balances[0].Spend30d != nil {
-		t.Fatalf("failed usage summary must not fabricate spend: %v", *quota.Balances[0].Spend30d)
+}
+
+func TestOpenCodePayAsYouGoZeroSpendIsKept(t *testing.T) {
+	quota, err := fetchWith(t, OpenCodeDriver{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/console/api/billing/status":
+			_, _ = io.WriteString(w, `{"balanceMicroCents":"100000000"}`)
+		case "/console/api/usage/summary":
+			_, _ = io.WriteString(w, `{"totalCostMicroCents":"0"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, EncodeOpenCodeCredential(OpenCodeModePayAsYouGo, "wrk_abc", "__Host-console_session=abc"))
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(quota.Balances) != 1 {
+		t.Fatalf("balances = %+v", quota.Balances)
+	}
+	// Zero spend is a real value, not "missing".
+	if quota.Balances[0].Spend30d == nil || *quota.Balances[0].Spend30d != 0 {
+		t.Fatalf("spend_30d = %v, want a preserved 0", quota.Balances[0].Spend30d)
 	}
 }
 

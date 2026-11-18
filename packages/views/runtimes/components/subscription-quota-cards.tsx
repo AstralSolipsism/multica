@@ -175,13 +175,21 @@ function SubscriptionQuotaCard({
   // marker hints at it and the full reason stays in the tooltip.
   const errorConveyed = !!probe || (source.kind === "jev_free" && !!source.last_error);
   const surfaceError = errorLabel && !errorConveyed ? errorLabel : null;
+  // A successful snapshot carries observed_at; before the first snapshot the
+  // server still records when the probe ran, and "last checked" must not
+  // disappear from the tooltip on that failure path.
+  const lastPolledMs = source.last_polled_at ? Date.parse(source.last_polled_at) : NaN;
   const observedLabel = observedAt > 0
     ? interrupted
       ? quotaInterruptedText(observedAt, now, tQuota, formatTime)
       : tQuota(($) => $.observed_ago, {
           time: formatCompactDuration(now - observedAt * 1000),
         })
-    : null;
+    : Number.isFinite(lastPolledMs)
+      ? tQuota(($) => $.observed_ago, {
+          time: formatCompactDuration(now - lastPolledMs),
+        })
+      : null;
 
   // Surface value: money balance, subscription windows, or a probe latency.
   // The last-updated time and the breakdown stay inside the tooltip.
@@ -377,7 +385,6 @@ function SubscriptionQuotaCard({
             aria-label={ariaLabel}
             className={cn(
               "inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-              !source.enabled && "opacity-60",
             )}
           >
             <QuotaSourceIcon kind={source.kind} className="size-4" />

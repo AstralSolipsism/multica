@@ -70,3 +70,86 @@ func TestNormalizedOpenCodeWorkspace(t *testing.T) {
 		})
 	}
 }
+
+// A pay-as-you-go credential is a Cookie header; the displayed mask must be
+// the core session value's tail, never an unrelated cookie or punctuation.
+func TestQuotaSourceCredentialHintOpenCodeCookieBoundaries(t *testing.T) {
+	cases := []struct {
+		name       string
+		kind       string
+		mode       string
+		credential string
+		want       string
+	}{
+		{
+			name:       "bare session value",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "session-value-1234",
+			want:       "1234",
+		},
+		{
+			name:       "full header ignores unrelated cookie",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "__Host-console_session=session-value-1234; theme=dark",
+			want:       "1234",
+		},
+		{
+			name:       "trailing semicolon does not leak punctuation",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "__Host-console_session=session-value-1234; theme=dark;",
+			want:       "1234",
+		},
+		{
+			name:       "legacy auth cookie is the fallback",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "theme=dark; auth=legacy-value-9876",
+			want:       "9876",
+		},
+		{
+			name:       "primary cookie wins when both are present",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "__Host-console_session=primary-value-1234; auth=secondary-value-9876",
+			want:       "1234",
+		},
+		{
+			name:       "short session value stays hidden despite long header",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "__Host-console_session=abc; theme=some-long-cookie-value",
+			want:       "",
+		},
+		{
+			name:       "header with no session cookie never hints",
+			kind:       "opencode",
+			mode:       "payg",
+			credential: "theme=some-long-cookie-value",
+			want:       "",
+		},
+		{
+			name:       "go mode masks the zen api key",
+			kind:       "opencode",
+			mode:       "go",
+			credential: "sk-zen-key-123456",
+			want:       "3456",
+		},
+		{
+			name:       "non-opencode kinds keep the raw key mask",
+			kind:       "deepseek",
+			mode:       "",
+			credential: "sk-deepseek-key-123456",
+			want:       "3456",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quotaSourceCredentialHint(tc.kind, tc.mode, tc.credential); got != tc.want {
+				t.Fatalf("hint = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

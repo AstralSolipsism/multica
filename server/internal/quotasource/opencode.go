@@ -78,6 +78,43 @@ func EncodeOpenCodeCredential(mode, workspaceID, secret string) string {
 	return string(payload)
 }
 
+// OpenCodeHintSecret picks the value the credential mask is derived from: the
+// session cookie value for a pay-as-you-go Cookie header, or the credential
+// itself (API key / bare cookie value) otherwise. Masking a full Cookie header
+// would expose the wrong tail — an unrelated cookie, or the header's last
+// punctuation — and would let a short session value bypass the short-secret
+// rule because the header names pad its length.
+func OpenCodeHintSecret(mode, credential string) string {
+	if mode != OpenCodeModePayAsYouGo {
+		return credential
+	}
+	value := strings.TrimSpace(credential)
+	if !strings.Contains(value, "=") {
+		return value
+	}
+	authValue := ""
+	for _, part := range strings.Split(value, ";") {
+		name, cookieValue, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		cookieValue = strings.TrimSpace(cookieValue)
+		if cookieValue == "" {
+			continue
+		}
+		switch name {
+		case "__Host-console_session":
+			return cookieValue
+		case "auth":
+			if authValue == "" {
+				authValue = cookieValue
+			}
+		}
+	}
+	return authValue
+}
+
 // ParseOpenCodeCredential decodes a stored credential, falling back to the
 // legacy bare Zen API key (Go mode) when it is not an envelope.
 func ParseOpenCodeCredential(raw string) OpenCodeCredential {
@@ -549,7 +586,7 @@ func openCodeDo(ctx context.Context, client *http.Client, endpoint, cookie, work
 	}
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Multica quota collector)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Labrastro quota collector)")
 	if workspaceID != "" {
 		req.Header.Set("x-org-id", workspaceID)
 	}

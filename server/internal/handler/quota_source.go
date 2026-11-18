@@ -159,6 +159,16 @@ func credentialHint(credential string) string {
 	return credential[len(credential)-4:]
 }
 
+// quotaSourceCredentialHint masks the real secret for one source. An opencode
+// pay-as-you-go credential is a Cookie header, so the mask must come from the
+// session cookie value rather than the header's last characters.
+func quotaSourceCredentialHint(kind, opencodeMode, credential string) string {
+	if kind == "opencode" {
+		return credentialHint(quotasource.OpenCodeHintSecret(opencodeMode, credential))
+	}
+	return credentialHint(credential)
+}
+
 // normalizedOpenCodeWorkspace canonicalizes an optional workspace id or
 // console URL. Empty means the collector discovers the default workspace.
 func normalizedOpenCodeWorkspace(raw string) (string, error) {
@@ -310,8 +320,9 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ciphertext = sealed
-		// The hint is the real secret's tail, never the envelope's JSON tail.
-		hint = credentialHint(req.Credential)
+		// The hint is the real secret's tail, never the envelope's JSON tail
+		// and never an unrelated Cookie header field.
+		hint = quotaSourceCredentialHint(req.Kind, opencodeMode, req.Credential)
 	}
 	var body []byte
 	if quota != nil {
@@ -542,8 +553,9 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.CredentialCiphertext = ciphertext
-		// The hint is the real secret's tail, never the envelope's JSON tail.
-		params.CredentialHint = textFromString(credentialHint(credential))
+		// The hint is the real secret's tail, never the envelope's JSON tail
+		// and never an unrelated Cookie header field.
+		params.CredentialHint = textFromString(quotaSourceCredentialHint(row.Kind, opencodeMode, credential))
 	} else if row.Kind == "opencode" && opencodeChanged {
 		storedCredential := quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, storedOpenCode.Secret)
 		ciphertext, err := h.QuotaSourceBox.Seal([]byte(storedCredential))

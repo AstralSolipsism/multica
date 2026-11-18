@@ -71,6 +71,9 @@ describe("SubscriptionQuotaCards", () => {
     const tile = card("Primary GLM");
     expect(tile.tagName).toBe("ARTICLE");
     expect(tile.className).toContain("inline-flex");
+    // The workspace card response carries no `enabled` (disabled sources are
+    // filtered server-side), so a healthy tile must never be dimmed.
+    expect(tile.className).not.toContain("opacity-60");
   });
 
   it("opens the tile tooltip with full window names, reset time and snapshot age", async () => {
@@ -265,7 +268,8 @@ describe("SubscriptionQuotaCards", () => {
     expect(pill.className).toContain("text-destructive");
   });
 
-  it("renders a rate-limited jev_free monitor compactly", () => {
+  it("renders a rate-limited jev_free monitor compactly and keeps its last check time", async () => {
+    const user = userEvent.setup();
     const limited = source({
       id: "source-free2",
       kind: "jev_free",
@@ -281,9 +285,14 @@ describe("SubscriptionQuotaCards", () => {
     // One compact hint is enough on the surface; the long reason is in the
     // tooltip only.
     expect(screen.queryByText(/The provider is rate limiting requests/)).not.toBeInTheDocument();
+
+    // No successful snapshot yet: the tooltip still reports when the probe ran.
+    await user.hover(card("免费通道"));
+    expect(await screen.findByText("updated 1m ago")).toBeInTheDocument();
+    expect(screen.getByText(/The provider is rate limiting requests/)).toBeInTheDocument();
   });
 
-  it("renders an enabled source with no snapshot as waiting", () => {
+  it("renders a source with no snapshot as waiting", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[source({ quota: null })]} now={NOW} />);
     expect(screen.getByText("Waiting for the first collection")).toBeInTheDocument();
   });
