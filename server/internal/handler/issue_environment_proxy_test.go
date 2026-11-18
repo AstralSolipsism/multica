@@ -156,11 +156,20 @@ func TestEnvironmentProxySharedOriginRoutes(t *testing.T) {
 }
 
 func TestEnvironmentProxyResponseCookies(t *testing.T) {
-	appCookies := []string{"app=kept; Path=/; HttpOnly", "theme=dark; Domain=example.com; Path=/; Secure; SameSite=None; Partitioned; Priority=High"}
+	appCookies := []string{
+		"app=kept; Path=/; HttpOnly",
+		"theme=dark; Domain=example.com; Path=/; Secure; SameSite=None; Partitioned; Priority=High",
+		"app=multica_demo; Path=/",
+		"app=; Max-Age=0; Path=/",
+		"=app_value; Path=/",
+		"app_value; Path=/",
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		for _, name := range []string{"multica_auth", "multica_csrf", "multica_csrf_session", environmentProxyCookie, "multica_future"} {
-			for _, attrs := range []string{"; Path=/", "; Domain=.example.com; Path=/", "; Max-Age=0; Path=/"} {
-				w.Header().Add("Set-Cookie", name+"=upstream"+attrs)
+			for _, pair := range []string{name + "=upstream", "=" + name, "= \"" + name + "\" ", name, strings.ToUpper(name) + "=upper", "\t= \" " + strings.ToUpper(name) + " \"\t"} {
+				for _, attrs := range []string{"; Path=/", "; Domain=.example.com; Path=/api", "; Path=/style.css", "; Max-Age=0; Path=/"} {
+					w.Header().Add("Set-Cookie", pair+attrs)
+				}
 			}
 		}
 		for _, raw := range appCookies {
@@ -297,8 +306,10 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Clone(r.Context())
 		w.Header().Add("Set-Cookie", "multica_env_proxy=forged; Path=/; HttpOnly")
+		w.Header().Add("Set-Cookie", "=multica_env_proxy; Path=/style.css")
+		w.Header().Add("Set-Cookie", "=multica_auth; Path=/api")
 		if r.URL.Path == "/socket" {
-			ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+			ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, w.Header())
 			if err != nil {
 				return
 			}
@@ -383,6 +394,9 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		if resp.StatusCode != 200 || got["path"] != "/docs?q=1" || got["host"] != "localhost:41000" || got["cookie"] != "app=kept" || got["auth"] != "" || got["identity"] != "" || got["forwarded"] != "preview.example" || got["proto"] != "http" {
 			t.Fatalf("status %d output %+v", resp.StatusCode, got)
 		}
+		if got := resp.Header.Values("Set-Cookie"); len(got) != 1 {
+			t.Fatalf("expected only the server routing cookie, got %q", got)
+		}
 		found := false
 		for _, cookie := range resp.Cookies() {
 			if cookie.Name == environmentProxyCookie {
@@ -412,9 +426,16 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		t.Fatalf("stream=%q %v", b, err)
 	}
 	header := http.Header{"Host": {"preview.example"}, "Cookie": {"multica_auth=" + token}, "Origin": {"http://preview.example"}}
-	ws, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/env/"+id+"/socket", header)
+	ws, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/env/"+id+"/socket", header)
 	if err != nil {
 		t.Fatal(err)
+	}
+	defer ws.Close()
+	if got := resp.Header.Values("Set-Cookie"); len(got) != 1 {
+		t.Fatalf("expected only the server routing cookie on upgrade, got %q", got)
+	}
+	if cookies := resp.Cookies(); len(cookies) != 1 || cookies[0].Name != environmentProxyCookie || cookies[0].Value != id || !cookies[0].HttpOnly {
+		t.Fatalf("routing cookie lost on upgrade: %+v", cookies)
 	}
 	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
 	ws.WriteMessage(websocket.TextMessage, []byte("hmr"))

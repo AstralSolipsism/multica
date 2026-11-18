@@ -334,8 +334,13 @@ func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row d
 			cookies := resp.Header.Values("Set-Cookie")
 			resp.Header.Del("Set-Cookie")
 			for _, cookie := range cookies {
-				name, _, _ := strings.Cut(cookie, "=")
-				if !strings.HasPrefix(strings.TrimSpace(name), "multica_") {
+				pair, _, _ := strings.Cut(cookie, ";")
+				name, value, _ := strings.Cut(pair, "=")
+				// Browsers send nameless cookie values as bare request cookie names.
+				if strings.TrimSpace(name) == "" {
+					name = strings.Trim(strings.TrimSpace(value), "\"")
+				}
+				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "multica_") {
 					resp.Header.Add("Set-Cookie", cookie)
 				}
 			}
