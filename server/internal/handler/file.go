@@ -512,6 +512,48 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			}
 			params.CommentID = comment.ID
 		}
+		// Baseline-wiki artifacts (the compiled LikeC4 canvas) bind to the page
+		// that references them, so the page read can resolve `src="name.html"`
+		// against its own attachment list exactly like Issue and Chat do.
+		var baselinePage *db.ProjectBaselinePage
+		if pageID := r.FormValue("baseline_page_id"); pageID != "" {
+			pageUUID, ok := parseUUIDOrBadRequest(w, pageID, "baseline_page_id")
+			if !ok {
+				return
+			}
+			page, err := h.Queries.LabrastroGetBaselinePage(r.Context(), db.LabrastroGetBaselinePageParams{
+				WorkspaceID: parseUUID(workspaceID),
+				ID:          pageUUID,
+			})
+			if err != nil || page.ArchivedAt.Valid {
+				writeError(w, http.StatusForbidden, "invalid baseline_page_id")
+				return
+			}
+			if !h.requireProjectVisible(w, r, workspaceID, page.ProjectID, http.StatusForbidden, "invalid baseline_page_id") {
+				return
+			}
+			params.BaselinePageID = page.ID
+			baselinePage = &page
+			if revisionID := r.FormValue("baseline_revision_id"); revisionID != "" {
+				revisionUUID, ok := parseUUIDOrBadRequest(w, revisionID, "baseline_revision_id")
+				if !ok {
+					return
+				}
+				revision, err := h.Queries.LabrastroGetBaselineRevision(r.Context(), db.LabrastroGetBaselineRevisionParams{
+					WorkspaceID: page.WorkspaceID,
+					ProjectID:   page.ProjectID,
+					ID:          revisionUUID,
+				})
+				if err != nil || revision.PageID != page.ID {
+					writeError(w, http.StatusForbidden, "invalid baseline_revision_id")
+					return
+				}
+				params.BaselineRevisionID = revision.ID
+			}
+		} else if r.FormValue("baseline_revision_id") != "" {
+			writeError(w, http.StatusBadRequest, "baseline_revision_id requires baseline_page_id")
+			return
+		}
 		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
 			// Require the member-visible Chat projection as well as private-agent
 			// access. A cached command-only session id must not accept uploads that
@@ -631,6 +673,15 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, uploaderType, uploaderID, map[string]any{
 					"issue_id":       uuidToString(att.IssueID),
 					"issue_revision": att.IssueRevision,
+				})
+			}
+			if baselinePage != nil {
+				// The page revision was written before its artifact uploaded;
+				// this event lets open readers pick the canvas up without a
+				// manual refresh.
+				h.publish(protocol.EventProjectBaselineChanged, workspaceID, uploaderType, uploaderID, map[string]any{
+					"project_id": uuidToString(baselinePage.ProjectID), "page_id": uuidToString(baselinePage.ID),
+					"slug": baselinePage.Slug, "change": "attachments", "revision_number": baselinePage.LastRevisionNumber,
 				})
 			}
 			if att.CommentRevision > 0 && att.CommentID.Valid {

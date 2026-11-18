@@ -146,7 +146,7 @@ describe("AttachmentHtmlBlock", () => {
 
     expect(screen.getByTestId("html-preview")).toHaveTextContent(FALLBACK);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      'Couldn\'t find HTML attachment "decision.html" on this comment or reply.',
+      'Couldn\'t find HTML attachment "decision.html" here.',
     );
     expect(getAttachmentTextContentMock).not.toHaveBeenCalled();
   });

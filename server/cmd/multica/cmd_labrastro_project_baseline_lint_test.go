@@ -248,3 +248,43 @@ func TestLabrastroBaselineLintMalformedResponse(t *testing.T) {
 		t.Fatalf("%d %s %s", code, out, stderr)
 	}
 }
+
+func TestLabrastroBaselineLintVerifiesHtmlAttachmentBinding(t *testing.T) {
+	const content = "## 架构\n\n```c4\nmodel {\n  api = system 'API'\n}\n```\n\n```html src=\"architecture.html\" title=\"架构画布\"\n交互画布见附件。\n```\n"
+	serve := func(t *testing.T, attachments []any) {
+		t.Helper()
+		tree := []map[string]any{baselineWikiTreePage("architecture", "架构", 1, nil, false)}
+		_, _ = serveBaseline(t, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+			if r.URL.Path == "/api/projects/"+baselineTestProject+"/baseline/tree" {
+				baselineWriteJSON(w, 200, baselineWikiTree(tree...))
+				return
+			}
+			baselineWriteJSON(w, 200, map[string]any{
+				"page":             baselineWikiPage("architecture", "架构", 1),
+				"revision":         baselineWikiRevision("architecture", "架构", 1, "create", content),
+				"content_markdown": content,
+				"attachments":      attachments,
+			})
+		})
+	}
+
+	serve(t, []any{})
+	out, _, code := executeBaseline(t, "lint", baselineTestProject, "--output", "json")
+	result := baselineJSON(t, out)
+	if code != 1 || result["ok"] != false {
+		t.Fatalf("%d %s", code, out)
+	}
+	codes := []string{}
+	for _, item := range result["diagnostics"].([]any) {
+		codes = append(codes, item.(map[string]any)["code"].(string))
+	}
+	if !reflect.DeepEqual(codes, []string{"html_attachment_missing"}) {
+		t.Fatalf("diagnostics = %v", codes)
+	}
+
+	serve(t, []any{map[string]any{"id": "att-1", "filename": "architecture.html"}})
+	out, stderr, code := executeBaseline(t, "lint", baselineTestProject, "--output", "json")
+	if code != 0 || stderr != "" || baselineJSON(t, out)["ok"] != true {
+		t.Fatalf("%d %s %s", code, out, stderr)
+	}
+}

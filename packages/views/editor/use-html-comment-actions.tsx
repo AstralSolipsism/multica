@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useCurrentIssueRenderContext } from "../issues/current-issue-render-context";
 import { useChatReplyActions } from "../chat/chat-reply-actions-context";
+import { useHtmlBlockHostActions } from "./html-block-host-actions";
 import { HTML_BLOCK_MESSAGE_KEY, type HtmlBlockMessage } from "./utils/html-block-document";
 
 type CommentAction = Extract<HtmlBlockMessage, { content: string }>;
@@ -21,6 +22,7 @@ export function useHtmlCommentActions(
 ) {
   const issue = useCurrentIssueRenderContext();
   const chat = useChatReplyActions();
+  const host = useHtmlBlockHostActions();
   const inFlight = useRef<object | null>(null);
 
   useLayoutEffect(() => () => { inFlight.current = null; }, [documentKey, issue?.id]);
@@ -32,7 +34,9 @@ export function useHtmlCommentActions(
     // conversation fall back to that surface's send/draft actions.
     const submit = issue?.submitComment
       ?? (chat ? (content: string) => chat.submit(content, cardKey) : undefined);
-    const fill = issue?.fillCommentDraft ?? chat?.fill;
+    // A surface with no composer (the baseline wiki) still accepts the
+    // instruction through its host adapter, which copies it verbatim.
+    const fill = issue?.fillCommentDraft ?? chat?.fill ?? host?.fillComment;
     const callback = message.type === "submit-comment" ? submit : fill;
     if (!callback) return;
     const reply = (ok: boolean) => frame.postMessage({
@@ -52,8 +56,13 @@ export function useHtmlCommentActions(
         ok = await submit!(message.content);
       } else {
         beforeFillComment();
-        fill!(message.content);
-        ok = true;
+        const filled = fill!(message.content) as boolean | Promise<boolean> | void;
+        // Composer fills are synchronous; the wiki's clipboard adapter is
+        // async. Await only real promises so the synchronous reply contract
+        // (the card unlocks in the same act) is preserved.
+        ok = typeof (filled as { then?: unknown } | undefined)?.then === "function"
+          ? (await (filled as Promise<boolean>)) !== false
+          : filled !== false;
       }
     } catch { /* A failed action leaves the card retryable. */ }
     // Reload/navigation must not acknowledge an old request to a new document.

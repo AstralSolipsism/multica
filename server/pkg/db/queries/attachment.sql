@@ -2,11 +2,13 @@
 WITH inserted AS (
   INSERT INTO attachment (
     id, workspace_id, issue_id, comment_id, chat_session_id, task_id, source_context_id,
+    baseline_page_id, baseline_revision_id,
     uploader_type, uploader_id, filename, url, content_type, size_bytes,
     width, height
   )
   VALUES (
     $1, $2, sqlc.narg(issue_id), sqlc.narg(comment_id), sqlc.narg(chat_session_id), sqlc.narg(task_id), sqlc.narg(source_context_id),
+    sqlc.narg(baseline_page_id), sqlc.narg(baseline_revision_id),
     $3, $4, $5, $6, $7, $8,
     sqlc.narg(width), sqlc.narg(height)
   )
@@ -31,6 +33,14 @@ FROM inserted;
 SELECT * FROM attachment
 WHERE issue_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC;
+
+-- name: ListAttachmentsByBaselinePage :many
+-- Every artifact ever bound to the page, oldest first. Readers resolve a
+-- `src="name.html"` fence by filename against the newest row (the same rule
+-- Issue and Chat use), so old revisions stay resolvable without extra joins.
+SELECT * FROM attachment
+WHERE baseline_page_id = $1 AND workspace_id = $2
+ORDER BY created_at ASC, id ASC;
 
 -- name: ListAttachmentsByComment :many
 SELECT * FROM attachment

@@ -32,6 +32,7 @@ vi.mock("./code-block-static", () => ({
 import { HtmlBlockPreview } from "./html-block-preview";
 import { HTML_BLOCK_MESSAGE_KEY } from "./utils/html-block-document";
 import { CurrentIssueRenderContextProvider } from "../issues/current-issue-render-context";
+import { HtmlBlockHostActionsProvider } from "./html-block-host-actions";
 
 let restoreDialog: () => void;
 beforeEach(() => {
@@ -169,6 +170,35 @@ describe("HtmlBlockPreview — comment actions", () => {
     expect(submit.mock.calls).toEqual([["old"], ["new"]]);
     await act(async () => finishes[1]!(true));
     expect(freshReply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", true), "*");
+  });
+
+  it("falls back to the host clipboard action when no composer is mounted", async () => {
+    activation.isActive = true;
+    const fillComment = vi.fn().mockResolvedValue(true);
+    render(
+      <HtmlBlockHostActionsProvider value={{ fillComment }}>
+        <HtmlBlockPreview html="<p>canvas</p>" />
+      </HtmlBlockHostActionsProvider>,
+    );
+    const frame = inlineFrame();
+    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
+    post(frame, { type: "fill-comment", content: "**Refine** cloud.api" });
+    expect(fillComment).toHaveBeenCalledExactlyOnceWith("**Refine** cloud.api");
+    await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("fill-comment", true), "*"));
+  });
+
+  it("reports a refused host copy so the canvas can retry", async () => {
+    activation.isActive = true;
+    const fillComment = vi.fn().mockResolvedValue(false);
+    render(
+      <HtmlBlockHostActionsProvider value={{ fillComment }}>
+        <HtmlBlockPreview html="<p>canvas</p>" />
+      </HtmlBlockHostActionsProvider>,
+    );
+    const frame = inlineFrame();
+    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
+    post(frame, { type: "fill-comment", content: "instruction" });
+    await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("fill-comment", false), "*"));
   });
 
   it("does not acknowledge a request after unmount", async () => {

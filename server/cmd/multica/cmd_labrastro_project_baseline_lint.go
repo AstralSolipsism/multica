@@ -31,7 +31,17 @@ func baselineLintOnline(ctx context.Context, cmd *cobra.Command, client *cli.API
 	}
 	pages := make([]engineering.LintPage, 0, len(snapshot))
 	for _, p := range snapshot {
-		pages = append(pages, engineering.LintPage{WikiPageContent: engineering.WikiPageContent{Slug: p.Page.Slug, Title: p.Page.Title, Content: p.Content}, Parent: p.Parent})
+		// A non-nil (possibly empty) list is authoritative: an online lint can
+		// tell a missing canvas attachment from an offline read that cannot.
+		attachments := make([]string, 0, len(p.Attachments))
+		for _, att := range p.Attachments {
+			attachments = append(attachments, att.Filename)
+		}
+		pages = append(pages, engineering.LintPage{
+			WikiPageContent: engineering.WikiPageContent{Slug: p.Page.Slug, Title: p.Page.Title, Content: p.Content},
+			Parent:          p.Parent,
+			Attachments:     attachments,
+		})
 	}
 	return baselineLintPrint(cmd, pages)
 }

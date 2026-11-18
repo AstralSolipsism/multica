@@ -209,3 +209,63 @@ func TestLintNestedSubgraphAndBidirectionalEdges(t *testing.T) {
 		t.Fatalf("%+v", result)
 	}
 }
+
+func TestLintAcceptsC4SourceFences(t *testing.T) {
+	content := "```likec4\nmodel {\n  api = system 'API'\n}\n```\n\n```c4\nviews {\n  view index {\n    include *\n  }\n}\n```\n"
+	result := Lint([]LintPage{{WikiPageContent: WikiPageContent{Slug: "architecture", Content: content}}}, "")
+	if !result.OK || len(result.Diagnostics) != 0 {
+		t.Fatalf("c4 fences: %+v", result)
+	}
+}
+
+func TestLintRejectsEmptyC4SourceFence(t *testing.T) {
+	for _, language := range []string{"likec4", "c4"} {
+		t.Run(language, func(t *testing.T) {
+			result := Lint([]LintPage{{WikiPageContent: WikiPageContent{Slug: "architecture", Content: "```" + language + "\n\n```\n"}}}, "")
+			if !lintHas(result, "c4_source_empty") || result.ErrorCount != 1 {
+				t.Fatalf("%+v", result)
+			}
+		})
+	}
+}
+
+func TestLintHtmlAttachmentFence(t *testing.T) {
+	hint := "Interactive canvas follows."
+	cases := []struct {
+		name        string
+		info        string
+		attachments []string
+		code        string
+	}{
+		{"bound", `html src="architecture.html" title="架构画布"`, []string{"architecture.html"}, ""},
+		{"single quotes", `html src='architecture.htm'`, []string{"architecture.htm"}, ""},
+		{"unquoted", `html src=architecture.html`, []string{"architecture.html"}, ""},
+		{"missing", `html src="architecture.html"`, []string{"other.html"}, "html_attachment_missing"},
+		{"not loaded offline", `html src="architecture.html"`, nil, ""},
+		{"path", `html src="views/architecture.html"`, []string{"architecture.html"}, "html_attachment_src"},
+		{"url", `html src="https://example.com/architecture.html"`, []string{"architecture.html"}, "html_attachment_src"},
+		{"not html", `html src="architecture.png"`, []string{"architecture.png"}, "html_attachment_src"},
+		{"inline html has no reference", `html`, []string{}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			page := LintPage{
+				WikiPageContent: WikiPageContent{Slug: "architecture", Content: "```" + tc.info + "\n" + hint + "\n```\n"},
+				Attachments:     tc.attachments,
+			}
+			if tc.attachments == nil {
+				page.Attachments = nil
+			}
+			result := Lint([]LintPage{page}, "")
+			if tc.code == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("unexpected diagnostics: %+v", result)
+				}
+				return
+			}
+			if !lintHas(result, tc.code) || result.ErrorCount != 1 {
+				t.Fatalf("%+v", result)
+			}
+		})
+	}
+}

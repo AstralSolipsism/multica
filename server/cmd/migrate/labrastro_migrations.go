@@ -21,6 +21,7 @@ func init() {
 		"9073_labrastro_baseline_thread_page_index":       "idx_baseline_thread_page",
 		"9074_labrastro_baseline_comment_identity_index":  "idx_baseline_comment_identity",
 		"9075_labrastro_baseline_comment_thread_index":    "idx_baseline_comment_thread",
+		"9078_labrastro_baseline_page_attachment_index":   "idx_attachment_baseline_page",
 
 		"9040_labrastro_engineering_config_identity_index":   "idx_project_engineering_identity",
 		"9041_labrastro_engineering_doc_identity_index":      "idx_project_baseline_doc_id",

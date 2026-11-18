@@ -68,6 +68,78 @@ describe("HTML block bridge", () => {
   });
 });
 
+describe("HTML block bridge storage", () => {
+  it("gives a sandboxed origin private in-memory storage instead of throwing", () => {
+    const windowStub: { addEventListener: (type: string, fn: () => void) => void; localStorage: Storage; sessionStorage: Storage } = {
+      addEventListener: vi.fn(),
+      get localStorage(): Storage {
+        throw new Error("SecurityError: sandboxed origin");
+      },
+      get sessionStorage(): Storage {
+        throw new Error("SecurityError: sandboxed origin");
+      },
+    };
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent: { postMessage: vi.fn() },
+      window: windowStub,
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+
+    windowStub.localStorage.setItem("view", "index");
+    expect(windowStub.localStorage.getItem("view")).toBe("index");
+    expect(windowStub.localStorage.length).toBe(1);
+    expect(windowStub.sessionStorage.getItem("view")).toBeNull();
+    windowStub.localStorage.removeItem("view");
+    expect(windowStub.localStorage.getItem("view")).toBeNull();
+  });
+});
+
+describe("HTML block bridge history", () => {
+  it("applies a fragment when the sandbox rejects a host-origin history entry", () => {
+    const hash: string[] = [];
+    const replaceState = vi.fn((_state?: unknown, _title?: string, _url?: string) => {
+      throw new Error("SecurityError: origin is opaque");
+    });
+    const windowStub = {
+      addEventListener: vi.fn(),
+      history: { replaceState },
+      location: { hash: "" },
+    };
+    Object.defineProperty(windowStub.location, "hash", {
+      get: () => hash[hash.length - 1] ?? "",
+      set: (value: string) => {
+        hash.push(value);
+      },
+    });
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent: { postMessage: vi.fn() },
+      window: windowStub,
+      location: windowStub.location,
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+
+    expect(() => windowStub.history.replaceState({}, "", "srcdoc#/view")).not.toThrow();
+    expect(replaceState).toHaveBeenCalledWith({}, "", "srcdoc#/view");
+    expect(hash).toEqual(["#/view"]);
+  });
+});
+
 describe("buildHtmlBlockDocument", () => {
   it("puts the theme and bridge in front of the markup and the fragment shim after it", () => {
     const doc = buildHtmlBlockDocument("<p>hi</p>", THEME);

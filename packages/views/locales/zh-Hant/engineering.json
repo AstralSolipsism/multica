@@ -188,6 +188,8 @@
     "outlineTitle": "On this page",
     "outlineEmpty": "本頁沒有小節。",
     "bodyLabel": "頁面正文",
+    "canvasInstructionCopied": "已複製為對話指令",
+    "canvasInstructionCopyFailed": "複製對話指令失敗",
     "actorAgent": "智能體",
     "actorAgentBadge": " · 智能體",
     "linkCreate": "按此名建立頁面",

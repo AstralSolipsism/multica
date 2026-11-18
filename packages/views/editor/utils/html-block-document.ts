@@ -39,6 +39,21 @@ const BRIDGE_SCRIPT = [
   "(function(){",
   `var K=${JSON.stringify(HTML_BLOCK_MESSAGE_KEY)};`,
   "function post(m){m[K]=1;try{parent.postMessage(m,'*')}catch(_){}}",
+  // A sandbox without allow-same-origin has an opaque origin, so touching
+  // localStorage/sessionStorage throws SecurityError. Inlined single-file apps
+  // (the LikeC4 canvas) read storage during boot and would otherwise replace
+  // the whole preview with a script error. Give the sandbox private in-memory
+  // stores instead of relaxing the sandbox.
+  "function memStore(){var m=Object.create(null);var api={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m=Object.create(null)},key:function(i){var ks=Object.keys(m);return i<ks.length?ks[i]:null}};Object.defineProperty(api,'length',{get:function(){return Object.keys(m).length}});return api}",
+  "var memStores={};",
+  "function shimStorage(n){try{window[n].getItem('__multica_probe__');return}catch(_){}try{Object.defineProperty(window,n,{configurable:true,get:function(){return memStores[n]||(memStores[n]=memStore())}})}catch(__){}}",
+  "shimStorage('localStorage');shimStorage('sessionStorage');",
+  // Same origin constraint: a srcdoc document's location is about:srcdoc but
+  // its baseURI is the host page, so an app that pushes `srcdoc#/view` asks
+  // History for a host-origin URL and gets a SecurityError. Keep rendering by
+  // applying the fragment directly; the sandbox has no address bar anyway.
+  "function shimHistory(n){var o=window.history&&window.history[n];if(typeof o!=='function')return;var w=function(s,t,u){try{return o.call(window.history,s,t,u)}catch(_){var i=typeof u==='string'?u.indexOf('#'):-1;if(i>=0){try{location.hash=u.slice(i)}catch(__){}}}};try{window.history[n]=w}catch(_){}}",
+  "shimHistory('replaceState');shimHistory('pushState');",
   "function px(v){return parseFloat(v)||0}",
   "var last=-1;",
   "function measure(){var b=document.body;if(!b)return;var bs=getComputedStyle(b);",

@@ -238,6 +238,11 @@ func (h *Handler) attachmentInHiddenProject(ctx context.Context, hidden projecta
 		projectID, err = h.Queries.GetIssueProjectID(ctx, att.IssueID)
 	case att.CommentID.Valid:
 		projectID, err = h.Queries.GetCommentIssueProjectID(ctx, att.CommentID)
+	case att.BaselinePageID.Valid:
+		// A wiki-page artifact inherits the project that owns the page.
+		var page db.ProjectBaselinePage
+		page, err = h.Queries.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{WorkspaceID: att.WorkspaceID, ID: att.BaselinePageID})
+		projectID = page.ProjectID
 	default:
 		return false, nil
 	}
@@ -257,7 +262,7 @@ func (h *Handler) requireAttachmentVisible(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) requireAttachmentVisibleWithNotFound(w http.ResponseWriter, r *http.Request, workspaceID string, att db.Attachment, notFound string) bool {
-	if !att.IssueID.Valid && !att.CommentID.Valid {
+	if !att.IssueID.Valid && !att.CommentID.Valid && !att.BaselinePageID.Valid {
 		return true
 	}
 	hidden, ok := h.requestHiddenProjects(w, r, workspaceID)

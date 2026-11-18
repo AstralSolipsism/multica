@@ -25,7 +25,7 @@ Lint uses the read-only exit contract [below](#read-only-lint).
 | `tree <pid>` | page tree with slugs, titles, `vN`, depths and H2/H3 outlines | `--no-sections`, `--output text\|json` |
 | `get <pid>` | read one page / section / historical revision | `--page <slug>`, `--section "<小节>"` (without `--page` searches across pages), `--revision N`, `--output markdown\|text\|json` (json adds `links`, `backlinks`, `related_issues`) |
 | `create <pid>` | create a page (publishes `create` v1) | `--title`, `--slug`, `--parent`, `--after`, `--content-file`, `--summary`, `--source-issue` |
-| `write <pid>` | whole-page or section write | `--page`, `--base N` (required), `--content-file` (alone or with `--section`), `--delete-section`, `--summary`, `--source-issue` |
+| `write <pid>` | whole-page or section write, optionally binding page artifacts | `--page`, `--base N` (required), `--content-file` (alone or with `--section`), `--attachment <path>` (repeatable), `--delete-section`, `--summary`, `--source-issue` |
 | `rename <pid>` | change title or slug | `--page`, `--base N`, `--title`, `--slug`, `--summary`, `--source-issue` |
 | `move <pid>` | change parent or order | `--page`, `--base N`, `--parent <slug>\|--root`, `--after <slug>\|--first`, `--summary`, `--source-issue` |
 | `archive <pid>` / `restore <pid>` | soft delete / undo (slug stays reserved) | `--page`, `--base N`, `--recursive`, `--parent` (restore only), `--summary`, `--source-issue` |
@@ -39,7 +39,9 @@ Lint uses the read-only exit contract [below](#read-only-lint).
 
 `--content-file` reads a regular file inside the current directory only
 (`filepath.IsLocal` + `os.OpenRoot`, in-directory symlinks allowed), capped at
-64 KiB of NUL-free UTF-8. `--source-issue` accepts an `OL-xxx` identifier or a
+64 KiB of NUL-free UTF-8. `--attachment` uses the same directory confinement
+and caps at the server's 100 MiB upload limit; every attachment is read before
+the page write commits, so a bad path never leaves a new revision behind. `--source-issue` accepts an `OL-xxx` identifier or a
 UUID; the server validates it belongs to the project. Writes never auto-retry.
 
 ## Migration from the retired commands
@@ -65,6 +67,9 @@ multica project baseline tree <pid>                       # outline + current vN
 multica project baseline get <pid> --page architecture --section "分层"
 multica project baseline write <pid> --page architecture --section "分层" \
   --content-file ./edit.md --base 5 --summary "补充分层规则" --source-issue OL-1304
+# bind the compiled LikeC4 canvas to the page (repeatable)
+multica project baseline write <pid> --page architecture --base 5 \
+  --content-file ./architecture.c4.md --attachment ./architecture.html
 # exit code 3 → someone else published; merge and retry with the new --base
 multica project baseline history <pid> --page architecture
 multica project baseline diff <pid> --page architecture --from 5
@@ -128,6 +133,14 @@ The checks are deterministic:
   ambiguous page titles are errors. `[[...]]` in a fence is a warning: put
   navigation immediately below the diagram. Native Mermaid `node[[label]]`
   subprocess shapes are exempt.
+- `likec4` and `c4` fences are valid architecture source (an empty one is an
+  error). Deep structure rules stay in the skills toolchain; lint only accepts
+  the fence and keeps Mermaid page checks unchanged for older pages.
+- A ```` ```html src="name.html" ```` fence must name one bare `.html`/`.htm`
+  filename. Online lint cross-checks it against the page's `attachments`
+  metadata (`html_attachment_missing`); offline `--dir` lint can only check the
+  reference shape, so export pages and run online lint before publishing a
+  canvas.
 - Mermaid `flowchart` / `graph` diagrams allow at most seven business nodes.
   Node text is limited to 36 CJK characters total and 22 per line (Latin text
   counts half); HTML tags do not count and `<br>` separates lines. Requirement
