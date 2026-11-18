@@ -99,8 +99,8 @@ function AccountPoolTooltipWindow({
       ? quotaWindowValueText(window, t) ?? "--"
       : `${displayRemainingPercent(window.remainingPercent)}%`;
   return (
-    <span className="grid grid-cols-[1.75rem_minmax(2rem,1fr)_auto] items-center gap-1.5">
-      <span className="text-muted-foreground">{label}</span>
+    <span className="grid grid-cols-[minmax(1.75rem,auto)_minmax(3rem,1fr)_auto] items-center gap-1.5">
+      <span className="min-w-0 max-w-20 truncate whitespace-nowrap text-muted-foreground">{label}</span>
       <AccountPoolBar window={window} interrupted={interrupted} label={label} />
       <span className="flex flex-wrap items-center justify-end gap-x-2 text-right">
         <span
@@ -149,7 +149,7 @@ export function AccountPoolAccountsTable({
           <tr>
             <th className="py-1 pr-2 font-normal">{t(($) => $.account_pools.account)}</th>
             {pool.windows.map((window, index) => (
-              <th key={`${window.name}-${index}`} className="w-12 px-2 py-1 text-right font-normal">
+              <th key={`${window.name}-${index}`} className="min-w-12 whitespace-nowrap px-2 py-1 text-right font-normal">
                 {formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name}
               </th>
             ))}

@@ -8,6 +8,7 @@ import type { QuotaAccountPoolState } from "@multica/core/runtimes";
 import type {
   Agent,
   AgentRuntime,
+  RuntimePlanQuotaWindow,
 } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
@@ -101,15 +102,11 @@ function ompAccount(
   remaining7d: number,
   note: string | null = null,
 ) {
-  return {
-    label,
-    status,
-    note,
-    windows: status === "disabled" ? [] : [
-      { name: "5h", used_percent: 100 - remaining5h, window_minutes: 300, resets_at: NOW_SEC + HOUR },
-      { name: "7d", used_percent: 100 - remaining7d, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
-    ],
-  };
+  const windows: RuntimePlanQuotaWindow[] = status === "disabled" ? [] : [
+    { name: "5h", used_percent: 100 - remaining5h, window_minutes: 300, resets_at: NOW_SEC + HOUR },
+    { name: "7d", used_percent: 100 - remaining7d, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+  ];
+  return { label, status, note, windows };
 }
 
 function ompPool(id: string, accounts: ReturnType<typeof ompAccount>[]) {
@@ -405,6 +402,36 @@ describe("OMP account pools", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByText("#1 (19*)")).not.toBeInTheDocument());
+  });
+
+  it("deduplicates legacy Kimi windows and keeps long custom labels out of the meter column", async () => {
+    const account = {
+      ...ompAccount("19*", "ok", 60, 38),
+      windows: [
+        { name: "7d", used_percent: 62, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+        { name: "limit_7d", used_percent: 62, window_minutes: null, resets_at: NOW_SEC + 4 * DAY },
+        { name: "limit_5h", used_percent: 40, window_minutes: null, resets_at: NOW_SEC + HOUR },
+        { name: "limit_custom_window", used_percent: 20, window_minutes: null, resets_at: NOW_SEC + 2 * DAY },
+      ] satisfies RuntimePlanQuotaWindow[],
+    };
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
+    await userEvent.hover(trigger);
+
+    const accountRow = await screen.findByText("#1 (19*)");
+    const card = accountRow.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
+    const customLabel = within(card).getByText("limit_custom_window", { selector: "span" });
+    expect(within(card).queryByText("limit_7d")).not.toBeInTheDocument();
+    expect(within(card).queryByText("limit_5h")).not.toBeInTheDocument();
+    expect(within(card).getAllByRole("columnheader", { name: "5h" })).toHaveLength(1);
+    expect(within(card).getAllByRole("columnheader", { name: "7d" })).toHaveLength(1);
+    expect(customLabel).toHaveClass("max-w-20", "truncate", "whitespace-nowrap");
+    expect(customLabel.parentElement).toHaveClass(
+      "grid-cols-[minmax(1.75rem,auto)_minmax(3rem,1fr)_auto]",
+    );
+    expect(within(card).getByRole("columnheader", { name: "limit_custom_window" }))
+      .toHaveClass("min-w-12", "whitespace-nowrap");
   });
 
   it("opens on keyboard focus", async () => {

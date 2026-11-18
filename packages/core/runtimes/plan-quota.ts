@@ -582,6 +582,34 @@ export interface PlanQuotaPoolsSummary {
   tone: QuotaTone;
 }
 
+function inferWindowMinutes(name: string): number | null {
+  let normalized = name.trim().toLowerCase();
+  for (const prefix of ["limit_", "limit-", "limit"]) {
+    if (normalized.startsWith(prefix)) {
+      normalized = normalized.slice(prefix.length);
+      break;
+    }
+  }
+  switch (normalized) {
+    case "5h":
+    case "300m":
+      return 300;
+    case "7d":
+    case "1w":
+      return 10080;
+    case "30d":
+      return 43200;
+    default:
+      return null;
+  }
+}
+
+function compareQuotaWindows(a: QuotaWindowState, b: QuotaWindowState): number {
+  if (a.windowMinutes == null) return b.windowMinutes == null ? 0 : 1;
+  if (b.windowMinutes == null) return -1;
+  return a.windowMinutes - b.windowMinutes;
+}
+
 /** Derive one account's windows and status from a sanitized snapshot. A
  *  window whose reset has passed counts as refilled, exactly like the flat
  *  list. An account is exhausted when its snapshot says so or any window is
@@ -590,25 +618,47 @@ function evaluateQuotaAccount(
   account: RuntimePlanQuotaAccount,
   nowSec: number,
 ): QuotaAccountState {
-  const windows: QuotaWindowState[] = [];
-  let anyExhausted = false;
+  const windowsByKey = new Map<string, QuotaWindowState>();
   for (const window of account.windows) {
+    const windowMinutes = window.window_minutes ?? inferWindowMinutes(window.name);
+    let name = window.name;
+    if (windowMinutes === 300) name = "5h";
+    if (windowMinutes === 10080) name = "7d";
+    if (windowMinutes === 43200) name = "30d";
     const passed = window.resets_at != null && window.resets_at <= nowSec;
     const remaining = passed ? 100 : windowRemainingPercent(window);
     const exhausted = !passed && window.used_percent != null && window.used_percent >= 100;
-    if (exhausted) anyExhausted = true;
-    windows.push({
-      name: window.name,
+    const candidate: QuotaWindowState = {
+      name,
       group: window.group ?? null,
-      windowMinutes: window.window_minutes,
+      windowMinutes,
       remainingPercent: remaining,
       resetsAt: passed ? null : window.resets_at,
       resetPassedAt: passed ? window.resets_at : null,
       exhausted,
       notApplicable: false,
       tone: exhausted ? "destructive" : quotaTone(remaining),
+    };
+    const key = windowMinutes != null ? `duration:${windowMinutes}` : `name:${name}`;
+    const existing = windowsByKey.get(key);
+    if (existing == null) {
+      windowsByKey.set(key, candidate);
+      continue;
+    }
+    const candidateIsTighter = candidate.remainingPercent != null &&
+      (existing.remainingPercent == null || candidate.remainingPercent < existing.remainingPercent);
+    const tightest = candidateIsTighter ? candidate : existing;
+    const other = candidateIsTighter ? existing : candidate;
+    const resets = [existing.resetsAt, candidate.resetsAt]
+      .filter((reset): reset is number => reset != null);
+    windowsByKey.set(key, {
+      ...tightest,
+      resetsAt: resets.length > 0 ? Math.min(...resets) : null,
+      resetPassedAt: tightest.resetPassedAt ?? other.resetPassedAt,
     });
   }
+  const windows = Array.from(windowsByKey.values()).sort(compareQuotaWindows);
+  const anyExhausted = windows.some((window) => window.exhausted);
   let status = account.status;
   if (anyExhausted && status !== "disabled") {
     status = "exhausted";
@@ -671,7 +721,7 @@ function aggregateAccountPoolWindows(
       notApplicable: false,
       tone: quotaTone(remainingPercent),
     };
-  });
+  }).sort(compareQuotaWindows);
 }
 
 /** Recovery time of ONE account: the LATEST reset among its exhausted

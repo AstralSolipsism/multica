@@ -367,44 +367,47 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 		hasFrac   bool
 		exhausted bool
 	}
-	buckets := make(map[string]*bucket)
-	var order []string
+	type bucketKey struct {
+		minutes int64
+		name    string
+	}
+	buckets := make(map[bucketKey]*bucket)
+	var order []bucketKey
 	worst := ""
 	for i := range report.Limits {
 		limit := &report.Limits[i]
-		// window is OPTIONAL: key by window id, else scope.windowId,
-		// else the limit's own id.
-		key := ""
-		if limit.Window != nil {
-			key = limit.Window.ID
-		}
-		if key == "" {
-			key = limit.Scope.WindowID
-		}
-		if key == "" {
-			key = limit.ID
+		name := ompWindowName(limit)
+		minutes := ompWindowMinutes(limit)
+		key := bucketKey{name: name}
+		if minutes > 0 {
+			key = bucketKey{minutes: minutes}
 		}
 		frac, hasFrac := ompLimitUsedFraction(limit)
 		b, ok := buckets[key]
 		if !ok {
-			w := protocol.RuntimePlanQuotaWindow{Name: ompWindowName(limit)}
-			if limit.Window != nil {
-				// resetsAt is independent of durationMs (kimi's weekly
-				// window carries only a reset time).
-				if limit.Window.ResetsAt > 0 {
-					unix := int64(limit.Window.ResetsAt / 1000)
-					if unix > observedAt.Unix() {
-						w.ResetsAt = &unix
-					}
-				}
-				minutes := ompWindowMinutes(limit.Window)
-				if minutes > 0 {
-					w.WindowMinutes = &minutes
-				}
+			w := protocol.RuntimePlanQuotaWindow{Name: name}
+			switch minutes {
+			case 300:
+				w.Name = "5h"
+			case 10080:
+				w.Name = "7d"
+			case 43200:
+				w.Name = "30d"
+			}
+			if minutes > 0 {
+				w.WindowMinutes = &minutes
 			}
 			b = &bucket{window: w}
 			buckets[key] = b
 			order = append(order, key)
+		}
+		if limit.Window != nil && limit.Window.ResetsAt > 0 {
+			// resetsAt is independent of durationMs (kimi's weekly
+			// window carries only a reset time).
+			unix := int64(limit.Window.ResetsAt / 1000)
+			if unix > observedAt.Unix() && (b.window.ResetsAt == nil || unix < *b.window.ResetsAt) {
+				b.window.ResetsAt = &unix
+			}
 		}
 		if hasFrac && (!b.hasFrac || frac > b.usedFrac) {
 			b.usedFrac = frac
@@ -428,6 +431,16 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 		}
 		windows = append(windows, b.window)
 	}
+	sort.SliceStable(windows, func(i, j int) bool {
+		a, b := windows[i].WindowMinutes, windows[j].WindowMinutes
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		return *a < *b
+	})
 	// Policy state is the routing truth (>=18.13): map it directly.
 	if report.Policy != nil {
 		switch report.Policy.State {
@@ -451,22 +464,34 @@ func ompAccountWindows(report *ompUsageReport, observedAt time.Time) ([]protocol
 }
 
 // ompWindowMinutes resolves a window's duration: explicit durationMs, else
-// the canonical ids (5h/300m, 7d, 30d) — kimi's weekly window reports no
-// durationMs but a canonical id.
-func ompWindowMinutes(window *ompUsageWindow) int64 {
-	if window.DurationMs > 0 {
-		minutes := int64(window.DurationMs / 60000)
+// canonical ids (with OMP's limit prefix) from the window, scope, or limit.
+func ompWindowMinutes(limit *ompUsageLimit) int64 {
+	if limit.Window != nil && limit.Window.DurationMs > 0 {
+		minutes := int64(limit.Window.DurationMs / 60000)
 		if minutes > 0 {
 			return minutes
 		}
 	}
-	switch strings.ToLower(strings.TrimSpace(window.ID)) {
-	case "5h", "300m":
-		return 300
-	case "7d":
-		return 10080
-	case "30d":
-		return 43200
+	ids := [3]string{"", limit.Scope.WindowID, limit.ID}
+	if limit.Window != nil {
+		ids[0] = limit.Window.ID
+	}
+	for _, id := range ids {
+		normalized := strings.ToLower(strings.TrimSpace(id))
+		for _, prefix := range []string{"limit_", "limit-", "limit"} {
+			if strings.HasPrefix(normalized, prefix) {
+				normalized = strings.TrimPrefix(normalized, prefix)
+				break
+			}
+		}
+		switch normalized {
+		case "5h", "300m":
+			return 300
+		case "7d", "1w":
+			return 10080
+		case "30d":
+			return 43200
+		}
 	}
 	return 0
 }
