@@ -356,6 +356,28 @@ describe("HtmlBlockPreview — height", () => {
     expect(frame.className).not.toContain("invisible");
   });
 
+  it("re-measures from a fresh viewport after in-frame navigation", async () => {
+    render(<HtmlBlockPreview html="<p>hi</p>" />);
+    const frame = inlineFrame();
+    post(frame, { type: "height", height: 900 });
+    expect(body(frame).style.height).toBe("900px");
+
+    // A gallery → single-view route change must not keep the gallery height:
+    // the document reports its old 100vh box otherwise.
+    post(frame, { type: "navigate" });
+    expect(body(frame).style.height).toBe("480px");
+
+    // The pre-resize height can still arrive while the document settles; it
+    // must not regrow the block, and the post-settle measurement wins.
+    post(frame, { type: "height", height: 900 });
+    expect(body(frame).style.height).toBe("480px");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    post(frame, { type: "height", height: 420 });
+    expect(body(frame).style.height).toBe("420px");
+  });
+
   it("never goes below the minimum body height", () => {
     render(<HtmlBlockPreview html="<p>hi</p>" />);
     const frame = inlineFrame();

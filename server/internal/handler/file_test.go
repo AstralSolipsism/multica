@@ -1765,8 +1765,8 @@ func TestGetAttachmentContent_ConfiguredLimit(t *testing.T) {
 		recordedSize int64
 		status       int
 	}{
-		{"default exact", 0, 2 << 20, 2 << 20, http.StatusOK},
-		{"default over", 0, (2 << 20) + 1, (2 << 20) + 1, http.StatusRequestEntityTooLarge},
+		{"default exact", 0, int(attachmentpreview.DefaultMaxSizeBytes), attachmentpreview.DefaultMaxSizeBytes, http.StatusOK},
+		{"default over", 0, int(attachmentpreview.DefaultMaxSizeBytes) + 1, attachmentpreview.DefaultMaxSizeBytes + 1, http.StatusRequestEntityTooLarge},
 		{"larger HTML", 8 << 20, 3 << 20, 3 << 20, http.StatusOK},
 		{"custom exact", 8 << 20, 8 << 20, 8 << 20, http.StatusOK},
 		{"custom over", 8 << 20, (8 << 20) + 1, (8 << 20) + 1, http.StatusRequestEntityTooLarge},

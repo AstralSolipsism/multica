@@ -33,6 +33,30 @@ describe.each(["submit-comment", "fill-comment"])("HTML block action %s", (type)
 });
 
 describe("HTML block bridge", () => {
+  it("announces in-frame navigation so the host can re-measure", () => {
+    const listeners = new Map<string, (event?: unknown) => void>();
+    const parent = { postMessage: vi.fn() };
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent,
+      window: { addEventListener: (type: string, listener: (event?: unknown) => void) => listeners.set(type, listener) },
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+    parent.postMessage.mockClear();
+
+    listeners.get("hashchange")!();
+    expect(parent.postMessage).toHaveBeenLastCalledWith({ [HTML_BLOCK_MESSAGE_KEY]: 1, type: "navigate" }, "*");
+    listeners.get("popstate")!();
+    expect(parent.postMessage).toHaveBeenCalledTimes(2);
+  });
+
   it("repeats an unchanged height only when its parent requests a measurement", () => {
     const listeners = new Map<string, (event?: unknown) => void>();
     const parent = { postMessage: vi.fn() };
@@ -137,6 +161,12 @@ describe("HTML block bridge history", () => {
     expect(() => windowStub.history.replaceState({}, "", "srcdoc#/view")).not.toThrow();
     expect(replaceState).toHaveBeenCalledWith({}, "", "srcdoc#/view");
     expect(hash).toEqual(["#/view"]);
+  });
+});
+
+describe("HTML block messages", () => {
+  it("parses a navigation notice", () => {
+    expect(readHtmlBlockMessage({ __multicaHtmlBlock: 1, type: "navigate" })).toEqual({ type: "navigate" });
   });
 });
 

@@ -39,6 +39,11 @@ const BRIDGE_SCRIPT = [
   "(function(){",
   `var K=${JSON.stringify(HTML_BLOCK_MESSAGE_KEY)};`,
   "function post(m){m[K]=1;try{parent.postMessage(m,'*')}catch(_){}}",
+  // In-frame navigation changes what the document measures (a gallery becomes
+  // one viewport-sized view). The parent cannot read a sandboxed URL, so the
+  // bridge announces it and the parent re-measures at a fresh viewport height.
+  "function nav(){post({type:'navigate'})}",
+  "window.addEventListener('hashchange',nav);window.addEventListener('popstate',nav);",
   // A sandbox without allow-same-origin has an opaque origin, so touching
   // localStorage/sessionStorage throws SecurityError. Inlined single-file apps
   // (the LikeC4 canvas) read storage during boot and would otherwise replace
@@ -146,6 +151,7 @@ export function buildHtmlBlockDocument(html: string, theme: HtmlBlockTheme): str
 }
 
 export type HtmlBlockMessage =
+  | { type: "navigate" }
   | { type: "height"; height: number }
   | { type: "error"; message: string; line: number }
   | { type: "submit-comment"; content: string }
@@ -165,6 +171,7 @@ export function readHtmlBlockMessage(data: unknown): HtmlBlockMessage | null {
   if (typeof data !== "object" || data === null) return null;
   const record = data as Record<string, unknown>;
   if (record[HTML_BLOCK_MESSAGE_KEY] !== 1) return null;
+  if (record.type === "navigate") return { type: "navigate" };
   if (record.type === "submit-comment" || record.type === "fill-comment") {
     if (typeof record.content !== "string" || !record.content.trim()) return null;
     return {
