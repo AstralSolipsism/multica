@@ -42,11 +42,15 @@ An unrelated preview domain cannot receive the app session cookie. An empty
 after changing the cookie domain.
 
 Every proxy request checks the existing login, workspace membership and private
-project visibility. Cookie-authenticated writes and WebSocket upgrades require
+project visibility; task tokens are limited to their bound workspace.
+Cookie-authenticated writes and WebSocket upgrades require
 a same-origin Origin/Referer. Multica identity headers, authorization and session
 cookies are removed before forwarding; application cookies are preserved.
-Upstream `Set-Cookie` headers for the platform's `multica_*` namespace are
-discarded so an environment cannot overwrite login, CSRF or routing cookies.
+Upstream HTTP responses cannot set cookies in the platform's `multica_*`
+namespace: those `Set-Cookie` headers are discarded. This filters response
+headers only. Page scripts on a shared origin or parent cookie domain can still
+set platform-named cookies at other paths, shadowing login, CSRF or routing
+cookies. Enable access only for trusted workspaces.
 Application `Set-Cookie` headers and their attributes are passed through unchanged.
 The local service receives `Host: localhost:<port>` and the public host/scheme
 in `X-Forwarded-Host` and `X-Forwarded-Proto`.
@@ -86,7 +90,9 @@ URLs. Existing explicit custom URL hosts are preserved.
 
 Declared URLs also accept `$MULTICA_HOST` / `${MULTICA_HOST}`, defaulting to
 `localhost`; start/stop commands receive `MULTICA_HOST` alongside `MULTICA_PORT`.
-Implicit readiness checks stay on `127.0.0.1` when the URL uses localhost or the
-host placeholder. An explicit `ready` continues to use its configured address.
+When `MULTICA_ENV_PUBLIC_HOST` overrides localhost, implicit readiness checks
+use `127.0.0.1` if the URL uses localhost or the host placeholder. Without the
+override, probes keep `localhost`, including its IPv6 loopback resolution.
+An explicit `ready` continues to use its configured address.
 Direct host links do not create a tunnel or change how the application binds its
 listening interface. Server proxy configuration takes precedence in sidebar URLs.

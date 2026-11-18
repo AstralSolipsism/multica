@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/envtunnel"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -295,6 +296,48 @@ func TestEnvironmentProxyAuthorizationAndState(t *testing.T) {
 	}
 }
 
+func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
+	id, rt, _ := proxyFixture(t)
+	dbfx.Exec(t, `UPDATE agent_runtime SET status='offline' WHERE id=$1`, rt)
+	otherWS := dbfx.Workspace(t, "other preview workspace", "preview-other-"+uuid.NewString())
+	dbfx.Member(t, otherWS, testUserID, "owner")
+	for _, wsID := range []string{testWorkspaceID, otherWS} {
+		fx := testutil.New(testPool, wsID, testUserID)
+		runtimeID := fx.Runtime(t, "token runtime")
+		agentID := fx.Agent(t, "token agent", runtimeID)
+		taskID := fx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID, "status": "running"})
+		token, err := auth.GenerateAgentTaskToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fx.Insert(t, "task_token", testutil.Cols{"token_hash": auth.HashToken(token), "task_id": taskID, "agent_id": agentID, "workspace_id": wsID, "user_id": testUserID, "expires_at": time.Now().Add(time.Hour)})
+		want := http.StatusServiceUnavailable // Same-workspace auth reaches the offline runtime.
+		if wsID != testWorkspaceID {
+			want = http.StatusForbidden
+		}
+		for _, base := range []string{"https://*.example.com", "https://preview.example.com"} {
+			h := proxyTestHandler(t, base)
+			address := h.resolveIssueEnvironmentURL(db.IssueEnvironment{ID: parseUUID(id), Port: pgtype.Int4{Int32: 41000, Valid: true}}, "http://localhost:41000/")
+			for _, kind := range []string{"GET", "POST", "websocket"} {
+				req := httptest.NewRequest("GET", address, nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("X-Actor-Source", "member")
+				if kind == "POST" {
+					req.Method = "POST"
+				} else if kind == "websocket" {
+					req.Header.Set("Connection", "Upgrade")
+					req.Header.Set("Upgrade", "websocket")
+				}
+				rec := httptest.NewRecorder()
+				h.EnvironmentProxyHostBoundary(http.NotFoundHandler()).ServeHTTP(rec, req)
+				if rec.Code != want {
+					t.Errorf("workspace=%s base=%s %s: status=%d want %d", wsID, base, kind, rec.Code, want)
+				}
+			}
+		}
+	}
+}
+
 type environmentNotifierFunc func(string, string)
 
 func (f environmentNotifierFunc) NotifyPendingWork(runtimeID, kind string) { f(runtimeID, kind) }
@@ -375,10 +418,12 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 	})
 	defer func() { h.envProxy.transport.CloseIdleConnections(); peers.Wait() }()
 	client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	appCookies := `app=kept; sp=b c; js={"x":1}; utf=é; py="a\054b"; cm=x,y`
 	fetch := func(path string) *http.Response {
 		req, _ := http.NewRequest("GET", server.URL+path, nil)
 		req.Host = "preview.example"
-		req.Header.Set("Cookie", "multica_auth="+token+"; multica_csrf=x; multica_csrf_session=y; multica_env_proxy="+id+"; app=kept")
+		req.Header.Set("Cookie", "multica_auth="+token+"; multica_csrf=x; multica_csrf_session=y; multica_env_proxy="+id+"; "+appCookies)
+		req.Header.Add("Cookie", "multica_future=hidden; MULTICA_AUTH=hidden; multica_logged_in=1; second=kept")
 		req.Header.Set("X-User-ID", "forged")
 		resp, err := client.Do(req)
 		if err != nil {
@@ -386,12 +431,31 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		}
 		return resp
 	}
+	if !t.Run("bearer credentials", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", server.URL+"/env/"+id+"/bearer", nil)
+		req.Host = "preview.example"
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var got map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK || got["path"] != "/bearer" || got["auth"] != "" || got["cookie"] != "" {
+			t.Fatalf("bearer status=%d path=%q authorization forwarded=%v cookie=%q", resp.StatusCode, got["path"], got["auth"] != "", got["cookie"])
+		}
+	}) {
+		return
+	}
 	for i := 0; i < 3; i++ {
 		resp := fetch("/env/" + id + "/docs?q=1")
 		var got map[string]string
 		json.NewDecoder(resp.Body).Decode(&got)
 		resp.Body.Close()
-		if resp.StatusCode != 200 || got["path"] != "/docs?q=1" || got["host"] != "localhost:41000" || got["cookie"] != "app=kept" || got["auth"] != "" || got["identity"] != "" || got["forwarded"] != "preview.example" || got["proto"] != "http" {
+		if resp.StatusCode != 200 || got["path"] != "/docs?q=1" || got["host"] != "localhost:41000" || got["cookie"] != appCookies+"; second=kept" || got["auth"] != "" || got["identity"] != "" || got["forwarded"] != "preview.example" || got["proto"] != "http" {
 			t.Fatalf("status %d output %+v", resp.StatusCode, got)
 		}
 		if got := resp.Header.Values("Set-Cookie"); len(got) != 1 {

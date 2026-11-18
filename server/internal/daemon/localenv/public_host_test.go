@@ -53,3 +53,21 @@ func TestPublicHostReadyIsolation(t *testing.T) {
 		t.Fatal("child environment host/credential boundary")
 	}
 }
+
+func TestPublicHostDefaultReadyCompatibility(t *testing.T) {
+	t.Setenv("MULTICA_ENV_PUBLIC_HOST", "")
+	for _, setting := range []string{"", "url='http://localhost:$MULTICA_PORT/app'", "ready='http://localhost:${MULTICA_PORT}/health'", "url=''"} {
+		cfg, err := ParseConfig([]byte("[environments.web]\nstart='true'\n" + setting))
+		if err != nil {
+			t.Fatal(err)
+		}
+		def := cfg.Environments["web"]
+		if got, want := expandReadyURL(def, 41000, publicHostFromEnv()), expandPort(def.Ready, 41000); got != want {
+			t.Errorf("%s: ready=%q want %q", setting, got, want)
+		}
+	}
+	def := Definition{URL: "http://$MULTICA_HOST:$MULTICA_PORT", Ready: "http://$MULTICA_HOST:$MULTICA_PORT"}
+	if got := expandReadyURL(def, 41000, publicHostFromEnv()); got != "http://localhost:41000" {
+		t.Fatalf("default host placeholder: %q", got)
+	}
+}

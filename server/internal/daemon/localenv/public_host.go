@@ -44,7 +44,7 @@ func expandEnvURL(raw string, port int, host string) string {
 }
 
 func expandReadyURL(def Definition, port int, host string) string {
-	if !def.ReadyExplicit && def.URL != "" {
+	if host != "localhost" && !def.ReadyExplicit && def.URL != "" {
 		return expandEnvURL(def.Ready, port, "127.0.0.1")
 	}
 	return expandEnvURL(def.Ready, port, host)

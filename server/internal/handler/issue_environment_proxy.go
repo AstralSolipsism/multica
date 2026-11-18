@@ -267,6 +267,10 @@ func (h *Handler) serveEnvironmentProxy(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		wsID := uuidToString(row.WorkspaceID)
+		if authenticated.Header.Get("X-Actor-Source") == "task_token" && authenticated.Header.Get("X-Workspace-ID") != wsID {
+			http.Error(w, "task token is bound to a different workspace", http.StatusForbidden)
+			return
+		}
 		if _, err := h.getWorkspaceMember(authenticated.Context(), requestUserID(authenticated), wsID); err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -296,20 +300,34 @@ func (h *Handler) serveEnvironmentProxy(w http.ResponseWriter, r *http.Request, 
 }
 
 func stripEnvironmentCredentials(r *http.Request) {
-	cookies := r.Cookies()
-	r.Header.Del("Cookie")
-	for _, c := range cookies {
-		switch c.Name {
-		case "multica_auth", "multica_csrf", "multica_csrf_session", environmentProxyCookie:
-			continue
+	var cookies []string
+	for _, header := range r.Header.Values("Cookie") {
+		for _, cookie := range strings.Split(header, ";") {
+			cookie = strings.TrimLeft(cookie, " \t")
+			if cookie != "" && !isEnvironmentPlatformCookie(cookie) {
+				cookies = append(cookies, cookie)
+			}
 		}
-		r.AddCookie(c)
+	}
+	r.Header.Del("Cookie")
+	if len(cookies) != 0 {
+		r.Header.Set("Cookie", strings.Join(cookies, "; "))
 	}
 	for _, name := range []string{"X-User-ID", "X-User-Email", "X-Actor-Source", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Workspace-ID"} {
 		r.Header.Del(name)
 	}
 	// Authorization was used by Multica Auth, including JWTs; never pass it on.
 	r.Header.Del("Authorization")
+}
+
+func isEnvironmentPlatformCookie(cookie string) bool {
+	pair, _, _ := strings.Cut(cookie, ";")
+	name, value, _ := strings.Cut(pair, "=")
+	// Browsers send nameless cookie values as bare request cookie names.
+	if strings.TrimSpace(name) == "" {
+		name = strings.Trim(strings.TrimSpace(value), "\"")
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "multica_")
 }
 
 func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row db.IssueEnvironment, prefix string) {
@@ -334,13 +352,7 @@ func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row d
 			cookies := resp.Header.Values("Set-Cookie")
 			resp.Header.Del("Set-Cookie")
 			for _, cookie := range cookies {
-				pair, _, _ := strings.Cut(cookie, ";")
-				name, value, _ := strings.Cut(pair, "=")
-				// Browsers send nameless cookie values as bare request cookie names.
-				if strings.TrimSpace(name) == "" {
-					name = strings.Trim(strings.TrimSpace(value), "\"")
-				}
-				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "multica_") {
+				if !isEnvironmentPlatformCookie(cookie) {
 					resp.Header.Add("Set-Cookie", cookie)
 				}
 			}

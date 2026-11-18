@@ -367,7 +367,9 @@ These commands use the running task's credential, so they work only inside a run
 Remote access is opt-in via server `MULTICA_ENV_PROXY_BASE_URL` (wildcard or
 `/env/<id>/` URLs) or daemon `MULTICA_ENV_PUBLIC_HOST` (LAN/VPN host override).
 Declared URLs accept `$MULTICA_HOST`, and commands receive `MULTICA_HOST`;
-implicit readiness probes stay local. See [remote environment deployment](docs/environment-proxy.md)
+implicit localhost readiness probes keep `localhost` by default and use
+`127.0.0.1` when the host override is active. Explicit `ready` addresses are
+preserved. See [remote environment deployment](docs/environment-proxy.md)
 for cookie domains, ingress routing and tunnel lifecycle.
 
 #### Sidebar controls
