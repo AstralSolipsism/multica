@@ -731,6 +731,48 @@ describe("multi-account provider pools (OMP)", () => {
     expect(pool.accounts[0]!.windows[1]!.resetsAt).toBe(NOW_SEC + 3 * 24 * 3600);
   });
 
+  it("retains distinct custom windows, the tightest first reading, and a duplicate's only reset", () => {
+    const reset7d = NOW_SEC + 4 * 24 * 3600;
+    const quota = parsePlanQuota(gatewayQuota([
+      {
+        id: "kimi-code",
+        total_accounts: 1,
+        available_accounts: 1,
+        disabled_accounts: 0,
+        status: "ok",
+        resumes_at: null,
+        accounts: [{
+          label: "19*",
+          status: "ok",
+          note: null,
+          windows: [
+            { name: "limit_custom_a", used_percent: 15, window_minutes: null, resets_at: null },
+            { name: "7d", used_percent: 67, window_minutes: 10080, resets_at: reset7d },
+            { name: "limit_7d", used_percent: 62, window_minutes: null, resets_at: null },
+            { name: "limit_custom_b", used_percent: 25, window_minutes: null, resets_at: null },
+          ],
+        }],
+      },
+    ]))!;
+
+    const pool = evaluatePlanQuotaPools(quota, NOW_MS)!.pools[0]!;
+    const account = pool.accounts[0]!;
+    expect(account.windows.map((window) => window.name)).toEqual([
+      "7d",
+      "limit_custom_a",
+      "limit_custom_b",
+    ]);
+    expect(pool.windows.map((window) => window.name)).toEqual([
+      "7d",
+      "limit_custom_a",
+      "limit_custom_b",
+    ]);
+    expect(account.windows[0]).toMatchObject({
+      remainingPercent: 33,
+      resetsAt: reset7d,
+    });
+  });
+
   it("OR health: one exhausted account of three does not exhaust the pool", () => {
     const quota = parsePlanQuota(gatewayQuota([
       {

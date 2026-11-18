@@ -278,9 +278,9 @@ func TestOmpUsageToPlanQuota_KimiAliasesDeduplicateAndSort(t *testing.T) {
 		"reports": []any{map[string]any{
 			"provider": "kimi-code",
 			"limits": []any{
+				ompLimitJSON("kimi-custom", "limit_custom", 0, 0, 0.2, "ok"),
 				ompLimitJSON("kimi-7d", "7d", 604_800_000, ompReset7d, 0.62, "ok"),
 				ompLimitJSON("kimi-limit5h", "limit5h", 0, ompReset5h, 0.4, "ok"),
-				ompLimitJSON("kimi-custom", "limit_custom", 0, 0, 0.2, "ok"),
 				ompLimitJSON("kimi-limit7d", "limit_7d", 0, ompReset7d+86400000, 0.67, "ok"),
 			},
 			"metadata": map[string]any{"email": "19*"},
