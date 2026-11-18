@@ -331,6 +331,14 @@ func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row d
 			stripEnvironmentCredentials(pr.Out)
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			cookies := resp.Header.Values("Set-Cookie")
+			resp.Header.Del("Set-Cookie")
+			for _, cookie := range cookies {
+				name, _, _ := strings.Cut(cookie, "=")
+				if !strings.HasPrefix(strings.TrimSpace(name), "multica_") {
+					resp.Header.Add("Set-Cookie", cookie)
+				}
+			}
 			if !p.wildcard {
 				location := resp.Header.Get("Location")
 				base := "/env/" + uuidToString(row.ID)

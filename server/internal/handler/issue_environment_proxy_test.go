@@ -155,6 +155,40 @@ func TestEnvironmentProxySharedOriginRoutes(t *testing.T) {
 	}
 }
 
+func TestEnvironmentProxyResponseCookies(t *testing.T) {
+	appCookies := []string{"app=kept; Path=/; HttpOnly", "theme=dark; Domain=example.com; Path=/; Secure; SameSite=None; Partitioned; Priority=High"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for _, name := range []string{"multica_auth", "multica_csrf", "multica_csrf_session", environmentProxyCookie, "multica_future"} {
+			for _, attrs := range []string{"; Path=/", "; Domain=.example.com; Path=/", "; Max-Age=0; Path=/"} {
+				w.Header().Add("Set-Cookie", name+"=upstream"+attrs)
+			}
+		}
+		for _, raw := range appCookies {
+			w.Header().Add("Set-Cookie", raw)
+		}
+		w.Write([]byte("preview"))
+	}))
+	defer upstream.Close()
+	row := db.IssueEnvironment{ID: parseUUID(uuid.NewString()), RuntimeID: parseUUID(uuid.NewString()), Port: pgtype.Int4{Int32: 41000, Valid: true}}
+	for _, base := range []string{"https://*.example.com", "https://preview.example.com"} {
+		t.Run(base, func(t *testing.T) {
+			h := proxyTestHandler(t, base)
+			h.envProxy.transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
+			}
+			req := httptest.NewRequest("GET", h.resolveIssueEnvironmentURL(row, "http://localhost:41000/"), nil)
+			rec := httptest.NewRecorder()
+			h.proxyEnvironment(rec, req, row, "")
+			if rec.Code != 200 || rec.Body.String() != "preview" {
+				t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Values("Set-Cookie"); strings.Join(got, "\n") != strings.Join(appCookies, "\n") {
+				t.Fatalf("upstream cookies=%q; want only %q", got, appCookies)
+			}
+		})
+	}
+}
+
 func TestEnvironmentProxyFallbackContext(t *testing.T) {
 	p := newEnvironmentProxy(Config{EnvProxyBaseURL: "https://preview.example"})
 	a, b := uuid.NewString(), uuid.NewString()
@@ -262,6 +296,7 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 	requests := make(chan *http.Request, 20)
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Clone(r.Context())
+		w.Header().Add("Set-Cookie", "multica_env_proxy=forged; Path=/; HttpOnly")
 		if r.URL.Path == "/socket" {
 			ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
 			if err != nil {
@@ -350,7 +385,10 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		}
 		found := false
 		for _, cookie := range resp.Cookies() {
-			if cookie.Name == environmentProxyCookie && cookie.HttpOnly {
+			if cookie.Name == environmentProxyCookie {
+				if found || cookie.Value != id || !cookie.HttpOnly {
+					t.Fatalf("routing cookie overwritten: %+v", cookie)
+				}
 				found = true
 			}
 		}

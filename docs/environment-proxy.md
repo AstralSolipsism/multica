@@ -45,6 +45,9 @@ Every proxy request checks the existing login, workspace membership and private
 project visibility. Cookie-authenticated writes and WebSocket upgrades require
 a same-origin Origin/Referer. Multica identity headers, authorization and session
 cookies are removed before forwarding; application cookies are preserved.
+Upstream `Set-Cookie` headers for the platform's `multica_*` namespace are
+discarded so an environment cannot overwrite login, CSRF or routing cookies.
+Application `Set-Cookie` headers and their attributes are passed through unchanged.
 The local service receives `Host: localhost:<port>` and the public host/scheme
 in `X-Forwarded-Host` and `X-Forwarded-Proto`.
 

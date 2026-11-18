@@ -30,8 +30,8 @@ func TestConnStreamsFramesAndInterruptsRead(t *testing.T) {
 	defer peer.Close()
 	peer.SetDeadline(time.Now().Add(time.Second))
 	for _, part := range []string{"first", "second"} {
-		if _, err := client.Write([]byte(part)); err != nil {
-			t.Fatal(err)
+		if n, err := client.Write([]byte(part)); err != nil || n != len(part) {
+			t.Fatalf("write=%d, %v; want %d, nil", n, err, len(part))
 		}
 	}
 	b := make([]byte, 11)
@@ -52,5 +52,11 @@ func TestConnStreamsFramesAndInterruptsRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("blocked read survived deadline")
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := client.Write([]byte("closed")); n != 0 || err == nil {
+		t.Fatalf("write after close=%d, %v; want 0 and an error", n, err)
 	}
 }
