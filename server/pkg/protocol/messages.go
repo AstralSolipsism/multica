@@ -196,7 +196,8 @@ const (
 	// PendingWorkKindEnvironmentCommand asks a daemon that supports it to claim
 	// its queued environment commands instead of heartbeating. Older daemons
 	// heartbeat as for any kind, which claims nothing.
-	PendingWorkKindEnvironmentCommand = "environment_command"
+	PendingWorkKindEnvironmentCommand      = "environment_command"
+	PendingWorkKindEnvironmentTunnelPrefix = "environment_tunnel:"
 )
 
 // PendingWorkPayload is sent from server to daemon as a wakeup hint when a

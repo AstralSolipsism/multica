@@ -79,9 +79,12 @@ Each environment gets ten free ports of its own, `MULTICA_PORT` through `MULTICA
 |---|---|
 | `MULTICA_PORT` | The first port of the block, for example `41000` |
 | `MULTICA_ENVIRONMENT` | The environment's name |
+| `MULTICA_HOST` | Host used in URLs; `MULTICA_ENV_PUBLIC_HOST`, or `localhost` by default |
 | `PATH` | The `PATH` of the agent that ran `multica env start`, so the repository's toolchain resolves. A start from the sidebar reuses the last one an agent used for that environment on the issue. |
 
-They also inherit the daemon's environment, except its `MULTICA_*` variables, credentials included: an environment cannot act as the run. In `url` and `ready`, only `$MULTICA_PORT` (or `${MULTICA_PORT}`) is substituted. To use a second port, compute it in the shell, for example `API_PORT=$((MULTICA_PORT + 1))`.
+They also inherit the daemon's environment, except its `MULTICA_*` variables, credentials included: an environment cannot act as the run. In `url` and `ready`, `$MULTICA_PORT` and `$MULTICA_HOST` (including `${...}` forms) are substituted. To use a second port, compute it in the shell, for example `API_PORT=$((MULTICA_PORT + 1))`.
+
+Remote access is opt-in: set `MULTICA_ENV_PROXY_BASE_URL` on the server to a wildcard origin such as `https://*.env.example.com`, or a single origin such as `https://preview.example.com` for `/env/<id>/` links. Cross-subdomain login requires `COOKIE_DOMAIN` covering the shared parent domain and the same scheme as the app (`SameSite=Strict`). The proxy checks workspace and private-project access. On the daemon, `MULTICA_ENV_PUBLIC_HOST` provides direct LAN/VPN links; implicit readiness probes stay local. A dedicated preview origin avoids conflicts with main-app API routes. Unset settings preserve localhost behavior.
 
 ### Keep `start` in the foreground [#foreground]
 

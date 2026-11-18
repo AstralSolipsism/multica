@@ -12,7 +12,11 @@ the issue sidebar's **Environments** section. It comes from one of two places:
   Members can only stop it; there is no log and no restart.
 
 Both work on macOS and Linux only. A `localhost` URL opens only on the machine
-running it.
+running it. Remote access is opt-in: the server's `MULTICA_ENV_PROXY_BASE_URL`
+provides authenticated wildcard or `/env/<id>/` proxy links; the daemon's
+`MULTICA_ENV_PUBLIC_HOST` provides direct LAN/VPN links. Cross-subdomain proxy
+access requires a shared parent `COOKIE_DOMAIN` and the same scheme as the app.
+Implicit readiness probes stay local.
 
 ## CLI
 
@@ -64,7 +68,7 @@ ttl = "24h"                         # 1m to 168h, default 24h
 | Field | Contract |
 |---|---|
 | `start` | Run with `/bin/sh -c` from the directory that holds `.multica/`, as the leader of a new process group. The environment lives as long as any process in that group does, and stopping it signals that group. A command that hands its work to something outside the group, such as `docker compose up -d`, a system service, or `setsid`, ends the environment as `exited` at once, and stopping it would not reach that work. |
-| `url` | Where a member opens it. `$MULTICA_PORT` or `${MULTICA_PORT}` is substituted; no other variable or arithmetic is. Set `url = ""` for a worker or a desktop app. |
+| `url` | Where a member opens it. `$MULTICA_PORT` and `$MULTICA_HOST` (also `${...}` forms) are substituted; other variables and arithmetic are not. Set `url = ""` for a worker or a desktop app. |
 | `ready` | Polled once a second until it answers with any status below 500 (a 404 counts). With no `ready` and no `url`, the environment is running as soon as `start` launches. |
 | `stop` | Run with the same directory and variables, with a one-minute limit. Afterwards the process group gets `SIGTERM`, then `SIGKILL` 10 seconds later. Needed whenever `start` creates something the process group does not own, such as containers. |
 | `ttl` | A Go duration: `30m`, `8h`, `168h`. `7d` is rejected. |
@@ -76,6 +80,7 @@ The start and stop commands receive:
   runs on one machine must not collide. Derive extra ports in the shell, for
   example `API_PORT=$((MULTICA_PORT + 1))`.
 - `MULTICA_ENVIRONMENT`: the environment's name.
+- `MULTICA_HOST`: the daemon's `MULTICA_ENV_PUBLIC_HOST`, or `localhost`.
 - The caller's `PATH`, and the daemon's other variables. No other
   `MULTICA_*` variable is passed, credentials included, so the environment
   cannot act as the run.

@@ -79,9 +79,12 @@ multica env start web
 |---|---|
 | `MULTICA_PORT` | 포트 범위의 첫 번째 포트. 예: `41000` |
 | `MULTICA_ENVIRONMENT` | 환경 이름 |
+| `MULTICA_HOST` | URL 호스트: `MULTICA_ENV_PUBLIC_HOST`, 기본값은 `localhost` |
 | `PATH` | `multica env start`를 실행한 에이전트의 `PATH`. 저장소의 도구 체인을 찾을 수 있게 합니다. 사이드바에서 시작하면 이 태스크에서 에이전트가 그 환경에 마지막으로 쓴 `PATH`를 다시 씁니다. |
 
-데몬의 환경 변수도 물려받지만 `MULTICA_*` 변수(자격 증명 포함)는 빠집니다. 환경은 실행의 권한으로 동작할 수 없습니다. `url`과 `ready`에서는 `$MULTICA_PORT`(또는 `${MULTICA_PORT}`)만 치환됩니다. 두 번째 포트가 필요하면 `API_PORT=$((MULTICA_PORT + 1))`처럼 셸에서 계산하세요.
+데몬의 환경 변수도 물려받지만 `MULTICA_*` 변수(자격 증명 포함)는 빠집니다. 환경은 실행의 권한으로 동작할 수 없습니다. `url`과 `ready`에서는 `$MULTICA_PORT`와 `$MULTICA_HOST`를 치환합니다(`${...}` 형식도 지원). 두 번째 포트가 필요하면 `API_PORT=$((MULTICA_PORT + 1))`처럼 셸에서 계산하세요.
+
+원격 접근은 기본적으로 꺼져 있습니다. 서버의 `MULTICA_ENV_PROXY_BASE_URL`을 `https://*.env.example.com`으로 설정하면 와일드카드 하위 도메인을, `https://preview.example.com`으로 설정하면 `/env/<id>/` 링크를 사용합니다. 하위 도메인 간 로그인에는 공통 상위 도메인의 `COOKIE_DOMAIN`과 앱과 동일한 프로토콜이 필요합니다(`SameSite=Strict`). 프록시는 워크스페이스 및 비공개 프로젝트 권한을 확인합니다. 데몬의 `MULTICA_ENV_PUBLIC_HOST`는 LAN/VPN 직접 링크를 제공하며 암시적 준비 확인은 로컬을 사용합니다. 메인 API와 충돌을 피하려면 별도의 미리보기 도메인을 사용하세요. 설정하지 않으면 localhost 동작을 유지합니다.
 
 ### `start`는 포그라운드에 두기 [#foreground]
 

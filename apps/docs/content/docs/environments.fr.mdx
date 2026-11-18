@@ -79,9 +79,12 @@ Chaque environnement reçoit dix ports libres rien qu'à lui, de `MULTICA_PORT` 
 |---|---|
 | `MULTICA_PORT` | Le premier port du bloc, par exemple `41000` |
 | `MULTICA_ENVIRONMENT` | Le nom de l'environnement |
+| `MULTICA_HOST` | Hôte des URL : `MULTICA_ENV_PUBLIC_HOST`, sinon `localhost` |
 | `PATH` | Le `PATH` de l'agent qui a lancé `multica env start`, pour que la chaîne d'outils du dépôt soit trouvée. Un démarrage depuis la barre latérale reprend le dernier utilisé par un agent pour cet environnement sur la tâche. |
 
-Ils héritent aussi de l'environnement du daemon, sauf de ses variables `MULTICA_*`, identifiants compris : un environnement ne peut pas agir au nom de l'exécution. Dans `url` et `ready`, seul `$MULTICA_PORT` (ou `${MULTICA_PORT}`) est remplacé. Pour un second port, calculez-le dans le shell, par exemple `API_PORT=$((MULTICA_PORT + 1))`.
+Ils héritent aussi de l'environnement du daemon, sauf de ses variables `MULTICA_*`, identifiants compris : un environnement ne peut pas agir au nom de l'exécution. Dans `url` et `ready`, `$MULTICA_PORT` et `$MULTICA_HOST` sont remplacés (les formes `${...}` sont aussi acceptées). Pour un second port, calculez-le dans le shell, par exemple `API_PORT=$((MULTICA_PORT + 1))`.
+
+L’accès distant est facultatif : configurez `MULTICA_ENV_PROXY_BASE_URL` sur le serveur avec `https://*.env.example.com`, ou `https://preview.example.com` pour des liens `/env/<id>/`. La connexion entre sous-domaines exige un `COOKIE_DOMAIN` parent commun et le même protocole que l’application (`SameSite=Strict`). Le proxy vérifie les accès à l’espace et aux projets privés. Sur le daemon, `MULTICA_ENV_PUBLIC_HOST` fournit des liens directs LAN/VPN ; les sondes implicites restent locales. Un domaine de prévisualisation dédié évite les conflits avec les API principales. Sans configuration, le comportement localhost est conservé.
 
 ### Garder `start` au premier plan [#foreground]
 
