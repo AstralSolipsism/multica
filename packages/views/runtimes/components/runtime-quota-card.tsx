@@ -13,7 +13,6 @@ import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { useQuotaTimeFormatter } from "./quota-time";
 import {
-  accountPoolHasQuotaContent,
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
@@ -117,7 +116,7 @@ export function RuntimeQuotaCard({
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
   const partition = accountPools
-    ? partitionAccountPools(accountPools.pools.filter(accountPoolHasQuotaContent), agents, runtime.id)
+    ? partitionAccountPools(accountPools.pools, agents, runtime.id)
     : null;
   const hasActiveAgents = agents.some(
     (agent) => agent.runtime_id === runtime.id && !agent.archived_at,
@@ -136,6 +135,7 @@ export function RuntimeQuotaCard({
       </h3>
       <div className="p-4">
         <>
+            {(!accountPools || !partition || partition.serving.length > 0) && (
             <div className="divide-y divide-border">
               {accountPools && partition
                 ? partition.serving.map((pool) => (
@@ -174,8 +174,9 @@ export function RuntimeQuotaCard({
                     </div>
                   ))}
             </div>
+            )}
             {accountPools && partition && partition.idle.length > 0 && (
-              <div className="mt-4 border-t border-border pt-3">
+              <div className={cn(partition.serving.length > 0 && "mt-4 border-t border-border pt-3")}>
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-left text-caption font-medium text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

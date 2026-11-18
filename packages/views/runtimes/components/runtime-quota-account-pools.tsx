@@ -10,7 +10,6 @@ import { cn } from "@multica/ui/lib/utils";
 import {
   formatCompactDuration,
   planQuotaState,
-  type PlanQuotaPoolsSummary,
   type QuotaAccountPoolState,
   type QuotaAccountState,
   type QuotaWindowState,
@@ -20,10 +19,10 @@ import { useT } from "../../i18n";
 import { useQuotaTimeFormatter } from "./quota-time";
 import { ProviderLogo } from "./provider-logo";
 import {
-  accountPoolHasQuotaContent,
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
+  type AccountPoolPartition,
 } from "./account-pool-filter";
 import { runtimeRowLabel } from "./runtime-machines";
 import {
@@ -256,7 +255,7 @@ function QuotaHoverCardBody({
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
   const partition = accountPools
-    ? partitionAccountPools(accountPools.pools.filter(accountPoolHasQuotaContent), agents, runtime.id)
+    ? partitionAccountPools(accountPools.pools, agents, runtime.id)
     : null;
   const runtimeLabel = runtimeRowLabel(runtime, machineName ?? "");
   const interrupted = state?.interrupted ?? false;
@@ -359,22 +358,13 @@ function QuotaHoverCardBody({
 }
 
 export function AccountPoolQuotaList({
-  summary,
-  agents,
-  runtime,
+  partition,
   interrupted,
 }: {
-  summary: PlanQuotaPoolsSummary;
-  agents: Agent[];
-  runtime: AgentRuntime;
+  partition: AccountPoolPartition;
   interrupted: boolean;
 }) {
   const { t } = useT("quota");
-  const partition = partitionAccountPools(
-    summary.pools.filter(accountPoolHasQuotaContent),
-    agents,
-    runtime.id,
-  );
   return (
     <>
       {partition.serving.map((pool) => (

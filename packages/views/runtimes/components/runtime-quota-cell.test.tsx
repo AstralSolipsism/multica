@@ -492,6 +492,33 @@ describe("OMP account pools", () => {
     expect(screen.getByText("Re-login required")).toBeInTheDocument();
   });
 
+  it("keeps idle pools idle when the bound serving pool has no snapshot", async () => {
+    const emptyAccount = ompAccount("empty", "ok", 85, 80);
+    emptyAccount.windows = [];
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("kimi-code", [emptyAccount]),
+        ompPool("anthropic", [ompAccount("idle", "ok", 72, 60)]),
+      ],
+    });
+    const agents = [quotaAgent("kimi-code/k2.5")];
+
+    const chips = renderChips(runtime, "en", agents);
+    expect(chips.container).toBeEmptyDOMElement();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} agents={agents} />);
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} agents={agents} />);
+    expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "1 idle provider pool" }));
+    expect(screen.getByText("Claude").parentElement).toHaveTextContent("· Not used");
+    expect(screen.getByRole("cell", { name: "72%" })).toBeInTheDocument();
+  });
+
   it("derives account table columns from reported windows", () => {
     const account = ompAccount("a", "ok", 85, 80);
     account.windows = [

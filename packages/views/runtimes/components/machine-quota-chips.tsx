@@ -20,7 +20,6 @@ import {
   quotaGroupLabel,
 } from "./runtime-quota-cell";
 import {
-  accountPoolHasQuotaContent,
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
@@ -57,7 +56,10 @@ export function MachineQuotaChips({
       });
     }
   }
-  const runtimeChips = machine.quotaChips;
+  const runtimeChips = machine.quotaChips.filter((chip) => {
+    const accountPoolView = accountPoolViews.get(chip.runtimeId);
+    return !accountPoolView || accountPoolView.partition.serving.length > 0;
+  });
   if (runtimeChips.length === 0) return null;
 
   const visibleChips = runtimeChips.slice(0, MAX_VISIBLE_CHIPS);
@@ -193,9 +195,7 @@ function QuotaChipFace({
 
   let summaries: ChipSummary[];
   if (accountPoolView) {
-    const pools = accountPoolView.partition.serving.filter(accountPoolHasQuotaContent);
-    if (pools.length === 0) return null;
-    summaries = pools.map((pool) => {
+    summaries = accountPoolView.partition.serving.map((pool) => {
       const relogin = accountPoolNeedsRelogin(pool);
       const percent = !relogin && !pool.exhausted && pool.windows.length > 0
         ? pool.remainingPercent
