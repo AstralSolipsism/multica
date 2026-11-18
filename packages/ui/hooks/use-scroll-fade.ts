@@ -20,6 +20,10 @@ export function useScrollFade(
     const el = ref.current;
     if (!el) return;
 
+    // Some touch browsers composite masks as opaque layers; touch scrolling
+    // already provides overflow feedback.
+    const mql = typeof window.matchMedia === "function" ? window.matchMedia("(pointer: coarse)") : null;
+
     // Resizes and child mutations funnel through one rAF-coalesced run
     // (scroll stays synchronous — see its listener below). Each run reads
     // layout once and calls setFade only when the value actually changes:
@@ -29,6 +33,8 @@ export function useScrollFade(
     // scheduler and stretched tab switches to seconds.
     let last: "none" | "start" | "end" | "both" | null = null;
     let raf = 0;
+    let ro: ResizeObserver | undefined;
+    let mo: MutationObserver | undefined;
     const run = () => {
       // A synchronous scroll absorbs any queued frame: this measurement
       // covers it, and leaving the handle alive would both double-fire the
@@ -55,30 +61,51 @@ export function useScrollFade(
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(run);
     };
+    const detach = () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      el.removeEventListener("scroll", run);
+      ro?.disconnect();
+      mo?.disconnect();
+    };
 
-    schedule();
-    // Scroll stays synchronous on purpose. Consumer wiring treats a scroll
-    // and its fade verdict as one task — chat's stick-to-bottom latch, for
-    // one, attributes wheel displacement to the scroll that confirms it, and
-    // deferring the fade update off that task reordered the handshake in a
-    // way its tests (and real scrolling feedback) depend on not happening.
-    // User scrolling is also far too rare to need coalescing; the storms come
-    // from resizes and DOM mutations below.
-    el.addEventListener("scroll", run, { passive: true });
-    const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    // ResizeObserver only fires on the container's own box. When children
-    // grow inside a flex/auto-sized parent, the scroll extent can change while
-    // the viewport does not — the mask would stay "none" until the user scrolls.
-    // MutationObserver on childList catches those content insertions.
-    const mo = new MutationObserver(schedule);
-    mo.observe(el, { childList: true, subtree: true });
+    const attach = () => {
+      schedule();
+      // Scroll stays synchronous on purpose. Consumer wiring treats a scroll
+      // and its fade verdict as one task — chat's stick-to-bottom latch, for
+      // one, attributes wheel displacement to the scroll that confirms it, and
+      // deferring the fade update off that task reordered the handshake in a
+      // way its tests (and real scrolling feedback) depend on not happening.
+      // User scrolling is also far too rare to need coalescing; the storms come
+      // from resizes and DOM mutations below.
+      el.addEventListener("scroll", run, { passive: true });
+      ro ??= new ResizeObserver(schedule);
+      ro.observe(el);
+      // ResizeObserver only fires on the container's own box. When children
+      // grow inside a flex/auto-sized parent, the scroll extent can change while
+      // the viewport does not — the mask would stay "none" until the user scrolls.
+      // MutationObserver on childList catches those content insertions.
+      mo ??= new MutationObserver(schedule);
+      mo.observe(el, { childList: true, subtree: true });
+    };
+
+    const onPointerChange = () => {
+      detach();
+      if (mql?.matches) {
+        last = null;
+        setFade((current) => (current === "none" ? current : "none"));
+      } else {
+        attach();
+      }
+    };
+    mql?.addEventListener("change", onPointerChange);
+    if (!mql?.matches) attach();
 
     return () => {
-      if (raf) cancelAnimationFrame(raf);
-      el.removeEventListener("scroll", run);
-      ro.disconnect();
-      mo.disconnect();
+      detach();
+      mql?.removeEventListener("change", onPointerChange);
     };
   }, [axis, ref]);
 
