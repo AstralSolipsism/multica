@@ -136,15 +136,22 @@ async function main() {
   // stay untouched.
   const installed = await installedPackageDir(version);
   const fetched = installed ? null : await fetchedPackageDir(version);
+  await stageVoiceEngineFiles(installed ?? fetched.dir, fetched, `${pkg}@${version}`);
+}
+
+// Copies the native engine files and the notices into destDir (tests pass
+// their own dest) and owns the fetched scratch dir's lifecycle: it is removed
+// in the finally whether staging succeeds or fails. `fetched` is null for the
+// installed package, whose source dir must never be touched.
+export async function stageVoiceEngineFiles(sourceDir, fetched, label, { dest = destDir } = {}) {
   try {
-    const sourceDir = installed ?? fetched.dir;
     const files = (await readdir(sourceDir)).filter((name) => NATIVE_FILE.test(name));
-    if (!files.includes("sherpa-onnx.node")) throw new Error(`${pkg}@${version} has no sherpa-onnx.node`);
-    await rm(destDir, { recursive: true, force: true });
-    await mkdir(destDir, { recursive: true });
-    for (const name of files) await copyFile(join(sourceDir, name), join(destDir, name));
-    await writeFile(join(destDir, "THIRD_PARTY_NOTICES.txt"), NOTICES);
-    console.log(`[bundle-voice-engine] ${pkg}@${version} → resources/voice-engine (${files.length} files)`);
+    if (!files.includes("sherpa-onnx.node")) throw new Error(`${label} has no sherpa-onnx.node`);
+    await rm(dest, { recursive: true, force: true });
+    await mkdir(dest, { recursive: true });
+    for (const name of files) await copyFile(join(sourceDir, name), join(dest, name));
+    await writeFile(join(dest, "THIRD_PARTY_NOTICES.txt"), NOTICES);
+    console.log(`[bundle-voice-engine] ${label} → ${dest} (${files.length} files)`);
   } finally {
     await removeScratchDir(fetched?.scratch);
   }

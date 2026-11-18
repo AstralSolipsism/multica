@@ -1,9 +1,15 @@
 // @vitest-environment node
 import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fetchedPackageDir, packOutputArchiveName, removeScratchDir } from "./bundle-voice-engine.mjs";
+import {
+  fetchedPackageDir,
+  packOutputArchiveName,
+  removeScratchDir,
+  stageVoiceEngineFiles,
+} from "./bundle-voice-engine.mjs";
 
 // Regression guard for the Fork candidate windows-latest failure: Git for
 // Windows' GNU tar parses "C:\Users\..." as a remote HOST:FILE archive
@@ -55,9 +61,8 @@ describe("fetchedPackageDir", () => {
       expect(tar.opts.cwd).toBe(scratch);
       expect(dir).toBe(join(scratch, "package"));
     } finally {
-      await removeScratchDir(scratch);
+      await rm(scratch, { recursive: true, force: true });
     }
-    expect(existsSync(scratch)).toBe(false);
   });
 
   it("removes the scratch dir when the fetch itself fails", async () => {
@@ -71,6 +76,64 @@ describe("fetchedPackageDir", () => {
     };
     await expect(fetchedPackageDir("1.12.17", { execFile })).rejects.toThrow("Cannot connect to C:");
     expect(existsSync(scratch)).toBe(false);
+  });
+});
+
+// Drives the production staging path that main() delegates to (same function,
+// with dest pointed at a temp dir), so the scratch lifecycle — cleanup after a
+// successful copy, cleanup on later failure, and the installed package's
+// node_modules staying untouched — is asserted against the real code.
+describe("stageVoiceEngineFiles", () => {
+  const FETCHED_LABEL = "sherpa-onnx-win-arm64@1.12.17";
+
+  async function stagingFixture({ withAddon = true } = {}) {
+    const scratch = await mkdtemp(join(tmpdir(), "voice-engine-"));
+    const sourceDir = join(scratch, "package");
+    await mkdir(sourceDir);
+    const files = ["sherpa-onnx.node", "libonnxruntime.so.1", "README.md"];
+    for (const name of files) {
+      if (withAddon || name !== "sherpa-onnx.node") await writeFile(join(sourceDir, name), `content of ${name}\n`);
+    }
+    const dest = await mkdtemp(join(tmpdir(), "voice-dest-"));
+    return { scratch, sourceDir, dest };
+  }
+
+  it("stages native files + notices and removes the fetched scratch dir", async () => {
+    const { scratch, sourceDir, dest } = await stagingFixture();
+    try {
+      await stageVoiceEngineFiles(sourceDir, { dir: sourceDir, scratch }, FETCHED_LABEL, { dest });
+      expect((await readdir(dest)).sort()).toEqual(["THIRD_PARTY_NOTICES.txt", "libonnxruntime.so.1", "sherpa-onnx.node"]);
+      expect(existsSync(scratch)).toBe(false);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+      await rm(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("still removes the fetched scratch dir when staging fails after the fetch", async () => {
+    const { scratch, sourceDir, dest } = await stagingFixture({ withAddon: false });
+    try {
+      await expect(stageVoiceEngineFiles(sourceDir, { dir: sourceDir, scratch }, FETCHED_LABEL, { dest })).rejects.toThrow(
+        "has no sherpa-onnx.node",
+      );
+      expect(existsSync(scratch)).toBe(false);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+      await rm(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the installed package's source dir when there is no scratch dir", async () => {
+    const { scratch, sourceDir, dest } = await stagingFixture();
+    try {
+      await stageVoiceEngineFiles(sourceDir, null, "sherpa-onnx-linux-x64@2.0.1", { dest });
+      expect((await readdir(dest)).sort()).toEqual(["THIRD_PARTY_NOTICES.txt", "libonnxruntime.so.1", "sherpa-onnx.node"]);
+      expect(existsSync(sourceDir)).toBe(true);
+      expect(existsSync(scratch)).toBe(true);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+      await rm(dest, { recursive: true, force: true });
+    }
   });
 });
 
