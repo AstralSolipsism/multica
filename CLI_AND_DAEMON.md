@@ -364,6 +364,12 @@ A declared environment's own servers are not listed a second time as detected on
 
 These commands use the running task's credential, so they work only inside a run. Environments belong to the issue, which means a later run on the same issue can list and stop what an earlier one started. Neither detected nor declared environments are supported on Windows yet.
 
+Remote access is opt-in via server `MULTICA_ENV_PROXY_BASE_URL` (wildcard or
+`/env/<id>/` URLs) or daemon `MULTICA_ENV_PUBLIC_HOST` (LAN/VPN host override).
+Declared URLs accept `$MULTICA_HOST`, and commands receive `MULTICA_HOST`;
+implicit readiness probes stay local. See [remote environment deployment](docs/environment-proxy.md)
+for cookie domains, ingress routing and tunnel lifecycle.
+
 #### Sidebar controls
 
 - **Declared environments:** use **+** to start an environment reported by the latest run on a machine, using that run's checkout. An environment's menu offers **Stop**, **Restart**, and **View logs**. Restart reads the repository's current declaration, so it needs the checkout and `.multica/environments.toml` to still exist.
