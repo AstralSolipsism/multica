@@ -17,8 +17,8 @@ import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
@@ -86,40 +86,86 @@ async function installedPackageDir(version) {
   return null;
 }
 
-async function fetchedPackageDir(version) {
+// npm pack's stdout ends with the packed tarball's path. Keep only the file
+// name: an absolute Windows path ("C:\Users\...") handed to GNU tar (Git for
+// Windows, first on PATH under `defaults.run.shell: bash`) parses the drive
+// letter as a remote HOST:FILE archive ("Cannot connect to C: resolve
+// failed"), and bsdtar has no --force-local, so a bare name plus cwd is the
+// only spelling every tar on every runner accepts.
+export function packOutputArchiveName(output) {
+  const lastLine = output.trim().split("\n").pop();
+  const name = basename(lastLine.trim().replace(/\\/g, "/"));
+  if (!name || /[/\\:]/.test(name)) {
+    throw new Error(`npm pack printed no archive name: ${lastLine.trim()}`);
+  }
+  return name;
+}
+
+// Fetches the cross-arch package pnpm didn't install into a scratch dir and
+// returns { dir, scratch }. The scratch dir outlives this call — main() owns
+// it and removes it with removeScratchDir once the native files are copied —
+// and is cleaned up here when the fetch itself fails.
+export async function fetchedPackageDir(version, { execFile = execFileSync } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), "voice-engine-"));
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const tarball = execFileSync(npm, ["pack", `${pkg}@${version}`, "--silent", "--pack-destination", scratch], {
-    encoding: "utf8",
-    shell: process.platform === "win32",
-  })
-    .trim()
-    .split("\n")
-    .pop();
-  execFileSync("tar", ["-xzf", join(scratch, tarball), "-C", scratch]);
-  return join(scratch, "package");
+  try {
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const packed = execFile(npm, ["pack", `${pkg}@${version}`, "--silent", "--pack-destination", scratch], {
+      encoding: "utf8",
+      shell: process.platform === "win32",
+    });
+    execFile("tar", ["-xzf", packOutputArchiveName(packed)], { cwd: scratch });
+    return { dir: join(scratch, "package"), scratch };
+  } catch (err) {
+    await removeScratchDir(scratch);
+    throw err;
+  }
+}
+
+// Removes a cross-arch fetch's scratch dir. `scratch` is null/undefined for
+// the installed-package path, whose node_modules dir must never be touched.
+export async function removeScratchDir(scratch) {
+  if (scratch) await rm(scratch, { recursive: true, force: true });
 }
 
 async function main() {
   if (!SUPPORTED.has(target)) throw new Error(`no speech engine for ${target}`);
   const require = createRequire(join(desktopRoot, "package.json"));
   const { version } = JSON.parse(await readFile(require.resolve("sherpa-onnx-node/package.json"), "utf8"));
-  const sourceDir = (await installedPackageDir(version)) ?? (await fetchedPackageDir(version));
-  const files = (await readdir(sourceDir)).filter((name) => NATIVE_FILE.test(name));
-  if (!files.includes("sherpa-onnx.node")) throw new Error(`${pkg}@${version} has no sherpa-onnx.node`);
-  await rm(destDir, { recursive: true, force: true });
-  await mkdir(destDir, { recursive: true });
-  for (const name of files) await copyFile(join(sourceDir, name), join(destDir, name));
-  await writeFile(join(destDir, "THIRD_PARTY_NOTICES.txt"), NOTICES);
-  console.log(`[bundle-voice-engine] ${pkg}@${version} → resources/voice-engine (${files.length} files)`);
+  // Only the cross-arch fetch has a scratch dir to clean up; when pnpm
+  // already installed the package, sourceDir sits in node_modules and must
+  // stay untouched.
+  const installed = await installedPackageDir(version);
+  const fetched = installed ? null : await fetchedPackageDir(version);
+  await stageVoiceEngineFiles(installed ?? fetched.dir, fetched, `${pkg}@${version}`);
 }
 
-main().catch(async (err) => {
-  await rm(destDir, { recursive: true, force: true });
-  const message = `[bundle-voice-engine] ${err instanceof Error ? err.message : String(err)}`;
-  if (required) {
-    console.error(message);
-    process.exit(1);
+// Copies the native engine files and the notices into destDir (tests pass
+// their own dest) and owns the fetched scratch dir's lifecycle: it is removed
+// in the finally whether staging succeeds or fails. `fetched` is null for the
+// installed package, whose source dir must never be touched.
+export async function stageVoiceEngineFiles(sourceDir, fetched, label, { dest = destDir } = {}) {
+  try {
+    const files = (await readdir(sourceDir)).filter((name) => NATIVE_FILE.test(name));
+    if (!files.includes("sherpa-onnx.node")) throw new Error(`${label} has no sherpa-onnx.node`);
+    await rm(dest, { recursive: true, force: true });
+    await mkdir(dest, { recursive: true });
+    for (const name of files) await copyFile(join(sourceDir, name), join(dest, name));
+    await writeFile(join(dest, "THIRD_PARTY_NOTICES.txt"), NOTICES);
+    console.log(`[bundle-voice-engine] ${label} → ${dest} (${files.length} files)`);
+  } finally {
+    await removeScratchDir(fetched?.scratch);
   }
-  console.warn(`${message} — voice input will be unavailable in this build.`);
-});
+}
+
+// Only run when invoked as a CLI, not when imported by a test file.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(async (err) => {
+    await rm(destDir, { recursive: true, force: true });
+    const message = `[bundle-voice-engine] ${err instanceof Error ? err.message : String(err)}`;
+    if (required) {
+      console.error(message);
+      process.exit(1);
+    }
+    console.warn(`${message} — voice input will be unavailable in this build.`);
+  });
+}
