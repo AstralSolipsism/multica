@@ -54,8 +54,8 @@ func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID 
 		return
 	}
 	defer ws.Close()
-	port, err := strconv.Atoi(resp.Header.Get("X-Multica-Env-Port"))
-	if err != nil || !d.environments.allowsTunnelPort(resp.Header.Get("X-Multica-Env-Key"), port) {
+	port, err := strconv.Atoi(resp.Header.Get("X-Env-Tunnel-Port"))
+	if err != nil || !d.environments.allowsTunnelPort(resp.Header.Get("X-Env-Tunnel-Key"), port) {
 		return
 	}
 	local, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))

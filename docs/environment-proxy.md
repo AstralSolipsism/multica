@@ -52,6 +52,10 @@ When sharing the API origin, registered API routes and reserved prefixes
 (`/api`, `/ws`, `/auth`, `/v1`, `/health`, `/readyz`, `/healthz`,
 `/plugin-surfaces`, `/_next`, `/docs`, `/metrics`) stay with Multica. An app that
 needs these root routes should use a dedicated preview origin or wildcard mode.
+Single-address mode treats the origin as dedicated only when `MULTICA_PUBLIC_URL`
+is a valid API origin and the preview host differs from it, `MULTICA_APP_URL`,
+and the configured attachment frame ancestors. When the API origin is unknown,
+shared-origin routing rules apply, including the reserved prefixes above.
 The routing cookie alone never redirects a top-level navigation into an
 application. Multiple tabs without an environment Referer share the latest
 routing cookie; wildcard mode keeps each environment independent.

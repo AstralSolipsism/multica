@@ -97,6 +97,64 @@ func TestEnvironmentProxyURLAndRoutes(t *testing.T) {
 	}
 }
 
+func TestEnvironmentProxySharedOriginRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, public, app string
+		ancestors               []string
+		dedicated               bool
+	}{
+		{name: "unknown API localhost", base: "http://localhost:8080", app: "http://localhost:3000"},
+		{name: "unknown API IP", base: "http://192.168.1.100:8080", app: "https://app.example"},
+		{name: "unknown API domain", base: "https://api.example", app: "https://app.example"},
+		{name: "hostless API", public: "/api", app: "https://app.example"},
+		{name: "invalid API", public: "https://[", app: "https://app.example"},
+		{name: "shared API", public: "https://API.EXAMPLE", app: "https://app.example"},
+		{name: "shared app", public: "https://other.example", app: "https://api.example"},
+		{name: "shared ancestor", public: "https://other.example", app: "https://app.example", ancestors: []string{"https://API.EXAMPLE"}},
+		{name: "dedicated preview", public: "https://other.example", app: "https://app.example", ancestors: []string{"https://desktop.example"}, dedicated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := tc.base
+			if base == "" {
+				base = "https://api.example"
+			}
+			h := &Handler{envProxy: newEnvironmentProxy(Config{
+				EnvProxyBaseURL: base, PublicURL: tc.public, AppURL: tc.app, AttachmentFrameAncestors: tc.ancestors,
+			})}
+			t.Cleanup(h.envProxy.transport.CloseIdleConnections)
+			id := uuid.NewString()
+			router := chi.NewRouter()
+			router.Use(h.EnvironmentProxyHostBoundary)
+			paths := []string{"/health", "/ws", "/api/issues", "/api/daemon/runtimes/runtime/environment-tunnel/stream"}
+			for _, path := range paths {
+				router.Get(path, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+			}
+			router.NotFound(h.EnvironmentProxyFallback)
+			for _, cookie := range []bool{false, true} {
+				for _, path := range append(paths, "/api/unknown", "/env/"+id+"/", "/style.css") {
+					req := httptest.NewRequest("GET", base+path, nil)
+					req.Header.Set("Sec-Fetch-Mode", "cors")
+					if cookie {
+						req.AddCookie(&http.Cookie{Name: environmentProxyCookie, Value: id})
+					}
+					want := http.StatusNoContent
+					if path == "/api/unknown" || path == "/style.css" || tc.dedicated {
+						want = http.StatusNotFound
+					}
+					if strings.HasPrefix(path, "/env/") || cookie && (path == "/style.css" || tc.dedicated) {
+						want = http.StatusUnauthorized
+					}
+					rec := httptest.NewRecorder()
+					router.ServeHTTP(rec, req)
+					if rec.Code != want {
+						t.Errorf("%s cookie=%v: status=%d want %d", path, cookie, rec.Code, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestEnvironmentProxyFallbackContext(t *testing.T) {
 	p := newEnvironmentProxy(Config{EnvProxyBaseURL: "https://preview.example"})
 	a, b := uuid.NewString(), uuid.NewString()
@@ -230,7 +288,10 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"path": r.URL.RequestURI(), "host": r.Host, "cookie": r.Header.Get("Cookie"), "auth": r.Header.Get("Authorization"), "forwarded": r.Header.Get("X-Forwarded-Host"), "proto": r.Header.Get("X-Forwarded-Proto"), "identity": r.Header.Get("X-User-ID")})
 	}))
 	defer local.Close()
-	h := proxyTestHandler(t, "http://preview.example")
+	h := &Handler{Queries: testHandler.Queries, DB: testPool, envProxy: newEnvironmentProxy(Config{
+		EnvProxyBaseURL: "http://preview.example", AppURL: "http://app.example",
+	})}
+	h.envProxy.transport.DialContext = h.dialEnvironmentTunnel
 	router := chi.NewRouter()
 	router.Use(h.EnvironmentProxyHostBoundary)
 	router.With(middleware.DaemonAuth(h.Queries, nil, nil, nil)).Get("/api/daemon/runtimes/{runtimeId}/environment-tunnel/{streamId}", h.ConnectEnvironmentTunnel)
@@ -243,13 +304,17 @@ func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
 		peers.Add(1)
 		go func() {
 			defer peers.Done()
-			ws, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/api/daemon/runtimes/"+runtime+"/environment-tunnel/"+strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix), http.Header{"Authorization": {"Bearer " + token}})
+			ws, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/api/daemon/runtimes/"+runtime+"/environment-tunnel/"+strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix), http.Header{"Host": {"preview.example"}, "Authorization": {"Bearer " + token}})
 			if err != nil {
 				return
 			}
 			opened.Add(1)
 			conn := envtunnel.NewConn(ws)
 			defer conn.Close()
+			if resp.Header.Get("X-Env-Tunnel-Key") != "config:web" || resp.Header.Get("X-Env-Tunnel-Port") != "41000" {
+				t.Error("tunnel handshake did not identify the registered environment")
+				return
+			}
 			tcp, err := net.Dial("tcp", strings.TrimPrefix(local.URL, "http://"))
 			if err != nil {
 				return

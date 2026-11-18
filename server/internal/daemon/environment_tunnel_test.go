@@ -55,7 +55,7 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 					http.Error(w, "auth", 401)
 					return
 				}
-				ws, err := (&websocket.Upgrader{}).Upgrade(w, r, http.Header{"X-Multica-Env-Key": {"detected:test"}, "X-Multica-Env-Port": {portText}})
+				ws, err := (&websocket.Upgrader{}).Upgrade(w, r, http.Header{"X-Env-Tunnel-Key": {"detected:test"}, "X-Env-Tunnel-Port": {portText}})
 				if err != nil {
 					result <- err
 					return

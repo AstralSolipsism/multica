@@ -64,12 +64,9 @@ func newEnvironmentProxy(cfg Config) *environmentProxy {
 	if wildcard && !strings.HasPrefix(u.Host, "*.") && !strings.HasPrefix(u.Host, "env-*.") {
 		return nil
 	}
-	dedicated := cfg.PublicURL != "" || cfg.AppURL != ""
-	for _, main := range []string{cfg.PublicURL, cfg.AppURL} {
-		if parsed, err := url.Parse(main); err == nil && strings.EqualFold(parsed.Host, u.Host) {
-			dedicated = false
-		}
-	}
+	// Without a known API origin, preserve shared-origin routing rules.
+	_, publicURLErr := parsePluginSurfaceOrigin(cfg.PublicURL)
+	dedicated := publicURLErr == nil && (&Handler{cfg: cfg}).pluginSurfaceOriginIsDedicated(u)
 	p := &environmentProxy{base: u, wildcard: wildcard, dedicated: dedicated, pending: make(map[string]*pendingEnvironmentTunnel), slots: make(map[string]*environmentTunnelSlots)}
 	p.transport = &http.Transport{
 		MaxConnsPerHost: 6, MaxIdleConnsPerHost: 4, MaxIdleConns: 64,
@@ -426,7 +423,7 @@ func (h *Handler) ConnectEnvironmentTunnel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	upgrader := websocket.Upgrader{HandshakeTimeout: tunnelDialTimeout}
-	ws, err := upgrader.Upgrade(w, r, http.Header{"X-Multica-Env-Key": {pending.key}, "X-Multica-Env-Port": {strconv.Itoa(int(pending.port))}})
+	ws, err := upgrader.Upgrade(w, r, http.Header{"X-Env-Tunnel-Key": {pending.key}, "X-Env-Tunnel-Port": {strconv.Itoa(int(pending.port))}})
 	if err != nil {
 		return
 	}
