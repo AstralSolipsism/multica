@@ -54,3 +54,7 @@ export function accountPoolNeedsRelogin(pool: QuotaAccountPoolState): boolean {
   return pool.accounts.length > 0 &&
     pool.accounts.every((account) => account.status === "disabled");
 }
+
+export function accountPoolHasQuotaContent(pool: QuotaAccountPoolState): boolean {
+  return pool.windows.length > 0 || pool.exhausted || accountPoolNeedsRelogin(pool);
+}

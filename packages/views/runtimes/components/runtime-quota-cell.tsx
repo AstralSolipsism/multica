@@ -3,6 +3,8 @@
 import { planQuotaState } from "@multica/core/runtimes";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { CollectionEmptyValue } from "../../layout/collection-list";
+import { accountPoolHasQuotaContent } from "./account-pool-filter";
 import { useQuotaTimeFormatter } from "./quota-time";
 import {
   AccountPoolQuotaList,
@@ -55,12 +57,8 @@ export function RuntimeQuotaCell({
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
 
-  if (!state) {
-    return (
-      <span className="text-caption text-faint-foreground">
-        {t(($) => $.no_snapshot)}
-      </span>
-    );
+  if (!state || (accountPools && !accountPools.pools.some(accountPoolHasQuotaContent))) {
+    return <CollectionEmptyValue />;
   }
   const trigger = (
     <span

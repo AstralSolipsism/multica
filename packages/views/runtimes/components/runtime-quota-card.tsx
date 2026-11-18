@@ -13,6 +13,7 @@ import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { useQuotaTimeFormatter } from "./quota-time";
 import {
+  accountPoolHasQuotaContent,
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
@@ -69,7 +70,7 @@ function AccountPoolQuotaSubject({
       {relogin ? (
         <p className="text-caption text-warning">{t(($) => $.account_pools.all_relogin)}</p>
       ) : pool.windows.length === 0 ? (
-        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
+        <p className="text-caption text-destructive">{t(($) => $.exhausted)}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
@@ -116,7 +117,7 @@ export function RuntimeQuotaCard({
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
   const partition = accountPools
-    ? partitionAccountPools(accountPools.pools, agents, runtime.id)
+    ? partitionAccountPools(accountPools.pools.filter(accountPoolHasQuotaContent), agents, runtime.id)
     : null;
   const hasActiveAgents = agents.some(
     (agent) => agent.runtime_id === runtime.id && !agent.archived_at,
@@ -126,16 +127,15 @@ export function RuntimeQuotaCard({
   const canIdentifyUnusedPools = partition != null && !agentsPending &&
     (!hasActiveAgents || partition.filtered);
 
+  if (!state || (accountPools && partition?.all.length === 0)) return null;
+
   return (
     <section className="rounded-lg border bg-card">
       <h3 className="border-b px-4 py-2.5 text-caption font-semibold">
         {t(($) => $.title)}
       </h3>
       <div className="p-4">
-        {!state ? (
-          <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
-        ) : (
-          <>
+        <>
             <div className="divide-y divide-border">
               {accountPools && partition
                 ? partition.serving.map((pool) => (
@@ -221,7 +221,6 @@ export function RuntimeQuotaCard({
                   })}
             </p>
           </>
-        )}
       </div>
     </section>
   );

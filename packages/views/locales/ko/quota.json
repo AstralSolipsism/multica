@@ -2,8 +2,6 @@
   "column_label": "할당량",
   "title": "플랜 할당량",
   "window_label": "{{label}} 기간",
-  "no_snapshot_chip": "스냅샷 없음",
-  "no_snapshot": "할당량 스냅샷 없음",
   "overflow_title_other": "추가 할당량 {{count}}개",
   "window_short_minutes": "{{value}}m",
   "window_short_hours": "{{value}}h",
