@@ -384,7 +384,7 @@ export function AccountPoolQuotaList({
             <span className="text-micro text-warning">
               {t(($) => $.account_pools.pool_needs_relogin)}
             </span>
-          ) : pool.exhausted ? (
+          ) : pool.windows.length === 0 ? (
             <span className="text-micro text-destructive">
               {t(($) => $.exhausted)}
             </span>

@@ -432,6 +432,46 @@ describe("OMP account pools", () => {
     expect(screen.getByText("1 more account; open Runtime details to view it")).toBeInTheDocument();
   });
 
+  it("keeps remaining windows visible when only one pool window is exhausted", () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("kimi-code", [ompAccount("ex*", "exhausted", 0, 65)]),
+      ],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+
+    const subject = screen.getByText("Kimi Code").closest<HTMLElement>("[data-account-pool]")!;
+    expect(within(subject).getByText("5h")).toBeInTheDocument();
+    expect(within(subject).getByText("7d")).toBeInTheDocument();
+    expect(within(subject).getByText("65%")).toBeInTheDocument();
+    expect(within(subject).queryByText("Rate limited")).not.toBeInTheDocument();
+  });
+
+  it("keeps a no-window exhausted pool visible across every quota surface", async () => {
+    const account = ompAccount("ex*", "exhausted", 0, 0);
+    account.windows = [];
+    const runtime = quotaRuntime("omp", {
+      account_pools: [ompPool("kimi-code", [account])],
+    });
+
+    const chips = renderChips(runtime);
+    const chip = chipTrigger(/^Omp: Kimi Code:/);
+    expect(within(chip).getByText("Rate limited")).toBeInTheDocument();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    const subject = screen.getByText("Kimi Code").closest<HTMLElement>("[data-account-pool]")!;
+    expect(within(subject).getByText("Rate limited")).toBeInTheDocument();
+    await userEvent.hover(subject.closest<HTMLElement>('[data-slot="hover-card-trigger"]')!);
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="hover-card-content"]')).toHaveTextContent("Rate limited");
+    });
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(document.querySelector('[data-account-pool-matrix="kimi-code"]')).toHaveTextContent("Rate limited");
+  });
+
   it("shows one re-login warning when every account is invalid", async () => {
     const runtime = quotaRuntime("omp", {
       account_pools: [
