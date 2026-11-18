@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -32,6 +33,10 @@ type baselineWikiAttachmentsOut struct {
 }
 
 func uploadBaselineAttachment(t *testing.T, filename string, data []byte, fields map[string]string) *testutil.Response {
+	return uploadBaselineAttachmentAs(t, testUserID, filename, data, fields)
+}
+
+func uploadBaselineAttachmentAs(t *testing.T, userID, filename string, data []byte, fields map[string]string) *testutil.Response {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -52,7 +57,7 @@ func uploadBaselineAttachment(t *testing.T, filename string, data []byte, fields
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
+	req.Header.Set("X-User-ID", userID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
 	return testutil.Call(t, testHandler.UploadFile, req)
 }
@@ -366,5 +371,144 @@ func TestDeleteProjectRemovesBaselineAttachmentObjects(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("project delete left %d attachment rows", count)
+	}
+}
+
+// cleanupStorage deletes stored bytes on DeleteKeys, so tests can assert both
+// the cleanup request and that no object survives a refused upload.
+type cleanupStorage struct {
+	mockStorage
+	deleted int
+}
+
+func (s *cleanupStorage) DeleteKeys(ctx context.Context, keys []string) {
+	s.deleted += len(keys)
+	for _, key := range keys {
+		s.mockStorage.Delete(ctx, key)
+	}
+}
+
+// holdProjectLockAndRevoke starts an upload that will pass its pre-check and
+// storage phase, then blocks on the project row. revoke runs in that window;
+// the returned upload result arrives after the lock transaction commits.
+func holdProjectLockAndRevoke(t *testing.T, projectID string, upload func() *testutil.Response, revoke func(ctx context.Context, tx pgx.Tx)) *testutil.Response {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := testHandler.Queries.WithTx(tx)
+	if _, err := qtx.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
+		WorkspaceID: parseUUID(testWorkspaceID), ID: parseUUID(projectID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *testutil.Response, 1)
+	go func() { done <- upload() }()
+	select {
+	case res := <-done:
+		t.Fatalf("upload did not wait for the project lock: %+v", res)
+	case <-time.After(300 * time.Millisecond):
+	}
+	revoke(ctx, tx)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload did not finish after the lock was released")
+		return nil
+	}
+}
+
+func TestBaselineAttachmentUploadRejectsRevokedProjectAccess(t *testing.T) {
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "UPDATE project SET visibility = 'public' WHERE id = $1", f.project)
+	})
+
+	res := holdProjectLockAndRevoke(t, f.project, func() *testutil.Response {
+		return uploadBaselineAttachment(t, "architecture.html", []byte("<html></html>"), map[string]string{
+			"baseline_page_id": page.Page.ID,
+		})
+	}, func(ctx context.Context, tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, "UPDATE project SET visibility = 'private' WHERE id = $1", f.project); err != nil {
+			t.Fatal(err)
+		}
+	})
+	res.Want(http.StatusForbidden)
+	var count int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(store.files) != 0 || store.deleted != 1 {
+		t.Fatalf("revoked project access left rows=%d files=%v deleted=%d", count, store.files, store.deleted)
+	}
+}
+
+func TestBaselineAttachmentUploadRejectsRevokedMembership(t *testing.T) {
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	uploader := createPlainMember(t, uuid.NewString()+"-uploader@multica.test")
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+
+	res := holdProjectLockAndRevoke(t, f.project, func() *testutil.Response {
+		return uploadBaselineAttachmentAs(t, uploader, "architecture.html", []byte("<html></html>"), map[string]string{
+			"baseline_page_id": page.Page.ID,
+		})
+	}, func(ctx context.Context, tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, "DELETE FROM member WHERE workspace_id = $1 AND user_id = $2", testWorkspaceID, uploader); err != nil {
+			t.Fatal(err)
+		}
+	})
+	res.Want(http.StatusForbidden)
+	var count int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(store.files) != 0 || store.deleted != 1 {
+		t.Fatalf("revoked membership left rows=%d files=%v deleted=%d", count, store.files, store.deleted)
+	}
+}
+
+func TestBaselineAttachmentUploadRejectsArchivedPageDuringUpload(t *testing.T) {
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+
+	res := holdProjectLockAndRevoke(t, f.project, func() *testutil.Response {
+		return uploadBaselineAttachment(t, "architecture.html", []byte("<html></html>"), map[string]string{
+			"baseline_page_id": page.Page.ID,
+		})
+	}, func(ctx context.Context, tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, "UPDATE project_baseline_page SET archived_at = now() WHERE id = $1", page.Page.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+	res.Want(http.StatusForbidden)
+	var count int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(store.files) != 0 || store.deleted != 1 {
+		t.Fatalf("archived page upload left rows=%d files=%v deleted=%d", count, store.files, store.deleted)
 	}
 }

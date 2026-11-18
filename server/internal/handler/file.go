@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/imagemetadata"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -766,6 +767,26 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 			ID:          projectID,
 		}); err != nil {
 			return db.CreateAttachmentRow{}, err
+		}
+		// Re-check the CURRENT actor, not the snapshot from before the bytes
+		// uploaded: membership and private-project access may have been revoked
+		// in the meantime.
+		userUUID, err := util.ParseUUID(requestUserID(r))
+		if err != nil {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+			UserID:      userUUID,
+			WorkspaceID: params.WorkspaceID,
+		}); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		hidden, err := projectaccess.ForPrincipals(ctx, q, params.WorkspaceID, userUUID)
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if !hidden.CanSeeProject(projectID) {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
 		}
 		page, err := q.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{
 			WorkspaceID: params.WorkspaceID,

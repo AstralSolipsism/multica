@@ -101,8 +101,11 @@ A page artifact has exactly one owner: `baseline_page_id` cannot be combined
 with `issue_id`, `comment_id`, `chat_session_id` or `task_id`, and the
 Issue/Chat/Comment claim queries all exclude page-bound rows, so a private
 wiki artifact cannot be adopted by another entity. Uploads take the workspace
-share lock, then the project row, then revalidate the page and revision in the
-same transaction as the insert — serialized with project/workspace deletion.
+share lock, then the project row, then revalidate the current actor's workspace
+membership, private-project access, and the page/revision in the same
+transaction as the insert — serialized with project/workspace deletion, so a
+revocation or archive that lands while the bytes upload is refused and the
+stored object is removed.
 Deletion collects the stored URLs before the metadata transaction and removes
 the objects after it commits.
 
