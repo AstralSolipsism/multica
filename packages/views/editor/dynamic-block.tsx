@@ -463,7 +463,13 @@ function DynamicBlockErrorPanel({
  * Loading state for a preview body: a quiet page outline at the height the
  * block will most likely take, so the finished render does not move the page.
  */
-export function DynamicBlockSkeleton({ className }: { className?: string }) {
+export function DynamicBlockSkeleton({
+  className,
+  label,
+}: {
+  className?: string;
+  label?: string;
+}) {
   const { t } = useT("editor");
   return (
     <div className={cn("flex h-full flex-col gap-3 px-5 py-[18px]", className)}>
@@ -471,7 +477,7 @@ export function DynamicBlockSkeleton({ className }: { className?: string }) {
       <div className="min-h-3 flex-1 rounded-sm bg-muted" />
       <div className="flex items-center gap-1.5 text-caption text-muted-foreground">
         <Spinner aria-hidden className="size-3.5" />
-        {t(($) => $.dynamic_block.rendering)}
+        {label ?? t(($) => $.dynamic_block.rendering)}
       </div>
     </div>
   );
