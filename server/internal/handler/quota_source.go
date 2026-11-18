@@ -41,18 +41,24 @@ const (
 // QuotaSourceResponse is the owner-facing view of one source. The credential
 // itself never appears; credential_hint is the stored last-4 mask.
 type QuotaSourceResponse struct {
-	ID             string                        `json:"id"`
-	Kind           string                        `json:"kind"`
-	Name           string                        `json:"name"`
-	BaseURL        *string                       `json:"base_url"`
-	CredentialHint string                        `json:"credential_hint"`
-	Enabled        bool                          `json:"enabled"`
-	Visibility     string                        `json:"visibility"`
-	Quota          *protocol.QuotaSourceSnapshot `json:"quota,omitempty"`
-	LastPolledAt   *time.Time                    `json:"last_polled_at,omitempty"`
-	LastError      *QuotaSourceError             `json:"last_error,omitempty"`
-	CreatedAt      time.Time                     `json:"created_at"`
-	UpdatedAt      time.Time                     `json:"updated_at"`
+	ID             string  `json:"id"`
+	Kind           string  `json:"kind"`
+	Name           string  `json:"name"`
+	BaseURL        *string `json:"base_url"`
+	CredentialHint string  `json:"credential_hint"`
+	// OpenCodeMode and WorkspaceID describe how an opencode source queries
+	// the account: "payg" (console session Cookie) or "go" (Zen API key).
+	// They live inside the sealed credential envelope, so legacy rows report
+	// mode "go" and no workspace.
+	OpenCodeMode string                        `json:"opencode_mode,omitempty"`
+	WorkspaceID  string                        `json:"workspace_id,omitempty"`
+	Enabled      bool                          `json:"enabled"`
+	Visibility   string                        `json:"visibility"`
+	Quota        *protocol.QuotaSourceSnapshot `json:"quota,omitempty"`
+	LastPolledAt *time.Time                    `json:"last_polled_at,omitempty"`
+	LastError    *QuotaSourceError             `json:"last_error,omitempty"`
+	CreatedAt    time.Time                     `json:"created_at"`
+	UpdatedAt    time.Time                     `json:"updated_at"`
 }
 
 type QuotaSourceError struct {
@@ -70,7 +76,7 @@ func quotaSourceSnapshotHasPayload(snap *protocol.QuotaSourceSnapshot) bool {
 		len(snap.Balances) > 0 || snap.Probe != nil
 }
 
-func quotaSourceToResponse(row db.QuotaSource) QuotaSourceResponse {
+func (h *Handler) quotaSourceToResponse(ctx context.Context, row db.QuotaSource) QuotaSourceResponse {
 	resp := QuotaSourceResponse{
 		ID:             uuidToString(row.ID),
 		Kind:           row.Kind,
@@ -80,6 +86,13 @@ func quotaSourceToResponse(row db.QuotaSource) QuotaSourceResponse {
 		Visibility:     row.Visibility,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
+	}
+	if row.Kind == "opencode" {
+		if plaintext, err := h.openQuotaSourceCredential(ctx, row); err == nil {
+			credential := quotasource.ParseOpenCodeCredential(string(plaintext))
+			resp.OpenCodeMode = credential.Mode
+			resp.WorkspaceID = credential.WorkspaceID
+		}
 	}
 	resp.BaseURL = ptrFromText(row.BaseUrl)
 	if row.LastPolledAt.Valid {
@@ -108,6 +121,10 @@ type quotaSourceCreateRequest struct {
 	Credential string  `json:"credential"`
 	BaseURL    *string `json:"base_url"`
 	Visibility string  `json:"visibility"`
+	// opencode only: "payg" | "go" (empty = the legacy "go" default) and an
+	// optional workspace id or console URL.
+	OpenCodeMode string `json:"opencode_mode"`
+	WorkspaceID  string `json:"workspace_id"`
 }
 
 type quotaSourcePatchRequest struct {
@@ -116,6 +133,9 @@ type quotaSourcePatchRequest struct {
 	BaseURL    *string `json:"base_url"`
 	Enabled    *bool   `json:"enabled"`
 	Visibility *string `json:"visibility"`
+	// opencode only. Nil leaves the stored mode/workspace untouched.
+	OpenCodeMode *string `json:"opencode_mode"`
+	WorkspaceID  *string `json:"workspace_id"`
 }
 
 // requireQuotaSourceBox writes the 503 and returns nil when encryption is
@@ -137,6 +157,20 @@ func credentialHint(credential string) string {
 		return ""
 	}
 	return credential[len(credential)-4:]
+}
+
+// normalizedOpenCodeWorkspace canonicalizes an optional workspace id or
+// console URL. Empty means the collector discovers the default workspace.
+func normalizedOpenCodeWorkspace(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	id, err := quotasource.ParseOpenCodeWorkspaceID(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("workspace_id must be a wrk_/org_ id or a console URL")
+	}
+	return id, nil
 }
 
 // probeQuotaSource runs one synchronous collection with the candidate
@@ -163,7 +197,7 @@ func (h *Handler) ListQuotaSources(w http.ResponseWriter, r *http.Request) {
 	}
 	sources := make([]QuotaSourceResponse, len(rows))
 	for i := range rows {
-		sources[i] = quotaSourceToResponse(rows[i])
+		sources[i] = h.quotaSourceToResponse(r.Context(), rows[i])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"encryption_configured": h.QuotaSourceBox != nil,
@@ -189,6 +223,7 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Kind = strings.TrimSpace(req.Kind)
 	req.Name = strings.TrimSpace(req.Name)
+	req.Credential = strings.TrimSpace(req.Credential)
 	req.Visibility = strings.TrimSpace(req.Visibility)
 	if req.Visibility == "" {
 		req.Visibility = "private"
@@ -202,8 +237,13 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	if requiresCredential && h.requireQuotaSourceBox(w) == nil {
 		return
 	}
-	if req.Name == "" || utf8.RuneCountInString(req.Name) > 64 {
-		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
+	// The name is optional: blank falls back to the channel's short default
+	// name so one account per channel needs no typing.
+	if req.Name == "" {
+		req.Name = quotasource.DefaultName(req.Kind)
+	}
+	if utf8.RuneCountInString(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "name must be at most 64 characters")
 		return
 	}
 	if req.Visibility != "private" && req.Visibility != "shared" {
@@ -214,13 +254,36 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "credential is required")
 		return
 	}
+	opencodeMode := ""
+	opencodeWorkspace := ""
+	if req.Kind == "opencode" {
+		mode, ok := quotasource.NormalizeOpenCodeMode(req.OpenCodeMode)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "opencode_mode must be payg or go")
+			return
+		}
+		opencodeMode = mode
+		if mode == quotasource.OpenCodeModePayAsYouGo {
+			workspace, err := normalizedOpenCodeWorkspace(req.WorkspaceID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			opencodeWorkspace = workspace
+		}
+	}
 	if count, err := h.Queries.CountQuotaSourcesByOwner(r.Context(), parseUUID(userID)); err == nil && count >= quotaSourceMaxPerUser {
 		writeError(w, http.StatusBadRequest, "quota source limit reached")
 		return
 	}
 
-	// Synchronous probe: only a passing credential is persisted.
-	quota, probeErr := h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(textFromPtr(req.BaseURL))), req.Credential)
+	// Synchronous probe: only a passing credential is persisted. An opencode
+	// source probes the sealed envelope so the driver sees the chosen mode.
+	probeCredential := req.Credential
+	if req.Kind == "opencode" {
+		probeCredential = quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, req.Credential)
+	}
+	quota, probeErr := h.probeQuotaSource(r.Context(), driver, derefOrEmpty(ptrFromText(textFromPtr(req.BaseURL))), probeCredential)
 	if probeErr != nil {
 		if requiresCredential || !quotaSourceProbeTransient(probeErr) {
 			writeProbeError(w, probeErr)
@@ -237,12 +300,17 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	ciphertext := []byte{}
 	hint := ""
 	if requiresCredential {
-		sealed, err := h.QuotaSourceBox.Seal([]byte(req.Credential))
+		storedCredential := req.Credential
+		if req.Kind == "opencode" {
+			storedCredential = quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, req.Credential)
+		}
+		sealed, err := h.QuotaSourceBox.Seal([]byte(storedCredential))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to encrypt credential")
 			return
 		}
 		ciphertext = sealed
+		// The hint is the real secret's tail, never the envelope's JSON tail.
 		hint = credentialHint(req.Credential)
 	}
 	var body []byte
@@ -281,7 +349,7 @@ func (h *Handler) CreateQuotaSource(w http.ResponseWriter, r *http.Request) {
 			row = updated
 		}
 	}
-	writeJSON(w, http.StatusCreated, quotaSourceToResponse(row))
+	writeJSON(w, http.StatusCreated, h.quotaSourceToResponse(r.Context(), row))
 }
 
 // quotaSourceProbeTransient reports whether a probe failure is an upstream
@@ -335,8 +403,12 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 	name := row.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
-		if name == "" || utf8.RuneCountInString(name) > 64 {
-			writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
+		// Blank means "use the channel's short default name".
+		if name == "" {
+			name = quotasource.DefaultName(row.Kind)
+		}
+		if utf8.RuneCountInString(name) > 64 {
+			writeError(w, http.StatusBadRequest, "name must be at most 64 characters")
 			return
 		}
 	}
@@ -365,18 +437,62 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// OpenCode mode and workspace live inside the sealed credential envelope:
+	// re-seal it when either changes so no schema migration is needed.
+	storedOpenCode := quotasource.OpenCodeCredential{}
+	opencodeMode := ""
+	opencodeWorkspace := ""
+	opencodeChanged := false
+	if row.Kind == "opencode" {
+		plaintext, err := h.openQuotaSourceCredential(r.Context(), row)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "stored credential unreadable")
+			return
+		}
+		storedOpenCode = quotasource.ParseOpenCodeCredential(plaintext)
+		opencodeMode = storedOpenCode.Mode
+		opencodeWorkspace = storedOpenCode.WorkspaceID
+		if req.OpenCodeMode != nil {
+			mode, ok := quotasource.NormalizeOpenCodeMode(*req.OpenCodeMode)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "opencode_mode must be payg or go")
+				return
+			}
+			opencodeMode = mode
+		}
+		if req.WorkspaceID != nil {
+			workspace, err := normalizedOpenCodeWorkspace(*req.WorkspaceID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			opencodeWorkspace = workspace
+		}
+		if opencodeMode != quotasource.OpenCodeModePayAsYouGo {
+			opencodeWorkspace = ""
+		}
+		opencodeChanged = opencodeMode != storedOpenCode.Mode || opencodeWorkspace != storedOpenCode.WorkspaceID
+	}
+
 	// Probe condition (final baseline): the credential changed, the base_url
 	// changed by its NORMALIZED value (empty = driver default, so clearing a
 	// custom address back to default counts, and re-sending the current
-	// value does not), or the source is being re-enabled.
+	// value does not), the OpenCode mode/workspace changed, or the source is
+	// being re-enabled.
 	credentialChanged := credential != ""
 	baseURLChanged := !sameText(baseURL, row.BaseUrl)
 	reEnabling := !row.Enabled && enabled
 	var probeQuota *protocol.QuotaSourceSnapshot
 	var probeErr error
-	if credentialChanged || baseURLChanged || reEnabling {
+	if credentialChanged || baseURLChanged || reEnabling || opencodeChanged {
 		probeCred := credential
-		if probeCred == "" {
+		if row.Kind == "opencode" {
+			secret := credential
+			if secret == "" {
+				secret = storedOpenCode.Secret
+			}
+			probeCred = quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, secret)
+		} else if probeCred == "" {
 			plaintext, err := h.openQuotaSourceCredential(r.Context(), row)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "stored credential unreadable")
@@ -416,13 +532,26 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		params.CredentialHint = textFromString("")
 	}
 	if credential != "" {
-		ciphertext, err := h.QuotaSourceBox.Seal([]byte(credential))
+		storedCredential := credential
+		if row.Kind == "opencode" {
+			storedCredential = quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, credential)
+		}
+		ciphertext, err := h.QuotaSourceBox.Seal([]byte(storedCredential))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to encrypt credential")
 			return
 		}
 		params.CredentialCiphertext = ciphertext
+		// The hint is the real secret's tail, never the envelope's JSON tail.
 		params.CredentialHint = textFromString(credentialHint(credential))
+	} else if row.Kind == "opencode" && opencodeChanged {
+		storedCredential := quotasource.EncodeOpenCodeCredential(opencodeMode, opencodeWorkspace, storedOpenCode.Secret)
+		ciphertext, err := h.QuotaSourceBox.Seal([]byte(storedCredential))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt credential")
+			return
+		}
+		params.CredentialCiphertext = ciphertext
 	}
 	if n, err := h.Queries.UpdateQuotaSourceFields(r.Context(), params); err != nil || n == 0 {
 		writeError(w, http.StatusInternalServerError, "failed to update quota source")
@@ -448,7 +577,7 @@ func (h *Handler) UpdateQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reload quota source")
 		return
 	}
-	writeJSON(w, http.StatusOK, quotaSourceToResponse(updated))
+	writeJSON(w, http.StatusOK, h.quotaSourceToResponse(r.Context(), updated))
 }
 
 // DeleteQuotaSource serves DELETE /api/me/quota-sources/{id}.
@@ -507,7 +636,7 @@ func (h *Handler) RefreshQuotaSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reload quota source")
 		return
 	}
-	writeJSON(w, http.StatusOK, quotaSourceToResponse(updated))
+	writeJSON(w, http.StatusOK, h.quotaSourceToResponse(r.Context(), updated))
 }
 
 // refreshQuotaSourceRow runs one collection against the stored credential
