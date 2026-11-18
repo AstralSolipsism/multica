@@ -13,6 +13,7 @@ import { getCurrentWsId } from "@multica/core/platform";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
+import type { EntityAttachmentsStatus } from "../../rich-content/entity-attachments-context";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import {
   isAgentRuntimeBound as hasAgentRuntime,
@@ -206,6 +207,8 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
+    isError: messagesError,
+    isRefetching: messagesRefetching,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
@@ -224,6 +227,11 @@ export function useChatController(opts?: { isActive?: boolean }) {
   );
   const showSkeleton =
     !!activeSessionId && (messagesLoading || pendingTaskLoading);
+  const attachmentsStatus: EntityAttachmentsStatus = messagesError
+    ? "error"
+    : messagesRefetching
+      ? "loading"
+      : "ready";
   const messages = hideQueuedChatMessages(allMessages, pendingTask);
   const olderMessageCount = messagePages
     .slice(1)
@@ -874,6 +882,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     availability,
     // messages
     messages,
+    attachmentsStatus,
     pendingTask,
     pendingTaskLoading,
     pendingTaskId,

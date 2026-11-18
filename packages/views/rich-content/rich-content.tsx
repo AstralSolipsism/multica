@@ -75,6 +75,7 @@ import { computeClosedFences, type ClosedFence } from "./streaming-fence";
 import {
   EntityAttachmentsProvider,
   type EntityAttachment,
+  type EntityAttachmentsStatus,
 } from "./entity-attachments-context";
 import { remarkRepairCjkStrongTrailingWhitespace } from "./cjk-emphasis";
 import {
@@ -553,6 +554,8 @@ export interface RichContentProps {
    * render busts the memo.
    */
   attachments?: readonly EntityAttachment[];
+  /** Metadata lifecycle for attachment-backed blocks; inherited when omitted. */
+  attachmentsStatus?: EntityAttachmentsStatus;
   /** CSS density only — never changes the semantic DOM. */
   density?: RichContentDensity;
   /**
@@ -566,6 +569,7 @@ export interface RichContentProps {
 export const RichContent = memo(function RichContent({
   content,
   attachments,
+  attachmentsStatus,
   density = "document",
   phase = "settled",
   className,
@@ -638,7 +642,11 @@ export const RichContent = memo(function RichContent({
           className,
         )}
       >
-        <EntityAttachmentsProvider attachments={attachments} phase={phase}>
+        <EntityAttachmentsProvider
+          attachments={attachments}
+          phase={phase}
+          status={attachmentsStatus}
+        >
           {markdown}
         </EntityAttachmentsProvider>
         <LinkHoverCard {...hover} />

@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { createElement, type ReactElement, type ReactNode } from "react";
 
 const h = vi.hoisted(() => ({
   sendChatMessage: vi.fn(),
   cancelTaskById: vi.fn(),
   deleteChatSession: vi.fn(),
   listChatMessages: vi.fn(),
+  getAttachmentTextContent: vi.fn(),
   getPendingChatTask: vi.fn(),
   listChatDraftRestores: vi.fn(),
   store: {
@@ -38,6 +39,7 @@ vi.mock("@multica/core/api", async () => {
       cancelTaskById: h.cancelTaskById,
       deleteChatSession: h.deleteChatSession,
       listChatMessages: h.listChatMessages,
+      getAttachmentTextContent: h.getAttachmentTextContent,
       getPendingChatTask: h.getPendingChatTask,
       listChatDraftRestores: h.listChatDraftRestores,
     },
@@ -49,12 +51,33 @@ vi.mock("@multica/core/chat", () => ({
     getState: () => h.store,
   }),
 }));
+vi.mock("react-virtuoso", () => ({
+  Virtuoso: ({
+    data,
+    itemContent,
+    computeItemKey,
+  }: {
+    data: unknown[];
+    itemContent: (index: number, item: unknown) => ReactElement;
+    computeItemKey: (index: number, item: unknown) => string;
+  }) => (
+    <div>
+      {data.map((item, index) => (
+        <div key={computeItemKey(index, item)}>{itemContent(index, item)}</div>
+      ))}
+    </div>
+  ),
+}));
+vi.mock("../../chat/components/chat-input", () => ({ ChatInput: () => null }));
+
 // `@multica/core/realtime` is deliberately NOT mocked: removeChatMessageFromCaches
 // is the behaviour under test.
 
 import { chatKeys } from "@multica/core/chat/queries";
-import type { ChatMessage, ChatMessagesPage } from "@multica/core/types";
+import type { Attachment, ChatMessage, ChatMessagesPage } from "@multica/core/types";
 import { useBuilderSession } from "./use-builder-session";
+import { BuilderConversation } from "./builder-conversation";
+import { renderWithI18n } from "../../test/i18n";
 
 const sessionId = "session-1";
 
@@ -67,6 +90,35 @@ function harness() {
     { wrapper },
   );
   return { qc, result };
+}
+
+function BuilderAttachmentHarness() {
+  const builder = useBuilderSession({ sessionId, encodeInput: (text: string) => text });
+  return (
+    <BuilderConversation
+      sessionId={sessionId}
+      messages={builder.messages}
+      loading={builder.messagesLoading}
+      attachmentsStatus={builder.attachmentsStatus}
+      pendingTask={builder.pendingTask}
+      runtimeOnline
+      onSend={async () => true}
+      onStop={() => {}}
+      restoreDraftRequest={null}
+      onRestoreDraftApplied={() => {}}
+      error={null}
+    />
+  );
+}
+
+function renderBuilderAttachmentConversation() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = renderWithI18n(
+    <QueryClientProvider client={qc}>
+      <BuilderAttachmentHarness />
+    </QueryClientProvider>,
+  );
+  return { qc, view };
 }
 
 function pagedIds(qc: QueryClient) {
@@ -179,5 +231,95 @@ describe("useBuilderSession cache cleanup", () => {
     await waitFor(() => {
       expect(qc.getQueryState(chatKeys.messagesPage(sessionId))?.isInvalidated).toBe(true);
     });
+  });
+});
+
+describe("Builder attachment metadata handoff", () => {
+  const content = [
+    '```html src="decision.html" title="Builder attachment"',
+    "<p>Builder fallback</p>",
+    "```",
+  ].join("\n");
+  const attachment = {
+    id: "att-builder",
+    filename: "decision.html",
+    content_type: "text/html",
+    url: "/uploads/decision.html",
+    download_url: "/api/attachments/att-builder/download",
+    markdown_url: "/api/attachments/att-builder/download",
+    size_bytes: 100,
+    created_at: "2026-11-18T10:00:00Z",
+  } as Attachment;
+
+  function message(attachments?: Attachment[]): ChatMessage {
+    return {
+      id: "msg-html",
+      chat_session_id: sessionId,
+      role: "assistant",
+      task_id: null,
+      content,
+      attachments,
+      created_at: "2026-11-18T10:00:00Z",
+    };
+  }
+
+  function startRefetch(qc: QueryClient) {
+    act(() => {
+      qc.setQueryData(chatKeys.messages(sessionId), [message()]);
+    });
+    void qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+  }
+
+  async function renderPendingRefetch() {
+    h.getPendingChatTask.mockResolvedValue({});
+    const pending = Promise.withResolvers<ChatMessage[]>();
+    h.listChatMessages
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => pending.promise);
+    const { qc } = renderBuilderAttachmentConversation();
+    await waitFor(() => {
+      expect(qc.getQueryState(chatKeys.messages(sessionId))?.status).toBe("success");
+    });
+    startRefetch(qc);
+    await screen.findByText("Loading preview…");
+    expect(screen.queryByText(/Couldn't find HTML attachment/)).toBeNull();
+    return { qc, pending };
+  }
+
+  it("keeps waiting through a slow refetch and renders the attachment on success", async () => {
+    const { pending } = await renderPendingRefetch();
+    const contentNode = document.querySelector("[data-rich-content]");
+
+    vi.useFakeTimers();
+    try {
+      act(() => vi.advanceTimersByTime(2_100));
+      expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    h.getAttachmentTextContent.mockResolvedValue({
+      text: "<h1>Builder attachment loaded</h1>",
+      originalContentType: "text/html",
+    });
+    pending.resolve([message([attachment])]);
+
+    const frame = await screen.findByTitle("HTML preview");
+    expect(frame.getAttribute("srcdoc")).toContain("Builder attachment loaded");
+    expect(frame.getAttribute("srcdoc")).not.toContain("Builder fallback");
+    expect(document.querySelector("[data-rich-content]")).toBe(contentNode);
+  });
+
+  it("shows a read failure rather than missing when the refetch rejects", async () => {
+    const { pending } = await renderPendingRefetch();
+    pending.reject(new Error("offline"));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load preview");
+    expect(alert).not.toHaveTextContent("Couldn't find HTML attachment");
+    const frame = screen.getByTitle("HTML preview");
+    expect(frame.getAttribute("srcdoc")).toContain("Builder fallback");
+    expect(h.getAttachmentTextContent).not.toHaveBeenCalled();
   });
 });

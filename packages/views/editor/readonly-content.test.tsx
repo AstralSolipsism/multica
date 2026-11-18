@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { Attachment } from "@multica/core/types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -605,7 +605,7 @@ describe("ReadonlyContent HTML block rendering", () => {
     expect(container.querySelector("pre")).toBeNull();
   });
 
-  it("loads a same-message src attachment after streaming without replacing the content node", async () => {
+  it("loads a same-message src attachment after a slow metadata handoff without replacing the content node", async () => {
     const content = [
       '```html src="decision.html" title="Decision"',
       "<p>Open the attachment below.</p>",
@@ -614,9 +614,18 @@ describe("ReadonlyContent HTML block rendering", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const ui = (attachments: Attachment[] | undefined, phase: "streaming" | "settled") => (
+    const ui = (
+      attachments: Attachment[] | undefined,
+      phase: "streaming" | "settled",
+      attachmentsStatus: "loading" | "ready" | "error" = "ready",
+    ) => (
       <QueryClientProvider client={client}>
-        <RichContent content={content} attachments={attachments} phase={phase} />
+        <RichContent
+          content={content}
+          attachments={attachments}
+          attachmentsStatus={attachmentsStatus}
+          phase={phase}
+        />
       </QueryClientProvider>
     );
     const view = render(ui(undefined, "streaming"));
@@ -627,10 +636,20 @@ describe("ReadonlyContent HTML block rendering", () => {
     expect(shell).toHaveStyle({ minHeight: `${HTML_BLOCK_DEFAULT_RESERVED_PX}px` });
     expect(getAttachmentTextContentMock).not.toHaveBeenCalled();
 
-    view.rerender(ui(undefined, "settled"));
+    view.rerender(ui(undefined, "settled", "loading"));
     expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);
     expect(screen.getByText("Loading preview…")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
+
+    vi.useFakeTimers();
+    try {
+      act(() => vi.advanceTimersByTime(2_100));
+      expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);
+    } finally {
+      vi.useRealTimers();
+    }
 
     const attachment = {
       id: "att-streamed",
@@ -642,7 +661,7 @@ describe("ReadonlyContent HTML block rendering", () => {
       text: '<h1 id="from-attachment">Attachment</h1>',
       originalContentType: "text/html",
     });
-    view.rerender(ui([attachment], "settled"));
+    view.rerender(ui([attachment], "settled", "ready"));
 
     const frame = await screen.findByTitle("HTML preview");
     expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);

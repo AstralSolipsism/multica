@@ -4,23 +4,36 @@ import { createContext, use, useMemo, type ReactNode } from "react";
 import type { Attachment, SourceContextAttachment } from "@multica/core/types";
 
 export type EntityAttachment = Attachment | SourceContextAttachment;
+export type EntityAttachmentsStatus = "loading" | "ready" | "error";
 
 interface EntityAttachmentsValue {
   attachments?: readonly EntityAttachment[];
   phase: "streaming" | "settled";
+  status: EntityAttachmentsStatus;
 }
 
 const EntityAttachmentsContext = createContext<EntityAttachmentsValue>({
   phase: "settled",
+  status: "ready",
 });
 
 /** Attachments owned by the comment or Chat message containing this content. */
 export function EntityAttachmentsProvider({
   attachments,
-  phase,
+  phase = "settled",
+  status,
   children,
-}: EntityAttachmentsValue & { children: ReactNode }) {
-  const value = useMemo(() => ({ attachments, phase }), [attachments, phase]);
+}: {
+  attachments?: readonly EntityAttachment[];
+  phase?: "streaming" | "settled";
+  status?: EntityAttachmentsStatus;
+  children: ReactNode;
+}) {
+  const inherited = use(EntityAttachmentsContext);
+  const value = useMemo(
+    () => ({ attachments, phase, status: status ?? inherited.status }),
+    [attachments, phase, status, inherited.status],
+  );
   return (
     <EntityAttachmentsContext.Provider value={value}>
       {children}

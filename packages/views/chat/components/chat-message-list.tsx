@@ -30,6 +30,10 @@ import {
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { isTaskMessageTaskId, taskMessagesOptions } from "@multica/core/chat/queries";
 import { RichContent } from "../../rich-content";
+import {
+  EntityAttachmentsProvider,
+  type EntityAttachmentsStatus,
+} from "../../rich-content/entity-attachments-context";
 import { RichContentScrollRootProvider } from "../../rich-content/scroll-root";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { AttachmentList } from "../../issues/components/comment-card";
@@ -77,6 +81,8 @@ interface ChatMessageListProps {
   /** The list became visible to the reader — on reveal, and on each reactivation after it. */
   onRevealed?: () => void;
   messages: ChatMessage[];
+  /** Real messages-query lifecycle for attachment-backed rich blocks. */
+  attachmentsStatus?: EntityAttachmentsStatus;
   /**
    * Server-authoritative pending-task snapshot. `null` / undefined means
    * no in-flight task — list renders without StatusPill.
@@ -198,6 +204,7 @@ export function ChatMessageList({
   revealKey = null,
   onRevealed,
   messages,
+  attachmentsStatus = "ready",
   pendingTask,
   availability,
   firstItemIndex = 0,
@@ -391,6 +398,7 @@ export function ChatMessageList({
       // "near-viewport" against that element rather than the browser viewport —
       // otherwise a diagram only starts loading once it is already on screen.
       <RichContentScrollRootProvider scrollRoot={scrollContainerEl}>
+      <EntityAttachmentsProvider status={attachmentsStatus}>
       <Virtuoso
         ref={virtuosoRef}
         customScrollParent={scrollContainerEl}
@@ -455,6 +463,7 @@ export function ChatMessageList({
           </div>
         )}
       />
+      </EntityAttachmentsProvider>
       </RichContentScrollRootProvider>
       )}
     </div>

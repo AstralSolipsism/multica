@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { PreviewTooLargeError, PreviewUnsupportedError } from "@multica/core/api";
 import { useT } from "../i18n";
 import {
   resolveEntityHtmlAttachment,
   useEntityAttachments,
   type EntityAttachment,
+  type EntityAttachmentsStatus,
 } from "../rich-content/entity-attachments-context";
 import { LazyRichBlock } from "../rich-content/lazy-rich-block";
 import {
@@ -25,18 +26,13 @@ interface AttachmentHtmlBlockProps {
   reservedHeightPx: number;
 }
 
-// chat:done persists the message before the invalidated messages query returns
-// its attachments. Keep the skeleton through that handoff instead of flashing
-// a missing-attachment error.
-const ATTACHMENT_RESOLUTION_GRACE_MS = 2_000;
-
 export function AttachmentHtmlBlock({
   src,
   fallbackHtml,
   title,
   reservedHeightPx,
 }: AttachmentHtmlBlockProps) {
-  const { attachments, phase } = useEntityAttachments();
+  const { attachments, phase, status } = useEntityAttachments();
   const attachment = useMemo(
     () => resolveEntityHtmlAttachment(attachments, src),
     [attachments, src],
@@ -50,7 +46,7 @@ export function AttachmentHtmlBlock({
       <AttachmentHtmlContent
         src={src}
         attachment={attachment}
-        attachmentsKnown={attachments !== undefined}
+        status={status}
         phase={phase}
         fallbackHtml={fallbackHtml}
         title={title}
@@ -62,33 +58,19 @@ export function AttachmentHtmlBlock({
 function AttachmentHtmlContent({
   src,
   attachment,
-  attachmentsKnown,
+  status,
   phase,
   fallbackHtml,
   title,
 }: Omit<AttachmentHtmlBlockProps, "reservedHeightPx"> & {
   attachment?: EntityAttachment;
-  attachmentsKnown: boolean;
+  status: EntityAttachmentsStatus;
   phase: "streaming" | "settled";
 }) {
   const { t } = useT("editor");
-  const [resolution, setResolution] = useState({ src, expired: false });
-  useEffect(() => {
-    setResolution((current) =>
-      current.src === src && !current.expired ? current : { src, expired: false },
-    );
-    if (attachmentsKnown || phase === "streaming") return;
-    const timer = setTimeout(
-      () => setResolution({ src, expired: true }),
-      ATTACHMENT_RESOLUTION_GRACE_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [attachmentsKnown, phase, src]);
-
   const query = useAttachmentHtmlText(attachment?.id);
   if (!attachment) {
-    const resolutionExpired = resolution.src === src && resolution.expired;
-    if (phase === "streaming" || (!attachmentsKnown && !resolutionExpired)) {
+    if (phase === "streaming" || status === "loading") {
       return (
         <AttachmentHtmlLoading
           fallbackHtml={fallbackHtml}
@@ -105,7 +87,9 @@ function AttachmentHtmlContent({
       <AttachmentHtmlFallback
         fallbackHtml={fallbackHtml}
         title={title}
-        reason={t(($) => $.attachment.preview_attachment_missing, { filename: src })}
+        reason={status === "error"
+          ? t(($) => $.attachment.preview_failed)
+          : t(($) => $.attachment.preview_attachment_missing, { filename: src })}
       />
     );
   }

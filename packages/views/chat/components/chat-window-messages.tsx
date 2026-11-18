@@ -44,6 +44,8 @@ export function ChatWindowMessages({
   const {
     data,
     isLoading,
+    isError: messagesError,
+    isRefetching: messagesRefetching,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -84,6 +86,11 @@ export function ChatWindowMessages({
           revealKey={sessionId}
           onRevealed={onReady}
           messages={messages}
+          attachmentsStatus={messagesError
+            ? "error"
+            : messagesRefetching
+              ? "loading"
+              : "ready"}
           pendingTask={pendingTask}
           availability={availability}
           firstItemIndex={messages.length > 0

@@ -7,6 +7,7 @@ import { renderWithI18n } from "../test/i18n";
 import {
   EntityAttachmentsProvider,
   type EntityAttachment,
+  type EntityAttachmentsStatus,
 } from "../rich-content/entity-attachments-context";
 import { DYNAMIC_BLOCK_CHROME_PX, DYNAMIC_BLOCK_MIN_BODY_PX } from "./dynamic-block";
 import { AttachmentHtmlBlock } from "./attachment-html-block";
@@ -68,6 +69,7 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
 function renderBlock(options: {
   attachments?: readonly EntityAttachment[];
   phase?: "streaming" | "settled";
+  status?: EntityAttachmentsStatus;
   src?: string;
 } = {}) {
   const attachments = "attachments" in options ? options.attachments : [makeAttachment()];
@@ -76,7 +78,11 @@ function renderBlock(options: {
   });
   return renderWithI18n(
     <QueryClientProvider client={client}>
-      <EntityAttachmentsProvider attachments={attachments} phase={options.phase ?? "settled"}>
+      <EntityAttachmentsProvider
+        attachments={attachments}
+        phase={options.phase ?? "settled"}
+        status={options.status ?? "ready"}
+      >
         <AttachmentHtmlBlock
           src={options.src ?? "decision.html"}
           fallbackHtml={FALLBACK}
@@ -124,21 +130,29 @@ describe("AttachmentHtmlBlock", () => {
     expect(screen.queryByTestId("html-preview")).toBeNull();
   });
 
-  it("keeps loading through chat:done, then reports a missing attachment", () => {
+  it("keeps waiting while attachment metadata is pending beyond two seconds", () => {
     vi.useFakeTimers();
     try {
-      renderBlock({ attachments: undefined, phase: "settled" });
+      renderBlock({ attachments: undefined, status: "loading" });
+      expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(2_100));
       expect(screen.getByText("Loading preview…")).toBeInTheDocument();
       expect(screen.queryByRole("alert")).toBeNull();
-
-      act(() => vi.advanceTimersByTime(2_000));
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        'Couldn\'t find HTML attachment "decision.html"',
-      );
-      expect(screen.getByTestId("html-preview")).toHaveTextContent(FALLBACK);
+      expect(screen.queryByTestId("html-preview")).toBeNull();
+      expect(getAttachmentTextContentMock).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reports metadata read failure instead of a missing attachment", () => {
+    renderBlock({ attachments: undefined, status: "error" });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load preview");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Couldn't find HTML attachment");
+    expect(screen.getByTestId("html-preview")).toHaveTextContent(FALLBACK);
+    expect(getAttachmentTextContentMock).not.toHaveBeenCalled();
   });
 
   it("renders the fallback and explains a missing attachment", () => {
