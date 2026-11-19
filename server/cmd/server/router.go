@@ -466,7 +466,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		ServerVersion:                  normalizeServerVersion(version),
 		GitExtraCACerts:                gitca.Load(slog.Default()),
 		EnvProxyLimits: handler.EnvironmentProxyLimits{
-			MaxBodyBytes: int64(envPositiveInt("MULTICA_ENV_PROXY_MAX_BODY_BYTES", 32<<20)),
+			MaxBodyBytes: envPositiveInt64("MULTICA_ENV_PROXY_MAX_BODY_BYTES", 32<<20),
 		},
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)

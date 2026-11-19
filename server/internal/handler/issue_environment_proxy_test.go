@@ -686,6 +686,42 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 	checkURLs(original)
 }
 
+func TestEnvironmentProxyLaunchQueueFullKeepsEntitlementSlot(t *testing.T) {
+	issue, task := issueEnvironmentFixture(t)
+	reportEnvironments(t, task, webEnvironment("running"), map[string]any{
+		"key": "detected:test", "source": "detected", "name": "detected",
+		"url": "http://localhost:5173/", "port": 5173, "state": "running",
+	}).Want(http.StatusOK)
+	var runtimeID string
+	dbfx.QueryRow(t, `SELECT runtime_id FROM issue_environment WHERE task_id=$1 LIMIT 1`, task).Scan(&runtimeID)
+	enableEnvironmentTunnel(t, runtimeID)
+
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	gates, limit := entitlementtest.New(), 1
+	gates.Set(uuid.MustParse(testWorkspaceID), entitlement.GateEnvironmentProxy,
+		entitlement.Decision{Gate: entitlement.Gate{Action: entitlement.ActionEnforce, Limit: &limit}, PolicyRevision: 17})
+	h.Entitlements = gates
+	router := proxyRouter(h)
+	envs := listEnvironments(t, issue)
+	launch := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, testAppOrigin+environmentLaunchURL(id, "/", false).String(), nil)
+		req.Header.Set("Authorization", "Bearer "+proxyToken(t, testUserID))
+		return callPreview(router, req)
+	}
+	for i := 0; i < maxEnvironmentLaunches; i++ {
+		h.envProxy.state.addLaunch(uuid.NewString(), time.Now().Add(environmentLaunchTTL).Unix())
+	}
+	if rec := launch(envs["web"].ID); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("full launch queue = %d %s", rec.Code, rec.Body.String())
+	}
+	h.envProxy.state.mu.Lock()
+	h.envProxy.state.launchNonces = make(map[string]int64)
+	h.envProxy.state.mu.Unlock()
+	if rec := launch(envs["detected"].ID); rec.Code != http.StatusFound {
+		t.Fatalf("rejected launch consumed the workspace entitlement slot: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

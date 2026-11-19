@@ -96,7 +96,7 @@ multica env start web
 
 若要透過區域網路或 VPN 直接連線，請在守護程序上將 `MULTICA_ENV_PUBLIC_HOST` 設為工作區成員可存取的主機名稱或 IP。這會取代宣告式和自動偵測服務 URL 中預設的 `localhost`。啟用代理或 Cloud 停用中繼時，兩種服務都會保留直接連結。設定主機覆寫後，隱含的就緒探測會使用 `127.0.0.1`，明確設定的 `ready` 則使用指定的位址。
 
-若要中繼迴路位址，請將伺服器的 `MULTICA_ENV_PROXY_BASE_URL` 設為獨立的萬用字元來源，例如 `https://*.preview.example.com` 或 `https://env-*.preview.example.com`。將萬用字元 DNS 和 TLS 設定至 API 入口，並保留 Host 和 WebSocket Upgrade 標頭。主站來源（`MULTICA_APP_URL`，空白時使用 `MULTICA_PUBLIC_URL`）須將 `/api/*` 轉送至 API。守護程序須支援環境通道，並可向 API 建立 WebSocket 連線。代理須在單一 API 副本上執行（`MULTICA_BACKEND_REPLICAS=1`）。來源無效、與平台來源重疊或副本數大於 1 時，伺服器會記錄錯誤並停用代理。
+若要中繼迴路位址，請將伺服器的 `MULTICA_ENV_PROXY_BASE_URL` 設為獨立的萬用字元來源，例如 `https://*.preview.example.com` 或 `https://env-*.preview.example.com`。面向多租戶公網部署時，建議為該代理來源使用獨立註冊的網域（獨立 eTLD+1，例如 `https://*.multica-preview.com`），徹底消除主站父網域 Cookie 被投擲到預覽主機的風險。將萬用字元 DNS 和 TLS 設定至 API 入口，並保留 Host 和 WebSocket Upgrade 標頭。主站來源（`MULTICA_APP_URL`，空白時使用 `MULTICA_PUBLIC_URL`）須將 `/api/*` 轉送至 API。守護程序須支援環境通道，並可向 API 建立 WebSocket 連線。代理須在單一 API 副本上執行（`MULTICA_BACKEND_REPLICAS=1`）。來源無效、與平台來源重疊或副本數大於 1 時，伺服器會記錄錯誤並停用代理。
 
 簽發一次性啟動票證前，預覽連結會檢查登入狀態、工作區成員資格、私人專案存取權及目前的 Cloud 原則。瀏覽器以票證換取僅限目前預覽主機的短期 Cookie。`COOKIE_DOMAIN` 可保持未設定。Cloud 可停用中繼或限制各工作區同時使用的環境數。中繼請求主體上限預設為 32 MiB，可透過 `MULTICA_ENV_PROXY_MAX_BODY_BYTES` 調整。
 

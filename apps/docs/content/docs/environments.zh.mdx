@@ -96,7 +96,7 @@ multica env start web
 
 如需通过局域网或 VPN 直连，请在守护进程上将 `MULTICA_ENV_PUBLIC_HOST` 设为工作区成员可访问的主机名或 IP。它会替换声明式和自动检测服务 URL 中默认的 `localhost`。启用代理或 Cloud 禁用中继时，两类服务仍保留直连链接。设置主机覆盖后，隐式就绪探针访问 `127.0.0.1`，显式 `ready` 使用配置的地址。
 
-如需中继回环地址，请在服务端将 `MULTICA_ENV_PROXY_BASE_URL` 设为独立的泛子域源，例如 `https://*.preview.example.com` 或 `https://env-*.preview.example.com`。将泛域名 DNS 和 TLS 配置到 API 入口，并保留 Host 和 WebSocket Upgrade 请求头。主站（`MULTICA_APP_URL`，为空时使用 `MULTICA_PUBLIC_URL`）须将 `/api/*` 转发到 API。守护进程须支持环境隧道并能向该 API 发起 WebSocket 连接。代理须部署在单个 API 副本上（`MULTICA_BACKEND_REPLICAS=1`）。预览源无效、与平台源重叠或副本数大于 1 时，服务端记录错误并关闭代理。
+如需中继回环地址，请在服务端将 `MULTICA_ENV_PROXY_BASE_URL` 设为独立的泛子域源，例如 `https://*.preview.example.com` 或 `https://env-*.preview.example.com`。面向多租户公网部署时，建议为该代理源使用单独注册的域名（独立 eTLD+1，例如 `https://*.multica-preview.com`），以彻底消除主站父域 Cookie 被投掷到预览主机的风险。将泛域名 DNS 和 TLS 配置到 API 入口，并保留 Host 和 WebSocket Upgrade 请求头。主站（`MULTICA_APP_URL`，为空时使用 `MULTICA_PUBLIC_URL`）须将 `/api/*` 转发到 API。守护进程须支持环境隧道并能向该 API 发起 WebSocket 连接。代理须部署在单个 API 副本上（`MULTICA_BACKEND_REPLICAS=1`）。预览源无效、与平台源重叠或副本数大于 1 时，服务端记录错误并关闭代理。
 
 签发一次性启动票据前，预览链接会检查登录状态、工作区成员资格、私有项目访问权限及当前 Cloud 策略。浏览器用票据换取仅限当前预览主机的短期 Cookie。`COOKIE_DOMAIN` 可保持未设置。Cloud 可关闭中继或限制每个工作区同时活跃的环境数。中继请求体上限默认为 32 MiB，可用 `MULTICA_ENV_PROXY_MAX_BODY_BYTES` 调整。
 

@@ -433,11 +433,14 @@ func (h *Handler) LaunchEnvironmentProxy(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "failed to issue environment launch ticket")
 			return
 		}
-		if p.admitEnvironment(w, claims, false) == nil {
-			return
-		}
+		// Reserve the launch slot before taking a workspace lease: a full queue
+		// must not leave an idle lease holding an entitlement slot.
 		if !p.state.addLaunch(launch.Nonce, launch.ExpiresAt) {
 			writeError(w, http.StatusTooManyRequests, "too many pending environment launches")
+			return
+		}
+		if p.admitEnvironment(w, claims, false) == nil {
+			p.state.consumeLaunch(launch)
 			return
 		}
 		target := url.URL{Scheme: p.base.Scheme, Host: p.environmentHost(claims.EnvID), Path: environmentCallbackPath, RawQuery: url.Values{"ticket": {ticket}}.Encode()}
