@@ -246,7 +246,7 @@ L'agent regarde comment le projet démarre, écrit le fichier avec des ports tir
 ## Limites connues [#limitations]
 
 - **macOS et Linux uniquement.** Sous Windows, les serveurs ne sont pas détectés et `multica env start` indique que les environnements ne sont pas encore pris en charge.
-- **Une URL localhost ne s'ouvre que sur l'appareil qui l'exécute.** Quand l'environnement tourne sur un autre appareil, comme un serveur de build ou l'ordinateur d'un collègue, la barre latérale l'indique ; ouvrez-le sur cet appareil, ou redirigez le port vous-même.
+- **Une URL localhost ne s'ouvre que sur l'appareil qui l'exécute.** Quand l'environnement tourne sur un autre appareil, comme un serveur de build ou l'ordinateur d'un collègue, la barre latérale l'indique ; ouvrez-le sur cet appareil, configurez [l’aperçu distant ou l’accès direct](#remote-access), ou redirigez le port vous-même.
 - **Redémarrages du daemon sous systemd.** Sous Linux avec le [démarrage à l'ouverture de session](/daemon-runtimes#autostart), redémarrer ou mettre à jour le daemon arrête aussi ses environnements déclarés. Redémarrez-les ensuite.
 - **Un appareil par environnement.** Un environnement tourne là où a tourné l'exécution qui l'a démarré ; il ne suit pas la tâche.
 

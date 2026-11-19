@@ -37,6 +37,19 @@ func (s *environmentService) allowsTunnelPort(key string, port int) bool {
 	return false
 }
 
+// dialLocalEnvironment reaches a declared or detected server on this machine.
+// Node 17+ may bind localhost to the IPv6 loopback only, so a refused IPv4
+// connect falls back to the literal [::1]; neither attempt resolves DNS.
+func dialLocalEnvironment(ctx context.Context, port int) (net.Conn, error) {
+	portText := strconv.Itoa(port)
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", portText))
+	if err == nil || ctx.Err() != nil {
+		return conn, err
+	}
+	return dialer.DialContext(ctx, "tcp", net.JoinHostPort("::1", portText))
+}
+
 func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID string) {
 	if d.environments == nil || ctx.Err() != nil {
 		return
@@ -66,7 +79,7 @@ func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID 
 	if err != nil || !d.environments.allowsTunnelPort(resp.Header.Get("X-Env-Tunnel-Key"), port) {
 		return
 	}
-	local, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	local, err := dialLocalEnvironment(ctx, port)
 	if err != nil {
 		return
 	}
