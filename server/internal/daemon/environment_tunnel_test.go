@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -132,15 +134,31 @@ func TestEnvironmentTunnelIPv6LoopbackFallback(t *testing.T) {
 		conn := envtunnel.NewConn(ws)
 		defer conn.Close()
 		conn.SetDeadline(time.Now().Add(2 * time.Second))
-		_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-		if err == nil {
-			var b []byte
-			b, err = io.ReadAll(conn)
-			if strings.Contains(string(b), "ipv6 loopback response") {
-				err = nil
-			}
+		if _, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+			result <- err
+			return
 		}
-		result <- err
+		req, err := http.NewRequest(http.MethodGet, "http://localhost/", nil)
+		if err != nil {
+			result <- err
+			return
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+		if err != nil {
+			result <- err
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			result <- err
+			return
+		}
+		if resp.StatusCode != http.StatusOK || string(body) != "ipv6 loopback response" {
+			result <- fmt.Errorf("unexpected tunneled response: %d %q", resp.StatusCode, body)
+			return
+		}
+		result <- nil
 	}))
 	defer server.Close()
 
@@ -149,8 +167,56 @@ func TestEnvironmentTunnelIPv6LoopbackFallback(t *testing.T) {
 		environments: &environmentService{detected: []localenv.Environment{{Key: "detected:test", Port: port}}},
 	}
 	d.openEnvironmentTunnel(context.Background(), uuid.NewString(), streamID+"."+token)
-	if err := <-result; err != nil {
-		t.Fatalf("IPv6 loopback tunnel failed: %v", err)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("IPv6 loopback tunnel failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tunnel callback never reached the local IPv6 server")
+	}
+}
+
+func TestEnvironmentTunnelPrefersIPv4Loopback(t *testing.T) {
+	v4, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v4.Close()
+	port := v4.Addr().(*net.TCPAddr).Port
+	v6, err := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(port)))
+	if err != nil {
+		t.Skipf("dual-stack loopback unavailable: %v", err)
+	}
+	defer v6.Close()
+
+	serve := func(listener net.Listener, reply string) {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			io.WriteString(conn, reply)
+			conn.Close()
+		}
+	}
+	go serve(v4, "ipv4")
+	go serve(v6, "ipv6")
+
+	conn, err := dialLocalEnvironment(context.Background(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "ipv4" {
+		t.Fatalf("dialLocalEnvironment reached %q, want the IPv4 listener", body)
 	}
 }
 
