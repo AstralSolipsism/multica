@@ -21,7 +21,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/entitlement/entitlementtest"
 	"github.com/multica-ai/multica/server/internal/envtunnel"
@@ -646,6 +648,11 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 			t.Errorf("limit response = %d %s", rec.Code, rec.Body.String())
 		}
 	}
+	pendingLaunches := func() int {
+		h.envProxy.state.mu.Lock()
+		defer h.envProxy.state.mu.Unlock()
+		return len(h.envProxy.state.launchNonces)
+	}
 	setGate(entitlement.ActionOff, 0)
 	for _, env := range list() {
 		if !strings.HasPrefix(env.URL, "http://"+h.envProxy.environmentHost(env.ID)+"/") {
@@ -662,7 +669,11 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 	if got := launch(original["web"].ID); got.Code != http.StatusFound {
 		t.Fatalf("first active environment launch = %d %s", got.Code, got.Body.String())
 	}
+	beforeReject := pendingLaunches()
 	wantError(launch(original["detected"].ID), "environment_proxy_limit_reached", 1)
+	if after := pendingLaunches(); after != beforeReject {
+		t.Fatalf("rejected launch leaked launch tickets: %d -> %d", beforeReject, after)
+	}
 	h.revokeEnvironmentSession(original["web"].ID)
 	if got := launch(original["detected"].ID); got.Code != http.StatusFound {
 		t.Fatalf("revocation did not release the active environment: %d %s", got.Code, got.Body.String())
@@ -797,6 +808,82 @@ func TestEnvironmentProxyTunnelWithoutRuntimeConnection(t *testing.T) {
 	}
 	if p.state.activeGlobal != 0 || len(p.state.pending) != 0 || len(p.state.slots) != 0 {
 		t.Fatal("failed dial leaked tunnel state")
+	}
+}
+
+func TestEnvironmentProxyNotifyTunnelProductionPath(t *testing.T) {
+	hub := daemonws.NewHub()
+	h := New(testHandler.Queries, testPool, testHandler.Hub, testHandler.Bus, testHandler.EmailService,
+		nil, nil, analytics.NoopClient{},
+		Config{AppURL: testAppOrigin, PublicURL: "http://api.example.net", EnvProxyBaseURL: testPreviewBase}, hub)
+	t.Cleanup(h.envProxy.transport.CloseIdleConnections)
+	notifier := &pendingWorkRecorder{}
+	h.DaemonPendingWork = notifier
+
+	target := environmentSessionClaims{
+		EnvID:       uuid.NewString(),
+		WorkspaceID: uuid.NewString(),
+		RuntimeID:   uuid.NewString(),
+		Port:        41000,
+		IssuedAt:    time.Now().UnixNano(),
+		ExpiresAt:   time.Now().Add(time.Minute).Unix(),
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://"+h.envProxy.environmentHost(target.EnvID)+"/", nil)
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	h.envProxy.serve(rec, req, target)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "environment tunnel unavailable") {
+		t.Fatalf("empty hub = %d %s", rec.Code, rec.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("empty hub waited %s", elapsed)
+	}
+	if got := notifier.count(); got != 0 {
+		t.Fatalf("empty hub used the generic notifier %d times", got)
+	}
+
+	runtimeID := uuid.NewString()
+	identity := daemonws.ClientIdentity{
+		UserID: testUserID, WorkspaceID: testWorkspaceID, WorkspaceIDs: []string{testWorkspaceID},
+		RuntimeIDs: []string{runtimeID},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.HandleWebSocket(w, r, identity)
+	}))
+	defer server.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.RuntimeConnectionCount(runtimeID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("runtime websocket was not registered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	const kind = "environment_tunnel:test-stream.test-secret"
+	if !h.envProxy.notifyTunnel(runtimeID, kind) {
+		t.Fatal("connected runtime was reported unreachable")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var msg protocol.Message
+	if err := conn.ReadJSON(&msg); err != nil {
+		t.Fatal(err)
+	}
+	var payload protocol.PendingWorkPayload
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != protocol.EventDaemonPendingWork || payload.RuntimeID != runtimeID || payload.Kind != kind {
+		t.Fatalf("unexpected notify frame: %s %+v", msg.Type, payload)
+	}
+	if got := notifier.count(); got != 0 {
+		t.Fatalf("connected runtime used the generic notifier %d times", got)
 	}
 }
 

@@ -372,9 +372,10 @@ Implicit readiness probes use `127.0.0.1` with a host override. Explicit
 
 To relay loopback URLs, set `MULTICA_ENV_PROXY_BASE_URL` on a single API
 replica to a dedicated wildcard origin such as `https://*.preview.example.com`.
-For multi-tenant public deployments, use a separately registered domain (its own
-eTLD+1, for example `https://*.multica-preview.com`) so parent-domain cookies
-from the main site cannot be tossed onto preview hosts.
+For multi-tenant public deployments, give the preview service a registered
+domain separate from the main site (its own eTLD+1, for example
+`https://*.multica-preview.com`), so preview pages cannot set cookies that are
+sent with main-site requests.
 The signed-in browser exchanges a one-time ticket for a host-only preview
 cookie. `COOKIE_DOMAIN` can stay unset. The daemon must support environment
 tunnels. Cloud relay limits leave reported direct URLs available. See
