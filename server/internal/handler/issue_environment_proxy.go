@@ -53,6 +53,9 @@ type environmentProxy struct {
 	proxy      *httputil.ReverseProxy
 	limits     EnvironmentProxyLimits
 	state      environmentProxyState
+	// notifyTunnel wakes a daemon over its runtime socket. The rendezvous
+	// secret must stay on that socket, never on the shared event bus.
+	notifyTunnel func(runtimeID, kind string) bool
 }
 
 type environmentSessionClaims struct {
@@ -116,7 +119,12 @@ func newEnvironmentProxy(cfg Config) *environmentProxy {
 	if base.Port() == "80" && base.Scheme == "http" || base.Port() == "443" && base.Scheme == "https" {
 		base.Host = base.Hostname()
 	}
-	p := &environmentProxy{base: base, authOrigin: origin, suffix: suffix, limits: cfg.EnvProxyLimits.withDefaults()}
+	p := &environmentProxy{
+		base:       base,
+		authOrigin: origin,
+		suffix:     suffix,
+		limits:     cfg.EnvProxyLimits.withDefaults(),
+	}
 	candidates := append([]string{cfg.PublicURL, cfg.AppURL, cfg.PluginSurfaceOrigin}, cfg.AttachmentFrameAncestors...)
 	for _, candidate := range candidates {
 		if app, err := parsePluginSurfaceOrigin(candidate); err == nil {
@@ -132,10 +140,7 @@ func newEnvironmentProxy(cfg Config) *environmentProxy {
 		}
 	}
 
-	key := cfg.EnvProxyKey
-	if len(key) == 0 {
-		key = auth.JWTSecret()
-	}
+	key := auth.JWTSecret()
 	p.launchBox = environmentProxyBox(key, "multica/env-proxy-launch/v1")
 	p.sessionBox = environmentProxyBox(key, "multica/env-proxy-session/v1")
 	p.state.init()
@@ -279,7 +284,10 @@ func writeEnvironmentProxyLimit(w http.ResponseWriter, limit int, revision int64
 		code, message = "environment_proxy_disabled", "remote environment preview is not available on the current plan"
 	}
 	writeJSON(w, http.StatusPaymentRequired, map[string]any{
-		"code": code, "error": message, "limit": limit, "policy_revision": revision,
+		"code":            code,
+		"error":           message,
+		"limit":           limit,
+		"policy_revision": revision,
 	})
 }
 
@@ -324,9 +332,14 @@ func (h *Handler) authorizeEnvironmentProxy(w http.ResponseWriter, r *http.Reque
 	}
 
 	claims = environmentSessionClaims{
-		UserID: userID, WorkspaceID: wsID, EnvID: id, RuntimeID: uuidToString(row.RuntimeID),
-		LocalKey: row.LocalKey, Port: row.Port.Int32, IssuedAt: issuedAt.UnixNano(),
-		ExpiresAt: issuedAt.Add(environmentSessionTTL).Unix(),
+		UserID:      userID,
+		WorkspaceID: wsID,
+		EnvID:       id,
+		RuntimeID:   uuidToString(row.RuntimeID),
+		LocalKey:    row.LocalKey,
+		Port:        row.Port.Int32,
+		IssuedAt:    issuedAt.UnixNano(),
+		ExpiresAt:   issuedAt.Add(environmentSessionTTL).Unix(),
 	}
 	if decision := h.environmentProxyGate(ctx, row.WorkspaceID); decision.Gate.Action == entitlement.ActionEnforce && decision.Gate.Limit != nil {
 		claims.Limit, claims.Revision = decision.Gate.Limit, decision.PolicyRevision
@@ -426,21 +439,33 @@ func (h *Handler) LaunchEnvironmentProxy(w http.ResponseWriter, r *http.Request)
 		if !ok {
 			return
 		}
-		launch := environmentLaunchClaims{environmentSessionClaims: claims, Nonce: uuid.NewString(), Next: next}
+		launch := environmentLaunchClaims{
+			environmentSessionClaims: claims,
+			Nonce:                    uuid.NewString(),
+			Next:                     next,
+		}
 		launch.ExpiresAt = time.Now().Add(environmentLaunchTTL).Unix()
 		ticket, err := sealEnvironmentClaims(p.launchBox, launch)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue environment launch ticket")
 			return
 		}
-		if p.admitEnvironment(w, claims, false) == nil {
-			return
-		}
+		// Reserve the launch slot before taking a workspace lease: a full queue
+		// must not leave an idle lease holding an entitlement slot.
 		if !p.state.addLaunch(launch.Nonce, launch.ExpiresAt) {
 			writeError(w, http.StatusTooManyRequests, "too many pending environment launches")
 			return
 		}
-		target := url.URL{Scheme: p.base.Scheme, Host: p.environmentHost(claims.EnvID), Path: environmentCallbackPath, RawQuery: url.Values{"ticket": {ticket}}.Encode()}
+		if p.admitEnvironment(w, claims, false) == nil {
+			p.state.consumeLaunch(launch)
+			return
+		}
+		target := url.URL{
+			Scheme:   p.base.Scheme,
+			Host:     p.environmentHost(claims.EnvID),
+			Path:     environmentCallbackPath,
+			RawQuery: url.Values{"ticket": {ticket}}.Encode(),
+		}
 		http.Redirect(w, r, target.String(), http.StatusFound)
 	})).ServeHTTP(authWriter, r)
 }
@@ -461,8 +486,13 @@ func (p *environmentProxy) completeLaunch(w http.ResponseWriter, r *http.Request
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: environmentPreviewCookie, Value: token, Path: "/", MaxAge: int(environmentSessionTTL.Seconds()),
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: p.base.Scheme == "https",
+		Name:     environmentPreviewCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(environmentSessionTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   p.base.Scheme == "https",
 	})
 	http.Redirect(w, r, launch.Next, http.StatusFound)
 }
@@ -526,7 +556,22 @@ func stripEnvironmentCredentials(r *http.Request) {
 	if len(cookies) != 0 {
 		r.Header.Set("Cookie", strings.Join(cookies, "; "))
 	}
-	for _, name := range []string{"Authorization", "X-User-ID", "X-User-Email", "X-Actor-Source", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Workspace-ID", "X-Workspace-Slug", "X-Client-Capabilities", "X-Client-Type", "X-Client-Version", "X-Env-Tunnel-Key", "X-Env-Tunnel-Port"} {
+	for _, name := range []string{
+		"Authorization",
+		"X-User-ID",
+		"X-User-Email",
+		"X-Actor-Source",
+		"X-Agent-ID",
+		"X-Task-ID",
+		"X-CSRF-Token",
+		"X-Workspace-ID",
+		"X-Workspace-Slug",
+		"X-Client-Capabilities",
+		"X-Client-Type",
+		"X-Client-Version",
+		"X-Env-Tunnel-Key",
+		"X-Env-Tunnel-Port",
+	} {
 		r.Header.Del(name)
 	}
 	for name := range r.Header {
@@ -548,12 +593,17 @@ func isEnvironmentPlatformCookie(cookie string) bool {
 
 func (p *environmentProxy) initProxy(dial func(context.Context, string, string) (net.Conn, error)) {
 	p.transport = &http.Transport{
-		DialContext: dial, MaxConnsPerHost: 6, MaxIdleConnsPerHost: 4, MaxIdleConns: 64,
-		IdleConnTimeout: time.Minute, ResponseHeaderTimeout: time.Minute,
+		DialContext:           dial,
+		MaxConnsPerHost:       6,
+		MaxIdleConnsPerHost:   4,
+		MaxIdleConns:          64,
+		IdleConnTimeout:       time.Minute,
+		ResponseHeaderTimeout: time.Minute,
 		ExpectContinueTimeout: time.Second,
 	}
 	p.proxy = &httputil.ReverseProxy{
-		Transport: p.transport, FlushInterval: -1,
+		Transport:     p.transport,
+		FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			target := pr.In.Context().Value(environmentTunnelContextKey{}).(environmentSessionClaims)
 			port := strconv.Itoa(int(target.Port))

@@ -21,7 +21,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/entitlement/entitlementtest"
 	"github.com/multica-ai/multica/server/internal/envtunnel"
@@ -225,12 +227,6 @@ func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
 	}
 }
 
-type environmentNotifierFunc func(string, string)
-
-func (f environmentNotifierFunc) NotifyPendingWork(runtimeID, kind string) {
-	f(runtimeID, kind)
-}
-
 type previewQueryCounter struct {
 	db.DBTX
 	count atomic.Int64
@@ -293,7 +289,7 @@ func startPreviewTunnelTest(t *testing.T, h *Handler, router http.Handler, upstr
 	var opened atomic.Int32
 	var peers sync.WaitGroup
 	ctx, cancel := context.WithCancel(t.Context())
-	h.DaemonPendingWork = environmentNotifierFunc(func(runtime, kind string) {
+	h.envProxy.notifyTunnel = func(runtime, kind string) bool {
 		peers.Go(func() {
 			payload := strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix)
 			stream, secret, _ := strings.Cut(payload, ".")
@@ -333,7 +329,8 @@ func startPreviewTunnelTest(t *testing.T, h *Handler, router http.Handler, upstr
 			peer.Close()
 			<-done
 		})
-	})
+		return true
+	}
 	t.Cleanup(func() {
 		server.Close()
 		cancel()
@@ -651,6 +648,11 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 			t.Errorf("limit response = %d %s", rec.Code, rec.Body.String())
 		}
 	}
+	pendingLaunches := func() int {
+		h.envProxy.state.mu.Lock()
+		defer h.envProxy.state.mu.Unlock()
+		return len(h.envProxy.state.launchNonces)
+	}
 	setGate(entitlement.ActionOff, 0)
 	for _, env := range list() {
 		if !strings.HasPrefix(env.URL, "http://"+h.envProxy.environmentHost(env.ID)+"/") {
@@ -667,7 +669,11 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 	if got := launch(original["web"].ID); got.Code != http.StatusFound {
 		t.Fatalf("first active environment launch = %d %s", got.Code, got.Body.String())
 	}
+	beforeReject := pendingLaunches()
 	wantError(launch(original["detected"].ID), "environment_proxy_limit_reached", 1)
+	if after := pendingLaunches(); after != beforeReject {
+		t.Fatalf("rejected launch leaked launch tickets: %d -> %d", beforeReject, after)
+	}
 	h.revokeEnvironmentSession(original["web"].ID)
 	if got := launch(original["detected"].ID); got.Code != http.StatusFound {
 		t.Fatalf("revocation did not release the active environment: %d %s", got.Code, got.Body.String())
@@ -684,6 +690,42 @@ func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 	}
 	testHandler.envProxy = nil
 	checkURLs(original)
+}
+
+func TestEnvironmentProxyLaunchQueueFullKeepsEntitlementSlot(t *testing.T) {
+	issue, task := issueEnvironmentFixture(t)
+	reportEnvironments(t, task, webEnvironment("running"), map[string]any{
+		"key": "detected:test", "source": "detected", "name": "detected",
+		"url": "http://localhost:5173/", "port": 5173, "state": "running",
+	}).Want(http.StatusOK)
+	var runtimeID string
+	dbfx.QueryRow(t, `SELECT runtime_id FROM issue_environment WHERE task_id=$1 LIMIT 1`, task).Scan(&runtimeID)
+	enableEnvironmentTunnel(t, runtimeID)
+
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	gates, limit := entitlementtest.New(), 1
+	gates.Set(uuid.MustParse(testWorkspaceID), entitlement.GateEnvironmentProxy,
+		entitlement.Decision{Gate: entitlement.Gate{Action: entitlement.ActionEnforce, Limit: &limit}, PolicyRevision: 17})
+	h.Entitlements = gates
+	router := proxyRouter(h)
+	envs := listEnvironments(t, issue)
+	launch := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, testAppOrigin+environmentLaunchURL(id, "/", false).String(), nil)
+		req.Header.Set("Authorization", "Bearer "+proxyToken(t, testUserID))
+		return callPreview(router, req)
+	}
+	for i := 0; i < maxEnvironmentLaunches; i++ {
+		h.envProxy.state.addLaunch(uuid.NewString(), time.Now().Add(environmentLaunchTTL).Unix())
+	}
+	if rec := launch(envs["web"].ID); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("full launch queue = %d %s", rec.Code, rec.Body.String())
+	}
+	h.envProxy.state.mu.Lock()
+	h.envProxy.state.launchNonces = make(map[string]int64)
+	h.envProxy.state.mu.Unlock()
+	if rec := launch(envs["detected"].ID); rec.Code != http.StatusFound {
+		t.Fatalf("rejected launch consumed the workspace entitlement slot: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
@@ -703,7 +745,10 @@ func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
 				IssuedAt: time.Now().UnixNano(), ExpiresAt: time.Now().Add(time.Minute).Unix(),
 			}
 			entered := make(chan struct{}, 1)
-			h.DaemonPendingWork = environmentNotifierFunc(func(string, string) { entered <- struct{}{} })
+			h.envProxy.notifyTunnel = func(string, string) bool {
+				entered <- struct{}{}
+				return true
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
@@ -736,6 +781,109 @@ func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
 				t.Fatal("cancel left tunnel broker state behind")
 			}
 		})
+	}
+}
+
+func TestEnvironmentProxyTunnelWithoutRuntimeConnection(t *testing.T) {
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	p := h.envProxy
+	p.notifyTunnel = func(string, string) bool { return false }
+	target := environmentSessionClaims{
+		EnvID:       uuid.NewString(),
+		WorkspaceID: uuid.NewString(),
+		RuntimeID:   uuid.NewString(),
+		Port:        41000,
+		IssuedAt:    time.Now().UnixNano(),
+		ExpiresAt:   time.Now().Add(time.Minute).Unix(),
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://"+p.environmentHost(target.EnvID)+"/", nil)
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	p.serve(rec, req, target)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "environment tunnel unavailable") {
+		t.Fatalf("missing runtime connection = %d %s", rec.Code, rec.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("missing runtime connection waited %s", elapsed)
+	}
+	if p.state.activeGlobal != 0 || len(p.state.pending) != 0 || len(p.state.slots) != 0 {
+		t.Fatal("failed dial leaked tunnel state")
+	}
+}
+
+func TestEnvironmentProxyNotifyTunnelProductionPath(t *testing.T) {
+	hub := daemonws.NewHub()
+	h := New(testHandler.Queries, testPool, testHandler.Hub, testHandler.Bus, testHandler.EmailService,
+		nil, nil, analytics.NoopClient{},
+		Config{AppURL: testAppOrigin, PublicURL: "http://api.example.net", EnvProxyBaseURL: testPreviewBase}, hub)
+	t.Cleanup(h.envProxy.transport.CloseIdleConnections)
+	notifier := &pendingWorkRecorder{}
+	h.DaemonPendingWork = notifier
+
+	target := environmentSessionClaims{
+		EnvID:       uuid.NewString(),
+		WorkspaceID: uuid.NewString(),
+		RuntimeID:   uuid.NewString(),
+		Port:        41000,
+		IssuedAt:    time.Now().UnixNano(),
+		ExpiresAt:   time.Now().Add(time.Minute).Unix(),
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://"+h.envProxy.environmentHost(target.EnvID)+"/", nil)
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	h.envProxy.serve(rec, req, target)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "environment tunnel unavailable") {
+		t.Fatalf("empty hub = %d %s", rec.Code, rec.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("empty hub waited %s", elapsed)
+	}
+	if got := notifier.count(); got != 0 {
+		t.Fatalf("empty hub used the generic notifier %d times", got)
+	}
+
+	runtimeID := uuid.NewString()
+	identity := daemonws.ClientIdentity{
+		UserID: testUserID, WorkspaceID: testWorkspaceID, WorkspaceIDs: []string{testWorkspaceID},
+		RuntimeIDs: []string{runtimeID},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.HandleWebSocket(w, r, identity)
+	}))
+	defer server.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.RuntimeConnectionCount(runtimeID) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("runtime websocket was not registered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	const kind = "environment_tunnel:test-stream.test-secret"
+	if !h.envProxy.notifyTunnel(runtimeID, kind) {
+		t.Fatal("connected runtime was reported unreachable")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var msg protocol.Message
+	if err := conn.ReadJSON(&msg); err != nil {
+		t.Fatal(err)
+	}
+	var payload protocol.PendingWorkPayload
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != protocol.EventDaemonPendingWork || payload.RuntimeID != runtimeID || payload.Kind != kind {
+		t.Fatalf("unexpected notify frame: %s %+v", msg.Type, payload)
+	}
+	if got := notifier.count(); got != 0 {
+		t.Fatalf("connected runtime used the generic notifier %d times", got)
 	}
 }
 

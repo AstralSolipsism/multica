@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,12 +52,8 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 			_, portText, _ := net.SplitHostPort(strings.TrimPrefix(local.URL, "http://"))
 			port, _ := strconv.Atoi(portText)
 			result := make(chan error, 1)
-			streamID, token := uuid.NewString(), "test-token"
-			pending := streamID
-			if allowed {
-				token = uuid.NewString()
-				pending += "." + token
-			}
+			streamID, token := uuid.NewString(), uuid.NewString()
+			pending := streamID + "." + token
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer "+token || !strings.HasSuffix(r.URL.Path, "/"+streamID) {
 					result <- errors.New("invalid environment callback authentication")
@@ -96,6 +93,33 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 			}
 			if !allowed && err == nil {
 				t.Fatal("unregistered port was forwarded")
+			}
+		})
+	}
+}
+
+func TestEnvironmentTunnelRejectsIncompleteStreamID(t *testing.T) {
+	var dials atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dials.Add(1)
+		http.Error(w, "unexpected dial", http.StatusTeapot)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name     string
+		streamID string
+	}{
+		{"missing separator", uuid.NewString()},
+		{"empty secret", uuid.NewString() + "."},
+		{"invalid id", "not-a-uuid." + uuid.NewString()},
+		{"invalid secret", uuid.NewString() + ".not-a-uuid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dials.Store(0)
+			d := &Daemon{client: NewClient(server.URL), environments: &environmentService{}}
+			d.openEnvironmentTunnel(context.Background(), uuid.NewString(), tc.streamID)
+			if got := dials.Load(); got != 0 {
+				t.Fatalf("incomplete stream id dialed %d times", got)
 			}
 		})
 	}

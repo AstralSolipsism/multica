@@ -209,7 +209,9 @@ func (p *environmentProxy) reserveEnvironment(target environmentSessionClaims, r
 		lease = &environmentLease{
 			runtimeID: target.RuntimeID,
 			limiter: environmentBandwidth{
-				rate: float64(p.limits.BytesPerSecond), tokens: environmentTunnelChunkSize, last: now,
+				rate:   float64(p.limits.BytesPerSecond),
+				tokens: environmentTunnelChunkSize,
+				last:   now,
 			},
 		}
 		leases[target.EnvID] = lease
@@ -347,7 +349,11 @@ func (h *Handler) dialEnvironmentTunnel(ctx context.Context, _, _ string) (net.C
 
 	streamID := uuid.NewString()
 	pending := &pendingEnvironmentTunnel{
-		target: target, secret: uuid.NewString(), ctx: ctx, cancel: cancel, conn: make(chan net.Conn),
+		target: target,
+		secret: uuid.NewString(),
+		ctx:    ctx,
+		cancel: cancel,
+		conn:   make(chan net.Conn),
 	}
 	s.mu.Lock()
 	if !s.validLocked(target, time.Now()) {
@@ -366,10 +372,8 @@ func (h *Handler) dialEnvironmentTunnel(ctx context.Context, _, _ string) (net.C
 	// registering its authenticated WebSocket. Keep the rendezvous secret
 	// on that connection and out of relay messages and HTTP URL logs.
 	kind := protocol.PendingWorkKindEnvironmentTunnelPrefix + streamID + "." + pending.secret
-	if h.DaemonHub != nil {
-		h.DaemonHub.NotifyPendingWork(target.RuntimeID, kind)
-	} else {
-		h.requestDaemonPendingWork(target.RuntimeID, kind)
+	if p.notifyTunnel == nil || !p.notifyTunnel(target.RuntimeID, kind) {
+		return nil, context.DeadlineExceeded
 	}
 	select {
 	case conn := <-pending.conn:
@@ -382,7 +386,12 @@ func (h *Handler) dialEnvironmentTunnel(ctx context.Context, _, _ string) (net.C
 		}
 		lifetime, cancelLifetime := context.WithCancel(context.Background())
 		tunnel := &trackedEnvironmentTunnel{
-			Conn: conn, state: s, target: target, limiter: &lease.limiter, ctx: lifetime, cancel: cancelLifetime,
+			Conn:    conn,
+			state:   s,
+			target:  target,
+			limiter: &lease.limiter,
+			ctx:     lifetime,
+			cancel:  cancelLifetime,
 		}
 		tunnel.timer = time.AfterFunc(p.limits.TunnelLifetime, func() { tunnel.Close() })
 		s.active[tunnel] = target
@@ -421,9 +430,12 @@ func (h *Handler) ConnectEnvironmentTunnel(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "environment tunnel not found")
 		return
 	}
-	upgrader := websocket.Upgrader{HandshakeTimeout: tunnelDialTimeout, Error: func(w http.ResponseWriter, _ *http.Request, status int, _ error) {
-		writeError(w, status, "environment tunnel upgrade failed")
-	}}
+	upgrader := websocket.Upgrader{
+		HandshakeTimeout: tunnelDialTimeout,
+		Error: func(w http.ResponseWriter, _ *http.Request, status int, _ error) {
+			writeError(w, status, "environment tunnel upgrade failed")
+		},
+	}
 	ws, err := upgrader.Upgrade(w, r, http.Header{
 		"X-Env-Tunnel-Key":  {pending.target.LocalKey},
 		"X-Env-Tunnel-Port": {strconv.Itoa(int(pending.target.Port))},

@@ -41,22 +41,20 @@ func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID 
 	if d.environments == nil || ctx.Err() != nil {
 		return
 	}
-	id, secret, hasSecret := strings.Cut(streamID, ".")
+	id, secret, ok := strings.Cut(streamID, ".")
+	if !ok {
+		return
+	}
 	if _, err := uuid.Parse(id); err != nil {
 		return
 	}
-	// Older servers use the regular daemon credential on the same route.
-	token := d.client.Token()
-	if hasSecret {
-		if _, err := uuid.Parse(secret); err != nil {
-			return
-		}
-		token = secret
+	if _, err := uuid.Parse(secret); err != nil {
+		return
 	}
 	endpoint := strings.TrimRight(d.client.baseURL, "/") + "/api/daemon/runtimes/" + runtimeID + "/environment-tunnel/" + id
 	endpoint = strings.Replace(strings.Replace(endpoint, "https://", "wss://", 1), "http://", "ws://", 1)
 	dialer := websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 10 * time.Second}
-	ws, resp, err := dialer.DialContext(ctx, endpoint, http.Header{"Authorization": {"Bearer " + token}})
+	ws, resp, err := dialer.DialContext(ctx, endpoint, http.Header{"Authorization": {"Bearer " + secret}})
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()
