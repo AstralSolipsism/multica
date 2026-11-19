@@ -195,6 +195,10 @@ type QuotaSourceBalance struct {
 	GrantedBalance *float64 `json:"granted_balance,omitempty"`
 	// ToppedUpBalance is the paid/topped-up portion, when disclosed.
 	ToppedUpBalance *float64 `json:"topped_up_balance,omitempty"`
+	// Spend30d is the pay-as-you-go spend over the provider's last 30 days,
+	// when disclosed. Optional: a missing figure never fails the balance
+	// collection.
+	Spend30d *float64 `json:"spend_30d,omitempty"`
 }
 
 // QuotaSourceProbe is a free-tier health probe result (jev_free, and the
