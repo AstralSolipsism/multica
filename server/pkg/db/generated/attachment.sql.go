@@ -1329,6 +1329,80 @@ func (q *Queries) ListSourceContextIssueAttachments(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const lockAttachmentAccessMembers = `-- name: LockAttachmentAccessMembers :many
+SELECT user_id FROM member
+WHERE workspace_id = $1
+  AND user_id = ANY($2::uuid[])
+ORDER BY user_id
+FOR SHARE
+`
+
+type LockAttachmentAccessMembersParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	UserIds     []pgtype.UUID `json:"user_ids"`
+}
+
+// Share-locks every workspace member row the upload depends on until the
+// attachment commits. Member removal takes the same row FOR UPDATE, so it
+// either lands before this read (the row disappears and the upload is
+// refused) or waits until the attachment is durable.
+func (q *Queries) LockAttachmentAccessMembers(ctx context.Context, arg LockAttachmentAccessMembersParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockAttachmentAccessMembers, arg.WorkspaceID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var user_id pgtype.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAttachmentAccessProjectMembers = `-- name: LockAttachmentAccessProjectMembers :many
+SELECT user_id FROM project_member
+WHERE workspace_id = $1
+  AND project_id = $2
+  AND user_id = ANY($3::uuid[])
+ORDER BY user_id
+FOR SHARE
+`
+
+type LockAttachmentAccessProjectMembersParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	ProjectID   pgtype.UUID   `json:"project_id"`
+	UserIds     []pgtype.UUID `json:"user_ids"`
+}
+
+// Same boundary for private-project membership: an explicit removal waits, or
+// lands first and the visibility re-read sees the project as hidden.
+func (q *Queries) LockAttachmentAccessProjectMembers(ctx context.Context, arg LockAttachmentAccessProjectMembersParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockAttachmentAccessProjectMembers, arg.WorkspaceID, arg.ProjectID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var user_id pgtype.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAttachmentRow = `-- name: LockAttachmentRow :one
 SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, width, height, baseline_page_id, baseline_revision_id FROM attachment
 WHERE id = $1 AND workspace_id = $2

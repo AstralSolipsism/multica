@@ -5,6 +5,27 @@
 -- finds the page gone.
 SELECT id FROM workspace WHERE id = $1 FOR SHARE;
 
+-- name: LockAttachmentAccessMembers :many
+-- Share-locks every workspace member row the upload depends on until the
+-- attachment commits. Member removal takes the same row FOR UPDATE, so it
+-- either lands before this read (the row disappears and the upload is
+-- refused) or waits until the attachment is durable.
+SELECT user_id FROM member
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND user_id = ANY(sqlc.arg(user_ids)::uuid[])
+ORDER BY user_id
+FOR SHARE;
+
+-- name: LockAttachmentAccessProjectMembers :many
+-- Same boundary for private-project membership: an explicit removal waits, or
+-- lands first and the visibility re-read sees the project as hidden.
+SELECT user_id FROM project_member
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND project_id = sqlc.arg(project_id)
+  AND user_id = ANY(sqlc.arg(user_ids)::uuid[])
+ORDER BY user_id
+FOR SHARE;
+
 -- name: CreateAttachment :one
 WITH inserted AS (
   INSERT INTO attachment (

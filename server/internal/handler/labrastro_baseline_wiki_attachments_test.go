@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -38,6 +39,14 @@ func uploadBaselineAttachment(t *testing.T, filename string, data []byte, fields
 
 func uploadBaselineAttachmentAs(t *testing.T, userID, filename string, data []byte, fields map[string]string) *testutil.Response {
 	t.Helper()
+	return uploadBaselineAttachmentWithHeaders(t, filename, data, fields, map[string]string{
+		"X-User-ID":      userID,
+		"X-Workspace-ID": testWorkspaceID,
+	})
+}
+
+func uploadBaselineAttachmentWithHeaders(t *testing.T, filename string, data []byte, fields, headers map[string]string) *testutil.Response {
+	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", filename)
@@ -57,8 +66,9 @@ func uploadBaselineAttachmentAs(t *testing.T, userID, filename string, data []by
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", userID)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	return testutil.Call(t, testHandler.UploadFile, req)
 }
 
@@ -466,16 +476,38 @@ func TestBaselineAttachmentUploadRejectsRevokedMembership(t *testing.T) {
 	testHandler.Storage, testHandler.CFSigner = store, nil
 	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
 
-	res := holdProjectLockAndRevoke(t, f.project, func() *testutil.Response {
-		return uploadBaselineAttachmentAs(t, uploader, "architecture.html", []byte("<html></html>"), map[string]string{
+	// The member delete holds the row lock and is uncommitted while the bytes
+	// upload; the upload's shared member lock then waits, and the committed
+	// delete makes the revalidation see no membership.
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), "DELETE FROM member WHERE workspace_id = $1 AND user_id = $2", testWorkspaceID, uploader); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan *testutil.Response, 1)
+	go func() {
+		done <- uploadBaselineAttachmentAs(t, uploader, "architecture.html", []byte("<html></html>"), map[string]string{
 			"baseline_page_id": page.Page.ID,
 		})
-	}, func(ctx context.Context, tx pgx.Tx) {
-		if _, err := tx.Exec(ctx, "DELETE FROM member WHERE workspace_id = $1 AND user_id = $2", testWorkspaceID, uploader); err != nil {
-			t.Fatal(err)
-		}
-	})
-	res.Want(http.StatusForbidden)
+	}()
+	select {
+	case res := <-done:
+		t.Fatalf("upload did not wait for the member lock: %+v", res)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case res := <-done:
+		res.Want(http.StatusForbidden)
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload did not finish after the member deletion committed")
+	}
 	var count int
 	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -510,5 +542,143 @@ func TestBaselineAttachmentUploadRejectsArchivedPageDuringUpload(t *testing.T) {
 	}
 	if count != 0 || len(store.files) != 0 || store.deleted != 1 {
 		t.Fatalf("archived page upload left rows=%d files=%v deleted=%d", count, store.files, store.deleted)
+	}
+}
+
+func TestBaselineAttachmentUploadRejectsAgentOwnerWithoutAccess(t *testing.T) {
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	agent := dbfx.Agent(t, "baseline-agent-"+uuid.NewString(), testRuntimeID, testutil.Cols{"owner_id": f.memberUser})
+	task := dbfx.Task(t, agent, testutil.Cols{
+		"runtime_id":          testRuntimeID,
+		"originator_user_id":  f.adminUser,
+		"accountable_user_id": f.adminUser,
+		"originator_source":   "member",
+	})
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "UPDATE project SET visibility = 'public' WHERE id = $1", f.project)
+	})
+
+	// The project is public while the bytes upload; the originator keeps
+	// access and the agent owner is excluded only afterwards.
+	res := holdProjectLockAndRevoke(t, f.project, func() *testutil.Response {
+		return uploadBaselineAttachmentWithHeaders(t, "architecture.html", []byte("<html></html>"), map[string]string{
+			"baseline_page_id": page.Page.ID,
+		}, map[string]string{
+			"X-User-ID":      f.adminUser,
+			"X-Workspace-ID": testWorkspaceID,
+			"X-Actor-Source": "task_token",
+			"X-Agent-ID":     agent,
+			"X-Task-ID":      task,
+		})
+	}, func(ctx context.Context, tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, "UPDATE project SET visibility = 'private' WHERE id = $1", f.project); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO project_member (workspace_id, project_id, user_id, added_by)
+			VALUES ($1, $2, $3, $3)
+		`, testWorkspaceID, f.project, f.adminUser); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	res.Want(http.StatusForbidden)
+	var count int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(store.files) != 0 || store.deleted != 1 {
+		t.Fatalf("excluded agent owner left rows=%d files=%v deleted=%d", count, store.files, store.deleted)
+	}
+}
+
+func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	uploader := createPlainMember(t, uuid.NewString()+"-lock-uploader@multica.test")
+	member, err := testHandler.Queries.GetMemberByUserAndWorkspace(context.Background(), db.GetMemberByUserAndWorkspaceParams{
+		UserID: parseUUID(uploader), WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM attachment WHERE baseline_page_id = $1", page.Page.ID)
+	})
+
+	// Hold the project row so the upload pauses AFTER taking the shared member
+	// lock. Member deletion then has to wait for the upload's commit.
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	qtx := testHandler.Queries.WithTx(tx)
+	if _, err := qtx.LabrastroLockEngineeringProject(context.Background(), db.LabrastroLockEngineeringProjectParams{
+		WorkspaceID: parseUUID(testWorkspaceID), ID: parseUUID(f.project),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	uploadDone := make(chan *testutil.Response, 1)
+	go func() {
+		uploadDone <- uploadBaselineAttachmentAs(t, uploader, "architecture.html", []byte("<html></html>"), map[string]string{
+			"baseline_page_id": page.Page.ID,
+		})
+	}()
+	select {
+	case res := <-uploadDone:
+		t.Fatalf("upload did not pause on the project lock: %+v", res)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	deleteDone := make(chan *testutil.Response, 1)
+	go func() {
+		req := newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/members/"+uuidToString(member.ID), nil)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		req.Header.Set("X-User-ID", f.adminUser)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", testWorkspaceID)
+		rctx.URLParams.Add("memberId", uuidToString(member.ID))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		deleteDone <- testutil.Call(t, testHandler.DeleteMember, req)
+	}()
+	select {
+	case res := <-deleteDone:
+		t.Fatalf("member deletion completed before the upload committed: %+v", res)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case res := <-uploadDone:
+		res.Want(http.StatusOK)
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload did not finish after the project lock was released")
+	}
+	select {
+	case res := <-deleteDone:
+		res.Want(http.StatusNoContent)
+	case <-time.After(5 * time.Second):
+		t.Fatal("member deletion did not finish after the upload committed")
+	}
+	var attachments int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", page.Page.ID).Scan(&attachments); err != nil {
+		t.Fatal(err)
+	}
+	if attachments != 1 {
+		t.Fatalf("uploaded attachment rows = %d, want 1", attachments)
 	}
 }

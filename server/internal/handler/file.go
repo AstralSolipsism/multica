@@ -752,15 +752,73 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createBaselinePageAttachment writes a page-owned attachment under the same
-// lock order as engineering writes and project deletion: workspace share lock,
-// project row, then a fresh page/revision revalidation. An upload that races a
-// deletion therefore either commits before the teardown snapshot or fails with
-// pgx.ErrNoRows after the page is gone, instead of leaving an orphan row.
+// createBaselinePageAttachment writes a page-owned attachment under a fixed
+// lock order: workspace share lock, the permission-bearing member rows (sorted),
+// the project row, project-member rows, then a fresh page/revision
+// revalidation. Member removal and project deletion either land before these
+// locks (and the revalidation refuses) or wait until the attachment commits;
+// an upload that races a deletion therefore cannot leave an orphan row.
 func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Request, params db.CreateAttachmentParams, projectID pgtype.UUID) (db.CreateAttachmentRow, error) {
 	return wakeupWrite(h, r, func(q *db.Queries) (db.CreateAttachmentRow, error) {
 		if _, err := q.LockWorkspaceForAttachmentUpload(ctx, params.WorkspaceID); err != nil {
 			return db.CreateAttachmentRow{}, err
+		}
+		// Re-check the CURRENT principals, not the snapshot from before the
+		// bytes uploaded: membership and private-project access may have been
+		// revoked in the meantime. An agent run is bounded by the same two
+		// humans as hiddenProjectsForAgentRun (task originator/accountable user
+		// and the agent owner); a human upload by that user alone.
+		principals := make([]pgtype.UUID, 0, 2)
+		if params.UploaderType == "agent" {
+			taskUUID, err := util.ParseUUID(r.Header.Get("X-Task-ID"))
+			if err != nil {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			task, err := q.GetAgentTask(ctx, taskUUID)
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			agent, err := q.GetAgent(ctx, params.UploaderID)
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			principals = append(principals, projectaccess.RunPrincipals(task, agent.OwnerID)...)
+		} else {
+			userUUID, err := util.ParseUUID(requestUserID(r))
+			if err != nil {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			principals = append(principals, userUUID)
+		}
+		seen := map[[16]byte]struct{}{}
+		unique := principals[:0]
+		for _, principal := range principals {
+			if !principal.Valid {
+				continue
+			}
+			if _, ok := seen[principal.Bytes]; ok {
+				continue
+			}
+			seen[principal.Bytes] = struct{}{}
+			unique = append(unique, principal)
+		}
+		if len(unique) == 0 {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		// Lock the member rows before the project row: member revocation takes
+		// these rows FOR UPDATE, so it either lands before this upload (the
+		// read below sees no row and refuses) or waits until the attachment
+		// commits. The remaining locks follow the existing workspace -> member
+		// -> project order.
+		lockedMembers, err := q.LockAttachmentAccessMembers(ctx, db.LockAttachmentAccessMembersParams{
+			WorkspaceID: params.WorkspaceID,
+			UserIds:     unique,
+		})
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if len(lockedMembers) != len(unique) {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
 		}
 		if _, err := q.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
 			WorkspaceID: params.WorkspaceID,
@@ -768,20 +826,14 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 		}); err != nil {
 			return db.CreateAttachmentRow{}, err
 		}
-		// Re-check the CURRENT actor, not the snapshot from before the bytes
-		// uploaded: membership and private-project access may have been revoked
-		// in the meantime.
-		userUUID, err := util.ParseUUID(requestUserID(r))
-		if err != nil {
-			return db.CreateAttachmentRow{}, pgx.ErrNoRows
-		}
-		if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-			UserID:      userUUID,
+		if _, err := q.LockAttachmentAccessProjectMembers(ctx, db.LockAttachmentAccessProjectMembersParams{
 			WorkspaceID: params.WorkspaceID,
+			ProjectID:   projectID,
+			UserIds:     unique,
 		}); err != nil {
 			return db.CreateAttachmentRow{}, err
 		}
-		hidden, err := projectaccess.ForPrincipals(ctx, q, params.WorkspaceID, userUUID)
+		hidden, err := projectaccess.ForPrincipals(ctx, q, params.WorkspaceID, unique...)
 		if err != nil {
 			return db.CreateAttachmentRow{}, err
 		}

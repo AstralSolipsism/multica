@@ -100,12 +100,14 @@ owner fields (`issue_id`, `comment_id`, `task_id`, …) remain unchanged.
 A page artifact has exactly one owner: `baseline_page_id` cannot be combined
 with `issue_id`, `comment_id`, `chat_session_id` or `task_id`, and the
 Issue/Chat/Comment claim queries all exclude page-bound rows, so a private
-wiki artifact cannot be adopted by another entity. Uploads take the workspace
-share lock, then the project row, then revalidate the current actor's workspace
-membership, private-project access, and the page/revision in the same
-transaction as the insert — serialized with project/workspace deletion, so a
-revocation or archive that lands while the bytes upload is refused and the
-stored object is removed.
+wiki artifact cannot be adopted by another entity. Uploads take a fixed lock
+order — workspace share lock, the permission-bearing member rows (sorted; for
+an agent run both the task originator/accountable user and the agent owner),
+the project row, project-member rows — and revalidate those principals'
+workspace membership, private-project access, and the page/revision in the same
+transaction as the insert. Member removal and project deletion either land
+first (and the revalidation refuses, removing the stored object) or wait until
+the attachment commits.
 Deletion collects the stored URLs before the metadata transaction and removes
 the objects after it commits.
 
