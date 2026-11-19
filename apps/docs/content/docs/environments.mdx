@@ -246,7 +246,7 @@ The agent reads how the project starts, writes the file with ports taken from `M
 ## Known limitations [#limitations]
 
 - **macOS and Linux only.** On Windows, servers are not detected and `multica env start` reports that environments are not supported yet.
-- **A localhost URL opens only on the machine running it.** When the environment runs on another machine, such as a build server or a teammate's computer, the sidebar says so; open it on that machine, or forward the port yourself.
+- **A localhost URL opens only on the machine running it.** When the environment runs on another machine, such as a build server or a teammate's computer, the sidebar says so; open it on that machine, configure [remote preview or direct access](#remote-access), or forward the port yourself.
 - **Daemon restarts under systemd.** On Linux with [start at login](/daemon-runtimes#autostart), restarting or updating the daemon also stops its declared environments. Start them again afterwards.
 - **One machine per environment.** An environment runs where the run that started it ran; it does not move with the issue.
 

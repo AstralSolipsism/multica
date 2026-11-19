@@ -98,6 +98,62 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 	}
 }
 
+func TestEnvironmentTunnelIPv6LoopbackFallback(t *testing.T) {
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	local := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "ipv6 loopback response")
+	})}
+	go func() { _ = local.Serve(listener) }()
+	t.Cleanup(func() {
+		local.Close()
+		listener.Close()
+	})
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	streamID, token := uuid.NewString(), uuid.NewString()
+	result := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token || !strings.HasSuffix(r.URL.Path, "/"+streamID) {
+			result <- errors.New("invalid environment callback authentication")
+			http.Error(w, "auth", 401)
+			return
+		}
+		ws, err := (&websocket.Upgrader{}).Upgrade(w, r, http.Header{
+			"X-Env-Tunnel-Key":  {"detected:test"},
+			"X-Env-Tunnel-Port": {strconv.Itoa(port)},
+		})
+		if err != nil {
+			result <- err
+			return
+		}
+		conn := envtunnel.NewConn(ws)
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(2 * time.Second))
+		_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+		if err == nil {
+			var b []byte
+			b, err = io.ReadAll(conn)
+			if strings.Contains(string(b), "ipv6 loopback response") {
+				err = nil
+			}
+		}
+		result <- err
+	}))
+	defer server.Close()
+
+	d := &Daemon{
+		client:       NewClient(server.URL),
+		environments: &environmentService{detected: []localenv.Environment{{Key: "detected:test", Port: port}}},
+	}
+	d.openEnvironmentTunnel(context.Background(), uuid.NewString(), streamID+"."+token)
+	if err := <-result; err != nil {
+		t.Fatalf("IPv6 loopback tunnel failed: %v", err)
+	}
+}
+
 func TestEnvironmentTunnelRejectsIncompleteStreamID(t *testing.T) {
 	var dials atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
