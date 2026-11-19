@@ -225,12 +225,6 @@ func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
 	}
 }
 
-type environmentNotifierFunc func(string, string)
-
-func (f environmentNotifierFunc) NotifyPendingWork(runtimeID, kind string) {
-	f(runtimeID, kind)
-}
-
 type previewQueryCounter struct {
 	db.DBTX
 	count atomic.Int64
@@ -293,7 +287,7 @@ func startPreviewTunnelTest(t *testing.T, h *Handler, router http.Handler, upstr
 	var opened atomic.Int32
 	var peers sync.WaitGroup
 	ctx, cancel := context.WithCancel(t.Context())
-	h.DaemonPendingWork = environmentNotifierFunc(func(runtime, kind string) {
+	h.envProxy.notifyTunnel = func(runtime, kind string) bool {
 		peers.Go(func() {
 			payload := strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix)
 			stream, secret, _ := strings.Cut(payload, ".")
@@ -333,7 +327,8 @@ func startPreviewTunnelTest(t *testing.T, h *Handler, router http.Handler, upstr
 			peer.Close()
 			<-done
 		})
-	})
+		return true
+	}
 	t.Cleanup(func() {
 		server.Close()
 		cancel()
@@ -739,7 +734,10 @@ func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
 				IssuedAt: time.Now().UnixNano(), ExpiresAt: time.Now().Add(time.Minute).Unix(),
 			}
 			entered := make(chan struct{}, 1)
-			h.DaemonPendingWork = environmentNotifierFunc(func(string, string) { entered <- struct{}{} })
+			h.envProxy.notifyTunnel = func(string, string) bool {
+				entered <- struct{}{}
+				return true
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
@@ -772,6 +770,33 @@ func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
 				t.Fatal("cancel left tunnel broker state behind")
 			}
 		})
+	}
+}
+
+func TestEnvironmentProxyTunnelWithoutRuntimeConnection(t *testing.T) {
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	p := h.envProxy
+	p.notifyTunnel = func(string, string) bool { return false }
+	target := environmentSessionClaims{
+		EnvID:       uuid.NewString(),
+		WorkspaceID: uuid.NewString(),
+		RuntimeID:   uuid.NewString(),
+		Port:        41000,
+		IssuedAt:    time.Now().UnixNano(),
+		ExpiresAt:   time.Now().Add(time.Minute).Unix(),
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://"+p.environmentHost(target.EnvID)+"/", nil)
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	p.serve(rec, req, target)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "environment tunnel unavailable") {
+		t.Fatalf("missing runtime connection = %d %s", rec.Code, rec.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("missing runtime connection waited %s", elapsed)
+	}
+	if p.state.activeGlobal != 0 || len(p.state.pending) != 0 || len(p.state.slots) != 0 {
+		t.Fatal("failed dial leaked tunnel state")
 	}
 }
 

@@ -378,7 +378,7 @@ from the main site cannot be tossed onto preview hosts.
 The signed-in browser exchanges a one-time ticket for a host-only preview
 cookie. `COOKIE_DOMAIN` can stay unset. The daemon must support environment
 tunnels. Cloud relay limits leave reported direct URLs available. See
-[environment deployment](apps/docs/content/docs/environments.mdx#remote-access)
+[environment deployment](apps/docs/content/docs/environments.mdx)
 for ingress and replica configuration.
 
 #### Sidebar controls

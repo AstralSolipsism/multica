@@ -141,7 +141,6 @@ type Config struct {
 	EnvProxyBaseURL     string
 	BackendReplicas     int
 	EnvProxyLimits      EnvironmentProxyLimits
-	EnvProxyKey         []byte
 	// LLM* configure the basic LLM API layer (MUL-4238). They back the
 	// server-internal LLM helpers in pkg/llm (e.g. chat title generation).
 	// The generic OpenAI-compatible passthrough endpoints were removed in
@@ -620,6 +619,13 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	if h.envProxy != nil {
 		h.envProxy.initProxy(h.dialEnvironmentTunnel)
+		h.envProxy.notifyTunnel = func(runtimeID, kind string) bool {
+			if h.DaemonHub == nil || h.DaemonHub.RuntimeConnectionCount(runtimeID) == 0 {
+				return false
+			}
+			h.DaemonHub.NotifyPendingWork(runtimeID, kind)
+			return true
+		}
 	}
 	return h
 }

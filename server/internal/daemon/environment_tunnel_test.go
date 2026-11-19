@@ -51,12 +51,8 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 			_, portText, _ := net.SplitHostPort(strings.TrimPrefix(local.URL, "http://"))
 			port, _ := strconv.Atoi(portText)
 			result := make(chan error, 1)
-			streamID, token := uuid.NewString(), "test-token"
-			pending := streamID
-			if allowed {
-				token = uuid.NewString()
-				pending += "." + token
-			}
+			streamID, token := uuid.NewString(), uuid.NewString()
+			pending := streamID + "." + token
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer "+token || !strings.HasSuffix(r.URL.Path, "/"+streamID) {
 					result <- errors.New("invalid environment callback authentication")
