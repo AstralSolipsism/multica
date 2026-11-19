@@ -1,0 +1,85 @@
+{
+  "schema": "intelligence-trends/1",
+  "timezone": "Asia/Shanghai",
+  "score_max": 150,
+  "time_basis": "Four-task weighted scores (fixture: trimmed, non-real values)",
+  "models": {
+    "gpt-6-astra": "GPT-6 Astra",
+    "gpt-6.2-sol": "GPT-6.2 Sol",
+    "gpt-6.2-astra": "GPT-6.2 Astra"
+  },
+  "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+  "batches": [
+    {
+      "id": "fixture-20261118-early-shanghai",
+      "label": "fixture-old-compat",
+      "protocol": "codex-four-weighted-150-v2",
+      "score_max": 150,
+      "compatibility_key": "fixture-compat-old",
+      "completed_at": "2026-11-18T01:00:00+08:00",
+      "model_efforts": {
+        "gpt-6-astra": ["low", "medium", "high", "xhigh", "max", "ultra"]
+      },
+      "points": [
+        {"model": "gpt-6-astra", "effort": "low", "score": 150.0},
+        {"model": "gpt-6-astra", "effort": "medium", "score": 150.0},
+        {"model": "gpt-6-astra", "effort": "high", "score": 150.0},
+        {"model": "gpt-6-astra", "effort": "xhigh", "score": 150.0},
+        {"model": "gpt-6-astra", "effort": "max", "score": 150.0},
+        {"model": "gpt-6-astra", "effort": "ultra", "score": 150.0}
+      ]
+    },
+    {
+      "id": "fixture-20261117-astra",
+      "label": "2026-11-18",
+      "protocol": "codex-four-weighted-150-v2",
+      "score_max": 150,
+      "compatibility_key": "fixture-compat-current",
+      "completed_at": "2026-11-17T22:21:37.351972+00:00",
+      "model_efforts": {
+        "gpt-6-astra": ["low", "medium", "high", "xhigh", "max", "ultra"],
+        "gpt-6.2-astra": ["low", "medium", "high", "xhigh", "max", "ultra"]
+      },
+      "points": [
+        {"model": "gpt-6-astra", "effort": "low", "score": 96.40673076923078},
+        {"model": "gpt-6-astra", "effort": "medium", "score": 117.89318181818182},
+        {"model": "gpt-6-astra", "effort": "high", "score": 120.92596153846154},
+        {"model": "gpt-6-astra", "effort": "xhigh", "score": 130.72500000000002},
+        {"model": "gpt-6-astra", "effort": "max", "score": 130.5},
+        {"model": "gpt-6-astra", "effort": "ultra", "score": 130.5},
+        {"model": "gpt-6.2-astra", "effort": "low", "score": 122.6054347826087},
+        {"model": "gpt-6.2-astra", "effort": "medium", "score": 129.60000000000002},
+        {"model": "gpt-6.2-astra", "effort": "high", "score": 129.60000000000002},
+        {"model": "gpt-6.2-astra", "effort": "xhigh", "score": 135.9375},
+        {"model": "gpt-6.2-astra", "effort": "max", "score": 149.325},
+        {"model": "gpt-6.2-astra", "effort": "ultra", "score": 148.8375}
+      ]
+    },
+    {
+      "id": "fixture-20261118-sol62",
+      "label": "2026-11-19",
+      "protocol": "codex-four-weighted-150-v2",
+      "score_max": 150,
+      "compatibility_key": "fixture-compat-current",
+      "completed_at": "2026-11-18T17:22:52.981276+08:00",
+      "model_efforts": {
+        "gpt-6.2-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
+        "gpt-6.2-astra": ["low", "medium", "high", "xhigh", "max", "ultra"]
+      },
+      "points": [
+        {"model": "gpt-6.2-sol", "effort": "low", "score": 108.99545454545455},
+        {"model": "gpt-6.2-sol", "effort": "medium", "score": 133.575},
+        {"model": "gpt-6.2-sol", "effort": "high", "score": 130.72500000000002},
+        {"model": "gpt-6.2-sol", "effort": "xhigh", "score": 148.875},
+        {"model": "gpt-6.2-sol", "effort": "max", "score": 149.775},
+        {"model": "gpt-6.2-sol", "effort": "ultra", "score": 135.9375},
+        {"model": "gpt-6.2-astra", "effort": "low", "score": 122.6054347826087},
+        {"model": "gpt-6.2-astra", "effort": "medium", "score": 129.60000000000002},
+        {"model": "gpt-6.2-astra", "effort": "high", "score": 129.60000000000002},
+        {"model": "gpt-6.2-astra", "effort": "xhigh", "score": 135.9375},
+        {"model": "gpt-6.2-astra", "effort": "max", "score": 149.325},
+        {"model": "gpt-6.2-astra", "effort": "ultra", "score": 148.8375}
+      ]
+    }
+  ]
+}
