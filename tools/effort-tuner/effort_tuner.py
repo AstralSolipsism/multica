@@ -229,6 +229,21 @@ def batch_claims_model(batch, model):
     return batch_has_model(batch, model)
 
 
+def point_structure_ok(point):
+    """A point is a dict with model, effort and score keys (score may be null)."""
+    return isinstance(point, dict) \
+        and isinstance(point.get("model"), str) and bool(point.get("model")) \
+        and isinstance(point.get("effort"), str) and bool(point.get("effort")) \
+        and "score" in point
+
+
+def batch_structure_ok(batch):
+    """Every entry in a batch's point list has the point shape."""
+    points = batch.get("points")
+    return isinstance(points, list) and all(
+        point_structure_ok(point) for point in points)
+
+
 def batch_score_max_ok(batch):
     """The batch's own score_max is exactly 150 (bool excluded)."""
     return score_max_ok(batch.get("score_max"))
@@ -253,31 +268,36 @@ def parsed_batches(payload):
 def latest_batch(model, payload):
     """Newest UTC batch that measured `model`, with its score_max validated.
 
-    A batch carrying points for the model but an unparseable completed_at makes
-    the model's recency unknowable, so that blocks the model rather than
-    falling back. The newest batch must also have score_max == 150 (bool
-    excluded); otherwise the model is blocked instead of using older data.
-    Returns (batch, completed_at) or (None, None).
+    Batches are walked newest-first: a structurally valid batch that did not
+    test the model is skipped, so a later real batch is not vetoed by an older,
+    clearly-dated bad record. A batch that declares the model (model_efforts)
+    but whose point structure is malformed blocks the model instead of looking
+    untested. A batch carrying points for the model but an unparseable
+    completed_at makes recency unknowable and still blocks the model. The
+    chosen batch must also have score_max == 150 (bool excluded). Returns
+    (batch, completed_at) or (None, None).
     """
     claimed = [batch for batch in payload["batches"]
                if batch_claims_model(batch, model)]
     if not claimed:
         return None, None
+    dated = []
     for batch in claimed:
-        if not isinstance(batch.get("points"), list):
-            raise TunerError("model %s: 批次 points 不是列表：got %s"
-                             % (model, type(batch.get("points")).__name__))
-    measured = [(parse_ts(batch.get("completed_at")), batch)
-                for batch in claimed if batch_has_model(batch, model)]
-    if not measured:
-        return None, None
-    if any(completed is None for completed, _ in measured):
-        raise TunerError("model %s: 包含该模型的批次存在无法解析的 completed_at" % model)
-    completed, batch = max(measured, key=lambda item: item[0])
-    if not batch_score_max_ok(batch):
-        raise TunerError("model %s: 最新批次 score_max 不是 %d：%s"
-                         % (model, SCORE_MAX, safe(batch.get("score_max"))))
-    return batch, completed
+        completed = parse_ts(batch.get("completed_at"))
+        if completed is None:
+            raise TunerError("model %s: 包含该模型的批次存在无法解析的 completed_at"
+                             % model)
+        dated.append((completed, batch))
+    for completed, batch in sorted(dated, key=lambda item: item[0], reverse=True):
+        if not batch_structure_ok(batch):
+            raise TunerError("model %s: 批次 points 结构损坏" % model)
+        if not batch_has_model(batch, model):
+            continue  # structurally valid and did not test this model
+        if not batch_score_max_ok(batch):
+            raise TunerError("model %s: 最新批次 score_max 不是 %d：%s"
+                             % (model, SCORE_MAX, safe(batch.get("score_max"))))
+        return batch, completed
+    return None, None
 
 
 def common_efforts_for(model, batch):
@@ -329,8 +349,8 @@ def model_scores(model, batch):
         if not finite_number(score):
             raise TunerError("score for %s/%s is not a finite number: %s"
                              % (model, safe(effort), type(score).__name__))
-        if score > SCORE_MAX:
-            raise TunerError("score for %s/%s exceeds the %d-point maximum: %s"
+        if not 0 <= score <= SCORE_MAX:
+            raise TunerError("score for %s/%s is outside the 0..%d range: %s"
                              % (model, safe(effort), SCORE_MAX,
                                 type(score).__name__))
         scores[effort] = score
@@ -369,7 +389,7 @@ def batch_best(model, batch):
         if p.get("effort") not in common:
             continue
         score = p.get("score")
-        if not finite_number(score) or score > SCORE_MAX:
+        if not finite_number(score) or not 0 <= score <= SCORE_MAX:
             continue
         if best is None or score > best:
             best = score
