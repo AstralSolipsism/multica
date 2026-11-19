@@ -107,36 +107,40 @@ func TestIssueSearch_ScopeWhitelist(t *testing.T) {
 		t.Skip("database not available")
 	}
 	token := "scopechk" + uuid.NewString()[:8]
-	issue := dbfx.Issue(t, token+" whitelist probe", testutil.Cols{})
+	titleHit := dbfx.Issue(t, token+" whitelist probe", testutil.Cols{})
+	commentOnly := dbfx.Issue(t, "unrelated sibling issue", testutil.Cols{})
+	dbfx.Comment(t, commentOnly, "the needle "+token+" only lives in this comment", testutil.Cols{})
 
-	// Absent, empty, all, and title_desc are the accepted spellings; each must
-	// keep returning results, not an error page.
-	for _, rawQuery := range []string{
-		"q=" + url.QueryEscape(token) + "&include_closed=true",
-		"q=" + url.QueryEscape(token) + "&scope=&include_closed=true",
-		"q=" + url.QueryEscape(token) + "&scope=all&include_closed=true",
-		"q=" + url.QueryEscape(token) + "&scope=title_desc&include_closed=true",
+	// Absent, empty, all, and title_desc are the accepted spellings. The
+	// first three keep the default all-field scope, so the comment-only match
+	// must survive each of them; title_desc drops it.
+	for _, tc := range []struct {
+		param       string
+		wantComment bool
+	}{
+		{"", true},
+		{"&scope=", true},
+		{"&scope=all", true},
+		{"&scope=title_desc", false},
 	} {
-		payload, _ := callIssueSearch(t, rawQuery)
-		if !searchOL458Contains(searchIDs(t, payload), issue) {
-			t.Fatalf("query %q did not return issue %s", rawQuery, issue)
+		payload, _ := callIssueSearch(t, "q="+url.QueryEscape(token)+"&include_closed=true&limit=50"+tc.param)
+		got := searchIDs(t, payload)
+		if !searchOL458Contains(got, titleHit) {
+			t.Fatalf("scope param %q lost the title hit: %v", tc.param, got)
+		}
+		if hasComment := searchOL458Contains(got, commentOnly); hasComment != tc.wantComment {
+			t.Fatalf("scope param %q comment-only match = %t, want %t: %v", tc.param, hasComment, tc.wantComment, got)
 		}
 	}
 
 	// Anything else is a client error: a typo like scope=title must not
 	// silently fall back to the wider all-field scope.
 	for _, scope := range []string{"title", "bogus"} {
-		recorder := httptest.NewRecorder()
-		testHandler.SearchIssues(recorder, newRequest(http.MethodGet, "/api/issues/search?q=x&scope="+scope, nil))
-		if recorder.Code != http.StatusBadRequest {
-			t.Fatalf("scope=%q status = %d, want 400: %s", scope, recorder.Code, recorder.Body.String())
-		}
+		req := newRequest(http.MethodGet, "/api/issues/search?q=x&scope="+scope, nil)
 		var resp struct {
 			Error string `json:"error"`
 		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("scope=%q decode error response: %v (body=%q)", scope, err, recorder.Body.String())
-		}
+		testutil.Call(t, testHandler.SearchIssues, req).Want(http.StatusBadRequest).JSON(&resp)
 		want := fmt.Sprintf("invalid scope %q: valid values are all, title_desc", scope)
 		if resp.Error != want {
 			t.Fatalf("scope=%q error = %q, want %q", scope, resp.Error, want)
