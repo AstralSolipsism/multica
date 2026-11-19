@@ -102,6 +102,48 @@ func TestIssueSearch_ProjectFilterMalformedUUIDResponse(t *testing.T) {
 	}
 }
 
+func TestIssueSearch_ScopeWhitelist(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	token := "scopechk" + uuid.NewString()[:8]
+	issue := dbfx.Issue(t, token+" whitelist probe", testutil.Cols{})
+
+	// Absent, empty, all, and title_desc are the accepted spellings; each must
+	// keep returning results, not an error page.
+	for _, rawQuery := range []string{
+		"q=" + url.QueryEscape(token) + "&include_closed=true",
+		"q=" + url.QueryEscape(token) + "&scope=&include_closed=true",
+		"q=" + url.QueryEscape(token) + "&scope=all&include_closed=true",
+		"q=" + url.QueryEscape(token) + "&scope=title_desc&include_closed=true",
+	} {
+		payload, _ := callIssueSearch(t, rawQuery)
+		if !searchOL458Contains(searchIDs(t, payload), issue) {
+			t.Fatalf("query %q did not return issue %s", rawQuery, issue)
+		}
+	}
+
+	// Anything else is a client error: a typo like scope=title must not
+	// silently fall back to the wider all-field scope.
+	for _, scope := range []string{"title", "bogus"} {
+		recorder := httptest.NewRecorder()
+		testHandler.SearchIssues(recorder, newRequest(http.MethodGet, "/api/issues/search?q=x&scope="+scope, nil))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("scope=%q status = %d, want 400: %s", scope, recorder.Code, recorder.Body.String())
+		}
+		var resp struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("scope=%q decode error response: %v (body=%q)", scope, err, recorder.Body.String())
+		}
+		want := fmt.Sprintf("invalid scope %q: valid values are all, title_desc", scope)
+		if resp.Error != want {
+			t.Fatalf("scope=%q error = %q, want %q", scope, resp.Error, want)
+		}
+	}
+}
+
 func TestIssueSearch_HasMoreAndOffset(t *testing.T) {
 	token := "pagemore" + uuid.NewString()[:8]
 	first := dbfx.Issue(t, token+" one", testutil.Cols{})
