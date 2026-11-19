@@ -318,7 +318,7 @@ func TestAntigravityBackgroundTaskSafetyAllKinds(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			agy := buildMetaSkillContent("antigravity", ctx)
-			if !strings.Contains(agy, "stop calling tools and yield the model subturn") ||
+			if !strings.Contains(agy, "yield the model subturn silently") ||
 				strings.Contains(agy, "whatever a tool response promises") || strings.Contains(agy, "Never background-and-yield") {
 				t.Fatal("Antigravity model-subturn contract missing or contradicted")
 			}
@@ -332,7 +332,13 @@ func TestAntigravityBackgroundTaskSafetyAllKinds(t *testing.T) {
 	}
 }
 
-// Keep the MUL-4140 no-background-and-yield contract for other providers.
+// TestBackgroundTaskSafetySlimHardPins asserts the slim brief carries the
+// same hardened Background Task Safety pins as the legacy brief (MUL-4140).
+// The verbose path is covered by
+// TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic; this locks
+// the compressed slim path so a future slim-brief trim can't quietly drop
+// the no-background-and-yield / no-"standing by" guardrails that address
+// the MUL-4091 mechanism.
 func TestBackgroundTaskSafetySlimHardPins(t *testing.T) {
 
 	out := buildMetaSkillContent("claude", TaskContextForEnv{
