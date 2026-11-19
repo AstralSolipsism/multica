@@ -15,7 +15,8 @@ export interface AccountPoolPartition {
 export { servingAccountPoolProviders };
 
 /** Empty prefix sets and prefix sets with no reported intersection both fall
- *  back to the full pool list, avoiding an empty quota surface. */
+ *  back to the full pool list. Partition before hiding contentless pools so an
+ *  empty serving pool never promotes idle pools into the serving surface. */
 export function partitionAccountPools(
   pools: QuotaAccountPoolState[],
   agents: Agent[],
@@ -24,13 +25,14 @@ export function partitionAccountPools(
   const providers = servingAccountPoolProviders(agents, runtimeId);
   const serving = pools.filter((pool) => providers.has(pool.id));
   if (serving.length === 0) {
-    return { all: pools, serving: pools, idle: [], filtered: false };
+    const visible = pools.filter(accountPoolHasQuotaContent);
+    return { all: visible, serving: visible, idle: [], filtered: false };
   }
   const servingIds = new Set(serving.map((pool) => pool.id));
   return {
-    all: pools,
-    serving,
-    idle: pools.filter((pool) => !servingIds.has(pool.id)),
+    all: pools.filter(accountPoolHasQuotaContent),
+    serving: serving.filter(accountPoolHasQuotaContent),
+    idle: pools.filter((pool) => !servingIds.has(pool.id) && accountPoolHasQuotaContent(pool)),
     filtered: true,
   };
 }
@@ -53,4 +55,8 @@ export function accountPoolProviderLabel(provider: string): string {
 export function accountPoolNeedsRelogin(pool: QuotaAccountPoolState): boolean {
   return pool.accounts.length > 0 &&
     pool.accounts.every((account) => account.status === "disabled");
+}
+
+export function accountPoolHasQuotaContent(pool: QuotaAccountPoolState): boolean {
+  return pool.windows.length > 0 || pool.exhausted || accountPoolNeedsRelogin(pool);
 }

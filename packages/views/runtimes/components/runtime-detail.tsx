@@ -234,14 +234,12 @@ export function RuntimeDetail({
           </ObjectSection>
 
           {canReadRuntime && (
-            <div className="space-y-4">
-              <RuntimeQuotaCard
-                runtime={runtime}
-                now={now}
-                agents={agents}
-                agentsPending={agentsPending}
-              />
-            </div>
+            <RuntimeQuotaCard
+              runtime={runtime}
+              now={now}
+              agents={agents}
+              agentsPending={agentsPending}
+            />
           )}
 
           {canReadRuntime && (

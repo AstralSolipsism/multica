@@ -2,8 +2,6 @@
   "column_label": "Quota",
   "title": "Quota du forfait",
   "window_label": "Fenêtre {{label}}",
-  "no_snapshot_chip": "Aucun instantané",
-  "no_snapshot": "Aucun instantané de quota",
   "overflow_title_one": "{{count}} quota supplémentaire",
   "overflow_title_other": "{{count}} quotas supplémentaires",
   "window_short_minutes": "{{value}}m",

@@ -2,8 +2,6 @@
   "column_label": "Quota",
   "title": "Plan quota",
   "window_label": "{{label}} window",
-  "no_snapshot_chip": "No snapshot",
-  "no_snapshot": "No quota snapshot",
   "overflow_title_one": "{{count}} more quota",
   "overflow_title_other": "{{count}} more quotas",
   "window_short_minutes": "{{value}}m",
