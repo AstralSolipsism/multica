@@ -37,6 +37,21 @@ describe("QuotaSourceSnapshotSchema", () => {
     expect(parsed.probe?.latency_ms).toBe(340);
   });
 
+  it("parses the pay-as-you-go last-30-day spend, null when not reported", () => {
+    const parsed = QuotaSourceSnapshotSchema.parse({
+      provider: "opencode",
+      status: "ok",
+      observed_at: 1,
+      source: "subscription",
+      balances: [
+        { currency: "USD", total_balance: 27.87, spend_30d: 14.2 },
+        { currency: "USD", total_balance: 1, spend_30d: null },
+      ],
+    });
+    expect(parsed.balances?.[0]?.spend_30d).toBe(14.2);
+    expect(parsed.balances?.[1]?.spend_30d).toBeNull();
+  });
+
   it("drops a malformed balance entry without losing the rest", () => {
     const parsed = QuotaSourceSnapshotSchema.parse({
       provider: "deepseek",
@@ -97,6 +112,38 @@ describe("QuotaSource schema surfaces", () => {
       quota: { provider: "opencode", status: "ok", observed_at: 1, source: "subscription", probe: { available: "yes", latency_ms: 5 } },
     });
     expect(parsed.quota?.probe).toBeNull();
+  });
+
+  it("parses the opencode query mode and workspace, degrading an unknown mode", () => {
+    const parsed = QuotaSourceSchema.parse({
+      id: "source-oc",
+      kind: "opencode",
+      name: "OpenCode",
+      enabled: true,
+      visibility: "private",
+      opencode_mode: "payg",
+      workspace_id: "wrk_abc",
+    });
+    expect(parsed.opencode_mode).toBe("payg");
+    expect(parsed.workspace_id).toBe("wrk_abc");
+
+    const legacy = QuotaSourceSchema.parse({
+      id: "source-legacy",
+      kind: "opencode",
+      name: "OpenCode",
+      enabled: true,
+      visibility: "private",
+    });
+    expect(legacy.opencode_mode).toBeUndefined();
+    expect(legacy.workspace_id).toBeUndefined();
+
+    const unknown = QuotaSourceSchema.parse({
+      id: "source-unknown",
+      kind: "opencode",
+      name: "OpenCode",
+      opencode_mode: "something-new",
+    });
+    expect(unknown.opencode_mode).toBeUndefined();
   });
 
   it("mounts the snapshot schema on the workspace card response", () => {
