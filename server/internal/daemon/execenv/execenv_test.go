@@ -1350,24 +1350,18 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 			}
 			s := string(data)
 			providerPins := []string{
-				"any run-owned work still active is orphaned",
 				"no background-completion wakeup",
 				"whatever a tool response promises",
 				"Never background-and-yield",
-				"standing by",
 			}
 			if tc.name == "antigravity" {
 				// Its model subturn can end while the same agy process waits.
 				// Detached processes and the shared CI contract stay restricted.
 				providerPins = []string{
-					"run ends when the `agy -p` process exits",
-					"Non-daemon `task-XXX` commands and subagents managed by agy",
-					"stop calling tools and yield the model subturn",
-					"completion notifications within the same process",
-					"Do not poll `manage_task` or read task logs",
-					"Deliver final results only after the required work completes",
-					"Processes detached from agy (such as `&` or `nohup`) have no such wakeup",
-					"before ending the run",
+					"completion notifications in the same process",
+					"yield the model subturn silently, without a placeholder reply",
+					"polling `manage_task` or task logs",
+					"have no such wakeup",
 				}
 			}
 			for _, want := range providerPins {
@@ -1387,6 +1381,8 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 				// polling", "any sleep / retry loop that polls check status", ...).
 				// What stays pinned: the fact, each boundary, each exception, and
 				// the handoff triple — the things an agent cannot infer.
+				"any run-owned work still active is orphaned",
+				"standing by",
 				"foreground tool calls that block",
 				"run unobservable work synchronously",
 				"are not run-owned: do not wait",

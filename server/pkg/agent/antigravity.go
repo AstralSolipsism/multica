@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 )
@@ -196,7 +195,6 @@ type antigravityStreamEvent struct {
 type antigravityStepSummary struct {
 	kind, state string
 	hasText     bool
-	text        string
 }
 
 type antigravityTurn struct {
@@ -225,41 +223,6 @@ func (t *antigravityTurn) completed(response string) bool {
 	latest := t.settledResponse()
 	return !t.invalid && strings.TrimSpace(response) != "" && t.start != nil && t.steps[*t.start].state == "DONE" &&
 		latest > *t.start && t.steps[latest].state == "DONE" && t.steps[latest].hasText
-}
-
-// agy can include earlier waiting replies in result.response. Keep the last
-// answered wakeup's whole response segment, without changing the live transcript
-// or overriding a canonical response that the deltas cannot reconstruct.
-func (t *antigravityTurn) responseAfterWakeup(response string) string {
-	if !t.completed(response) {
-		return response
-	}
-	latest := t.settledResponse()
-	wakeup := -1
-	for index, step := range t.steps {
-		if index > *t.start && index < latest && index > wakeup && step.kind == "system_message" && step.state == "DONE" {
-			wakeup = index
-		}
-	}
-	if wakeup < 0 {
-		return response
-	}
-	var before, after strings.Builder
-	for _, index := range slices.Sorted(maps.Keys(t.steps)) {
-		step := t.steps[index]
-		if index < *t.start || step.kind != "agent_response" {
-			continue
-		}
-		if index <= wakeup {
-			before.WriteString(step.text)
-		} else {
-			after.WriteString(step.text)
-		}
-	}
-	if strings.TrimSpace(after.String()) != "" && before.String()+after.String() == response {
-		return after.String()
-	}
-	return response
 }
 
 // antigravityNetworkIssueError is the provider sentence some agy releases
@@ -509,7 +472,6 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 						turn.steps[*idx] = antigravityStepSummary{
 							kind: step.StepType, state: strings.ToUpper(step.State),
 							hasText: turn.steps[*idx].hasText || strings.TrimSpace(step.TextDelta) != "",
-							text:    turn.steps[*idx].text + step.TextDelta,
 						}
 					}
 					if event.StepUpdate.ConversationID != "" {
@@ -638,9 +600,6 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 				trySend(msgCh, Message{Type: MessageText, Content: streamResponse})
 			}
 			finalOutput = streamResponse
-		}
-		if finalStatus == "completed" && streamResultStatus != "" && antigravityResultStatus(streamResultStatus) == "completed" {
-			finalOutput = turn.responseAfterWakeup(finalOutput)
 		}
 		if finalStatus == "completed" && strings.TrimSpace(finalOutput) == "" {
 			// agy 1.0.14 print mode can finish a turn (tools executed, reply

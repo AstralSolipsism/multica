@@ -58,9 +58,9 @@ func multicaCLICommand() string {
 }
 
 // writeBackgroundTaskSafetySlim states the task-lifetime and external-work
-// boundaries. agy can wait across model subturns within one process; detached
-// work cannot. External CI is handed off unless this turn explicitly requires
-// its result; a repository merge gate does not supply that requirement.
+// boundaries. Turn exit is terminal for run-owned work. External CI is handed off
+// unless this turn explicitly requires its result; a repository merge gate does
+// not supply that requirement.
 //
 // Keep the explicit watch/poll restriction and its foreground-watch exception
 // together. User-requested persistent services require a separate lifecycle,
@@ -68,7 +68,7 @@ func multicaCLICommand() string {
 func writeBackgroundTaskSafetySlim(b *strings.Builder, provider string) {
 	b.WriteString("## Background Task Safety\n\n")
 	if provider == "antigravity" {
-		b.WriteString("The platform run ends when the `agy -p` process exits. Non-daemon `task-XXX` commands and subagents managed by agy keep that process alive: stop calling tools and yield the model subturn while waiting; agy delivers completion notifications within the same process. Do not poll `manage_task` or read task logs to keep the turn alive. Deliver final results only after the required work completes. Processes detached from agy (such as `&` or `nohup`) have no such wakeup: collect their results inside foreground tool calls that block to completion before ending the run, or run unobservable work synchronously. An issue wakeup (`multica issue wakeup create`) starts a separate run later.\n\n")
+		b.WriteString("Labrastro marks the task terminal when the `agy -p` process exits — any run-owned work still active is orphaned, its result lost, and the final comment you meant to post never sends. Non-daemon `task-XXX` commands and subagents managed by agy keep `agy -p` alive and deliver completion notifications in the same process. Stop calling tools and yield the model subturn silently, without a placeholder reply or polling `manage_task` or task logs. Processes detached from agy (such as `&` or `nohup`) have no such wakeup; an issue wakeup (`multica issue wakeup create`) is different — the platform stores it and starts a new run later. For detached work, never background-and-yield: collect required results inside foreground tool calls that block to completion, run unobservable work synchronously, and never end a turn \"standing by\" for something to finish — that message becomes your final output.\n\n")
 	} else {
 		b.WriteString("Labrastro marks the task terminal the moment your top-level turn exits — any run-owned work still active is orphaned, its result lost, and the final comment you meant to post never sends. There is no background-completion wakeup, whatever a tool response promises; an issue wakeup (`multica issue wakeup create`) is different — the platform stores it and starts a new run later. Never background-and-yield: collect required results inside foreground tool calls that block to completion, run unobservable work synchronously, and never end a turn \"standing by\" for something to finish — that message becomes your final output.\n\n")
 	}
