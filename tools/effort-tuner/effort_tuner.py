@@ -24,6 +24,7 @@ TIE_RANGE = 5            # efforts scoring >= S - TIE_RANGE count as tied
 DEGRADE_THRESHOLD = 10   # alert when S <= peak - DEGRADE_THRESHOLD (7-day peak)
 HISTORY_WINDOW_DAYS = 7
 FRESHNESS_HOURS = 72     # a model's latest batch older than this is not used
+FUTURE_TOLERANCE_HOURS = 24  # completed_at may lead the clock by at most this
 TRENDS_URL = "https://codexradar.com/data/intelligence-trends.json"
 TRENDS_SCHEMA = "intelligence-trends/1"
 SCORE_MAX = 150
@@ -150,10 +151,18 @@ def list_managed_agents(exclude=(), multica=None):
     return managed, skipped
 
 
+def finite_number(value):
+    """Ints are always finite; floats must not be NaN/Inf (no int->float cast)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return isinstance(value, int) or math.isfinite(value)
+
+
 def score_max_ok(value):
     """Value is a numeric 150; bool is not a number and NaN/Inf never match."""
-    return not isinstance(value, bool) and isinstance(value, (int, float)) \
-        and math.isfinite(value) and value == SCORE_MAX
+    if not finite_number(value):
+        return False
+    return value == SCORE_MAX
 
 
 def fetch_trends(deadline, http_get=None):
@@ -207,6 +216,19 @@ def batch_has_model(batch, model):
         isinstance(p, dict) and p.get("model") == model for p in points)
 
 
+def batch_claims_model(batch, model):
+    """True when the batch declares or measures the model.
+
+    `model_efforts` membership catches a batch whose `points` structure is
+    corrupt: without it such a batch would look like it never tested the model
+    and an older batch would be used, hiding the defect.
+    """
+    model_efforts = batch.get("model_efforts")
+    if isinstance(model_efforts, dict) and model in model_efforts:
+        return True
+    return batch_has_model(batch, model)
+
+
 def batch_score_max_ok(batch):
     """The batch's own score_max is exactly 150 (bool excluded)."""
     return score_max_ok(batch.get("score_max"))
@@ -237,8 +259,16 @@ def latest_batch(model, payload):
     excluded); otherwise the model is blocked instead of using older data.
     Returns (batch, completed_at) or (None, None).
     """
+    claimed = [batch for batch in payload["batches"]
+               if batch_claims_model(batch, model)]
+    if not claimed:
+        return None, None
+    for batch in claimed:
+        if not isinstance(batch.get("points"), list):
+            raise TunerError("model %s: 批次 points 不是列表：got %s"
+                             % (model, type(batch.get("points")).__name__))
     measured = [(parse_ts(batch.get("completed_at")), batch)
-                for batch in payload["batches"] if batch_has_model(batch, model)]
+                for batch in claimed if batch_has_model(batch, model)]
     if not measured:
         return None, None
     if any(completed is None for completed, _ in measured):
@@ -296,10 +326,13 @@ def model_scores(model, batch):
         if score is None:
             scores[effort] = None
             continue
-        if isinstance(score, bool) or not isinstance(score, (int, float)) \
-                or not math.isfinite(score):
+        if not finite_number(score):
             raise TunerError("score for %s/%s is not a finite number: %s"
                              % (model, safe(effort), type(score).__name__))
+        if score > SCORE_MAX:
+            raise TunerError("score for %s/%s exceeds the %d-point maximum: %s"
+                             % (model, safe(effort), SCORE_MAX,
+                                type(score).__name__))
         scores[effort] = score
     return scores
 
@@ -336,8 +369,7 @@ def batch_best(model, batch):
         if p.get("effort") not in common:
             continue
         score = p.get("score")
-        if isinstance(score, bool) or not isinstance(score, (int, float)) \
-                or not math.isfinite(score):
+        if not finite_number(score) or score > SCORE_MAX:
             continue
         if best is None or score > best:
             best = score
@@ -366,6 +398,8 @@ def degrade_peak(model, payload, compatibility_key, now):
         if not isinstance(batch_key, str) or not batch_key \
                 or batch_key != compatibility_key:
             continue
+        if completed > now + timedelta(hours=FUTURE_TOLERANCE_HOURS):
+            continue  # a future completion cannot be a real past measurement
         day = completed.date()
         if not (cutoff <= day <= today):
             continue
@@ -449,9 +483,10 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model,
                     lines.append("- `%s/%s`: score %s%s"
                                  % (model, e, fmt_score(s), suffix))
         lines.append("")
-        lines.append("params: tie_range=%d freshness=%dh degrade_threshold=%d window=%dd"
-                     % (TIE_RANGE, FRESHNESS_HOURS, DEGRADE_THRESHOLD,
-                        HISTORY_WINDOW_DAYS))
+        lines.append("params: tie_range=%d freshness=%dh future=%dh "
+                     "degrade_threshold=%d window=%dd"
+                     % (TIE_RANGE, FRESHNESS_HOURS, FUTURE_TOLERANCE_HOURS,
+                        DEGRADE_THRESHOLD, HISTORY_WINDOW_DAYS))
     if anomalies:
         if lines:
             lines.append("")
@@ -574,6 +609,12 @@ def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, now=No
             if batch is None:
                 issues.append("model %s: intelligence-trends 中没有包含该模型的有效批次；"
                               "本轮未改该模型的 agent：%s" % (model, model_agents))
+                continue
+            if completed > now + timedelta(hours=FUTURE_TOLERANCE_HOURS):
+                issues.append("model %s: 最新批次完成于 %s，晚于当前时间超过 %d 小时；"
+                              "本轮未改该模型的 agent：%s"
+                              % (model, safe(completed.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                                 FUTURE_TOLERANCE_HOURS, model_agents))
                 continue
             age = now - completed
             if age > timedelta(hours=FRESHNESS_HOURS):

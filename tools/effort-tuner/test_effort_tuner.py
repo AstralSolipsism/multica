@@ -216,6 +216,26 @@ class BatchSelectionTests(unittest.TestCase):
         with self.assertRaises(et.TunerError):
             et.latest_batch("gpt-6-astra", payload)
 
+    def test_corrupt_points_in_latest_batch_blocks_instead_of_falling_back(self):
+        # model_efforts still lists astra: a null points list must block the
+        # model, not look like "this batch never tested it" and reuse 11-17
+        payload = load()
+        batch = next(b for b in payload["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+        batch["points"] = None
+        with self.assertRaises(et.TunerError) as ctx:
+            et.latest_batch("gpt-6-astra", payload)
+        self.assertIn("points 不是列表", str(ctx.exception))
+
+    def test_batch_score_max_huge_integer_blocks_without_overflow(self):
+        payload = load()
+        batch = next(b for b in payload["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+        batch["score_max"] = 10 ** 400
+        with self.assertRaises(et.TunerError) as ctx:
+            et.latest_batch("gpt-6-astra", payload)
+        self.assertIn("score_max", str(ctx.exception))
+
     def test_parsed_batches_drops_unparseable_and_sorts_desc(self):
         payload = load()
         payload["batches"].append({"score_max": 150, "completed_at": "soon",
@@ -333,6 +353,17 @@ class SelectionTests(unittest.TestCase):
                 et.model_scores("gpt-6-astra", {"points": bad_points})
             self.assertNotIn("mention://", str(ctx.exception))
 
+    def test_score_above_maximum_rejected(self):
+        for bad in (151, 150.5, 10 ** 400):
+            b = with_points("gpt-6-astra", {"low": bad})
+            with self.assertRaises(et.TunerError) as ctx:
+                et.model_scores("gpt-6-astra", b)
+            self.assertIn("exceeds the 150-point maximum", str(ctx.exception))
+
+    def test_score_at_maximum_accepted(self):
+        b = with_points("gpt-6-astra", {"low": 150})
+        self.assertEqual(et.model_scores("gpt-6-astra", b)["low"], 150)
+
     def test_missing_effort_in_use_blocks_all_agents_of_model(self):
         scores = dict(self.astra_scores)
         scores["high"] = None
@@ -439,6 +470,14 @@ class DegradeTests(unittest.TestCase):
                                   self.batches(usable, tampered), "k", NOW)
         self.assertEqual(peak, 130.0)
 
+    def test_out_of_range_history_scores_excluded_from_peak(self):
+        good = self.best_batch({e: 130.0 for e in et.EFFORT_ORDER})
+        for bad_score in (151.0, 10 ** 400):
+            bad = self.best_batch({e: bad_score for e in et.EFFORT_ORDER})
+            peak, _ = et.degrade_peak("gpt-6-astra",
+                                      self.batches(good, bad), "k", NOW)
+            self.assertEqual(peak, 130.0)
+
     def test_malformed_history_points_are_skipped(self):
         good = with_points("gpt-6-astra", {"low": 90.0, "ultra": 100.0},
                            completed="2026-11-17T00:00:00Z")
@@ -540,6 +579,15 @@ class FetchTests(unittest.TestCase):
                 et.fetch_trends(deadline=1000,
                                 http_get=lambda url, timeout=None: payload),
                 payload)
+
+    def test_huge_integer_score_max_rejected_without_overflow(self):
+        bad = load()
+        bad["score_max"] = 10 ** 400
+        with patch.object(et.time, "monotonic", side_effect=itertools.count()), \
+             self.assertRaises(et.TunerError) as ctx:
+            et.fetch_trends(deadline=1000,
+                            http_get=lambda url, timeout=None: bad)
+        self.assertIn("score_max", str(ctx.exception))
 
     def test_batches_must_be_a_list(self):
         for bad_batches in ({}, None, "batches"):
@@ -839,6 +887,63 @@ class RoundTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
         self.assertIn("completed_at", m.comments[0])
+
+    def test_corrupt_points_in_latest_batch_blocks_model(self):
+        def corrupt(p):
+            b = next(b for b in p["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+            b["points"] = None   # model_efforts keeps gpt-6-astra
+        m = FakeMultica([agent(ID1, "gpt-6-astra", "max", name="one")])
+        code, _ = self.run_with_budget(m, FakeHTTP(self.astra_payload(corrupt)))
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("points 不是列表", m.comments[0])
+        self.assertIn(ID1, m.comments[0])
+        self.assertIn("本轮未改该模型的 agent", m.comments[0])
+
+    def test_score_above_maximum_blocks_model(self):
+        def corrupt(p):
+            b = next(b for b in p["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+            for pt in b["points"]:
+                if pt["model"] == "gpt-6-astra" and pt["effort"] == "low":
+                    pt["score"] = 151.0   # would otherwise win and pick low
+        m = FakeMultica([agent(ID1, "gpt-6-astra", "max", name="one")])
+        code, _ = self.run_with_budget(m, FakeHTTP(self.astra_payload(corrupt)))
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("exceeds the 150-point maximum", m.comments[0])
+        self.assertIn(ID1, m.comments[0])
+
+    def test_future_batch_blocks_model(self):
+        def future(p):
+            b = next(b for b in p["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+            b["completed_at"] = (NOW + datetime.timedelta(days=30)).isoformat()
+        m = FakeMultica([agent(ID1, "gpt-6-astra", "max", name="one")])
+        code, _ = self.run_with_budget(m, FakeHTTP(self.astra_payload(future)))
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[:2] == ["agent", "update"] for c in m.calls))
+        self.assertEqual(len(m.comments), 1)
+        self.assertIn("晚于当前时间", m.comments[0])
+        self.assertIn(ID1, m.comments[0])
+
+    def test_boundary_future_24h_still_used(self):
+        def boundary(p):
+            p["batches"] = [b for b in p["batches"]
+                            if b["id"] != "fixture-20261118-early-shanghai"]
+            b = next(b for b in p["batches"]
+                     if b["id"] == "fixture-20261117-astra")
+            b["completed_at"] = (NOW + datetime.timedelta(hours=24)).isoformat()
+        m = FakeMultica([agent(ID1, "gpt-6-astra", "max", name="one")])
+        code, _ = self.run_with_budget(m, FakeHTTP(self.astra_payload(boundary)))
+        self.assertEqual(code, 0)
+        updates = [c for c in m.calls if c[:2] == ["agent", "update"]]
+        self.assertEqual(updates,
+                         [["agent", "update", ID1, "--thinking-level", "xhigh"]])
+        self.assertNotIn("晚于当前时间", m.comments[0])
 
     def test_current_effort_missing_blocks_model(self):
         def remove_xhigh(p):
