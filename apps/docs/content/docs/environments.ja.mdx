@@ -79,9 +79,12 @@ multica env start web
 |---|---|
 | `MULTICA_PORT` | ポート範囲の先頭。例: `41000` |
 | `MULTICA_ENVIRONMENT` | 環境名 |
+| `MULTICA_HOST` | URL のホスト：`MULTICA_ENV_PUBLIC_HOST`。既定値は `localhost` |
 | `PATH` | `multica env start` を実行したエージェントの `PATH`。リポジトリのツールチェーンが見つかるようにするためです。サイドバーから起動した場合は、そのタスクでエージェントがその環境に最後に使った `PATH` を使います。 |
 
-デーモンの環境変数も引き継ぎますが、`MULTICA_*` 変数（認証情報を含む）は除かれます。環境が実行の権限で操作することはできません。`url` と `ready` で置き換えられるのは `$MULTICA_PORT`（または `${MULTICA_PORT}`）だけです。2 つ目のポートが必要なら、`API_PORT=$((MULTICA_PORT + 1))` のようにシェルで計算します。
+デーモンの環境変数も引き継ぎますが、`MULTICA_*` 変数（認証情報を含む）は除かれます。環境が実行の権限で操作することはできません。`url` と `ready` は `$MULTICA_PORT` と `$MULTICA_HOST` を展開します（`${...}` 形式も使用可能）。2 つ目のポートが必要なら、`API_PORT=$((MULTICA_PORT + 1))` のようにシェルで計算します。
+
+リモートアクセスは既定で無効です。サーバーの `MULTICA_ENV_PROXY_BASE_URL` を `https://*.env.example.com` に設定するとワイルドカードのサブドメイン、`https://preview.example.com` にすると `/env/<id>/` リンクを使えます。サブドメイン間のログインには、共通の親ドメインを指定した `COOKIE_DOMAIN` とアプリと同じプロトコルが必要です（`SameSite=Strict`）。プロキシはワークスペースと非公開プロジェクトの権限を確認します。デーモンの `MULTICA_ENV_PUBLIC_HOST` は LAN/VPN の直接リンクに使え、暗黙の準備確認はローカルのままです。メイン API との衝突を避けるには専用プレビュードメインを使ってください。未設定なら localhost の動作を維持します。
 
 ### `start` はフォアグラウンドで動かす [#foreground]
 

@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { render, act } from "@testing-library/react";
 import { type CSSProperties, useRef, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useScrollFade } from "./use-scroll-fade";
+
+const originalMatchMedia = window.matchMedia;
+const originalResizeObserver = globalThis.ResizeObserver;
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+  globalThis.ResizeObserver = originalResizeObserver;
+});
 
 /** jsdom reports every box as 0×0; these getters stand in for real layout. */
 function fakeScrollBox(
@@ -71,6 +79,136 @@ function Host({
 }
 
 describe("useScrollFade", () => {
+  function mockPointerQuery(initialMatches: boolean) {
+    let matches = initialMatches;
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+    const query = {
+      get matches() {
+        return matches;
+      },
+      addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.add(listener);
+      },
+      removeEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.delete(listener);
+      },
+    } as unknown as MediaQueryList;
+    window.matchMedia = vi.fn(() => query) as unknown as typeof window.matchMedia;
+    return {
+      listeners,
+      change(next: boolean) {
+        matches = next;
+        const event = { matches: next } as MediaQueryListEvent;
+        for (const listener of listeners) listener(event);
+      },
+    };
+  }
+
+  function mockResizeObserver() {
+    const instances: ResizeObserverStub[] = [];
+    class ResizeObserverStub implements ResizeObserver {
+      private observing = false;
+
+      constructor(private readonly callback: ResizeObserverCallback) {
+        instances.push(this);
+      }
+
+      observe(): void {
+        this.observing = true;
+      }
+
+      unobserve(): void {
+        this.observing = false;
+      }
+
+      disconnect(): void {
+        this.observing = false;
+      }
+
+      trigger(): void {
+        if (this.observing) this.callback([], this);
+      }
+    }
+    globalThis.ResizeObserver = ResizeObserverStub;
+    return () => {
+      for (const instance of instances) instance.trigger();
+    };
+  }
+
+  it("does no layout work on a coarse pointer", async () => {
+    mockPointerQuery(true);
+    const renders = vi.fn();
+    const styles: (CSSProperties | undefined)[] = [];
+    const { container } = render(
+      <Host box={{ client: 100, scroll: 400 }} onRender={renders} onStyle={(s) => styles.push(s)} />,
+    );
+    const el = container.querySelector("div")!;
+    const measures = trackMeasures(el);
+
+    expect(styles.at(-1)).toBeUndefined();
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(pendingRaf()).toBe(0);
+    await act(async () => {
+      el.dispatchEvent(new Event("scroll"));
+      el.appendChild(document.createElement("span"));
+      await Promise.resolve();
+      flushRaf();
+    });
+    expect(measures()).toBe(0);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(pendingRaf()).toBe(0);
+  });
+
+  it("detaches on coarse pointers and resumes on fine pointers", async () => {
+    const pointer = mockPointerQuery(false);
+    const triggerResizes = mockResizeObserver();
+    const styles: (CSSProperties | undefined)[] = [];
+    const { container, unmount } = render(
+      <Host box={{ client: 100, scroll: 400 }} onStyle={(s) => styles.push(s)} />,
+    );
+    act(() => flushRaf());
+    const initialMask = styles.at(-1);
+    expect(String(initialMask?.maskImage)).toContain("transparent 100%");
+    const el = container.querySelector("div")!;
+
+    act(() => {
+      triggerResizes();
+      expect(pendingRaf()).toBe(1);
+      pointer.change(true);
+      expect(pendingRaf()).toBe(0);
+    });
+    expect(styles.at(-1)).toBeUndefined();
+    expect(pointer.listeners.size).toBe(1);
+
+    const measures = trackMeasures(el);
+    await act(async () => {
+      triggerResizes();
+      expect(pendingRaf()).toBe(0);
+      el.dispatchEvent(new Event("scroll"));
+      el.appendChild(document.createElement("span"));
+      await Promise.resolve();
+      flushRaf();
+    });
+    expect(measures()).toBe(0);
+
+    act(() => {
+      pointer.change(false);
+      expect(pendingRaf()).toBe(1);
+      flushRaf();
+    });
+    expect(measures()).toBe(3);
+    expect(styles.at(-1)).toEqual(initialMask);
+
+    act(() => {
+      fakeScrollBox(el, { client: 100, scroll: 400, position: 150 });
+      el.dispatchEvent(new Event("scroll"));
+    });
+    expect(String(styles.at(-1)?.maskImage)).toContain("transparent 0%");
+    expect(String(styles.at(-1)?.maskImage)).toContain("transparent 100%");
+    unmount();
+    expect(pointer.listeners.size).toBe(0);
+  });
+
   it("returns no mask for a non-scrollable box", () => {
     const styles: (CSSProperties | undefined)[] = [];
     render(<Host box={{ client: 100, scroll: 100 }} onStyle={(s) => styles.push(s)} />);

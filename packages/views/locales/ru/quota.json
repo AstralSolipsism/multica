@@ -2,8 +2,6 @@
   "column_label": "Квота",
   "title": "Квота тарифа",
   "window_label": "Окно: {{label}}",
-  "no_snapshot_chip": "Нет снимка",
-  "no_snapshot": "Нет снимка квоты",
   "overflow_title_one": "Ещё {{count}} квота",
   "overflow_title_few": "Ещё {{count}} квоты",
   "overflow_title_many": "Ещё {{count}} квот",

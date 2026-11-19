@@ -370,6 +370,7 @@ func (h *Handler) ListIssueEnvironments(w http.ResponseWriter, r *http.Request) 
 	out := make([]IssueEnvironmentResponse, 0, len(rows))
 	for _, row := range rows {
 		resp := issueEnvironmentToResponse(row, now)
+		resp.URL = h.resolveIssueEnvironmentURL(row, resp.URL)
 		resp.CanControl = row.Controllable && canControl(row.RuntimeID)
 		resp.PendingAction = pending[resp.ID]
 		resp.LastAction = last[resp.ID]

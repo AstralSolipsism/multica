@@ -529,6 +529,32 @@ describe("runtime machine quota chips", () => {
     ]));
   });
 
+  it("omits runtimes and account pools without displayable quota content", () => {
+    const emptyPoolRuntime = makeRuntime({
+      id: "rt-empty-pool",
+      provider: "omp",
+      plan_quota: makeQuota({
+        provider: "omp",
+        windows: [],
+        account_pools: [{
+          id: "kimi-code",
+          total_accounts: 1,
+          available_accounts: 1,
+          disabled_accounts: 0,
+          status: "ok",
+          resumes_at: null,
+          accounts: [{ label: "a", status: "ok", note: null, windows: [] }],
+        }],
+      }),
+    });
+    const machines = buildRuntimeMachines([
+      makeRuntime({ id: "rt-none", plan_quota: null }),
+      emptyPoolRuntime,
+    ], { now: NOW });
+
+    expect(machines[0]?.quotaChips).toEqual([]);
+  });
+
   it("leaves chips empty for an offline machine", () => {
     const machines = buildRuntimeMachines(
       [

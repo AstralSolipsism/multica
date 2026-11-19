@@ -3,6 +3,8 @@
 import { planQuotaState } from "@multica/core/runtimes";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { CollectionEmptyValue } from "../../layout/collection-list";
+import { partitionAccountPools } from "./account-pool-filter";
 import { useQuotaTimeFormatter } from "./quota-time";
 import {
   AccountPoolQuotaList,
@@ -54,24 +56,21 @@ export function RuntimeQuotaCell({
   const formatTime = useQuotaTimeFormatter();
   const state = planQuotaState(runtime.plan_quota, now);
   const accountPools = evaluateRuntimeAccountPools(runtime, now);
+  const accountPoolPartition = accountPools
+    ? partitionAccountPools(accountPools.pools, agents, runtime.id)
+    : null;
 
-  if (!state) {
-    return (
-      <span className="text-caption text-faint-foreground">
-        {t(($) => $.no_snapshot)}
-      </span>
-    );
+  if (!state || (accountPoolPartition && accountPoolPartition.serving.length === 0)) {
+    return <CollectionEmptyValue />;
   }
   const trigger = (
     <span
       tabIndex={0}
       className="flex w-full flex-col gap-1.5 rounded-sm leading-tight outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {accountPools ? (
+      {accountPoolPartition ? (
         <AccountPoolQuotaList
-          summary={accountPools}
-          agents={agents}
-          runtime={runtime}
+          partition={accountPoolPartition}
           interrupted={state.interrupted}
         />
       ) : (

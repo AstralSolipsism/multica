@@ -2,8 +2,6 @@
   "column_label": "配额",
   "title": "套餐配额",
   "window_label": "{{label}} 窗口",
-  "no_snapshot_chip": "暂无快照",
-  "no_snapshot": "暂无额度快照",
   "overflow_title_other": "另外 {{count}} 个额度",
   "window_short_minutes": "{{value}}m",
   "window_short_hours": "{{value}}h",

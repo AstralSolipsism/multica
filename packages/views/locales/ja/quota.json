@@ -2,8 +2,6 @@
   "column_label": "クォータ",
   "title": "プランのクォータ",
   "window_label": "{{label}} ウィンドウ",
-  "no_snapshot_chip": "スナップショットなし",
-  "no_snapshot": "クォータのスナップショットがありません",
   "overflow_title_other": "その他 {{count}} 件のクォータ",
   "window_short_minutes": "{{value}}m",
   "window_short_hours": "{{value}}h",

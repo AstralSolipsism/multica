@@ -10,7 +10,6 @@ import { cn } from "@multica/ui/lib/utils";
 import {
   formatCompactDuration,
   planQuotaState,
-  type PlanQuotaPoolsSummary,
   type QuotaAccountPoolState,
   type QuotaAccountState,
   type QuotaWindowState,
@@ -23,6 +22,7 @@ import {
   accountPoolNeedsRelogin,
   accountPoolProviderLabel,
   partitionAccountPools,
+  type AccountPoolPartition,
 } from "./account-pool-filter";
 import { runtimeRowLabel } from "./runtime-machines";
 import {
@@ -286,11 +286,7 @@ function QuotaHoverCardBody({
           <span className={cn("shrink-0", interrupted && "text-warning")}>{freshness}</span>
         )}
       </div>
-      {!state ? (
-        <p className="-mx-3 border-t border-border px-3 pt-2.5 text-caption text-faint-foreground">
-          {t(($) => $.no_snapshot)}
-        </p>
-      ) : accountPools && partition ? (
+      {!state ? null : accountPools && partition ? (
         <div className="-mx-3 flex flex-col gap-3 border-t border-border px-3 pt-2.5">
           {partition.serving.map((pool) => {
             const relogin = accountPoolNeedsRelogin(pool);
@@ -309,7 +305,7 @@ function QuotaHoverCardBody({
                 {relogin ? (
                   <p className="text-caption text-warning">{t(($) => $.account_pools.all_relogin)}</p>
                 ) : pool.windows.length === 0 ? (
-                  <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
+                  <p className="text-caption text-destructive">{t(($) => $.exhausted)}</p>
                 ) : (
                   <>
                     <div className="flex flex-col gap-2 text-caption">
@@ -362,18 +358,13 @@ function QuotaHoverCardBody({
 }
 
 export function AccountPoolQuotaList({
-  summary,
-  agents,
-  runtime,
+  partition,
   interrupted,
 }: {
-  summary: PlanQuotaPoolsSummary;
-  agents: Agent[];
-  runtime: AgentRuntime;
+  partition: AccountPoolPartition;
   interrupted: boolean;
 }) {
   const { t } = useT("quota");
-  const partition = partitionAccountPools(summary.pools, agents, runtime.id);
   return (
     <>
       {partition.serving.map((pool) => (
@@ -394,8 +385,8 @@ export function AccountPoolQuotaList({
               {t(($) => $.account_pools.pool_needs_relogin)}
             </span>
           ) : pool.windows.length === 0 ? (
-            <span className="text-caption text-faint-foreground">
-              {t(($) => $.no_snapshot)}
+            <span className="text-micro text-destructive">
+              {t(($) => $.exhausted)}
             </span>
           ) : (
             pool.windows.map((window, windowIndex) => (
