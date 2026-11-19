@@ -763,6 +763,12 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 		if _, err := q.LockWorkspaceForAttachmentUpload(ctx, params.WorkspaceID); err != nil {
 			return db.CreateAttachmentRow{}, err
 		}
+		if _, err := q.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
+			WorkspaceID: params.WorkspaceID,
+			ID:          projectID,
+		}); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
 		// Re-check the CURRENT principals, not the snapshot from before the
 		// bytes uploaded: membership and private-project access may have been
 		// revoked in the meantime. An agent run is bounded by the same two
@@ -770,6 +776,9 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 		// and the agent owner); a human upload by that user alone.
 		principals := make([]pgtype.UUID, 0, 2)
 		if params.UploaderType == "agent" {
+			if r.Header.Get("X-Actor-Source") != "task_token" {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
 			taskUUID, err := util.ParseUUID(r.Header.Get("X-Task-ID"))
 			if err != nil {
 				return db.CreateAttachmentRow{}, pgx.ErrNoRows
@@ -782,7 +791,21 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 			if err != nil {
 				return db.CreateAttachmentRow{}, err
 			}
+			// Liveness gate: a cancelled task or an archived agent must not
+			// keep writing through a stale capability. Both rows are read in
+			// this transaction after the project lock.
+			if task.AgentID != params.UploaderID || task.Status == "cancelled" {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			if agent.WorkspaceID != params.WorkspaceID || agent.ArchivedAt.Valid {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
 			principals = append(principals, projectaccess.RunPrincipals(task, agent.OwnerID)...)
+			// A task with no human originator/accountable principal must not
+			// collapse to the agent owner alone.
+			if len(principals) == 0 || !principals[0].Valid {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
 		} else {
 			userUUID, err := util.ParseUUID(requestUserID(r))
 			if err != nil {
@@ -805,11 +828,11 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 		if len(unique) == 0 {
 			return db.CreateAttachmentRow{}, pgx.ErrNoRows
 		}
-		// Lock the member rows before the project row: member revocation takes
-		// these rows FOR UPDATE, so it either lands before this upload (the
-		// read below sees no row and refuses) or waits until the attachment
-		// commits. The remaining locks follow the existing workspace -> member
-		// -> project order.
+		// Lock order is fixed as workspace -> project -> member ->
+		// project_member. Member revocation takes a member row FOR UPDATE and
+		// private-project removal takes a project_member row, so a revocation
+		// either lands before these reads (and the upload is refused) or waits
+		// until the attachment commits.
 		lockedMembers, err := q.LockAttachmentAccessMembers(ctx, db.LockAttachmentAccessMembersParams{
 			WorkspaceID: params.WorkspaceID,
 			UserIds:     unique,
@@ -819,12 +842,6 @@ func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Requ
 		}
 		if len(lockedMembers) != len(unique) {
 			return db.CreateAttachmentRow{}, pgx.ErrNoRows
-		}
-		if _, err := q.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
-			WorkspaceID: params.WorkspaceID,
-			ID:          projectID,
-		}); err != nil {
-			return db.CreateAttachmentRow{}, err
 		}
 		if _, err := q.LockAttachmentAccessProjectMembers(ctx, db.LockAttachmentAccessProjectMembersParams{
 			WorkspaceID: params.WorkspaceID,

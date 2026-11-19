@@ -609,6 +609,22 @@ func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A private project with the uploader on its member list passes the
+	// visibility gate; the held project_member row is what pauses the upload
+	// after it has acquired the member share locks.
+	if _, err := testPool.Exec(context.Background(), "UPDATE project SET visibility = 'private' WHERE id = $1", f.project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO project_member (workspace_id, project_id, user_id, added_by)
+		VALUES ($1, $2, $3, $3)
+	`, testWorkspaceID, f.project, uploader); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "DELETE FROM project_member WHERE project_id = $1 AND user_id = $2", f.project, uploader)
+		testPool.Exec(context.Background(), "UPDATE project SET visibility = 'public' WHERE id = $1", f.project)
+	})
 	store := &cleanupStorage{}
 	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
 	testHandler.Storage, testHandler.CFSigner = store, nil
@@ -617,19 +633,20 @@ func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
 		testPool.Exec(context.Background(), "DELETE FROM attachment WHERE baseline_page_id = $1", page.Page.ID)
 	})
 
-	// Hold the project row so the upload pauses AFTER taking the shared member
-	// lock. Member deletion then has to wait for the upload's commit.
-	tx, err := testPool.Begin(context.Background())
+	txHold, err := testPool.Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
-	qtx := testHandler.Queries.WithTx(tx)
-	if _, err := qtx.LabrastroLockEngineeringProject(context.Background(), db.LabrastroLockEngineeringProjectParams{
-		WorkspaceID: parseUUID(testWorkspaceID), ID: parseUUID(f.project),
-	}); err != nil {
+	defer txHold.Rollback(context.Background())
+	var held int
+	if err := txHold.QueryRow(context.Background(), `
+		SELECT 1 FROM project_member
+		WHERE workspace_id = $1 AND project_id = $2 AND user_id = $3
+		FOR UPDATE
+	`, testWorkspaceID, f.project, uploader).Scan(&held); err != nil {
 		t.Fatal(err)
 	}
+
 	uploadDone := make(chan *testutil.Response, 1)
 	go func() {
 		uploadDone <- uploadBaselineAttachmentAs(t, uploader, "architecture.html", []byte("<html></html>"), map[string]string{
@@ -638,7 +655,7 @@ func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
 	}()
 	select {
 	case res := <-uploadDone:
-		t.Fatalf("upload did not pause on the project lock: %+v", res)
+		t.Fatalf("upload did not pause on the project_member lock: %+v", res)
 	case <-time.After(300 * time.Millisecond):
 	}
 
@@ -659,14 +676,14 @@ func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	if err := tx.Commit(context.Background()); err != nil {
+	if err := txHold.Rollback(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case res := <-uploadDone:
 		res.Want(http.StatusOK)
 	case <-time.After(5 * time.Second):
-		t.Fatal("upload did not finish after the project lock was released")
+		t.Fatal("upload did not finish after the project_member lock was released")
 	}
 	select {
 	case res := <-deleteDone:
@@ -681,4 +698,134 @@ func TestBaselineAttachmentUploadHoldsMemberLockUntilCommit(t *testing.T) {
 	if attachments != 1 {
 		t.Fatalf("uploaded attachment rows = %d, want 1", attachments)
 	}
+}
+
+type agentUploadFixture struct {
+	f     baselineWikiFixture
+	page  baselineWikiWriteOut
+	agent string
+	task  string
+	store *cleanupStorage
+}
+
+func newAgentUploadFixture(t *testing.T) *agentUploadFixture {
+	t.Helper()
+	f := newBaselineWikiFixture(t)
+	f.enable()
+	page := f.create("session", "架构", "architecture", nil, nil, "## 架构\n")
+	agent := dbfx.Agent(t, "baseline-agent-"+uuid.NewString(), testRuntimeID, testutil.Cols{"owner_id": f.memberUser})
+	task := dbfx.Task(t, agent, testutil.Cols{
+		"runtime_id":          testRuntimeID,
+		"originator_user_id":  f.adminUser,
+		"accountable_user_id": f.adminUser,
+		"originator_source":   "member",
+	})
+	store := &cleanupStorage{}
+	originalStorage, originalSigner := testHandler.Storage, testHandler.CFSigner
+	testHandler.Storage, testHandler.CFSigner = store, nil
+	t.Cleanup(func() { testHandler.Storage, testHandler.CFSigner = originalStorage, originalSigner })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), "UPDATE project SET visibility = 'public' WHERE id = $1", f.project)
+		testPool.Exec(context.Background(), "DELETE FROM project_member WHERE project_id = $1", f.project)
+	})
+	return &agentUploadFixture{f: f, page: page, agent: agent, task: task, store: store}
+}
+
+func (a *agentUploadFixture) upload(t *testing.T) *testutil.Response {
+	t.Helper()
+	return uploadBaselineAttachmentWithHeaders(t, "architecture.html", []byte("<html></html>"), map[string]string{
+		"baseline_page_id": a.page.Page.ID,
+	}, map[string]string{
+		"X-User-ID":      a.f.adminUser,
+		"X-Workspace-ID": testWorkspaceID,
+		"X-Actor-Source": "task_token",
+		"X-Agent-ID":     a.agent,
+		"X-Task-ID":      a.task,
+	})
+}
+
+func (a *agentUploadFixture) assertRejected(t *testing.T) {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), "SELECT count(*) FROM attachment WHERE baseline_page_id = $1", a.page.Page.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || len(a.store.files) != 0 || a.store.deleted != 1 {
+		t.Fatalf("rejected upload left rows=%d files=%v deleted=%d", count, a.store.files, a.store.deleted)
+	}
+}
+
+func TestBaselineAttachmentUploadAgentAuthorityGates(t *testing.T) {
+	t.Run("originator excluded from private project", func(t *testing.T) {
+		a := newAgentUploadFixture(t)
+		res := holdProjectLockAndRevoke(t, a.f.project, func() *testutil.Response { return a.upload(t) }, func(ctx context.Context, tx pgx.Tx) {
+			if _, err := tx.Exec(ctx, "UPDATE project SET visibility = 'private' WHERE id = $1", a.f.project); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO project_member (workspace_id, project_id, user_id, added_by) VALUES ($1,$2,$3,$3)
+			`, testWorkspaceID, a.f.project, a.f.memberUser); err != nil {
+				t.Fatal(err)
+			}
+		})
+		res.Want(http.StatusForbidden)
+		a.assertRejected(t)
+	})
+
+	for _, principal := range []struct {
+		name string
+		user string
+	}{
+		{"agent owner membership removed", ""},
+		{"originator membership removed", ""},
+	} {
+		principal := principal
+		t.Run(principal.name, func(t *testing.T) {
+			a := newAgentUploadFixture(t)
+			user := a.f.memberUser
+			if principal.name == "originator membership removed" {
+				user = a.f.adminUser
+			}
+			res := holdProjectLockAndRevoke(t, a.f.project, func() *testutil.Response { return a.upload(t) }, func(ctx context.Context, tx pgx.Tx) {
+				if _, err := tx.Exec(ctx, "DELETE FROM member WHERE workspace_id = $1 AND user_id = $2", testWorkspaceID, user); err != nil {
+					t.Fatal(err)
+				}
+			})
+			res.Want(http.StatusForbidden)
+			a.assertRejected(t)
+		})
+	}
+
+	t.Run("task cancelled during upload", func(t *testing.T) {
+		a := newAgentUploadFixture(t)
+		res := holdProjectLockAndRevoke(t, a.f.project, func() *testutil.Response { return a.upload(t) }, func(ctx context.Context, tx pgx.Tx) {
+			if _, err := tx.Exec(ctx, "UPDATE agent_task_queue SET status = 'cancelled' WHERE id = $1", a.task); err != nil {
+				t.Fatal(err)
+			}
+		})
+		res.Want(http.StatusForbidden)
+		a.assertRejected(t)
+	})
+
+	t.Run("agent archived during upload", func(t *testing.T) {
+		a := newAgentUploadFixture(t)
+		res := holdProjectLockAndRevoke(t, a.f.project, func() *testutil.Response { return a.upload(t) }, func(ctx context.Context, tx pgx.Tx) {
+			if _, err := tx.Exec(ctx, "UPDATE agent SET archived_at = now() WHERE id = $1", a.agent); err != nil {
+				t.Fatal(err)
+			}
+		})
+		res.Want(http.StatusForbidden)
+		a.assertRejected(t)
+	})
+
+	t.Run("task without human principal", func(t *testing.T) {
+		a := newAgentUploadFixture(t)
+		if _, err := testPool.Exec(context.Background(), `
+			UPDATE agent_task_queue SET originator_user_id = NULL, accountable_user_id = NULL, originator_source = NULL WHERE id = $1
+		`, a.task); err != nil {
+			t.Fatal(err)
+		}
+		a.upload(t).Want(http.StatusForbidden)
+		a.assertRejected(t)
+	})
 }
