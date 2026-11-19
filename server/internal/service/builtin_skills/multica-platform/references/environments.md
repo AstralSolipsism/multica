@@ -11,12 +11,17 @@ the issue sidebar's **Environments** section. It comes from one of two places:
   inside an issue run's directory, seen on two scans about 30 seconds apart.
   Members can only stop it; there is no log and no restart.
 
-Both work on macOS and Linux only. A `localhost` URL opens only on the machine
-running it. Remote access is opt-in: the server's `MULTICA_ENV_PROXY_BASE_URL`
-provides authenticated wildcard or `/env/<id>/` proxy links; the daemon's
-`MULTICA_ENV_PUBLIC_HOST` provides direct LAN/VPN links. Cross-subdomain proxy
-access requires a shared parent `COOKIE_DOMAIN` and the same scheme as the app.
-Implicit readiness probes stay local.
+Both work on macOS and Linux. A `localhost` URL opens on the machine running
+the environment. For direct LAN/VPN links, set the daemon's
+`MULTICA_ENV_PUBLIC_HOST` to a reachable hostname or IP. Declared URLs can use
+`$MULTICA_HOST`. With a host override, implicit readiness probes use
+`127.0.0.1`. Explicit `ready` addresses keep their configured values.
+
+The server can relay loopback links when `MULTICA_ENV_PROXY_BASE_URL` is a
+dedicated wildcard origin and the daemon supports environment tunnels. The
+relay requires a single API replica. The browser exchanges a one-time ticket
+for a host-only preview cookie while `COOKIE_DOMAIN` stays unset. Direct
+LAN/VPN links remain available when Cloud disables the relay.
 
 ## CLI
 

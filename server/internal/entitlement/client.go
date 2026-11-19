@@ -280,9 +280,14 @@ func normalizePolicy(wire wirePolicy) (fetchedPolicy, error) {
 		wire.ValidUntil.IsZero() || wire.ValidForSeconds <= 0 || wire.ValidForSeconds > int64(maxPolicyTTL/time.Second) {
 		return fetchedPolicy{}, ErrInvalidPolicy
 	}
-	gates := make(map[GateName]Gate, 2)
-	for _, name := range []GateName{GateIssueCount, GateAutopilotRuns} {
+	gates := make(map[GateName]Gate, 3)
+	for _, name := range []GateName{GateIssueCount, GateAutopilotRuns, GateEnvironmentProxy} {
 		wireGate, ok := wire.Gates[string(name)]
+		// Older Cloud instances do not send this optional gate.
+		if !ok && name == GateEnvironmentProxy {
+			gates[name] = Gate{Action: ActionOff}
+			continue
+		}
 		if !ok {
 			return fetchedPolicy{}, ErrInvalidPolicy
 		}

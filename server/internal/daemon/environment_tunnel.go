@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/envtunnel"
 )
 
+// allowsTunnelPort limits relay connections to ports reported for this environment.
 func (s *environmentService) allowsTunnelPort(key string, port int) bool {
 	if s == nil || port < 1 || port > 65535 {
 		return false
@@ -40,13 +41,22 @@ func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID 
 	if d.environments == nil || ctx.Err() != nil {
 		return
 	}
-	if _, err := uuid.Parse(streamID); err != nil {
+	id, secret, hasSecret := strings.Cut(streamID, ".")
+	if _, err := uuid.Parse(id); err != nil {
 		return
 	}
-	endpoint := strings.TrimRight(d.client.baseURL, "/") + "/api/daemon/runtimes/" + runtimeID + "/environment-tunnel/" + streamID
+	// Older servers use the regular daemon credential on the same route.
+	token := d.client.Token()
+	if hasSecret {
+		if _, err := uuid.Parse(secret); err != nil {
+			return
+		}
+		token = secret
+	}
+	endpoint := strings.TrimRight(d.client.baseURL, "/") + "/api/daemon/runtimes/" + runtimeID + "/environment-tunnel/" + id
 	endpoint = strings.Replace(strings.Replace(endpoint, "https://", "wss://", 1), "http://", "ws://", 1)
 	dialer := websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 10 * time.Second}
-	ws, resp, err := dialer.DialContext(ctx, endpoint, http.Header{"Authorization": {"Bearer " + d.client.Token()}})
+	ws, resp, err := dialer.DialContext(ctx, endpoint, http.Header{"Authorization": {"Bearer " + token}})
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()
@@ -64,10 +74,17 @@ func (d *Daemon) openEnvironmentTunnel(ctx context.Context, runtimeID, streamID 
 	}
 	defer local.Close()
 	tunnel := envtunnel.NewConn(ws)
-	stop := context.AfterFunc(ctx, func() { tunnel.Close(); local.Close() })
+	stop := context.AfterFunc(ctx, func() {
+		tunnel.Close()
+		local.Close()
+	})
 	defer stop()
 	done := make(chan struct{})
-	go func() { _, _ = io.Copy(local, tunnel); local.Close(); close(done) }()
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(local, tunnel)
+		local.Close()
+	}()
 	_, _ = io.Copy(tunnel, local)
 	tunnel.Close()
 	<-done

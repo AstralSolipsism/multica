@@ -139,6 +139,9 @@ type Config struct {
 	// origin: the route serves stored third-party JavaScript as HTML.
 	PluginSurfaceOrigin string
 	EnvProxyBaseURL     string
+	BackendReplicas     int
+	EnvProxyLimits      EnvironmentProxyLimits
+	EnvProxyKey         []byte
 	// LLM* configure the basic LLM API layer (MUL-4238). They back the
 	// server-internal LLM helpers in pkg/llm (e.g. chat title generation).
 	// The generic OpenAI-compatible passthrough endpoints were removed in
@@ -280,6 +283,7 @@ type Handler struct {
 	HeartbeatScheduler   HeartbeatScheduler
 	Storage              storage.Storage
 	CFSigner             *auth.CloudFrontSigner
+	CloudPAT             *auth.CloudPATVerifier
 	Analytics            analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
@@ -615,7 +619,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	taskSvc.PRSnapshotsEnabled = h.PRRefresh.Enabled()
 
 	if h.envProxy != nil {
-		h.envProxy.transport.DialContext = h.dialEnvironmentTunnel
+		h.envProxy.initProxy(h.dialEnvironmentTunnel)
 	}
 	return h
 }
@@ -857,10 +861,15 @@ func (h *Handler) notifyDaemonWorkspacesChanged(userIDs ...string) {
 // NotifyRuntimeGone emits the post-commit runtime invalidation signal. It is
 // exported so the runtime GC can use the same publisher as request handlers.
 func (h *Handler) NotifyRuntimeGone(runtimeID string) {
-	if h == nil || h.DaemonRuntimeGone == nil || runtimeID == "" {
+	if h == nil || runtimeID == "" {
 		return
 	}
-	h.DaemonRuntimeGone.NotifyRuntimeGone(runtimeID)
+	if h.envProxy != nil {
+		h.envProxy.state.revoke(environmentRevocationKey{runtimeID: runtimeID})
+	}
+	if h.DaemonRuntimeGone != nil {
+		h.DaemonRuntimeGone.NotifyRuntimeGone(runtimeID)
+	}
 }
 
 // NotifyRuntimeRecovered republishes the workspace-scoped daemon:register

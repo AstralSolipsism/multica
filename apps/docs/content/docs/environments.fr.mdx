@@ -84,8 +84,6 @@ Chaque environnement reçoit dix ports libres rien qu'à lui, de `MULTICA_PORT` 
 
 Ils héritent aussi de l'environnement du daemon, sauf de ses variables `MULTICA_*`, identifiants compris : un environnement ne peut pas agir au nom de l'exécution. Dans `url` et `ready`, `$MULTICA_PORT` et `$MULTICA_HOST` sont remplacés (les formes `${...}` sont aussi acceptées). Pour un second port, calculez-le dans le shell, par exemple `API_PORT=$((MULTICA_PORT + 1))`.
 
-L’accès distant est facultatif : configurez `MULTICA_ENV_PROXY_BASE_URL` sur le serveur avec `https://*.env.example.com`, ou `https://preview.example.com` pour des liens `/env/<id>/`. La connexion entre sous-domaines exige un `COOKIE_DOMAIN` parent commun et le même protocole que l’application (`SameSite=Strict`). Le proxy vérifie les accès à l’espace et aux projets privés. Sur le daemon, `MULTICA_ENV_PUBLIC_HOST` fournit des liens directs LAN/VPN ; les sondes implicites restent locales. Un domaine de prévisualisation dédié évite les conflits avec les API principales. Sans configuration, le comportement localhost est conservé.
-
 ### Garder `start` au premier plan [#foreground]
 
 `start` s'exécute en tant que chef d'un nouveau groupe de processus. L'environnement vit tant qu'un processus de ce groupe tourne, et l'arrêter envoie un signal à tout le groupe. Donc :
@@ -93,6 +91,14 @@ L’accès distant est facultatif : configurez `MULTICA_ENV_PROXY_BASE_URL` sur 
 - Gardez le serveur principal au premier plan. Les processus auxiliaires lancés avec `&` ne posent pas de problème : ils restent dans le groupe.
 - Ne confiez pas le travail à quelque chose hors du groupe, comme `docker compose up -d`, un service système ou `setsid`. L'environnement passerait aussitôt à **Terminé**, et l'arrêter n'atteindrait pas ce travail. Lancez ces outils au premier plan et ajoutez une commande `stop`.
 - Le checkout d'une exécution démarre sans dépendances installées. Installez-les dans `start` ; les dix minutes pendant lesquelles le daemon attend que l'environnement soit prêt incluent ce temps.
+
+### Aperçu distant et accès direct [#remote-access]
+
+Pour un accès direct sur le réseau local ou le VPN, définissez `MULTICA_ENV_PUBLIC_HOST` sur le daemon avec un nom d’hôte ou une adresse IP accessible aux membres de l’espace de travail. Cette valeur remplace le `localhost` par défaut dans les URL des serveurs déclarés et détectés. Les deux types de liens directs restent disponibles lorsque le proxy est activé ou que Cloud désactive le relais. Avec un hôte personnalisé, les sondes de disponibilité implicites utilisent `127.0.0.1`. Un paramètre `ready` explicite utilise l’adresse configurée.
+
+Pour relayer les URL de bouclage, définissez `MULTICA_ENV_PROXY_BASE_URL` sur le serveur avec une origine générique dédiée, par exemple `https://*.preview.example.com` ou `https://env-*.preview.example.com`. Acheminez le DNS et TLS génériques vers l’entrée de l’API et conservez les en-têtes Host et WebSocket Upgrade. L’origine de l’application (`MULTICA_APP_URL` ou, à défaut, `MULTICA_PUBLIC_URL`) doit transférer `/api/*` à l’API. Le daemon doit prendre en charge les tunnels d’environnement et pouvoir ouvrir une connexion WebSocket vers cette API. Exécutez le proxy sur une seule réplique de l’API (`MULTICA_BACKEND_REPLICAS=1`). Une origine invalide ou qui chevauche une origine de la plateforme, ou plusieurs répliques, désactive le proxy et génère une erreur dans les journaux.
+
+À l’émission du ticket de lancement à usage unique, le service vérifie la connexion, l’appartenance à l’espace de travail, l’accès au projet privé et la politique Cloud en vigueur. Le navigateur échange le ticket contre un cookie de courte durée propre à l’hôte d’aperçu. `COOKIE_DOMAIN` peut rester indéfini. Cloud peut désactiver le relais ou limiter le nombre d’environnements actifs par espace de travail. Les corps des requêtes relayées sont limités à 32 Mio par défaut. Ce seuil se règle avec `MULTICA_ENV_PROXY_MAX_BODY_BYTES`.
 
 ## Exemples [#examples]
 

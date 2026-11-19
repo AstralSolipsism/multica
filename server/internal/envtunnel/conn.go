@@ -14,14 +14,18 @@ const IdleTimeout = 5 * time.Minute
 
 // Conn implements net.Conn without buffering entire WebSocket messages.
 type Conn struct {
-	ws                          *websocket.Conn
-	reader                      io.Reader
-	mu                          sync.Mutex
-	writeMu                     sync.Mutex
-	readDeadline, writeDeadline time.Time
+	ws            *websocket.Conn
+	reader        io.Reader
+	mu            sync.Mutex
+	writeMu       sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
 }
 
-func NewConn(ws *websocket.Conn) *Conn { return &Conn{ws: ws} }
+// NewConn wraps a dedicated WebSocket as a byte stream.
+func NewConn(ws *websocket.Conn) *Conn {
+	return &Conn{ws: ws}
+}
 
 func (c *Conn) deadline(explicit time.Time) time.Time {
 	idle := time.Now().Add(IdleTimeout)
@@ -70,9 +74,18 @@ func (c *Conn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (c *Conn) Close() error         { return c.ws.Close() }
-func (c *Conn) LocalAddr() net.Addr  { return c.ws.LocalAddr() }
-func (c *Conn) RemoteAddr() net.Addr { return c.ws.RemoteAddr() }
+func (c *Conn) Close() error {
+	return c.ws.Close()
+}
+
+func (c *Conn) LocalAddr() net.Addr {
+	return c.ws.LocalAddr()
+}
+
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.ws.RemoteAddr()
+}
+
 func (c *Conn) SetDeadline(t time.Time) error {
 	if err := c.SetReadDeadline(t); err != nil {
 		return err

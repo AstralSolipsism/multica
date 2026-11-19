@@ -1,11 +1,14 @@
 package localenv
 
 import (
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 func publicHostFromEnv() string {
@@ -13,16 +16,20 @@ func publicHostFromEnv() string {
 	if host == "" {
 		return "localhost"
 	}
-	if strings.Contains(host, "://") {
-		if u, err := url.Parse(host); err == nil {
-			host = u.Hostname()
-		}
+	address := host
+	if strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]") && strings.Contains(address, ":") {
+		address = address[1 : len(address)-1]
 	}
-	host = strings.Trim(host, "[]")
-	if host == "" || (net.ParseIP(host) == nil && strings.ContainsAny(host, "/:@?# ")) {
-		return "localhost"
+	if net.ParseIP(address) != nil {
+		return address
 	}
-	return host
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	// Dotted numbers that failed IP parsing are invalid IP literals, not DNS names.
+	if strings.ContainsAny(name, "abcdefghijklmnopqrstuvwxyz") && util.ValidDNSHostname(name) {
+		return name
+	}
+	slog.Warn("invalid MULTICA_ENV_PUBLIC_HOST, using localhost")
+	return "localhost"
 }
 
 func expandEnvURL(raw string, port int, host string) string {

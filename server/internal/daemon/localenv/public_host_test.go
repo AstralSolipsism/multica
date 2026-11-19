@@ -8,7 +8,11 @@ import (
 func TestPublicHostURLs(t *testing.T) {
 	for _, tc := range []struct{ host, want string }{
 		{"", "http://localhost:41000"}, {"lan.example", "http://lan.example:41000"},
-		{"http://lan.example/", "http://lan.example:41000"}, {"[::1]", "http://[::1]:41000"}, {"bad/path", "http://localhost:41000"},
+		{"http://lan.example/", "http://localhost:41000"}, {"[::1]", "http://[::1]:41000"},
+		{"2001:db8::cafe", "http://[2001:db8::cafe]:41000"}, {"192.168.1.10", "http://192.168.1.10:41000"},
+		{"bad/path", "http://localhost:41000"}, {"bad_name", "http://localhost:41000"},
+		{"lab.example:80", "http://localhost:41000"}, {"1.2.3.999", "http://localhost:41000"},
+		{"[lab.example]", "http://localhost:41000"}, {"-bad.example", "http://localhost:41000"},
 	} {
 		t.Run(tc.host, func(t *testing.T) {
 			t.Setenv("MULTICA_ENV_PUBLIC_HOST", tc.host)

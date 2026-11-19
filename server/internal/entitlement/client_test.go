@@ -606,6 +606,30 @@ func newTestClient(t *testing.T, baseURL string, mutate func(*Config)) *Client {
 	return client
 }
 
+func TestNormalizeEnvironmentProxyGate(t *testing.T) {
+	policy := samplePolicy(1, 1, 60, ActionEnforce)
+	fetched, err := normalizePolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetched.snapshot.gates[GateEnvironmentProxy].Action != ActionOff ||
+		fetched.snapshot.gates[GateIssueCount].Action != ActionEnforce ||
+		fetched.snapshot.gates[GateAutopilotRuns].Action != ActionEnforce {
+		t.Fatal("legacy policies must leave the other gates enforceable")
+	}
+	for _, limit := range []int{0, 3} {
+		policy.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: &limit}
+		fetched, err := normalizePolicy(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := fetched.snapshot.gates[GateEnvironmentProxy]
+		if got.Action != ActionEnforce || got.Limit == nil || *got.Limit != limit {
+			t.Fatalf("environment proxy gate = %+v, want limit %d", got, limit)
+		}
+	}
+}
+
 func samplePolicy(policyRevision, subscriptionVersion, validForSeconds int64, issueAction Action) wirePolicy {
 	issueLimit := testIssueLimit
 	autopilotLimit := testAutopilotLimit

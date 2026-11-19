@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -50,8 +51,15 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 			_, portText, _ := net.SplitHostPort(strings.TrimPrefix(local.URL, "http://"))
 			port, _ := strconv.Atoi(portText)
 			result := make(chan error, 1)
+			streamID, token := uuid.NewString(), "test-token"
+			pending := streamID
+			if allowed {
+				token = uuid.NewString()
+				pending += "." + token
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "Bearer test-token" {
+				if r.Header.Get("Authorization") != "Bearer "+token || !strings.HasSuffix(r.URL.Path, "/"+streamID) {
+					result <- errors.New("invalid environment callback authentication")
 					http.Error(w, "auth", 401)
 					return
 				}
@@ -81,7 +89,7 @@ func TestEnvironmentTunnelForwardAndReject(t *testing.T) {
 			client := NewClient(server.URL)
 			client.SetToken("test-token")
 			d := &Daemon{client: client, environments: s}
-			d.openEnvironmentTunnel(context.Background(), uuid.NewString(), uuid.NewString())
+			d.openEnvironmentTunnel(context.Background(), uuid.NewString(), pending)
 			err := <-result
 			if allowed && err != nil {
 				t.Fatal(err)
