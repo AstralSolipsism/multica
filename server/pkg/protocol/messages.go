@@ -3,6 +3,9 @@ package protocol
 import "encoding/json"
 
 const (
+	// DaemonCapabilityEnvironmentTunnelV1 allows preview tunnel rendezvous
+	// over the authenticated daemon WebSocket.
+	DaemonCapabilityEnvironmentTunnelV1 = "environment-tunnel-v1"
 	// DaemonCapabilityThinkingAdaptV1 allows claims to carry the reserved
 	// adaptive thinking mode. Older daemons receive an empty thinking level.
 	DaemonCapabilityThinkingAdaptV1     = "thinking-adapt-v1"
@@ -196,7 +199,9 @@ const (
 	// PendingWorkKindEnvironmentCommand asks a daemon that supports it to claim
 	// its queued environment commands instead of heartbeating. Older daemons
 	// heartbeat as for any kind, which claims nothing.
-	PendingWorkKindEnvironmentCommand      = "environment_command"
+	PendingWorkKindEnvironmentCommand = "environment_command"
+	// Environment tunnel hints go to the local authenticated runtime socket.
+	// V1 appends the one-use stream ID and rendezvous secret separated by a dot.
 	PendingWorkKindEnvironmentTunnelPrefix = "environment_tunnel:"
 )
 
@@ -205,7 +210,7 @@ const (
 // sending one immediate heartbeat for RuntimeID instead of waiting for its next
 // scheduled tick; the request itself is still claimed through the normal
 // heartbeat path, so this event carries no work and is safe to lose, duplicate,
-// or ignore (MUL-5444).
+// or ignore (MUL-5444). Environment kinds use their own rendezvous or claim.
 type PendingWorkPayload struct {
 	RuntimeID string `json:"runtime_id"`
 	Kind      string `json:"kind,omitempty"`

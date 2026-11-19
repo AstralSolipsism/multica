@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,8 +19,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/entitlement/entitlementtest"
 	"github.com/multica-ai/multica/server/internal/envtunnel"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -27,194 +31,39 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func proxyTestHandler(t *testing.T, base string) *Handler {
+const (
+	testPreviewBase = "http://*.preview.example.com"
+	testAppOrigin   = "http://app.example.net"
+)
+
+func proxyTestHandler(t *testing.T, limits EnvironmentProxyLimits) *Handler {
 	t.Helper()
-	p := newEnvironmentProxy(Config{EnvProxyBaseURL: base, PublicURL: "https://main.example"})
-	h := &Handler{Queries: testHandler.Queries, DB: testPool, envProxy: p}
-	if p != nil {
-		p.transport.DialContext = h.dialEnvironmentTunnel
-		t.Cleanup(p.transport.CloseIdleConnections)
+	cfg := Config{
+		AppURL: testAppOrigin, PublicURL: "http://api.example.net",
+		PluginSurfaceOrigin: "http://plugins.example.org", EnvProxyBaseURL: testPreviewBase, EnvProxyLimits: limits,
 	}
+	h := &Handler{Queries: testHandler.Queries, DB: testPool, cfg: cfg, envProxy: newEnvironmentProxy(cfg)}
+	h.envProxy.initProxy(h.dialEnvironmentTunnel)
+	t.Cleanup(h.envProxy.transport.CloseIdleConnections)
 	return h
 }
 
-func TestEnvironmentProxyURLAndRoutes(t *testing.T) {
-	id := uuid.NewString()
-	row := db.IssueEnvironment{ID: parseUUID(id), Port: pgtype.Int4{Int32: 41000, Valid: true}}
-	for _, tc := range []struct{ base, want string }{
-		{"", "http://localhost:41000/docs?q=1"},
-		{"https://*.example.com", "https://env-" + strings.ReplaceAll(id, "-", "") + ".example.com/docs?q=1"},
-		{"https://env-*.example.com:8080", "https://env-" + strings.ReplaceAll(id, "-", "") + ".example.com:8080/docs?q=1"},
-		{"https://preview.example.com", "https://preview.example.com/env/" + id + "/docs?q=1"},
-	} {
-		h := proxyTestHandler(t, tc.base)
-		if got := h.resolveIssueEnvironmentURL(row, "http://localhost:41000/docs?q=1"); got != tc.want {
-			t.Fatalf("url=%s want %s", got, tc.want)
-		}
-		row.Kind = "app"
-		if got := h.resolveIssueEnvironmentURL(row, "app-url"); got != "app-url" {
-			t.Fatal(got)
-		}
-		row.Kind = "server"
-		if h.envProxy != nil && h.envProxy.wildcard {
-			host := strings.Split(strings.TrimPrefix(tc.want, "https://"), "/")[0]
-			got, owned := h.envProxy.hostEnvironment(host)
-			if got != id || !owned {
-				t.Fatalf("route=%s %v", got, owned)
-			}
-			got, owned = h.envProxy.hostEnvironment(strings.Replace(host, strings.ReplaceAll(id, "-", ""), id, 1))
-			if got != id || !owned {
-				t.Fatal("canonical UUID rejected")
-			}
-			if _, owned = h.envProxy.hostEnvironment("evil.example.net"); owned {
-				t.Fatal("foreign host matched")
-			}
-		}
-	}
-	for _, raw := range []string{"ftp://example.com", "https://user:pw@example.com", "https://example.com/sub", "https://*.*.com", "https://example.com?q=1"} {
-		if p := newEnvironmentProxy(Config{EnvProxyBaseURL: raw}); p != nil {
-			t.Fatalf("invalid base accepted: %s", raw)
-		}
-	}
-	h := proxyTestHandler(t, "https://main.example")
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	req := httptest.NewRequest("GET", "https://main.example/env/"+id+"?q=1", nil)
+func proxyRouter(h *Handler) http.Handler {
+	router := chi.NewRouter()
+	router.Use(h.PluginSurfaceHostBoundary, h.EnvironmentProxyHostBoundary, middleware.ContentSecurityPolicy)
+	router.Get(environmentLaunchPath, h.LaunchEnvironmentProxy)
+	router.Get("/api/daemon/runtimes/{runtimeId}/environment-tunnel/{streamId}", h.ConnectEnvironmentTunnel)
+	router.Route("/api/daemon", func(r chi.Router) {
+		r.Use(middleware.DaemonAuth(h.Queries, nil, nil, nil))
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	})
+	return router
+}
+
+func callPreview(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.EnvironmentProxyHostBoundary(next).ServeHTTP(rec, req)
-	if rec.Code != 307 || rec.Header().Get("Location") != "https://main.example/env/"+id+"/?q=1" {
-		t.Fatalf("redirect=%d %s", rec.Code, rec.Header().Get("Location"))
-	}
-	for _, path := range []string{"/api/unknown", "/ws", "/auth/callback", "/_next/x", "/docs/a", "/metrics"} {
-		if !environmentReservedPath(path) {
-			t.Fatal(path)
-		}
-		req := httptest.NewRequest("GET", "https://main.example"+path, nil)
-		req.AddCookie(&http.Cookie{Name: environmentProxyCookie, Value: id})
-		rec := httptest.NewRecorder()
-		h.EnvironmentProxyFallback(rec, req)
-		if rec.Code != 404 {
-			t.Fatalf("main route intercepted: %s %d", path, rec.Code)
-		}
-	}
-}
-
-func TestEnvironmentProxySharedOriginRoutes(t *testing.T) {
-	for _, tc := range []struct {
-		name, base, public, app string
-		ancestors               []string
-		dedicated               bool
-	}{
-		{name: "unknown API localhost", base: "http://localhost:8080", app: "http://localhost:3000"},
-		{name: "unknown API IP", base: "http://192.168.1.100:8080", app: "https://app.example"},
-		{name: "unknown API domain", base: "https://api.example", app: "https://app.example"},
-		{name: "hostless API", public: "/api", app: "https://app.example"},
-		{name: "invalid API", public: "https://[", app: "https://app.example"},
-		{name: "shared API", public: "https://API.EXAMPLE", app: "https://app.example"},
-		{name: "shared app", public: "https://other.example", app: "https://api.example"},
-		{name: "shared ancestor", public: "https://other.example", app: "https://app.example", ancestors: []string{"https://API.EXAMPLE"}},
-		{name: "dedicated preview", public: "https://other.example", app: "https://app.example", ancestors: []string{"https://desktop.example"}, dedicated: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base := tc.base
-			if base == "" {
-				base = "https://api.example"
-			}
-			h := &Handler{envProxy: newEnvironmentProxy(Config{
-				EnvProxyBaseURL: base, PublicURL: tc.public, AppURL: tc.app, AttachmentFrameAncestors: tc.ancestors,
-			})}
-			t.Cleanup(h.envProxy.transport.CloseIdleConnections)
-			id := uuid.NewString()
-			router := chi.NewRouter()
-			router.Use(h.EnvironmentProxyHostBoundary)
-			paths := []string{"/health", "/ws", "/api/issues", "/api/daemon/runtimes/runtime/environment-tunnel/stream"}
-			for _, path := range paths {
-				router.Get(path, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-			}
-			router.NotFound(h.EnvironmentProxyFallback)
-			for _, cookie := range []bool{false, true} {
-				for _, path := range append(paths, "/api/unknown", "/env/"+id+"/", "/style.css") {
-					req := httptest.NewRequest("GET", base+path, nil)
-					req.Header.Set("Sec-Fetch-Mode", "cors")
-					if cookie {
-						req.AddCookie(&http.Cookie{Name: environmentProxyCookie, Value: id})
-					}
-					want := http.StatusNoContent
-					if path == "/api/unknown" || path == "/style.css" || tc.dedicated {
-						want = http.StatusNotFound
-					}
-					if strings.HasPrefix(path, "/env/") || cookie && (path == "/style.css" || tc.dedicated) {
-						want = http.StatusUnauthorized
-					}
-					rec := httptest.NewRecorder()
-					router.ServeHTTP(rec, req)
-					if rec.Code != want {
-						t.Errorf("%s cookie=%v: status=%d want %d", path, cookie, rec.Code, want)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestEnvironmentProxyResponseCookies(t *testing.T) {
-	appCookies := []string{
-		"app=kept; Path=/; HttpOnly",
-		"theme=dark; Domain=example.com; Path=/; Secure; SameSite=None; Partitioned; Priority=High",
-		"app=multica_demo; Path=/",
-		"app=; Max-Age=0; Path=/",
-		"=app_value; Path=/",
-		"app_value; Path=/",
-	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		for _, name := range []string{"multica_auth", "multica_csrf", "multica_csrf_session", environmentProxyCookie, "multica_future"} {
-			for _, pair := range []string{name + "=upstream", "=" + name, "= \"" + name + "\" ", name, strings.ToUpper(name) + "=upper", "\t= \" " + strings.ToUpper(name) + " \"\t"} {
-				for _, attrs := range []string{"; Path=/", "; Domain=.example.com; Path=/api", "; Path=/style.css", "; Max-Age=0; Path=/"} {
-					w.Header().Add("Set-Cookie", pair+attrs)
-				}
-			}
-		}
-		for _, raw := range appCookies {
-			w.Header().Add("Set-Cookie", raw)
-		}
-		w.Write([]byte("preview"))
-	}))
-	defer upstream.Close()
-	row := db.IssueEnvironment{ID: parseUUID(uuid.NewString()), RuntimeID: parseUUID(uuid.NewString()), Port: pgtype.Int4{Int32: 41000, Valid: true}}
-	for _, base := range []string{"https://*.example.com", "https://preview.example.com"} {
-		t.Run(base, func(t *testing.T) {
-			h := proxyTestHandler(t, base)
-			h.envProxy.transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
-			}
-			req := httptest.NewRequest("GET", h.resolveIssueEnvironmentURL(row, "http://localhost:41000/"), nil)
-			rec := httptest.NewRecorder()
-			h.proxyEnvironment(rec, req, row, "")
-			if rec.Code != 200 || rec.Body.String() != "preview" {
-				t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
-			}
-			if got := rec.Header().Values("Set-Cookie"); strings.Join(got, "\n") != strings.Join(appCookies, "\n") {
-				t.Fatalf("upstream cookies=%q; want only %q", got, appCookies)
-			}
-		})
-	}
-}
-
-func TestEnvironmentProxyFallbackContext(t *testing.T) {
-	p := newEnvironmentProxy(Config{EnvProxyBaseURL: "https://preview.example"})
-	a, b := uuid.NewString(), uuid.NewString()
-	for _, tc := range []struct{ ref, mode, want string }{
-		{"https://preview.example/env/" + a + "/", "navigate", a},
-		{"https://evil.example/env/" + a + "/", "cors", b},
-		{"", "navigate", ""}, {"", "cors", b},
-	} {
-		req := httptest.NewRequest("GET", "https://preview.example/style.css", nil)
-		req.Header.Set("Referer", tc.ref)
-		req.Header.Set("Sec-Fetch-Mode", tc.mode)
-		req.AddCookie(&http.Cookie{Name: environmentProxyCookie, Value: b})
-		if got := p.fallbackEnvironment(req); got != tc.want {
-			t.Fatalf("%+v got %s", tc, got)
-		}
-	}
+	h.ServeHTTP(rec, req)
+	return rec
 }
 
 func proxyToken(t *testing.T, user string) string {
@@ -231,68 +80,116 @@ func proxyFixture(t *testing.T) (id, runtimeID, issueID string) {
 	issueID, taskID := issueEnvironmentFixture(t)
 	reportEnvironments(t, taskID, webEnvironment("running")).Want(200)
 	dbfx.QueryRow(t, `SELECT id,runtime_id FROM issue_environment WHERE task_id=$1`, taskID).Scan(&id, &runtimeID)
+	enableEnvironmentTunnel(t, runtimeID)
 	return
+}
+
+func enableEnvironmentTunnel(t *testing.T, runtimeID string) {
+	t.Helper()
+	dbfx.Exec(t, `UPDATE agent_runtime SET status='online',metadata=jsonb_build_object('capabilities',jsonb_build_array($2::text)) WHERE id=$1`,
+		runtimeID, protocol.DaemonCapabilityEnvironmentTunnelV1)
+}
+
+func TestEnvironmentProxyOriginAndRedirectBoundary(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://*.preview.example.com", "https://preview.example.com", "https://*.*.com", "https://*.com",
+		"https://*.co.uk", "https://*.preview.example.com:99999", "https://*.preview.example.com?",
+		"https://*.preview.example.com/path", "https://user@*.preview.example.com",
+	} {
+		if newEnvironmentProxy(Config{EnvProxyBaseURL: raw, AppURL: testAppOrigin}) != nil {
+			t.Errorf("invalid preview origin accepted: %s", raw)
+		}
+	}
+	for _, cfg := range []Config{
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, BackendReplicas: 2},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: "http://app.preview.example.com:80"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: "http://PREVIEW.example.com.:3000"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: "https://example.com"},
+		{EnvProxyBaseURL: testPreviewBase, PublicURL: "http://api.preview.example.com", AppURL: testAppOrigin},
+		{EnvProxyBaseURL: testPreviewBase, PublicURL: "https://preview.example.com:8443", AppURL: testAppOrigin},
+		{EnvProxyBaseURL: testPreviewBase, PublicURL: "https://example.com", AppURL: testAppOrigin},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://plugins.preview.example.com"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://preview.example.com"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://example.com"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, AttachmentFrameAncestors: []string{"https://desktop.preview.example.com"}},
+		{EnvProxyBaseURL: "http://*.localhost:8080", AppURL: "http://app.localhost:3000"},
+		{EnvProxyBaseURL: testPreviewBase},
+	} {
+		if newEnvironmentProxy(cfg) != nil {
+			t.Errorf("invalid deployment accepted: %+v", cfg)
+		}
+	}
+	for _, base := range []string{"http://*.localhost:8080", "http://*.127.0.0.1.nip.io:8080", "https://env-*.preview.example.com"} {
+		cfg := Config{EnvProxyBaseURL: base, AppURL: "http://localhost:3000", BackendReplicas: 1}
+		p := newEnvironmentProxy(cfg)
+		if p == nil {
+			t.Fatalf("valid config disabled: %s", base)
+		}
+		id := uuid.NewString()
+		host := p.environmentHost(id)
+		if resolved, owned := p.hostEnvironment(host); resolved != id || !owned {
+			t.Fatalf("host %q matched %q, owned=%v", host, resolved, owned)
+		}
+		if resolved, owned := p.hostEnvironment("other." + p.suffix); resolved != "" || !owned {
+			t.Fatalf("non-environment preview host reached app: %q, owned=%v", resolved, owned)
+		}
+	}
+	for _, raw := range []string{"//other.example/", "/%2fother.example/", "/\\other.example", "/%5cother.example", "/%0d%0a", "https://other.example/", environmentCallbackPath} {
+		if next := environmentNext(raw); next != "/" {
+			t.Errorf("unsafe next %q kept as %q", raw, next)
+		}
+	}
+	if next := environmentNext("/a%20b?a=1&b=2"); next != "/a%20b?a=1&b=2" {
+		t.Fatalf("relative path changed: %q", next)
+	}
 }
 
 func TestEnvironmentProxyAuthorizationAndState(t *testing.T) {
 	id, rt, issue := proxyFixture(t)
-	h := proxyTestHandler(t, "https://preview.example")
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	router := proxyRouter(h)
 	outsider := dbfx.User(t, "outside", "env-outside-"+uuid.NewString()+"@example.com")
 	project := newPrivateProjectFixture(t)
 	memberToken := proxyToken(t, testUserID)
-	serve := func(token, method, origin string) int {
-		req := httptest.NewRequest(method, "https://preview.example/env/"+id+"/", nil)
-		if token != "" {
-			req.AddCookie(&http.Cookie{Name: auth.AuthCookieName, Value: token})
-		}
-		req.Header.Set("Origin", origin)
-		rec := httptest.NewRecorder()
-		h.EnvironmentProxyHostBoundary(http.NotFoundHandler()).ServeHTTP(rec, req)
-		return rec.Code
+	serve := func(token string) int {
+		req := httptest.NewRequest(http.MethodGet, testAppOrigin+environmentLaunchURL(id, "/", true).String(), nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return callPreview(router, req).Code
 	}
-	if got := serve("", "GET", ""); got != 401 {
-		t.Fatal(got)
-	}
-	if got := serve(proxyToken(t, outsider), "GET", ""); got != 403 {
-		t.Fatal(got)
-	}
-	if got := serve(memberToken, "POST", "https://evil.example"); got != 403 {
-		t.Fatal(got)
-	}
-	if got := serve(memberToken, "POST", ""); got != 403 {
-		t.Fatal(got)
+	if got := serve(proxyToken(t, outsider)); got != 403 {
+		t.Fatalf("nonmember status = %d", got)
 	}
 	dbfx.Exec(t, `UPDATE issue SET project_id=$1 WHERE id=$2`, project.projectID, issue)
-	if got := serve(proxyToken(t, project.outsider), "GET", ""); got != 403 {
-		t.Fatalf("private project=%d", got)
+	if got := serve(proxyToken(t, project.outsider)); got != 403 {
+		t.Fatalf("private project status = %d", got)
 	}
 	dbfx.Exec(t, `UPDATE issue SET project_id=NULL WHERE id=$1`, issue)
 	for _, state := range []string{"stopped", "exited"} {
 		dbfx.Exec(t, `UPDATE issue_environment SET state=$1 WHERE id=$2`, state, id)
-		if got := serve(memberToken, "GET", ""); got != 410 {
-			t.Fatalf("%s=%d", state, got)
+		if got := serve(memberToken); got != 410 {
+			t.Fatalf("%s status = %d", state, got)
 		}
 	}
 	dbfx.Exec(t, `UPDATE issue_environment SET state='running',last_seen_at=now()-interval '10 minutes' WHERE id=$1`, id)
-	if got := serve(memberToken, "GET", ""); got != 503 {
-		t.Fatalf("stale=%d", got)
+	if got := serve(memberToken); got != 503 {
+		t.Fatalf("stale environment status = %d", got)
 	}
-	dbfx.Exec(t, `UPDATE issue_environment SET last_seen_at=now(),kind='app' WHERE id=$1`, id)
-	if got := serve(memberToken, "GET", ""); got != 404 {
-		t.Fatal(got)
-	}
-	dbfx.Exec(t, `UPDATE issue_environment SET kind='server',port=NULL WHERE id=$1`, id)
-	if got := serve(memberToken, "GET", ""); got != 404 {
-		t.Fatal(got)
+	dbfx.Exec(t, `UPDATE issue_environment SET last_seen_at=now(),port=NULL WHERE id=$1`, id)
+	if got := serve(memberToken); got != 404 {
+		t.Fatalf("missing port status = %d", got)
 	}
 	dbfx.Exec(t, `UPDATE issue_environment SET port=41000 WHERE id=$1`, id)
+	dbfx.Exec(t, `UPDATE agent_runtime SET metadata='{}' WHERE id=$1`, rt)
+	if got := serve(memberToken); got != 409 {
+		t.Fatalf("legacy daemon status = %d", got)
+	}
 	dbfx.Exec(t, `UPDATE agent_runtime SET status='offline' WHERE id=$1`, rt)
-	if got := serve(memberToken, "GET", ""); got != 503 {
-		t.Fatal(got)
+	if got := serve(memberToken); got != 503 {
+		t.Fatalf("offline daemon status = %d", got)
 	}
 	dbfx.Exec(t, `DELETE FROM issue_environment WHERE id=$1`, id)
-	if got := serve(memberToken, "GET", ""); got != 404 {
-		t.Fatal(got)
+	if got := serve(memberToken); got != 404 {
+		t.Fatalf("missing environment status = %d", got)
 	}
 }
 
@@ -301,6 +198,8 @@ func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
 	dbfx.Exec(t, `UPDATE agent_runtime SET status='offline' WHERE id=$1`, rt)
 	otherWS := dbfx.Workspace(t, "other preview workspace", "preview-other-"+uuid.NewString())
 	dbfx.Member(t, otherWS, testUserID, "owner")
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	address := "http://" + h.envProxy.environmentHost(id)
 	for _, wsID := range []string{testWorkspaceID, otherWS} {
 		fx := testutil.New(testPool, wsID, testUserID)
 		runtimeID := fx.Runtime(t, "token runtime")
@@ -315,24 +214,12 @@ func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
 		if wsID != testWorkspaceID {
 			want = http.StatusForbidden
 		}
-		for _, base := range []string{"https://*.example.com", "https://preview.example.com"} {
-			h := proxyTestHandler(t, base)
-			address := h.resolveIssueEnvironmentURL(db.IssueEnvironment{ID: parseUUID(id), Port: pgtype.Int4{Int32: 41000, Valid: true}}, "http://localhost:41000/")
-			for _, kind := range []string{"GET", "POST", "websocket"} {
-				req := httptest.NewRequest("GET", address, nil)
-				req.Header.Set("Authorization", "Bearer "+token)
-				req.Header.Set("X-Actor-Source", "member")
-				if kind == "POST" {
-					req.Method = "POST"
-				} else if kind == "websocket" {
-					req.Header.Set("Connection", "Upgrade")
-					req.Header.Set("Upgrade", "websocket")
-				}
-				rec := httptest.NewRecorder()
-				h.EnvironmentProxyHostBoundary(http.NotFoundHandler()).ServeHTTP(rec, req)
-				if rec.Code != want {
-					t.Errorf("workspace=%s base=%s %s: status=%d want %d", wsID, base, kind, rec.Code, want)
-				}
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			req := httptest.NewRequest(method, address, nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("X-Actor-Source", "member")
+			if got := callPreview(proxyRouter(h), req).Code; got != want {
+				t.Errorf("workspace=%s method=%s status=%d want=%d", wsID, method, got, want)
 			}
 		}
 	}
@@ -340,280 +227,612 @@ func TestEnvironmentProxyTaskTokenWorkspace(t *testing.T) {
 
 type environmentNotifierFunc func(string, string)
 
-func (f environmentNotifierFunc) NotifyPendingWork(runtimeID, kind string) { f(runtimeID, kind) }
+func (f environmentNotifierFunc) NotifyPendingWork(runtimeID, kind string) {
+	f(runtimeID, kind)
+}
 
-func TestEnvironmentProxyTunnelHTTPAndWebSocket(t *testing.T) {
-	id, rt, _ := proxyFixture(t)
-	token := proxyToken(t, testUserID)
-	requests := make(chan *http.Request, 20)
-	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.Clone(r.Context())
-		w.Header().Add("Set-Cookie", "multica_env_proxy=forged; Path=/; HttpOnly")
-		w.Header().Add("Set-Cookie", "=multica_env_proxy; Path=/style.css")
-		w.Header().Add("Set-Cookie", "=multica_auth; Path=/api")
-		if r.URL.Path == "/socket" {
-			ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, w.Header())
-			if err != nil {
-				return
-			}
-			defer ws.Close()
-			kind, b, err := ws.ReadMessage()
-			if err == nil {
-				ws.WriteMessage(kind, b)
-			}
-			return
-		}
-		if r.URL.Path == "/redirect" {
-			http.Redirect(w, r, "/next?q=1", 302)
-			return
-		}
-		if r.URL.Path == "/stream" {
-			w.Write([]byte("first\n"))
-			w.(http.Flusher).Flush()
-			<-r.Context().Done()
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"path": r.URL.RequestURI(), "host": r.Host, "cookie": r.Header.Get("Cookie"), "auth": r.Header.Get("Authorization"), "forwarded": r.Header.Get("X-Forwarded-Host"), "proto": r.Header.Get("X-Forwarded-Proto"), "identity": r.Header.Get("X-User-ID")})
-	}))
-	defer local.Close()
-	h := &Handler{Queries: testHandler.Queries, DB: testPool, envProxy: newEnvironmentProxy(Config{
-		EnvProxyBaseURL: "http://preview.example", AppURL: "http://app.example",
-	})}
-	h.envProxy.transport.DialContext = h.dialEnvironmentTunnel
-	router := chi.NewRouter()
-	router.Use(h.EnvironmentProxyHostBoundary)
-	router.With(middleware.DaemonAuth(h.Queries, nil, nil, nil)).Get("/api/daemon/runtimes/{runtimeId}/environment-tunnel/{streamId}", h.ConnectEnvironmentTunnel)
-	router.NotFound(h.EnvironmentProxyFallback)
+type previewQueryCounter struct {
+	db.DBTX
+	count atomic.Int64
+}
+
+func (db *previewQueryCounter) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	db.count.Add(1)
+	return db.DBTX.QueryRow(ctx, sql, args...)
+}
+
+func (db *previewQueryCounter) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	db.count.Add(1)
+	return db.DBTX.Query(ctx, sql, args...)
+}
+
+func (db *previewQueryCounter) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	db.count.Add(1)
+	return db.DBTX.Exec(ctx, sql, args...)
+}
+
+func launchPreview(t *testing.T, router http.Handler, id string) (*http.Cookie, string) {
+	t.Helper()
+	launchPath := environmentLaunchURL(id, "/docs?q=1&f=2", true)
+	req := httptest.NewRequest(http.MethodGet, testAppOrigin+launchPath.String(), nil)
+	req.AddCookie(&http.Cookie{Name: auth.AuthCookieName, Value: proxyToken(t, testUserID)})
+	rec := callPreview(router, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("launch failed: %d %s", rec.Code, rec.Body.String())
+	}
+	callback := rec.Header().Get("Location")
+	u, err := url.Parse(callback)
+	if err != nil || u.Path != environmentCallbackPath || u.Query().Get("ticket") == "" {
+		t.Fatal("invalid callback URL")
+	}
+	wrongHost := *u
+	wrongHost.Host = "env-" + strings.ReplaceAll(uuid.NewString(), "-", "") + ".preview.example.com"
+	if got := callPreview(router, httptest.NewRequest(http.MethodGet, wrongHost.String(), nil)); got.Code != http.StatusUnauthorized {
+		t.Fatalf("cross-environment ticket accepted: %d", got.Code)
+	}
+	rec = callPreview(router, httptest.NewRequest(http.MethodGet, callback, nil))
+	cookies := rec.Result().Cookies()
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/docs?q=1&f=2" || len(cookies) != 1 {
+		t.Fatalf("callback failed: %d %s", rec.Code, rec.Body.String())
+	}
+	cookie := cookies[0]
+	if cookie.Name != environmentPreviewCookie || cookie.Domain != "" || !cookie.HttpOnly || cookie.Secure ||
+		cookie.Path != "/" || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge != 600 {
+		t.Fatalf("invalid preview cookie attributes: %s", cookie.Name)
+	}
+	if replay := callPreview(router, httptest.NewRequest(http.MethodGet, callback, nil)); replay.Code != http.StatusUnauthorized {
+		t.Fatalf("launch replay accepted: %d", replay.Code)
+	}
+	return cookie, u.Host
+}
+
+func startPreviewTunnelTest(t *testing.T, h *Handler, router http.Handler, upstream http.Handler) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	local := httptest.NewServer(upstream)
 	server := httptest.NewServer(router)
-	defer server.Close()
 	var opened atomic.Int32
 	var peers sync.WaitGroup
+	ctx, cancel := context.WithCancel(t.Context())
 	h.DaemonPendingWork = environmentNotifierFunc(func(runtime, kind string) {
-		peers.Add(1)
-		go func() {
-			defer peers.Done()
-			ws, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/api/daemon/runtimes/"+runtime+"/environment-tunnel/"+strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix), http.Header{"Host": {"preview.example"}, "Authorization": {"Bearer " + token}})
+		peers.Go(func() {
+			payload := strings.TrimPrefix(kind, protocol.PendingWorkKindEnvironmentTunnelPrefix)
+			stream, secret, _ := strings.Cut(payload, ".")
+			endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/daemon/runtimes/" + runtime + "/environment-tunnel/" + stream
+			ws, resp, err := websocket.DefaultDialer.DialContext(ctx, endpoint, http.Header{"Authorization": {"Bearer " + secret}})
 			if err != nil {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				t.Errorf("tunnel rendezvous failed: %v", err)
 				return
 			}
 			opened.Add(1)
 			conn := envtunnel.NewConn(ws)
 			defer conn.Close()
 			if resp.Header.Get("X-Env-Tunnel-Key") != "config:web" || resp.Header.Get("X-Env-Tunnel-Port") != "41000" {
-				t.Error("tunnel handshake did not identify the registered environment")
+				t.Error("tunnel lost the registered environment port binding")
+			}
+			peer, err := (&net.Dialer{}).DialContext(ctx, "tcp", local.Listener.Addr().String())
+			if err != nil {
+				t.Error(err)
 				return
 			}
-			tcp, err := net.Dial("tcp", strings.TrimPrefix(local.URL, "http://"))
+			defer peer.Close()
+			stop := context.AfterFunc(ctx, func() {
+				conn.Close()
+				peer.Close()
+			})
+			defer stop()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = io.Copy(conn, peer)
+				conn.Close()
+			}()
+			_, _ = io.Copy(peer, conn)
+			peer.Close()
+			<-done
+		})
+	})
+	t.Cleanup(func() {
+		server.Close()
+		cancel()
+		h.envProxy.transport.CloseIdleConnections()
+		peers.Wait()
+		local.Close()
+	})
+	return server, &opened
+}
+
+func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
+	id, runtimeID, _ := proxyFixture(t)
+	h := proxyTestHandler(t, EnvironmentProxyLimits{MaxBodyBytes: 64})
+	queries := &previewQueryCounter{DBTX: testPool}
+	h.Queries, h.DB = db.New(queries), queries
+	router := proxyRouter(h)
+	previewOrigin := "http://" + h.envProxy.environmentHost(id)
+	initial := httptest.NewRequest(http.MethodGet, previewOrigin+"/docs?q=1&f=2", nil)
+	initial.Header.Set("Sec-Fetch-Mode", "navigate")
+	initial.Header.Set("Sec-Fetch-Dest", "document")
+	initial.AddCookie(&http.Cookie{Name: auth.AuthCookieName, Value: proxyToken(t, testUserID)})
+	rec := callPreview(router, initial)
+	want := testAppOrigin + environmentLaunchURL(id, "/docs?q=1&f=2", false).String()
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != want {
+		t.Fatalf("initial redirect = %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = callPreview(router, httptest.NewRequest(http.MethodGet, want, nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Security-Policy") == "" ||
+		!strings.Contains(rec.Body.String(), `http-equiv="refresh"`) || !strings.Contains(rec.Body.String(), "bounced=1") ||
+		queries.count.Load() != 0 {
+		t.Fatalf("cross-site bounce = %d %s, queries=%d", rec.Code, rec.Body.String(), queries.count.Load())
+	}
+	missing := callPreview(router, httptest.NewRequest(http.MethodGet, testAppOrigin+environmentLaunchURL(id, "/", true).String(), nil))
+	if missing.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated second hop = %d", missing.Code)
+	}
+	if blocked := callPreview(router, httptest.NewRequest(http.MethodGet, h.cfg.PluginSurfaceOrigin+"/api/health", nil)); blocked.Code != http.StatusNotFound {
+		t.Fatalf("plugin host reached main API: %d", blocked.Code)
+	}
+
+	cookie, host := launchPreview(t, router, id)
+	before := queries.count.Load()
+	if before == 0 {
+		t.Fatal("launch never performed the authoritative database lookup")
+	}
+	requests := make(chan *http.Request, 32)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Clone(r.Context())
+		w.Header().Add("Set-Cookie", "multica_env_session=upstream; Path=/")
+		w.Header().Add("Set-Cookie", "=MuLtIcA_auth; Path=/")
+		w.Header().Add("Set-Cookie", "local_pref=on; Path=/")
+		switch r.URL.Path {
+		case "/socket":
+			ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, w.Header())
 			if err != nil {
 				return
 			}
-			defer tcp.Close()
-			done := make(chan struct{})
-			go func() { io.Copy(tcp, conn); tcp.Close(); close(done) }()
-			io.Copy(conn, tcp)
-			conn.Close()
-			<-done
-		}()
+			defer ws.Close()
+			kind, message, err := ws.ReadMessage()
+			if err == nil {
+				ws.WriteMessage(kind, message)
+			}
+			_, _, _ = ws.ReadMessage()
+		case "/redirect":
+			http.Redirect(w, r, "/next?q=1", http.StatusFound)
+		default:
+			if _, err := io.Copy(io.Discard, r.Body); err == nil {
+				io.WriteString(w, r.URL.RequestURI())
+			}
+		}
 	})
-	defer func() { h.envProxy.transport.CloseIdleConnections(); peers.Wait() }()
-	client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	appCookies := `app=kept; sp=b c; js={"x":1}; utf=é; py="a\054b"; cm=x,y`
-	fetch := func(path string) *http.Response {
-		req, _ := http.NewRequest("GET", server.URL+path, nil)
-		req.Host = "preview.example"
-		req.Header.Set("Cookie", "multica_auth="+token+"; multica_csrf=x; multica_csrf_session=y; multica_env_proxy="+id+"; "+appCookies)
-		req.Header.Add("Cookie", "multica_future=hidden; MULTICA_AUTH=hidden; multica_logged_in=1; second=kept")
-		req.Header.Set("X-User-ID", "forged")
+	server, opened := startPreviewTunnelTest(t, h, router, upstream)
+	client := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	do := func(t *testing.T, method, path, origin string, body io.Reader, upgrade bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+path, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Authorization", "Basic local-marker")
+		req.Header.Set("X-User-ID", "platform-marker")
+		req.Header.Set("X-Multica-Client", "platform-marker")
+		if upgrade {
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+		}
+		req.AddCookie(cookie)
+		req.AddCookie(&http.Cookie{Name: auth.AuthCookieName, Value: "platform-marker"})
+		req.AddCookie(&http.Cookie{Name: "local_pref", Value: "on"})
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return resp
 	}
-	if !t.Run("bearer credentials", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/env/"+id+"/bearer", nil)
-		req.Host = "preview.example"
-		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := client.Do(req)
+	assertCookies := func(resp *http.Response) {
+		t.Helper()
+		if cookies := resp.Header.Values("Set-Cookie"); len(cookies) != 1 || cookies[0] != "local_pref=on; Path=/" {
+			t.Errorf("status %d forwarded cookies %v", resp.StatusCode, cookies)
+		}
+	}
+	for _, path := range []string{"/docs?q=1", "/style.css", "/app.js", "/favicon.ico", "/api/data", "/rediscover"} {
+		resp := do(t, http.MethodGet, path, "", nil, false)
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || string(body) != path {
+			t.Fatalf("GET %s = %d %q %v", path, resp.StatusCode, body, err)
+		}
+		assertCookies(resp)
+	}
+	if got := opened.Load(); got != 1 {
+		t.Fatalf("sequential HTTP requests opened %d tunnels, want 1", got)
+	}
+	resp := do(t, http.MethodGet, "/redirect", "", nil, false)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/next?q=1" {
+		t.Fatalf("upstream redirect changed: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	for _, tc := range []struct {
+		name    string
+		origin  string
+		body    io.Reader
+		upgrade bool
+		want    int
+	}{
+		{"same origin", previewOrigin, strings.NewReader("allowed"), false, http.StatusOK},
+		{"cross origin", "http://other.example.net", strings.NewReader("foreign"), false, http.StatusForbidden},
+		{"no origin", "", nil, false, http.StatusForbidden},
+		{"at limit", previewOrigin, strings.NewReader(strings.Repeat("x", 64)), false, http.StatusOK},
+		{"over limit", previewOrigin, strings.NewReader(strings.Repeat("x", 65)), false, http.StatusRequestEntityTooLarge},
+		{"chunked over limit", previewOrigin, io.NopCloser(strings.NewReader(strings.Repeat("x", 65))), false, http.StatusRequestEntityTooLarge},
+		{"over limit with upgrade headers", previewOrigin, strings.NewReader(strings.Repeat("x", 65)), true, http.StatusRequestEntityTooLarge},
+		{"chunked over limit with upgrade headers", previewOrigin, io.NopCloser(strings.NewReader(strings.Repeat("x", 65))), true, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := do(t, http.MethodPost, "/submit", tc.origin, tc.body, tc.upgrade)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != tc.want {
+				t.Fatalf("POST = %d %q, err=%v, want %d", resp.StatusCode, body, err, tc.want)
+			}
+		})
+	}
+
+	headers := http.Header{"Host": {host}, "Origin": {"http://other.example.net"}, "Cookie": {cookie.String()}}
+	socketURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/socket"
+	_, resp, err := websocket.DefaultDialer.Dial(socketURL, headers)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign WebSocket origin accepted: %v", err)
+	}
+	resp.Body.Close()
+	headers.Set("Origin", previewOrigin)
+	ws, resp, err := websocket.DefaultDialer.Dial(socketURL, headers)
+	if err != nil {
+		t.Fatalf("WebSocket dial: %v", err)
+	}
+	defer ws.Close()
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("WebSocket handshake status = %d", resp.StatusCode)
+	}
+	assertCookies(resp)
+	wantMessage := strings.Repeat("preview ready", 8)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(wantMessage)); err != nil {
+		t.Fatal(err)
+	}
+	_, message, err := ws.ReadMessage()
+	if err != nil || string(message) != wantMessage {
+		t.Fatalf("WebSocket message = %q, %v", message, err)
+	}
+	closeRequests := len(requests)
+	for i := 0; i < closeRequests; i++ {
+		req := <-requests
+		if req.Header.Get("Authorization") != "" || req.Header.Get("X-User-ID") != "" ||
+			req.Header.Get("X-Multica-Client") != "" || strings.Contains(req.Header.Get("Cookie"), "multica_") ||
+			req.Header.Get("X-Forwarded-Host") != host || req.Host != "localhost:41000" {
+			t.Errorf("upstream credential or host boundary failed on %s", req.URL.Path)
+		}
+		if req.Method == http.MethodGet && req.URL.Path == "/style.css" && req.Header.Get("Cookie") != "local_pref=on" {
+			t.Error("application cookie lost")
+		}
+	}
+	h.NotifyRuntimeGone(runtimeID)
+	if _, _, err := ws.ReadMessage(); err == nil {
+		t.Fatal("runtime removal did not close the live WebSocket")
+	}
+	resp = do(t, http.MethodGet, "/style.css", "", nil, false)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked session served an asset: %d", resp.StatusCode)
+	}
+	if delta := queries.count.Load() - before; delta != 0 {
+		t.Fatalf("HTTP, WebSocket and tunnel rendezvous used %d database queries", delta)
+	}
+}
+
+func TestEnvironmentProxySessionEnvironmentBinding(t *testing.T) {
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	router := proxyRouter(h)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Host)
+	}))
+	defer upstream.Close()
+	dialer := &net.Dialer{}
+	h.envProxy.transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+
+	now := time.Now()
+	runtimeID := uuid.NewString()
+	session := func(id string, port int32) *http.Cookie {
+		t.Helper()
+		claims := environmentSessionClaims{
+			UserID: testUserID, WorkspaceID: testWorkspaceID, RuntimeID: runtimeID,
+			EnvID: id, LocalKey: "config:web", Port: port,
+			IssuedAt: now.UnixNano(), ExpiresAt: now.Add(environmentSessionTTL).Unix(),
+		}
+		token, err := sealEnvironmentClaims(h.envProxy.sessionBox, claims)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
-		var got map[string]string
-		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != http.StatusOK || got["path"] != "/bearer" || got["auth"] != "" || got["cookie"] != "" {
-			t.Fatalf("bearer status=%d path=%q authorization forwarded=%v cookie=%q", resp.StatusCode, got["path"], got["auth"] != "", got["cookie"])
-		}
-	}) {
-		return
+		return &http.Cookie{Name: environmentPreviewCookie, Value: token}
 	}
-	for i := 0; i < 3; i++ {
-		resp := fetch("/env/" + id + "/docs?q=1")
-		var got map[string]string
-		json.NewDecoder(resp.Body).Decode(&got)
-		resp.Body.Close()
-		if resp.StatusCode != 200 || got["path"] != "/docs?q=1" || got["host"] != "localhost:41000" || got["cookie"] != appCookies+"; second=kept" || got["auth"] != "" || got["identity"] != "" || got["forwarded"] != "preview.example" || got["proto"] != "http" {
-			t.Fatalf("status %d output %+v", resp.StatusCode, got)
+	id := uuid.NewString()
+	foreign := session(uuid.NewString(), 41000)
+	matching := session(id, 41001)
+
+	const path = "/preview?tab=1"
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		cookies  []*http.Cookie
+		status   int
+		location string
+	}{
+		{"foreign session on asset", "no-cors", []*http.Cookie{foreign}, http.StatusUnauthorized, ""},
+		{"foreign session on navigation", "navigate", []*http.Cookie{foreign}, http.StatusFound, testAppOrigin + environmentLaunchURL(id, path, false).String()},
+		{"foreign cookie first", "no-cors", []*http.Cookie{foreign, matching}, http.StatusOK, ""},
+		{"matching cookie first", "no-cors", []*http.Cookie{matching, foreign}, http.StatusOK, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+h.envProxy.environmentHost(id)+path, nil)
+			req.Header.Set("Sec-Fetch-Mode", tc.mode)
+			for _, cookie := range tc.cookies {
+				req.AddCookie(cookie)
+			}
+			rec := callPreview(router, req)
+			if got := rec.Header().Get("Location"); rec.Code != tc.status || got != tc.location {
+				t.Fatalf("status = %d, Location = %q; want %d, %q", rec.Code, got, tc.status, tc.location)
+			}
+			if tc.status == http.StatusOK && rec.Body.String() != "localhost:41001" {
+				t.Fatalf("upstream host = %q; want localhost:41001", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
+	issue, task := issueEnvironmentFixture(t)
+	reportEnvironments(t, task, webEnvironment("running"), map[string]any{
+		"key": "detected:test", "source": "detected", "name": "detected",
+		"url": "http://localhost:5173/docs?q=1", "port": 5173, "state": "running",
+	}).Want(200)
+	var runtimeID string
+	dbfx.QueryRow(t, `SELECT runtime_id FROM issue_environment WHERE task_id=$1 LIMIT 1`, task).Scan(&runtimeID)
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	previousProxy, previousGate := testHandler.envProxy, testHandler.Entitlements
+	t.Cleanup(func() { testHandler.envProxy, testHandler.Entitlements = previousProxy, previousGate })
+	list := func() map[string]IssueEnvironmentResponse { return listEnvironments(t, issue) }
+	original := list()
+	checkURLs := func(want map[string]IssueEnvironmentResponse) {
+		t.Helper()
+		got := list()
+		if len(got) != 2 || len(want) != 2 {
+			t.Fatalf("sidebar environment count = %d, want 2", len(got))
 		}
-		if got := resp.Header.Values("Set-Cookie"); len(got) != 1 {
-			t.Fatalf("expected only the server routing cookie, got %q", got)
-		}
-		found := false
-		for _, cookie := range resp.Cookies() {
-			if cookie.Name == environmentProxyCookie {
-				if found || cookie.Value != id || !cookie.HttpOnly {
-					t.Fatalf("routing cookie overwritten: %+v", cookie)
-				}
-				found = true
+		for i := range want {
+			if got[i].ID != want[i].ID || got[i].URL != want[i].URL {
+				t.Errorf("sidebar environment %s URL = %s, want %s", got[i].ID, got[i].URL, want[i].URL)
 			}
 		}
-		if !found {
-			t.Fatal("routing cookie missing")
+	}
+	testHandler.envProxy = h.envProxy
+	checkURLs(original) // Legacy runtime.
+	enableEnvironmentTunnel(t, runtimeID)
+	gates := entitlementtest.New()
+	h.Entitlements, testHandler.Entitlements = gates, gates
+	router := proxyRouter(h)
+	setGate := func(action entitlement.Action, limit int) {
+		t.Helper()
+		gates.Set(uuid.MustParse(testWorkspaceID), entitlement.GateEnvironmentProxy,
+			entitlement.Decision{Gate: entitlement.Gate{Action: action, Limit: &limit}, PolicyRevision: 17})
+	}
+	launch := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, testAppOrigin+environmentLaunchURL(id, "/", false).String(), nil)
+		req.Header.Set("Authorization", "Bearer "+proxyToken(t, testUserID))
+		return callPreview(router, req)
+	}
+	wantError := func(rec *httptest.ResponseRecorder, code string, limit int) {
+		t.Helper()
+		var got struct {
+			Code     string `json:"code"`
+			Limit    int    `json:"limit"`
+			Revision int    `json:"policy_revision"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusPaymentRequired ||
+			got.Code != code || got.Limit != limit || got.Revision != 17 {
+			t.Errorf("limit response = %d %s", rec.Code, rec.Body.String())
 		}
 	}
-	if opened.Load() != 1 {
-		t.Fatalf("keepalive opened %d tunnels", opened.Load())
+	setGate(entitlement.ActionOff, 0)
+	for _, env := range list() {
+		if !strings.HasPrefix(env.URL, "http://"+h.envProxy.environmentHost(env.ID)+"/") {
+			t.Fatalf("ActionOff left loopback URL %s", env.URL)
+		}
 	}
-	resp := fetch("/env/" + id + "/redirect")
-	resp.Body.Close()
-	if got := resp.Header.Get("Location"); got != "/env/"+id+"/next?q=1" {
-		t.Fatal(got)
+	setGate(entitlement.ActionEnforce, 0)
+	checkURLs(original)
+	wantError(launch(original["web"].ID), "environment_proxy_disabled", 0)
+	directBearer := httptest.NewRequest(http.MethodGet, "http://"+h.envProxy.environmentHost(original["web"].ID), nil)
+	directBearer.Header.Set("Authorization", "Bearer "+proxyToken(t, testUserID))
+	wantError(callPreview(router, directBearer), "environment_proxy_disabled", 0)
+	setGate(entitlement.ActionEnforce, 1)
+	if got := launch(original["web"].ID); got.Code != http.StatusFound {
+		t.Fatalf("first active environment launch = %d %s", got.Code, got.Body.String())
 	}
-	resp = fetch("/env/" + id + "/stream")
-	b := make([]byte, 6)
-	_, err := io.ReadFull(resp.Body, b)
-	resp.Body.Close()
-	if err != nil || string(b) != "first\n" {
-		t.Fatalf("stream=%q %v", b, err)
+	wantError(launch(original["detected"].ID), "environment_proxy_limit_reached", 1)
+	h.revokeEnvironmentSession(original["web"].ID)
+	if got := launch(original["detected"].ID); got.Code != http.StatusFound {
+		t.Fatalf("revocation did not release the active environment: %d %s", got.Code, got.Body.String())
 	}
-	header := http.Header{"Host": {"preview.example"}, "Cookie": {"multica_auth=" + token}, "Origin": {"http://preview.example"}}
-	ws, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http://", "ws://", 1)+"/env/"+id+"/socket", header)
+
+	for name, env := range original {
+		env.URL = strings.Replace(env.URL, "localhost", "dev-machine.internal", 1)
+		dbfx.Exec(t, `UPDATE issue_environment SET url=$1 WHERE id=$2`, env.URL, env.ID)
+		original[name] = env
+	}
+	for _, action := range []entitlement.Action{entitlement.ActionOff, entitlement.ActionEnforce} {
+		setGate(action, 0)
+		checkURLs(original)
+	}
+	testHandler.envProxy = nil
+	checkURLs(original)
+}
+
+func TestEnvironmentProxyTunnelLimitsAndCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		limits  EnvironmentProxyLimits
+		otherWS bool
+	}{
+		{name: "workspace", limits: EnvironmentProxyLimits{WorkspaceTunnels: 1, GlobalTunnels: 2}},
+		{name: "global", limits: EnvironmentProxyLimits{WorkspaceTunnels: 2, GlobalTunnels: 1}, otherWS: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := proxyTestHandler(t, tc.limits)
+			p := h.envProxy
+			target := environmentSessionClaims{
+				EnvID: uuid.NewString(), WorkspaceID: uuid.NewString(), RuntimeID: uuid.NewString(), Port: 41000,
+				IssuedAt: time.Now().UnixNano(), ExpiresAt: time.Now().Add(time.Minute).Unix(),
+			}
+			entered := make(chan struct{}, 1)
+			h.DaemonPendingWork = environmentNotifierFunc(func(string, string) { entered <- struct{}{} })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				ctx := context.WithValue(ctx, environmentTunnelContextKey{}, target)
+				_, err := h.dialEnvironmentTunnel(ctx, "tcp", "")
+				done <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("first dial did not enter")
+			}
+			other := target
+			other.EnvID = uuid.NewString()
+			if tc.otherWS {
+				other.WorkspaceID = uuid.NewString()
+			}
+			req := httptest.NewRequest(http.MethodGet, "http://"+p.environmentHost(other.EnvID), nil)
+			rec := httptest.NewRecorder()
+			p.serve(rec, req, other)
+			if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "environment_tunnel_limit_reached") {
+				t.Fatalf("second dial = %d %s", rec.Code, rec.Body.String())
+			}
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled dial = %v", err)
+			}
+			if p.state.activeGlobal != 0 || len(p.state.pending) != 0 || len(p.state.slots) != 0 {
+				t.Fatal("cancel left tunnel broker state behind")
+			}
+		})
+	}
+}
+
+func TestEnvironmentProxySnapshotRevokesSession(t *testing.T) {
+	_, task := issueEnvironmentFixture(t)
+	report := webEnvironment("running")
+	reportEnvironments(t, task, report).Want(http.StatusOK)
+	var id, runtimeID string
+	dbfx.QueryRow(t, `SELECT id,runtime_id FROM issue_environment WHERE task_id=$1`, task).Scan(&id, &runtimeID)
+	enableEnvironmentTunnel(t, runtimeID)
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	previous := testHandler.envProxy
+	testHandler.envProxy = h.envProxy
+	t.Cleanup(func() { testHandler.envProxy = previous })
+	router := proxyRouter(h)
+	cookie, host := launchPreview(t, router, id)
+	report["port"], report["url"] = 41001, "http://localhost:41001"
+	reportEnvironments(t, task, report).Want(http.StatusOK)
+	req := httptest.NewRequest(http.MethodGet, "http://"+host+"/style.css", nil)
+	req.Header.Set("Sec-Fetch-Mode", "no-cors")
+	req.AddCookie(cookie)
+	if got := callPreview(router, req); got.Code != http.StatusUnauthorized {
+		t.Fatalf("old preview cookie survived a port change: %d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestEnvironmentProxyRendezvousBinding(t *testing.T) {
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	router := proxyRouter(h)
+	state := &h.envProxy.state
+	runtimeID := uuid.NewString()
+	stream, secret := uuid.NewString(), uuid.NewString()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	state.pending[stream] = &pendingEnvironmentTunnel{
+		target: environmentSessionClaims{RuntimeID: runtimeID},
+		secret: secret, ctx: ctx, cancel: cancel,
+	}
+	dial := func(runtime, credential string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/daemon/runtimes/"+runtime+"/environment-tunnel/"+stream, nil)
+		req.Header.Set("Authorization", "Bearer "+credential)
+		return callPreview(router, req).Code
+	}
+	if got := dial(runtimeID, uuid.NewString()); got != http.StatusNotFound {
+		t.Fatalf("wrong rendezvous credential = %d", got)
+	}
+	if got := dial(uuid.NewString(), secret); got != http.StatusNotFound {
+		t.Fatalf("wrong rendezvous runtime = %d", got)
+	}
+	// The authenticated callback reaches the upgrade check, which refuses
+	// this deliberately ordinary GET and consumes the pending entry.
+	if got := dial(runtimeID, secret); got != http.StatusBadRequest {
+		t.Fatalf("authenticated callback = %d", got)
+	}
+	if got := dial(runtimeID, secret); got != http.StatusNotFound {
+		t.Fatalf("replayed rendezvous credential = %d", got)
+	}
+}
+
+func TestEnvironmentProxyTunnelLifetime(t *testing.T) {
+	id, _, _ := proxyFixture(t)
+	h := proxyTestHandler(t, EnvironmentProxyLimits{TunnelLifetime: 500 * time.Millisecond})
+	router := proxyRouter(h)
+	cookie, host := launchPreview(t, router, id)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		_, _, _ = ws.ReadMessage()
+	})
+	server, _ := startPreviewTunnelTest(t, h, router, upstream)
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/socket",
+		http.Header{"Host": {host}, "Origin": {"http://" + host}, "Cookie": {cookie.String()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ws.Close()
-	if got := resp.Header.Values("Set-Cookie"); len(got) != 1 {
-		t.Fatalf("expected only the server routing cookie on upgrade, got %q", got)
-	}
-	if cookies := resp.Cookies(); len(cookies) != 1 || cookies[0].Name != environmentProxyCookie || cookies[0].Value != id || !cookies[0].HttpOnly {
-		t.Fatalf("routing cookie lost on upgrade: %+v", cookies)
-	}
-	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
-	ws.WriteMessage(websocket.TextMessage, []byte("hmr"))
-	_, data, err := ws.ReadMessage()
-	ws.Close()
-	if err != nil || string(data) != "hmr" {
-		t.Fatalf("websocket=%q %v", data, err)
-	}
-	h.envProxy.transport.CloseIdleConnections()
-	peers.Wait()
-	local.Close()
-	resp = fetch("/env/" + id + "/")
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("refused local port = %d", resp.StatusCode)
-	}
-	// Stream IDs are consumed once, and bound to their runtime.
-	pending := &pendingEnvironmentTunnel{runtimeID: rt}
-	h.envProxy.pending["once"] = pending
-	if h.envProxy.take("once", uuid.NewString()) != nil || h.envProxy.take("once", rt) != pending || h.envProxy.take("once", rt) != nil {
-		t.Fatal("replay/runtime binding failed")
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = ws.ReadMessage()
+	var netErr net.Error
+	if err == nil || (errors.As(err, &netErr) && netErr.Timeout()) {
+		t.Fatalf("tunnel lifetime did not close the WebSocket: %v", err)
 	}
 }
 
-func TestEnvironmentProxyPendingDialLimitAndCancellation(t *testing.T) {
-	h := proxyTestHandler(t, "http://preview.example")
-	runtime := parseUUID(uuid.NewString())
-	row := db.IssueEnvironment{RuntimeID: runtime}
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), environmentTunnelContextKey{}, row))
-	notified := make(chan struct{}, 10)
-	h.DaemonPendingWork = environmentNotifierFunc(func(string, string) { notified <- struct{}{} })
-	errs := make(chan error, 10)
-	for i := 0; i < 10; i++ {
-		go func() { _, err := h.dialEnvironmentTunnel(ctx, "tcp", ""); errs <- err }()
-	}
-	for i := 0; i < 4; i++ {
-		select {
-		case <-notified:
-		case <-time.After(time.Second):
-			t.Fatal("missing dial")
-		}
-	}
-	select {
-	case <-notified:
-		t.Fatal("more than four outstanding handshakes")
-	default:
+func TestEnvironmentProxyBandwidth(t *testing.T) {
+	start := time.Now()
+	limiter := &environmentBandwidth{rate: 20000, last: start}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := limiter.wait(ctx, 1000); err != nil || time.Since(start) < 45*time.Millisecond {
+		t.Fatalf("bandwidth limiter did not wait: %s, %v", time.Since(start), err)
 	}
 	cancel()
-	for i := 0; i < 10; i++ {
-		if err := <-errs; !errors.Is(err, context.Canceled) {
-			t.Fatal(err)
-		}
-	}
-	if len(h.envProxy.pending) != 0 || len(h.envProxy.slots) != 0 {
-		t.Fatal("cancel leaked broker entries")
-	}
-}
-
-func TestEnvironmentProxyFailedState(t *testing.T) {
-	row := db.IssueEnvironment{State: "failed", Port: pgtype.Int4{Int32: 80, Valid: true}}
-	if got := environmentProxyStatus(row, time.Now()); got != 410 {
-		t.Fatal(got)
-	}
-}
-
-func TestEnvironmentProxyHandshakeTimeout(t *testing.T) {
-	id, _, _ := proxyFixture(t)
-	h := proxyTestHandler(t, "http://preview.example")
-	req := httptest.NewRequest("GET", "http://preview.example/env/"+id+"/", nil)
-	req.Header.Set("Authorization", "Bearer "+proxyToken(t, testUserID))
-	rec := httptest.NewRecorder()
-	h.EnvironmentProxyHostBoundary(http.NotFoundHandler()).ServeHTTP(rec, req)
-	if rec.Code != 503 || len(h.envProxy.pending) != 0 || len(h.envProxy.slots) != 0 {
-		t.Fatalf("timeout status=%d pending=%d slots=%d", rec.Code, len(h.envProxy.pending), len(h.envProxy.slots))
-	}
-}
-
-func TestEnvironmentProxyDaemonOwnership(t *testing.T) {
-	_, rt, _ := proxyFixture(t)
-	h := proxyTestHandler(t, "http://preview.example")
-	pending := &pendingEnvironmentTunnel{runtimeID: rt, ctx: context.Background()}
-	h.envProxy.pending["secret"] = pending
-	foreign := createPlainMember(t, "env-foreign-"+uuid.NewString()+"@example.com")
-	req := withURLParam(newRequestAs(foreign, "GET", "/", nil), "runtimeId", rt)
-	chi.RouteContext(req.Context()).URLParams.Add("streamId", "secret")
-	rec := httptest.NewRecorder()
-	h.ConnectEnvironmentTunnel(rec, req)
-	if rec.Code != 404 || h.envProxy.pending["secret"] != pending {
-		t.Fatal("foreign owner consumed pending stream")
-	}
-	req = withURLParam(newOwnerDaemonRequest("GET", "/", nil), "runtimeId", rt)
-	chi.RouteContext(req.Context()).URLParams.Add("streamId", "missing")
-	rec = httptest.NewRecorder()
-	h.ConnectEnvironmentTunnel(rec, req)
-	if rec.Code != 404 {
-		t.Fatal(rec.Code)
-	}
-}
-
-func TestEnvironmentProxyResponseDoesNotPersistURL(t *testing.T) {
-	issue, task := issueEnvironmentFixture(t)
-	reportEnvironments(t, task, webEnvironment("running"), map[string]any{"key": "detected:test", "source": "detected", "name": "detected", "url": "http://localhost:5173/docs?q=1", "port": 5173, "state": "running"}).Want(200)
-	before := testHandler.envProxy
-	testHandler.envProxy = newEnvironmentProxy(Config{EnvProxyBaseURL: "https://preview.example"})
-	t.Cleanup(func() { testHandler.envProxy = before })
-	for _, env := range listEnvironments(t, issue) {
-		if !strings.HasPrefix(env.URL, "https://preview.example/env/"+env.ID+"/") {
-			t.Fatal(env.URL)
-		}
-	}
-	testHandler.envProxy = nil
-	for _, env := range listEnvironments(t, issue) {
-		if !strings.HasPrefix(env.URL, "http://localhost:") {
-			t.Fatal("proxy URL persisted", env.URL)
-		}
+	if err := limiter.wait(ctx, environmentTunnelChunkSize); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("closed connection kept waiting for bandwidth: %v", err)
 	}
 }

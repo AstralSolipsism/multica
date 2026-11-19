@@ -364,13 +364,19 @@ A declared environment's own servers are not listed a second time as detected on
 
 These commands use the running task's credential, so they work only inside a run. Environments belong to the issue, which means a later run on the same issue can list and stop what an earlier one started. Neither detected nor declared environments are supported on Windows yet.
 
-Remote access is opt-in via server `MULTICA_ENV_PROXY_BASE_URL` (wildcard or
-`/env/<id>/` URLs) or daemon `MULTICA_ENV_PUBLIC_HOST` (LAN/VPN host override).
-Declared URLs accept `$MULTICA_HOST`, and commands receive `MULTICA_HOST`;
-implicit localhost readiness probes keep `localhost` by default and use
-`127.0.0.1` when the host override is active. Explicit `ready` addresses are
-preserved. See [remote environment deployment](docs/environment-proxy.md)
-for cookie domains, ingress routing and tunnel lifecycle.
+For direct LAN or VPN access, set `MULTICA_ENV_PUBLIC_HOST` on the daemon to a
+hostname or IP that members can reach. This supplies the host for detected
+server URLs and replaces `localhost` or `$MULTICA_HOST` in declared URLs.
+Implicit readiness probes use `127.0.0.1` with a host override. Explicit
+`ready` addresses use their configured values.
+
+To relay loopback URLs, set `MULTICA_ENV_PROXY_BASE_URL` on a single API
+replica to a dedicated wildcard origin such as `https://*.preview.example.com`.
+The signed-in browser exchanges a one-time ticket for a host-only preview
+cookie. `COOKIE_DOMAIN` can stay unset. The daemon must support environment
+tunnels. Cloud relay limits leave reported direct URLs available. See
+[environment deployment](apps/docs/content/docs/environments.mdx#remote-access)
+for ingress and replica configuration.
 
 #### Sidebar controls
 

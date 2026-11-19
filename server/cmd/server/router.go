@@ -456,6 +456,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		MaxPreviewSizeBytes:            attachmentpreview.ConfiguredMaxSizeBytes(os.Getenv("MULTICA_MAX_PREVIEW_SIZE")),
 		AttachmentFrameAncestors:       origins,
 		EnvProxyBaseURL:                os.Getenv("MULTICA_ENV_PROXY_BASE_URL"),
+		BackendReplicas:                envPositiveInt("MULTICA_BACKEND_REPLICAS", 1),
 		PluginSurfaceOrigin:            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PLUGIN_SURFACE_ORIGIN")), "/"),
 		LLMAPIKey:                      strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
 		LLMBaseURL:                     strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
@@ -464,6 +465,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMDisableThinking:             opts.LLMDisableThinking,
 		ServerVersion:                  normalizeServerVersion(version),
 		GitExtraCACerts:                gitca.Load(slog.Default()),
+		EnvProxyLimits: handler.EnvironmentProxyLimits{
+			MaxBodyBytes: int64(envPositiveInt("MULTICA_ENV_PROXY_MAX_BODY_BYTES", 32<<20)),
+		},
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	invitationRateLimits := handler.DefaultInvitationRateLimits()
@@ -1500,6 +1504,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		FleetBaseURL: signupConfig.CloudURL,
 		Redis:        rdb,
 	})
+	h.CloudPAT = cloudPATVerifier
 
 	// Empty-claim cache: lets the daemon poll path skip a Postgres
 	// scan when a recent check confirmed the runtime had no queued
@@ -1673,6 +1678,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Get("/api/media/jobs/{id}/status", h.MediaAttemptStatus)
 	r.Get("/api/media/jobs/{id}/inputs/{attachmentID}", h.DownloadMediaInput)
 
+	// Preview launch handles the browser's initial cross-site navigation
+	// before requiring authentication. The tunnel rendezvous verifies the
+	// one-time credential sent to an already authenticated daemon socket.
+	r.Get("/api/environment-proxy/{environmentId}/launch", h.LaunchEnvironmentProxy)
+	r.Get("/api/daemon/runtimes/{runtimeId}/environment-tunnel/{streamId}", h.ConnectEnvironmentTunnel)
+
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
@@ -1717,7 +1728,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
-		r.Get("/runtimes/{runtimeId}/environment-tunnel/{streamId}", h.ConnectEnvironmentTunnel)
 		r.Post("/runtimes/{runtimeId}/environment-commands/claim", h.ClaimEnvironmentCommands)
 		r.Post("/runtimes/{runtimeId}/environment-commands/{commandId}/result", h.ReportEnvironmentCommandResult)
 
@@ -2773,7 +2783,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// the Feishu integration; see labrastro_messaging.go.
 	assembleMessageDelivery(h, bus)
 
-	r.NotFound(h.EnvironmentProxyFallback)
 	return r, h
 }
 

@@ -2,8 +2,13 @@ package handler
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,169 +16,227 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
-	"github.com/multica-ai/multica/server/internal/envtunnel"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/entitlement"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"golang.org/x/net/publicsuffix"
 )
 
-const tunnelDialTimeout = 10 * time.Second
-const maxPendingDialsPerRuntime = 4
-const environmentProxyCookie = "multica_env_proxy"
+const (
+	environmentPreviewCookie = "multica_env_session"
+	environmentLaunchPath    = "/api/environment-proxy/{environmentId}/launch"
+	environmentCallbackPath  = "/_multica_env_auth"
+	environmentLaunchTTL     = time.Minute
+	environmentSessionTTL    = 10 * time.Minute
+	maxEnvironmentLaunches   = 4096
+)
 
 type environmentProxy struct {
-	base      *url.URL
-	wildcard  bool
-	dedicated bool
-	transport *http.Transport
-	mu        sync.Mutex
-	pending   map[string]*pendingEnvironmentTunnel
-	slots     map[string]*environmentTunnelSlots
+	base       *url.URL
+	authOrigin *url.URL
+	suffix     string
+	launchBox  *secretbox.Box
+	sessionBox *secretbox.Box
+	transport  *http.Transport
+	proxy      *httputil.ReverseProxy
+	limits     EnvironmentProxyLimits
+	state      environmentProxyState
 }
-type pendingEnvironmentTunnel struct {
-	runtimeID, key string
-	port           int32
-	ctx            context.Context
-	conn           chan net.Conn
+
+type environmentSessionClaims struct {
+	UserID      string `json:"uid"`
+	WorkspaceID string `json:"wid"`
+	EnvID       string `json:"eid"`
+	RuntimeID   string `json:"rid"`
+	LocalKey    string `json:"key"`
+	Port        int32  `json:"port"`
+	IssuedAt    int64  `json:"iat"` // Nanoseconds, to order revocation and launch within a second.
+	ExpiresAt   int64  `json:"exp"`
+	Limit       *int   `json:"limit,omitempty"`
+	Revision    int64  `json:"revision,omitempty"`
 }
-type environmentTunnelSlots struct {
-	ch   chan struct{}
-	refs int
+
+type environmentLaunchClaims struct {
+	environmentSessionClaims
+	Nonce string `json:"n"`
+	Next  string `json:"next"`
 }
+
 type environmentTunnelContextKey struct{}
 
 func newEnvironmentProxy(cfg Config) *environmentProxy {
-	raw := strings.TrimSpace(cfg.EnvProxyBaseURL)
-	if raw == "" {
+	if strings.TrimSpace(cfg.EnvProxyBaseURL) == "" {
 		return nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" || strings.Count(u.Host, "*") > 1 {
+	base, err := parsePluginSurfaceOrigin(cfg.EnvProxyBaseURL)
+	if err != nil || strings.Count(base.Host, "*") != 1 || base.ForceQuery || base.RawPath != "" {
 		slog.Error("invalid MULTICA_ENV_PROXY_BASE_URL; environment proxy disabled")
 		return nil
 	}
-	u.Host = strings.ToLower(u.Host)
-	wildcard := strings.Contains(u.Host, "*")
-	if wildcard && !strings.HasPrefix(u.Host, "*.") && !strings.HasPrefix(u.Host, "env-*.") {
+	base.Host = strings.ToLower(base.Host)
+	prefix, suffix, _ := strings.Cut(base.Hostname(), "*")
+	suffix = strings.TrimPrefix(suffix, ".")
+	_, suffixErr := publicsuffix.EffectiveTLDPlusOne(suffix)
+	port, portErr := strconv.Atoi(base.Port())
+	if (prefix != "" && prefix != "env-") || !strings.HasPrefix(base.Hostname(), prefix+"*.") ||
+		len(suffix) > 253-len("env-")-32-1 || !util.ValidDNSHostname(suffix) ||
+		(suffix != "localhost" && (suffixErr != nil || net.ParseIP(suffix) != nil)) ||
+		(base.Port() != "" && (portErr != nil || port < 1 || port > 65535)) || strings.HasSuffix(base.Host, ":") {
+		slog.Error("invalid MULTICA_ENV_PROXY_BASE_URL wildcard host; environment proxy disabled")
 		return nil
 	}
-	// Without a known API origin, preserve shared-origin routing rules.
-	_, publicURLErr := parsePluginSurfaceOrigin(cfg.PublicURL)
-	dedicated := publicURLErr == nil && (&Handler{cfg: cfg}).pluginSurfaceOriginIsDedicated(u)
-	p := &environmentProxy{base: u, wildcard: wildcard, dedicated: dedicated, pending: make(map[string]*pendingEnvironmentTunnel), slots: make(map[string]*environmentTunnelSlots)}
-	p.transport = &http.Transport{
-		MaxConnsPerHost: 6, MaxIdleConnsPerHost: 4, MaxIdleConns: 64,
-		IdleConnTimeout: 60 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
-		ExpectContinueTimeout: time.Second,
+	if cfg.BackendReplicas > 1 {
+		slog.Error("environment proxy disabled: in-memory tunnel rendezvous requires MULTICA_BACKEND_REPLICAS=1", "replicas", cfg.BackendReplicas)
+		return nil
 	}
+
+	// The app origin owns the browser's host-only login cookie. In split
+	// deployments the app forwards /api to the backend.
+	main := cfg.AppURL
+	if strings.TrimSpace(main) == "" {
+		main = cfg.PublicURL
+	}
+	origin, err := parsePluginSurfaceOrigin(main)
+	if err != nil || origin.Hostname() == "" || strings.Contains(origin.Host, "*") {
+		slog.Error("invalid environment proxy authentication origin; environment proxy disabled")
+		return nil
+	}
+	if base.Port() == "80" && base.Scheme == "http" || base.Port() == "443" && base.Scheme == "https" {
+		base.Host = base.Hostname()
+	}
+	p := &environmentProxy{base: base, authOrigin: origin, suffix: suffix, limits: cfg.EnvProxyLimits.withDefaults()}
+	candidates := append([]string{cfg.PublicURL, cfg.AppURL, cfg.PluginSurfaceOrigin}, cfg.AttachmentFrameAncestors...)
+	for _, candidate := range candidates {
+		if app, err := parsePluginSurfaceOrigin(candidate); err == nil {
+			host := strings.ToLower(strings.TrimSuffix(app.Hostname(), "."))
+			// Allow the localhost app and its wildcard preview host in local development.
+			if host == "localhost" && suffix == "localhost" {
+				continue
+			}
+			if host == suffix || strings.HasSuffix(host, "."+suffix) || strings.HasSuffix(suffix, "."+host) {
+				slog.Error("environment proxy overlaps a platform origin; environment proxy disabled", "host", host)
+				return nil
+			}
+		}
+	}
+
+	key := cfg.EnvProxyKey
+	if len(key) == 0 {
+		key = auth.JWTSecret()
+	}
+	p.launchBox = environmentProxyBox(key, "multica/env-proxy-launch/v1")
+	p.sessionBox = environmentProxyBox(key, "multica/env-proxy-session/v1")
+	p.state.init()
 	return p
 }
 
-func (h *Handler) resolveIssueEnvironmentURL(row db.IssueEnvironment, original string) string {
-	p := h.envProxy
-	if p == nil || row.Kind == "app" || original == "" || !row.Port.Valid || row.Port.Int32 <= 0 || row.Port.Int32 > 65535 {
-		return original
-	}
-	source, err := url.Parse(original)
-	if err != nil {
-		return original
-	}
-	target := *p.base
-	target.Path, target.RawPath, target.RawQuery, target.Fragment = source.Path, source.RawPath, source.RawQuery, source.Fragment
-	if target.Path == "" {
-		target.Path = "/"
-	}
-	id := uuidToString(row.ID)
-	if p.wildcard {
-		label := strings.ReplaceAll(id, "-", "")
-		if !strings.HasPrefix(target.Host, "env-*") {
-			label = "env-" + label
-		}
-		target.Host = strings.Replace(target.Host, "*", label, 1)
-	} else {
-		prefix := "/env/" + id
-		target.Path = prefix + target.Path
-		if target.RawPath != "" {
-			target.RawPath = prefix + target.RawPath
-		}
-	}
-	return target.String()
+func environmentProxyBox(secret []byte, scope string) *secretbox.Box {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(scope))
+	box, _ := secretbox.New(mac.Sum(nil)) // SHA-256 always produces a valid AES-256 key.
+	return box
 }
 
-func environmentPath(path string) (id, rest string, ok bool) {
-	if !strings.HasPrefix(path, "/env/") {
-		return "", "", false
-	}
-	id, rest, slash := strings.Cut(strings.TrimPrefix(path, "/env/"), "/")
-	parsed, err := uuid.Parse(id)
+func sealEnvironmentClaims(box *secretbox.Box, claims any) (string, error) {
+	payload, err := json.Marshal(claims)
 	if err != nil {
-		return "", "", false
+		return "", err
 	}
-	if slash {
-		rest = "/" + rest
-	}
-	return parsed.String(), rest, true
+	sealed, err := box.Seal(payload)
+	return base64.RawURLEncoding.EncodeToString(sealed), err
 }
 
-func (p *environmentProxy) hostEnvironment(host string) (string, bool) {
-	if !p.wildcard {
-		return "", false
-	}
-	before, after, _ := strings.Cut(p.base.Host, "*")
-	host = strings.ToLower(host)
-	if !strings.HasPrefix(host, before) || !strings.HasSuffix(host, after) {
-		return "", false
-	}
-	label := strings.TrimSuffix(strings.TrimPrefix(host, before), after)
-	if before == "" {
-		if !strings.HasPrefix(label, "env-") {
-			return "", false
-		}
-		label = strings.TrimPrefix(label, "env-")
-	}
-	id, err := uuid.Parse(label)
+func openEnvironmentClaims(box *secretbox.Box, token string, claims any) bool {
+	sealed, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
+		return false
+	}
+	payload, err := box.Open(sealed)
+	return err == nil && json.Unmarshal(payload, claims) == nil
+}
+
+func (p *environmentProxy) environmentHost(id string) string {
+	label := "env-" + strings.ReplaceAll(id, "-", "")
+	host := label + "." + p.suffix
+	if port := p.base.Port(); port != "" {
+		return net.JoinHostPort(host, port)
+	}
+	return host
+}
+
+func (p *environmentProxy) defaultPortSuffix() string {
+	if p.base.Scheme == "https" {
+		return ":443"
+	}
+	return ":80"
+}
+
+func environmentHostname(host string) string {
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+func (p *environmentProxy) hostEnvironment(host string) (id string, owned bool) {
+	name := environmentHostname(host)
+	label, ok := strings.CutSuffix(name, "."+p.suffix)
+	if !ok {
+		return "", false
+	}
+	const prefix = "env-"
+	if !strings.HasPrefix(label, prefix) || len(label) != len(prefix)+32 {
 		return "", true
 	}
-	return id.String(), true
+	parsed, err := uuid.Parse(label[len(prefix):])
+	if err != nil || !strings.EqualFold(strings.TrimSuffix(host, p.defaultPortSuffix()), p.environmentHost(parsed.String())) {
+		return "", true
+	}
+	return parsed.String(), true
 }
 
+func (p *environmentProxy) resolveURL(row db.IssueEnvironment) string {
+	source, err := url.Parse(row.Url)
+	if err != nil || source.Hostname() == "" {
+		return row.Url
+	}
+	hostname := strings.TrimSuffix(strings.ToLower(source.Hostname()), ".")
+	// A non-loopback URL is already reachable without a relay.
+	if hostname != "localhost" && !net.ParseIP(hostname).IsLoopback() {
+		return row.Url
+	}
+	source.Scheme = p.base.Scheme
+	source.Host = p.environmentHost(uuidToString(row.ID))
+	source.User = nil
+	if source.Path == "" {
+		source.Path = "/"
+	}
+	return source.String()
+}
+
+// EnvironmentProxyHostBoundary keeps every host in the preview namespace
+// out of the main application router.
 func (h *Handler) EnvironmentProxyHostBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := h.envProxy
-		if p == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if id, owned := p.hostEnvironment(r.Host); owned {
-			if id == "" {
-				http.NotFound(w, r)
-				return
-			}
-			h.serveEnvironmentProxy(w, r, id, "")
-			return
-		}
-		if !p.wildcard && strings.EqualFold(r.Host, p.base.Host) {
-			if id, rest, ok := environmentPath(r.URL.Path); ok {
-				if rest == "" {
-					target := *r.URL
-					target.Path += "/"
-					target.RawPath = ""
-					http.Redirect(w, r, target.String(), http.StatusTemporaryRedirect)
+		if p := h.envProxy; p != nil {
+			if id, owned := p.hostEnvironment(r.Host); owned {
+				if id == "" {
+					writeError(w, http.StatusNotFound, "environment not found")
 					return
 				}
-				h.serveEnvironmentProxy(w, r, id, strings.TrimSuffix(r.URL.Path, rest))
-				return
-			}
-			if p.dedicated {
-				h.EnvironmentProxyFallback(w, r)
+				h.serveEnvironmentProxy(w, r, id)
 				return
 			}
 		}
@@ -181,122 +244,272 @@ func (h *Handler) EnvironmentProxyHostBoundary(next http.Handler) http.Handler {
 	})
 }
 
-func environmentReservedPath(path string) bool {
-	for _, prefix := range []string{"/api", "/ws", "/auth", "/v1", "/health", "/readyz", "/healthz", "/plugin-surfaces", "/_next", "/docs", "/metrics"} {
-		if path == prefix || strings.HasPrefix(path, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *environmentProxy) sameOrigin(raw, host string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && u.User == nil && u.Scheme == p.base.Scheme && strings.EqualFold(u.Host, host)
-}
-
-func (p *environmentProxy) fallbackEnvironment(r *http.Request) string {
-	if ref, err := url.Parse(r.Referer()); err == nil && p.sameOrigin(r.Referer(), r.Host) {
-		if id, _, ok := environmentPath(ref.Path); ok {
-			return id
-		}
-	}
-	if r.Header.Get("Sec-Fetch-Mode") != "navigate" {
-		if c, err := r.Cookie(environmentProxyCookie); err == nil {
-			if id, err := uuid.Parse(c.Value); err == nil {
-				return id.String()
-			}
-		}
-	}
-	return ""
-}
-
-func (h *Handler) EnvironmentProxyFallback(w http.ResponseWriter, r *http.Request) {
-	p := h.envProxy
-	if p != nil && !p.wildcard && strings.EqualFold(r.Host, p.base.Host) && (p.dedicated || !environmentReservedPath(r.URL.Path)) {
-		if id := p.fallbackEnvironment(r); id != "" {
-			h.serveEnvironmentProxy(w, r, id, "")
-			return
-		}
-	}
-	http.NotFound(w, r)
-}
-
 func environmentProxyStatus(row db.IssueEnvironment, now time.Time) int {
-	if row.Kind == "app" || !row.Port.Valid || row.Port.Int32 < 1 || row.Port.Int32 > 65535 {
+	if row.Kind != issueEnvironmentKindServer || !row.Port.Valid || row.Port.Int32 < 1 || row.Port.Int32 > 65535 {
 		return http.StatusNotFound
 	}
 	if row.EndedAt.Valid {
 		return http.StatusGone
 	}
-	switch issueEnvironmentToResponse(row, now).State {
-	case "stopped", "exited", "failed":
-		return http.StatusGone
+	switch issueEnvironmentState(row, now) {
+	case "starting", "running":
+		return 0
 	case "unreachable":
 		return http.StatusServiceUnavailable
+	default:
+		return http.StatusGone
 	}
-	return 0
 }
 
-func (h *Handler) serveEnvironmentProxy(w http.ResponseWriter, r *http.Request, id, prefix string) {
+func environmentRuntimeSupportsTunnel(rt db.AgentRuntime, workspaceID pgtype.UUID) bool {
+	return rt.Status == "online" && rt.WorkspaceID == workspaceID &&
+		runtimeHasCapability(rt.Metadata, protocol.DaemonCapabilityEnvironmentTunnelV1)
+}
+
+func (h *Handler) environmentProxyGate(ctx context.Context, workspaceID pgtype.UUID) entitlement.Decision {
+	if h.Entitlements == nil {
+		return entitlement.Decision{Gate: entitlement.Gate{Action: entitlement.ActionOff}}
+	}
+	return h.Entitlements.Gate(ctx, uuid.UUID(workspaceID.Bytes), entitlement.GateEnvironmentProxy)
+}
+
+func writeEnvironmentProxyLimit(w http.ResponseWriter, limit int, revision int64) {
+	code, message := "environment_proxy_limit_reached", "workspace has reached its active remote environment limit"
+	if limit == 0 {
+		code, message = "environment_proxy_disabled", "remote environment preview is not available on the current plan"
+	}
+	writeJSON(w, http.StatusPaymentRequired, map[string]any{
+		"code": code, "error": message, "limit": limit, "policy_revision": revision,
+	})
+}
+
+func (h *Handler) authorizeEnvironmentProxy(w http.ResponseWriter, r *http.Request, id string) (environmentSessionClaims, bool) {
+	var claims environmentSessionClaims
+	ctx := r.Context()
+	issuedAt := time.Now()
+	row, err := h.Queries.GetIssueEnvironmentByID(ctx, parseUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return claims, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load environment")
+		return claims, false
+	}
+
+	wsID, userID := uuidToString(row.WorkspaceID), requestUserID(r)
+	if r.Header.Get("X-Actor-Source") == "task_token" && r.Header.Get("X-Workspace-ID") != wsID {
+		writeError(w, http.StatusForbidden, "task token is bound to a different workspace")
+		return claims, false
+	}
+	if _, err := h.getWorkspaceMember(ctx, userID, wsID); err != nil {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return claims, false
+	}
+	if !h.requireIssueIDVisible(w, r, wsID, row.IssueID, http.StatusForbidden, "forbidden") {
+		return claims, false
+	}
+	if status := environmentProxyStatus(row, time.Now()); status != 0 {
+		writeError(w, status, http.StatusText(status))
+		return claims, false
+	}
+	rt, err := h.getAgentRuntime(ctx, obsmetrics.RuntimeLookupSourceIssue, row.RuntimeID)
+	if err != nil || rt.WorkspaceID != row.WorkspaceID || rt.Status != "online" {
+		writeError(w, http.StatusServiceUnavailable, "runtime unavailable")
+		return claims, false
+	}
+	if !environmentRuntimeSupportsTunnel(rt, row.WorkspaceID) {
+		writeErrorCode(w, http.StatusConflict, "environment_tunnel_unsupported", "runtime does not support environment tunnels")
+		return claims, false
+	}
+
+	claims = environmentSessionClaims{
+		UserID: userID, WorkspaceID: wsID, EnvID: id, RuntimeID: uuidToString(row.RuntimeID),
+		LocalKey: row.LocalKey, Port: row.Port.Int32, IssuedAt: issuedAt.UnixNano(),
+		ExpiresAt: issuedAt.Add(environmentSessionTTL).Unix(),
+	}
+	if decision := h.environmentProxyGate(ctx, row.WorkspaceID); decision.Gate.Action == entitlement.ActionEnforce && decision.Gate.Limit != nil {
+		claims.Limit, claims.Revision = decision.Gate.Limit, decision.PolicyRevision
+	}
+	return claims, true
+}
+
+func environmentNext(raw string) string {
+	if len(raw) > 2048 || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") ||
+		strings.ContainsAny(raw, "\\") || strings.IndexFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+		return "/"
+	}
+	next, err := url.ParseRequestURI(raw)
+	if err != nil || strings.HasPrefix(next.Path, "//") || strings.Contains(next.Path, "\\") ||
+		strings.IndexFunc(next.Path, func(r rune) bool { return r < ' ' || r == 0x7f }) >= 0 ||
+		next.Path == environmentCallbackPath {
+		return "/"
+	}
+	return next.RequestURI()
+}
+
+func environmentNavigation(r *http.Request) bool {
+	mode := r.Header.Get("Sec-Fetch-Mode")
+	dest := r.Header.Get("Sec-Fetch-Dest")
+	return r.Method == http.MethodGet && !websocket.IsWebSocketUpgrade(r) &&
+		(mode == "navigate" || mode == "") && (dest == "document" || dest == "")
+}
+
+func environmentBearer(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+
+func environmentLaunchURL(id, next string, bounced bool) *url.URL {
+	query := url.Values{"next": {next}}
+	if bounced {
+		query.Set("bounced", "1")
+	}
+	return &url.URL{Path: strings.Replace(environmentLaunchPath, "{environmentId}", id, 1), RawQuery: query.Encode()}
+}
+
+func environmentPrivateResponse(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+// environmentProxyAuthWriter normalizes errors from Auth. On first browser
+// navigation it turns a 401 into a document on the main origin, allowing the
+// next navigation to send the host-only SameSite=Strict cookie.
+type environmentProxyAuthWriter struct {
+	http.ResponseWriter
+	target  string
+	bounced bool
+}
+
+func (w *environmentProxyAuthWriter) WriteHeader(status int) {
+	if status != http.StatusUnauthorized || w.target == "" {
+		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	w.bounced = true
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.ResponseWriter.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w.ResponseWriter, `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=%s"><a href="%s">Continue to preview</a>`, w.target, w.target)
+}
+
+func (w *environmentProxyAuthWriter) Write(body []byte) (int, error) {
+	if w.bounced {
+		return len(body), nil
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+// LaunchEnvironmentProxy exchanges the main site's authenticated session for
+// a one-use ticket scoped to a single preview host.
+func (h *Handler) LaunchEnvironmentProxy(w http.ResponseWriter, r *http.Request) {
 	p := h.envProxy
-	// Auth's cookie CSRF token belongs to the main app. Environment apps use
-	// a same-origin check, including WebSocket handshakes, instead.
-	authReq := r.Clone(r.Context())
-	authReq.Method = http.MethodGet
-	middleware.Auth(h.Queries, h.PATCache, nil, h.CFSigner)(http.HandlerFunc(func(w http.ResponseWriter, authenticated *http.Request) {
-		if r.Header.Get("Authorization") == "" && (r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" || websocket.IsWebSocketUpgrade(r)) {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				origin = r.Referer()
-			}
-			if !p.sameOrigin(origin, r.Host) {
-				http.Error(w, "forbidden origin", http.StatusForbidden)
-				return
-			}
-		}
-		var row db.IssueEnvironment
-		err := h.DB.QueryRow(r.Context(), `SELECT id, workspace_id, issue_id, runtime_id, local_key, kind, port, state, last_seen_at, ended_at FROM issue_environment WHERE id=$1`, id).Scan(
-			&row.ID, &row.WorkspaceID, &row.IssueID, &row.RuntimeID, &row.LocalKey, &row.Kind, &row.Port, &row.State, &row.LastSeenAt, &row.EndedAt)
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.NotFound(w, r)
+	if p == nil {
+		writeError(w, http.StatusNotFound, "environment proxy unavailable")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "environmentId"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+	environmentPrivateResponse(w)
+	next := environmentNext(r.URL.Query().Get("next"))
+	authWriter := &environmentProxyAuthWriter{ResponseWriter: w}
+	if !environmentBearer(r) && environmentNavigation(r) && r.URL.Query().Get("bounced") != "1" {
+		authWriter.target = html.EscapeString(environmentLaunchURL(id.String(), next, true).String())
+	}
+	middleware.Auth(h.Queries, h.PATCache, h.CloudPAT, h.CFSigner)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		claims, ok := h.authorizeEnvironmentProxy(w, r, id.String())
+		if !ok {
 			return
 		}
+		launch := environmentLaunchClaims{environmentSessionClaims: claims, Nonce: uuid.NewString(), Next: next}
+		launch.ExpiresAt = time.Now().Add(environmentLaunchTTL).Unix()
+		ticket, err := sealEnvironmentClaims(p.launchBox, launch)
 		if err != nil {
-			http.Error(w, "failed to load environment", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "failed to issue environment launch ticket")
 			return
 		}
-		wsID := uuidToString(row.WorkspaceID)
-		if authenticated.Header.Get("X-Actor-Source") == "task_token" && authenticated.Header.Get("X-Workspace-ID") != wsID {
-			http.Error(w, "task token is bound to a different workspace", http.StatusForbidden)
+		if p.admitEnvironment(w, claims, false) == nil {
 			return
 		}
-		if _, err := h.getWorkspaceMember(authenticated.Context(), requestUserID(authenticated), wsID); err != nil {
-			http.Error(w, "forbidden", http.StatusForbidden)
+		if !p.state.addLaunch(launch.Nonce, launch.ExpiresAt) {
+			writeError(w, http.StatusTooManyRequests, "too many pending environment launches")
 			return
 		}
-		if !h.requireIssueIDVisible(w, authenticated, wsID, row.IssueID, http.StatusForbidden, "forbidden") {
+		target := url.URL{Scheme: p.base.Scheme, Host: p.environmentHost(claims.EnvID), Path: environmentCallbackPath, RawQuery: url.Values{"ticket": {ticket}}.Encode()}
+		http.Redirect(w, r, target.String(), http.StatusFound)
+	})).ServeHTTP(authWriter, r)
+}
+
+func (p *environmentProxy) completeLaunch(w http.ResponseWriter, r *http.Request, id string) {
+	environmentPrivateResponse(w)
+	var launch environmentLaunchClaims
+	if !environmentNavigation(r) || !openEnvironmentClaims(p.launchBox, r.URL.Query().Get("ticket"), &launch) ||
+		launch.EnvID != id || !p.state.consumeLaunch(launch) {
+		writeError(w, http.StatusUnauthorized, "invalid environment launch ticket")
+		return
+	}
+	claims := launch.environmentSessionClaims
+	claims.ExpiresAt = time.Now().Add(environmentSessionTTL).Unix()
+	token, err := sealEnvironmentClaims(p.sessionBox, claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to issue environment session")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: environmentPreviewCookie, Value: token, Path: "/", MaxAge: int(environmentSessionTTL.Seconds()),
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: p.base.Scheme == "https",
+	})
+	http.Redirect(w, r, launch.Next, http.StatusFound)
+}
+
+func (h *Handler) serveEnvironmentProxy(w http.ResponseWriter, r *http.Request, id string) {
+	p := h.envProxy
+	if r.URL.Path == environmentCallbackPath {
+		p.completeLaunch(w, r, id)
+		return
+	}
+	if environmentBearer(r) {
+		req := r.Clone(r.Context())
+		// Only the main origin accepts a platform session cookie.
+		req.Header.Del("Cookie")
+		middleware.Auth(h.Queries, h.PATCache, h.CloudPAT, h.CFSigner)(http.HandlerFunc(func(_ http.ResponseWriter, authenticated *http.Request) {
+			if claims, ok := h.authorizeEnvironmentProxy(w, authenticated, id); ok {
+				p.serve(w, r, claims)
+			}
+		})).ServeHTTP(&environmentProxyAuthWriter{ResponseWriter: w}, req)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions || websocket.IsWebSocketUpgrade(r) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = r.Referer()
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.User != nil || u.Scheme != p.base.Scheme || !strings.EqualFold(strings.TrimSuffix(u.Host, p.defaultPortSuffix()), p.environmentHost(id)) {
+			writeError(w, http.StatusForbidden, "forbidden origin")
 			return
 		}
-		if status := environmentProxyStatus(row, time.Now()); status != 0 {
-			http.Error(w, http.StatusText(status), status)
+	}
+	now := time.Now()
+	for _, cookie := range r.CookiesNamed(environmentPreviewCookie) {
+		var claims environmentSessionClaims
+		if openEnvironmentClaims(p.sessionBox, cookie.Value, &claims) && claims.EnvID == id && p.state.sessionValid(claims, now) {
+			p.serve(w, r, claims)
 			return
 		}
-		if !row.RuntimeID.Valid {
-			http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		rt, err := h.Queries.GetAgentRuntime(r.Context(), row.RuntimeID)
-		if err != nil || rt.Status != "online" {
-			http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if prefix != "" {
-			http.SetCookie(w, &http.Cookie{Name: environmentProxyCookie, Value: id, Path: "/", MaxAge: 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: p.base.Scheme == "https"})
-		}
-		w.Header().Del("Content-Security-Policy")
-		h.proxyEnvironment(w, r, row, prefix)
-	})).ServeHTTP(w, authReq)
+	}
+	if !environmentNavigation(r) {
+		writeError(w, http.StatusUnauthorized, "missing authorization")
+		return
+	}
+	environmentPrivateResponse(w)
+	target := p.authOrigin.ResolveReference(environmentLaunchURL(id, environmentNext(r.URL.RequestURI()), false))
+	http.Redirect(w, r, target.String(), http.StatusFound)
 }
 
 func stripEnvironmentCredentials(r *http.Request) {
@@ -313,11 +526,14 @@ func stripEnvironmentCredentials(r *http.Request) {
 	if len(cookies) != 0 {
 		r.Header.Set("Cookie", strings.Join(cookies, "; "))
 	}
-	for _, name := range []string{"X-User-ID", "X-User-Email", "X-Actor-Source", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Workspace-ID"} {
+	for _, name := range []string{"Authorization", "X-User-ID", "X-User-Email", "X-Actor-Source", "X-Agent-ID", "X-Task-ID", "X-CSRF-Token", "X-Workspace-ID", "X-Workspace-Slug", "X-Client-Capabilities", "X-Client-Type", "X-Client-Version", "X-Env-Tunnel-Key", "X-Env-Tunnel-Port"} {
 		r.Header.Del(name)
 	}
-	// Authorization was used by Multica Auth, including JWTs; never pass it on.
-	r.Header.Del("Authorization")
+	for name := range r.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-multica-") {
+			r.Header.Del(name)
+		}
+	}
 }
 
 func isEnvironmentPlatformCookie(cookie string) bool {
@@ -330,24 +546,25 @@ func isEnvironmentPlatformCookie(cookie string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "multica_")
 }
 
-func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row db.IssueEnvironment, prefix string) {
-	p := h.envProxy
-	proxy := &httputil.ReverseProxy{
+func (p *environmentProxy) initProxy(dial func(context.Context, string, string) (net.Conn, error)) {
+	p.transport = &http.Transport{
+		DialContext: dial, MaxConnsPerHost: 6, MaxIdleConnsPerHost: 4, MaxIdleConns: 64,
+		IdleConnTimeout: time.Minute, ResponseHeaderTimeout: time.Minute,
+		ExpectContinueTimeout: time.Second,
+	}
+	p.proxy = &httputil.ReverseProxy{
 		Transport: p.transport, FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			target := pr.In.Context().Value(environmentTunnelContextKey{}).(environmentSessionClaims)
+			port := strconv.Itoa(int(target.Port))
 			pr.Out.URL.Scheme = "http"
-			pr.Out.URL.Host = uuidToString(row.ID) + "." + uuidToString(row.RuntimeID) + ".env.internal:" + strconv.Itoa(int(row.Port.Int32))
-			if prefix != "" {
-				pr.Out.URL.Path = strings.TrimPrefix(pr.Out.URL.Path, prefix)
-				if pr.Out.URL.RawPath != "" {
-					pr.Out.URL.RawPath = strings.TrimPrefix(pr.Out.URL.RawPath, prefix)
-				}
-			}
-			pr.Out.Host = "localhost:" + strconv.Itoa(int(row.Port.Int32))
+			pr.Out.URL.Host = target.EnvID + "." + target.RuntimeID + ".env.internal:" + port
+			pr.Out.Host = "localhost:" + port
 			pr.SetXForwarded()
 			pr.Out.Header.Set("X-Forwarded-Proto", p.base.Scheme)
 			stripEnvironmentCredentials(pr.Out)
 		},
+		// ReverseProxy calls ModifyResponse for both ordinary and 101 responses.
 		ModifyResponse: func(resp *http.Response) error {
 			cookies := resp.Header.Values("Set-Cookie")
 			resp.Header.Del("Set-Cookie")
@@ -356,106 +573,38 @@ func (h *Handler) proxyEnvironment(w http.ResponseWriter, r *http.Request, row d
 					resp.Header.Add("Set-Cookie", cookie)
 				}
 			}
-			if !p.wildcard {
-				location := resp.Header.Get("Location")
-				base := "/env/" + uuidToString(row.ID)
-				if strings.HasPrefix(location, "/") && !strings.HasPrefix(location, "//") && location != base && !strings.HasPrefix(location, base+"/") {
-					resp.Header.Set("Location", base+location)
-				}
-			}
 			return nil
 		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			status := http.StatusBadGateway
-			if errors.Is(err, context.DeadlineExceeded) {
-				status = http.StatusServiceUnavailable
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			var bodyErr *http.MaxBytesError
+			switch {
+			case errors.As(err, &bodyErr):
+				writeErrorCode(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "environment preview request body exceeds the limit")
+			case errors.Is(err, errEnvironmentTunnelLimit):
+				writeErrorCode(w, http.StatusTooManyRequests, "environment_tunnel_limit_reached", "too many active environment tunnels")
+			case errors.Is(err, errEnvironmentSessionRevoked):
+				writeError(w, http.StatusGone, "environment session revoked")
+			case errors.Is(err, context.DeadlineExceeded):
+				writeError(w, http.StatusServiceUnavailable, "environment tunnel unavailable")
+			default:
+				writeError(w, http.StatusBadGateway, "environment tunnel failed")
 			}
-			http.Error(w, http.StatusText(status), status)
 		},
 	}
-	proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), environmentTunnelContextKey{}, row)))
 }
 
-func (p *environmentProxy) take(streamID, runtimeID string) *pendingEnvironmentTunnel {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	pending := p.pending[streamID]
-	if pending == nil || pending.runtimeID != runtimeID {
-		return nil
-	}
-	delete(p.pending, streamID)
-	return pending
-}
-
-func (h *Handler) dialEnvironmentTunnel(ctx context.Context, network, address string) (net.Conn, error) {
-	p := h.envProxy
-	row, ok := ctx.Value(environmentTunnelContextKey{}).(db.IssueEnvironment)
-	if !ok {
-		return nil, fmt.Errorf("missing environment")
-	}
-	runtimeID := uuidToString(row.RuntimeID)
-	ctx, cancel := context.WithTimeout(ctx, tunnelDialTimeout)
-	defer cancel()
-	p.mu.Lock()
-	slots := p.slots[runtimeID]
-	if slots == nil {
-		slots = &environmentTunnelSlots{ch: make(chan struct{}, maxPendingDialsPerRuntime)}
-		p.slots[runtimeID] = slots
-	}
-	slots.refs++
-	p.mu.Unlock()
-	defer func() {
-		p.mu.Lock()
-		slots.refs--
-		if slots.refs == 0 {
-			delete(p.slots, runtimeID)
-		}
-		p.mu.Unlock()
-	}()
-	select {
-	case slots.ch <- struct{}{}:
-		defer func() { <-slots.ch }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	streamID := strings.ReplaceAll(uuid.NewString(), "-", "")
-	pending := &pendingEnvironmentTunnel{runtimeID: runtimeID, key: row.LocalKey, port: row.Port.Int32, ctx: ctx, conn: make(chan net.Conn)}
-	p.mu.Lock()
-	p.pending[streamID] = pending
-	p.mu.Unlock()
-	defer p.take(streamID, runtimeID)
-	h.requestDaemonPendingWork(runtimeID, protocol.PendingWorkKindEnvironmentTunnelPrefix+streamID)
-	select {
-	case conn := <-pending.conn:
-		return conn, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (h *Handler) ConnectEnvironmentTunnel(w http.ResponseWriter, r *http.Request) {
-	if h.envProxy == nil {
-		http.NotFound(w, r)
+func (p *environmentProxy) serve(w http.ResponseWriter, r *http.Request, claims environmentSessionClaims) {
+	lease := p.admitEnvironment(w, claims, true)
+	if lease == nil {
 		return
 	}
-	rt, ok := h.requireDaemonRuntimeAccess(w, r, chi.URLParam(r, "runtimeId"))
-	if !ok {
+	defer p.state.releaseEnvironment(lease)
+	if r.ContentLength > p.limits.MaxBodyBytes {
+		writeErrorCode(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "environment preview request body exceeds the limit")
 		return
 	}
-	pending := h.envProxy.take(chi.URLParam(r, "streamId"), uuidToString(rt.ID))
-	if pending == nil || pending.ctx.Err() != nil {
-		http.NotFound(w, r)
-		return
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = http.MaxBytesReader(w, r.Body, p.limits.MaxBodyBytes)
 	}
-	upgrader := websocket.Upgrader{HandshakeTimeout: tunnelDialTimeout}
-	ws, err := upgrader.Upgrade(w, r, http.Header{"X-Env-Tunnel-Key": {pending.key}, "X-Env-Tunnel-Port": {strconv.Itoa(int(pending.port))}})
-	if err != nil {
-		return
-	}
-	conn := envtunnel.NewConn(ws)
-	select {
-	case pending.conn <- conn:
-	case <-pending.ctx.Done():
-		conn.Close()
-	}
+	p.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), environmentTunnelContextKey{}, claims)))
 }
