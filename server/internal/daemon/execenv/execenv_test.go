@@ -1329,6 +1329,8 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 	}{
 		{"claude", "CLAUDE.md"},
 		{"codex", "AGENTS.md"},
+		{"codebuddy", "CODEBUDDY.md"},
+		{"antigravity", "AGENTS.md"},
 		{"opencode", "AGENTS.md"},
 		{"codearts", "AGENTS.md"},
 		{"hermes", "AGENTS.md"},
@@ -1347,6 +1349,32 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 				t.Fatalf("read %s: %v", tc.file, err)
 			}
 			s := string(data)
+			providerPins := []string{
+				"any run-owned work still active is orphaned",
+				"no background-completion wakeup",
+				"whatever a tool response promises",
+				"Never background-and-yield",
+				"standing by",
+			}
+			if tc.name == "antigravity" {
+				// Its model subturn can end while the same agy process waits.
+				// Detached processes and the shared CI contract stay restricted.
+				providerPins = []string{
+					"run ends when the `agy -p` process exits",
+					"Non-daemon `task-XXX` commands and subagents managed by agy",
+					"stop calling tools and yield the model subturn",
+					"completion notifications within the same process",
+					"Do not poll `manage_task` or read task logs",
+					"Deliver final results only after the required work completes",
+					"Processes detached from agy (such as `&` or `nohup`) have no such wakeup",
+					"before ending the run",
+				}
+			}
+			for _, want := range providerPins {
+				if !strings.Contains(s, want) {
+					t.Errorf("%s missing provider boundary %q", tc.name, want)
+				}
+			}
 			for _, want := range []string{
 				"## Background Task Safety",
 				// MUL-5442 judgment rewrite (owner-authorized pin renegotiation): the
@@ -1359,13 +1387,8 @@ func TestInjectRuntimeConfigBackgroundTaskSafetyProviderAgnostic(t *testing.T) {
 				// polling", "any sleep / retry loop that polls check status", ...).
 				// What stays pinned: the fact, each boundary, each exception, and
 				// the handoff triple — the things an agent cannot infer.
-				"any run-owned work still active is orphaned",
-				"no background-completion wakeup",
-				"whatever a tool response promises",
-				"Never background-and-yield",
 				"foreground tool calls that block",
 				"run unobservable work synchronously",
-				"standing by",
 				"are not run-owned: do not wait",
 				// The full compound ban, not its first item — MUL-5223 made this a
 				// non-derivable boundary, so no member may be silently dropped.
