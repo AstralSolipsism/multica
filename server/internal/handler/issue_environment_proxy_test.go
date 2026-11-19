@@ -175,8 +175,12 @@ func TestEnvironmentProxyAuthorizationAndState(t *testing.T) {
 	assertHidden("nonmember", proxyToken(t, outsider))
 	dbfx.Exec(t, `UPDATE issue SET project_id=$1 WHERE id=$2`, project.projectID, issue)
 	assertHidden("private project outsider", proxyToken(t, project.outsider))
-	if status, body := serve(memberToken, id); status == http.StatusNotFound {
-		t.Fatalf("private project member was hidden: %d %s", status, body)
+	assertHidden("private project workspace admin", proxyToken(t, project.outsideAdmin))
+	// The fixture environment runs on an online, tunnel-capable runtime, so a
+	// member who can see the project must actually launch, not merely differ
+	// from the hidden case.
+	if status, body := serve(memberToken, id); status != http.StatusFound {
+		t.Fatalf("private project member launch = %d %s, want %d", status, body, http.StatusFound)
 	}
 	dbfx.Exec(t, `UPDATE issue SET project_id=NULL WHERE id=$1`, issue)
 	for _, state := range []string{"stopped", "exited"} {
