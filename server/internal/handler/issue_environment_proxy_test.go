@@ -537,6 +537,67 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 	}
 }
 
+func TestEnvironmentProxySessionEnvironmentBinding(t *testing.T) {
+	h := proxyTestHandler(t, EnvironmentProxyLimits{})
+	router := proxyRouter(h)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Host)
+	}))
+	defer upstream.Close()
+	dialer := &net.Dialer{}
+	h.envProxy.transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+
+	now := time.Now()
+	runtimeID := uuid.NewString()
+	session := func(id string, port int32) *http.Cookie {
+		t.Helper()
+		claims := environmentSessionClaims{
+			UserID: testUserID, WorkspaceID: testWorkspaceID, RuntimeID: runtimeID,
+			EnvID: id, LocalKey: "config:web", Port: port,
+			IssuedAt: now.UnixNano(), ExpiresAt: now.Add(environmentSessionTTL).Unix(),
+		}
+		token, err := sealEnvironmentClaims(h.envProxy.sessionBox, claims)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Cookie{Name: environmentPreviewCookie, Value: token}
+	}
+	id := uuid.NewString()
+	foreign := session(uuid.NewString(), 41000)
+	matching := session(id, 41001)
+
+	const path = "/preview?tab=1"
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		cookies  []*http.Cookie
+		status   int
+		location string
+	}{
+		{"foreign session on asset", "no-cors", []*http.Cookie{foreign}, http.StatusUnauthorized, ""},
+		{"foreign session on navigation", "navigate", []*http.Cookie{foreign}, http.StatusFound, testAppOrigin + environmentLaunchURL(id, path, false).String()},
+		{"foreign cookie first", "no-cors", []*http.Cookie{foreign, matching}, http.StatusOK, ""},
+		{"matching cookie first", "no-cors", []*http.Cookie{matching, foreign}, http.StatusOK, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+h.envProxy.environmentHost(id)+path, nil)
+			req.Header.Set("Sec-Fetch-Mode", tc.mode)
+			for _, cookie := range tc.cookies {
+				req.AddCookie(cookie)
+			}
+			rec := callPreview(router, req)
+			if got := rec.Header().Get("Location"); rec.Code != tc.status || got != tc.location {
+				t.Fatalf("status = %d, Location = %q; want %d, %q", rec.Code, got, tc.status, tc.location)
+			}
+			if tc.status == http.StatusOK && rec.Body.String() != "localhost:41001" {
+				t.Fatalf("upstream host = %q; want localhost:41001", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestEnvironmentProxyEntitlementAndDirectURLs(t *testing.T) {
 	issue, task := issueEnvironmentFixture(t)
 	reportEnvironments(t, task, webEnvironment("running"), map[string]any{
