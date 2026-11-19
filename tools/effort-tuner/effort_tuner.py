@@ -150,6 +150,12 @@ def list_managed_agents(exclude=(), multica=None):
     return managed, skipped
 
 
+def score_max_ok(value):
+    """Value is a numeric 150; bool is not a number and NaN/Inf never match."""
+    return not isinstance(value, bool) and isinstance(value, (int, float)) \
+        and math.isfinite(value) and value == SCORE_MAX
+
+
 def fetch_trends(deadline, http_get=None):
     """Fetch intelligence-trends.json with one retry and validate its envelope.
 
@@ -180,46 +186,68 @@ def fetch_trends(deadline, http_get=None):
         raise TunerError("intelligence-trends schema 不对：expected %s, got %s"
                          % (safe(TRENDS_SCHEMA), safe(schema)))
     score_max = payload.get("score_max")
-    if isinstance(score_max, bool) or not isinstance(score_max, int) \
-            or score_max != SCORE_MAX:
+    if not score_max_ok(score_max):
         raise TunerError("intelligence-trends score_max 不是 %d：%s"
                          % (SCORE_MAX, safe(score_max)))
+    batches = payload.get("batches")
+    if not isinstance(batches, list):
+        raise TunerError("intelligence-trends batches 不是列表：got %s"
+                         % type(batches).__name__)
+    for batch in batches:
+        if not isinstance(batch, dict):
+            raise TunerError("intelligence-trends batches 含非对象元素：got %s"
+                             % type(batch).__name__)
     return payload
 
 
-def sorted_batches(payload):
-    """Batches usable as a measurement round, newest first.
+def batch_has_model(batch, model):
+    """True when `batch` carries at least one point measured for `model`."""
+    points = batch.get("points")
+    return isinstance(points, list) and any(
+        isinstance(p, dict) and p.get("model") == model for p in points)
 
-    A batch is usable when its own score_max is 150 and completed_at parses;
-    ordering uses the parsed UTC timestamp, never the raw string (the site
-    mixes +00:00 and +08:00 offsets).
+
+def batch_score_max_ok(batch):
+    """The batch's own score_max is exactly 150 (bool excluded)."""
+    return score_max_ok(batch.get("score_max"))
+
+
+def parsed_batches(payload):
+    """Batches with a parseable UTC completed_at, newest first.
+
+    fetch_trends already guarantees a list of dicts. Unparseable timestamps are
+    dropped here; latest_batch reports them per model instead of letting a
+    model silently fall back to older data.
     """
     out = []
-    for batch in payload.get("batches") or []:
-        if not isinstance(batch, dict) or batch.get("score_max") != SCORE_MAX:
-            continue
+    for batch in payload["batches"]:
         completed = parse_ts(batch.get("completed_at"))
-        if completed is None:
-            continue
-        out.append((completed, batch))
+        if completed is not None:
+            out.append((completed, batch))
     out.sort(key=lambda item: item[0], reverse=True)
     return out
 
 
-def latest_batch(model, batches):
-    """Newest usable batch that measured `model` (needs >=1 point for it).
+def latest_batch(model, payload):
+    """Newest UTC batch that measured `model`, with its score_max validated.
 
-    Returns (batch, completed_at) or (None, None). A batch that measured the
-    model but carries unusable points still counts as "latest": model_scores
-    then reports the format error instead of silently falling back to older
-    data.
+    A batch carrying points for the model but an unparseable completed_at makes
+    the model's recency unknowable, so that blocks the model rather than
+    falling back. The newest batch must also have score_max == 150 (bool
+    excluded); otherwise the model is blocked instead of using older data.
+    Returns (batch, completed_at) or (None, None).
     """
-    for completed, batch in batches:
-        points = batch.get("points")
-        if isinstance(points, list) and any(
-                isinstance(p, dict) and p.get("model") == model for p in points):
-            return batch, completed
-    return None, None
+    measured = [(parse_ts(batch.get("completed_at")), batch)
+                for batch in payload["batches"] if batch_has_model(batch, model)]
+    if not measured:
+        return None, None
+    if any(completed is None for completed, _ in measured):
+        raise TunerError("model %s: 包含该模型的批次存在无法解析的 completed_at" % model)
+    completed, batch = max(measured, key=lambda item: item[0])
+    if not batch_score_max_ok(batch):
+        raise TunerError("model %s: 最新批次 score_max 不是 %d：%s"
+                         % (model, SCORE_MAX, safe(batch.get("score_max"))))
+    return batch, completed
 
 
 def common_efforts_for(model, batch):
@@ -262,6 +290,8 @@ def model_scores(model, batch):
         if not isinstance(effort, str) or not effort:
             raise TunerError("effort for %s is not a non-empty string: %s"
                              % (model, type(effort).__name__))
+        if effort in scores:
+            raise TunerError("duplicate point for %s/%s" % (model, safe(effort)))
         score = p.get("score")
         if score is None:
             scores[effort] = None
@@ -293,6 +323,8 @@ def pick_efforts(model, batch, scores):
 
 def batch_best(model, batch):
     """Best usable score for `model` in one batch, or None (advisory path)."""
+    if not batch_score_max_ok(batch):
+        return None
     common, _ = common_efforts_for(model, batch)
     points = batch.get("points")
     if not isinstance(points, list):
@@ -312,21 +344,27 @@ def batch_best(model, batch):
     return best
 
 
-def degrade_peak(model, batches, compatibility_key, now):
+def degrade_peak(model, payload, compatibility_key, now):
     """Peak score over the last HISTORY_WINDOW_DAYS UTC days ending at now.
 
     Only batches with the same non-empty compatibility_key count: a judge or
-    rubric change makes older scores incomparable. Per UTC day, the max across
-    that day's batches; the window is [today-6, today] regardless of staleness.
-    Returns (peak, day) or (None, None).
+    rubric change makes older scores incomparable. Historical batches whose
+    score_max is not 150 (bool included) or whose key is not a non-empty string
+    are skipped. Per UTC day, the max across that day's batches; the window is
+    [today-6, today] regardless of staleness. Returns (peak, day) or
+    (None, None).
     """
-    if not compatibility_key:
+    if not isinstance(compatibility_key, str) or not compatibility_key:
         return None, None
     today = now.astimezone(timezone.utc).date()
     cutoff = today - timedelta(days=HISTORY_WINDOW_DAYS - 1)
     days = {}
-    for completed, batch in batches:
-        if batch.get("compatibility_key") != compatibility_key:
+    for completed, batch in parsed_batches(payload):
+        if not batch_score_max_ok(batch):
+            continue
+        batch_key = batch.get("compatibility_key")
+        if not isinstance(batch_key, str) or not batch_key \
+                or batch_key != compatibility_key:
             continue
         day = completed.date()
         if not (cutoff <= day <= today):
@@ -341,9 +379,9 @@ def degrade_peak(model, batches, compatibility_key, now):
     return days[peak_day], peak_day.isoformat()
 
 
-def degrade_check(model, batches, compatibility_key, s_max, now):
+def degrade_check(model, payload, compatibility_key, s_max, now):
     """Alert string when S fell DEGRADE_THRESHOLD below the 7-day peak."""
-    peak, peak_day = degrade_peak(model, batches, compatibility_key, now)
+    peak, peak_day = degrade_peak(model, payload, compatibility_key, now)
     if peak is None or s_max is None or s_max > peak - DEGRADE_THRESHOLD:
         return None
     return ("degrade: %s best %.1f vs 7-day peak %.1f on %s (down %.1f pts)"
@@ -523,13 +561,16 @@ def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, now=No
         except TunerError as exc:
             issues.append("%s；本轮未改任何 agent" % exc)
             return finish([], [], {}, {}, {})
-        batches = sorted_batches(payload)
         models = sorted({a["model"] for a in managed.values()})
         for model in models:
             model_agents = "、".join("%s (%s)" % (a["id"], a.get("name", ""))
                                     for a in managed.values()
                                     if a["model"] == model)
-            batch, completed = latest_batch(model, batches)
+            try:
+                batch, completed = latest_batch(model, payload)
+            except TunerError as exc:
+                issues.append("%s；本轮未改该模型的 agent：%s" % (exc, model_agents))
+                continue
             if batch is None:
                 issues.append("model %s: intelligence-trends 中没有包含该模型的有效批次；"
                               "本轮未改该模型的 agent：%s" % (model, model_agents))
@@ -554,7 +595,7 @@ def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, now=No
             common_by_model[model] = common
             batch_days[model] = completed.date().isoformat()
             if target is not None:
-                alert = degrade_check(model, batches,
+                alert = degrade_check(model, payload,
                                       batch.get("compatibility_key"), s_max, now)
                 if alert:
                     alerts.append(alert)
