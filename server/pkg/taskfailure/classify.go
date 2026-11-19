@@ -182,6 +182,7 @@ func Classify(rawError string) Reason {
 	case httpQuotaCodeRe.MatchString(lower),
 		containsAny(lower,
 			"insufficient_balance",
+			"insufficient balance",
 			"balance is too low",
 			"monthly usage limit",
 			"usage limit",
@@ -685,6 +686,13 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	// Upgrade that label at ingestion so the rejected session is not resumed.
 	if (reason == string(ReasonAgentUnknown) || reason == "agent_error") && OversizedRequest(rawError) {
 		return ReasonAPIInvalidRequest
+	}
+	// Older daemons treated the billing rejection as a rate limit because
+	// they only recognized the numeric status and the structured balance code.
+	if reason == ReasonAgentProviderCapacityOrRateLimit.String() &&
+		strings.Contains(strings.ToLower(rawError), "insufficient balance") &&
+		Classify(rawError) == ReasonAgentProviderQuotaLimit {
+		return ReasonAgentProviderQuotaLimit
 	}
 	if legacyConcurrentRequestLimitReasons[reason] &&
 		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
