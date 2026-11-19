@@ -103,9 +103,16 @@ func TestEnvironmentProxyOriginAndRedirectBoundary(t *testing.T) {
 	for _, cfg := range []Config{
 		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, BackendReplicas: 2},
 		{EnvProxyBaseURL: testPreviewBase, AppURL: "http://app.preview.example.com:80"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: "http://PREVIEW.example.com.:3000"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: "https://example.com"},
 		{EnvProxyBaseURL: testPreviewBase, PublicURL: "http://api.preview.example.com", AppURL: testAppOrigin},
+		{EnvProxyBaseURL: testPreviewBase, PublicURL: "https://preview.example.com:8443", AppURL: testAppOrigin},
+		{EnvProxyBaseURL: testPreviewBase, PublicURL: "https://example.com", AppURL: testAppOrigin},
 		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://plugins.preview.example.com"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://preview.example.com"},
+		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, PluginSurfaceOrigin: "https://example.com"},
 		{EnvProxyBaseURL: testPreviewBase, AppURL: testAppOrigin, AttachmentFrameAncestors: []string{"https://desktop.preview.example.com"}},
+		{EnvProxyBaseURL: "http://*.localhost:8080", AppURL: "http://app.localhost:3000"},
 		{EnvProxyBaseURL: testPreviewBase},
 	} {
 		if newEnvironmentProxy(cfg) != nil {
@@ -113,7 +120,7 @@ func TestEnvironmentProxyOriginAndRedirectBoundary(t *testing.T) {
 		}
 	}
 	for _, base := range []string{"http://*.localhost:8080", "http://*.127.0.0.1.nip.io:8080", "https://env-*.preview.example.com"} {
-		cfg := Config{EnvProxyBaseURL: base, AppURL: "http://localhost:3000"}
+		cfg := Config{EnvProxyBaseURL: base, AppURL: "http://localhost:3000", BackendReplicas: 1}
 		p := newEnvironmentProxy(cfg)
 		if p == nil {
 			t.Fatalf("valid config disabled: %s", base)
@@ -403,7 +410,7 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 		Timeout:       2 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	do := func(method, path, origin string, body io.Reader) *http.Response {
+	do := func(t *testing.T, method, path, origin string, body io.Reader, upgrade bool) *http.Response {
 		t.Helper()
 		req, err := http.NewRequest(method, server.URL+path, body)
 		if err != nil {
@@ -415,6 +422,10 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 		req.Header.Set("Authorization", "Basic local-marker")
 		req.Header.Set("X-User-ID", "platform-marker")
 		req.Header.Set("X-Multica-Client", "platform-marker")
+		if upgrade {
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+		}
 		req.AddCookie(cookie)
 		req.AddCookie(&http.Cookie{Name: auth.AuthCookieName, Value: "platform-marker"})
 		req.AddCookie(&http.Cookie{Name: "local_pref", Value: "on"})
@@ -431,7 +442,7 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 		}
 	}
 	for _, path := range []string{"/docs?q=1", "/style.css", "/app.js", "/favicon.ico", "/api/data", "/rediscover"} {
-		resp := do(http.MethodGet, path, "", nil)
+		resp := do(t, http.MethodGet, path, "", nil, false)
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil || resp.StatusCode != http.StatusOK || string(body) != path {
@@ -442,29 +453,36 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 	if got := opened.Load(); got != 1 {
 		t.Fatalf("sequential HTTP requests opened %d tunnels, want 1", got)
 	}
-	resp := do(http.MethodGet, "/redirect", "", nil)
+	resp := do(t, http.MethodGet, "/redirect", "", nil, false)
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/next?q=1" {
 		t.Fatalf("upstream redirect changed: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	for _, tc := range []struct {
-		origin string
-		body   io.Reader
-		want   int
+		name    string
+		origin  string
+		body    io.Reader
+		upgrade bool
+		want    int
 	}{
-		{previewOrigin, strings.NewReader("allowed"), http.StatusOK},
-		{"http://other.example.net", strings.NewReader("foreign"), http.StatusForbidden},
-		{"", nil, http.StatusForbidden},
-		{previewOrigin, strings.NewReader(strings.Repeat("x", 65)), http.StatusRequestEntityTooLarge},
-		{previewOrigin, io.NopCloser(strings.NewReader(strings.Repeat("x", 65))), http.StatusRequestEntityTooLarge},
+		{"same origin", previewOrigin, strings.NewReader("allowed"), false, http.StatusOK},
+		{"cross origin", "http://other.example.net", strings.NewReader("foreign"), false, http.StatusForbidden},
+		{"no origin", "", nil, false, http.StatusForbidden},
+		{"at limit", previewOrigin, strings.NewReader(strings.Repeat("x", 64)), false, http.StatusOK},
+		{"over limit", previewOrigin, strings.NewReader(strings.Repeat("x", 65)), false, http.StatusRequestEntityTooLarge},
+		{"chunked over limit", previewOrigin, io.NopCloser(strings.NewReader(strings.Repeat("x", 65))), false, http.StatusRequestEntityTooLarge},
+		{"over limit with upgrade headers", previewOrigin, strings.NewReader(strings.Repeat("x", 65)), true, http.StatusRequestEntityTooLarge},
+		{"chunked over limit with upgrade headers", previewOrigin, io.NopCloser(strings.NewReader(strings.Repeat("x", 65))), true, http.StatusRequestEntityTooLarge},
 	} {
-		resp = do(http.MethodPost, "/submit", tc.origin, tc.body)
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != tc.want {
-			t.Fatalf("POST origin %q = %d want %d: %s", tc.origin, resp.StatusCode, tc.want, body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			resp := do(t, http.MethodPost, "/submit", tc.origin, tc.body, tc.upgrade)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != tc.want {
+				t.Fatalf("POST = %d %q, err=%v, want %d", resp.StatusCode, body, err, tc.want)
+			}
+		})
 	}
 
 	headers := http.Header{"Host": {host}, "Origin": {"http://other.example.net"}, "Cookie": {cookie.String()}}
@@ -481,12 +499,16 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 	}
 	defer ws.Close()
 	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("WebSocket handshake status = %d", resp.StatusCode)
+	}
 	assertCookies(resp)
-	if err := ws.WriteMessage(websocket.TextMessage, []byte("preview ready")); err != nil {
+	wantMessage := strings.Repeat("preview ready", 8)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(wantMessage)); err != nil {
 		t.Fatal(err)
 	}
 	_, message, err := ws.ReadMessage()
-	if err != nil || string(message) != "preview ready" {
+	if err != nil || string(message) != wantMessage {
 		t.Fatalf("WebSocket message = %q, %v", message, err)
 	}
 	closeRequests := len(requests)
@@ -505,7 +527,7 @@ func TestEnvironmentProxyHandshakeAndZeroQueryDataPlane(t *testing.T) {
 	if _, _, err := ws.ReadMessage(); err == nil {
 		t.Fatal("runtime removal did not close the live WebSocket")
 	}
-	resp = do(http.MethodGet, "/style.css", "", nil)
+	resp = do(t, http.MethodGet, "/style.css", "", nil, false)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked session served an asset: %d", resp.StatusCode)

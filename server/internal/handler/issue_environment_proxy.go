@@ -121,7 +121,11 @@ func newEnvironmentProxy(cfg Config) *environmentProxy {
 	for _, candidate := range candidates {
 		if app, err := parsePluginSurfaceOrigin(candidate); err == nil {
 			host := strings.ToLower(strings.TrimSuffix(app.Hostname(), "."))
-			if strings.HasSuffix(host, "."+p.suffix) {
+			// Allow the localhost app and its wildcard preview host in local development.
+			if host == "localhost" && suffix == "localhost" {
+				continue
+			}
+			if host == suffix || strings.HasSuffix(host, "."+suffix) || strings.HasSuffix(suffix, "."+host) {
 				slog.Error("environment proxy overlaps a platform origin; environment proxy disabled", "host", host)
 				return nil
 			}
@@ -595,14 +599,12 @@ func (p *environmentProxy) serve(w http.ResponseWriter, r *http.Request, claims 
 		return
 	}
 	defer p.state.releaseEnvironment(lease)
-	if !websocket.IsWebSocketUpgrade(r) {
-		if r.ContentLength > p.limits.MaxBodyBytes {
-			writeErrorCode(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "environment preview request body exceeds the limit")
-			return
-		}
-		if r.Body != nil && r.Body != http.NoBody {
-			r.Body = http.MaxBytesReader(w, r.Body, p.limits.MaxBodyBytes)
-		}
+	if r.ContentLength > p.limits.MaxBodyBytes {
+		writeErrorCode(w, http.StatusRequestEntityTooLarge, "request_body_too_large", "environment preview request body exceeds the limit")
+		return
+	}
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = http.MaxBytesReader(w, r.Body, p.limits.MaxBodyBytes)
 	}
 	p.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), environmentTunnelContextKey{}, claims)))
 }
