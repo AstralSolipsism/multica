@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Codex effort auto-tuner (OL-259).
+"""Codex effort auto-tuner (OL-259 / OL-1463).
 
-Reads codexradar.com benchmark scores for the models used by managed Codex
-agents and moves each agent to the cheapest reasoning effort level whose score
-is within TIE_RANGE points of the best. See README.md for usage and rules.
+Reads codexradar.com's four-task intelligence-trends dataset for the models
+used by managed Codex agents and moves each agent to the cheapest reasoning
+effort level whose score is within TIE_RANGE points of the best. See README.md
+for usage and rules.
 """
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -17,20 +19,20 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 
-# ---- tunables (spec OL-259 §4.5) ----
+# ---- tunables (spec OL-1463 §3) ----
 TIE_RANGE = 5            # efforts scoring >= S - TIE_RANGE count as tied
-COVERAGE_MIN = 56        # a fetched effort is a candidate only at this coverage
 DEGRADE_THRESHOLD = 10   # alert when S <= peak - DEGRADE_THRESHOLD (7-day peak)
 HISTORY_WINDOW_DAYS = 7
-BINDING_URL = "https://codexradar.com/data/radar-bench-binding.json"
-SCORE_URL = ("https://codexradar.com/api/radar-bench-score"
-             "?model={model}&effort={effort}&view=summary&selection=user-selected-v1")
+FRESHNESS_HOURS = 72     # a model's latest batch older than this is not used
+FUTURE_TOLERANCE_HOURS = 24  # completed_at may lead the clock by at most this
+TRENDS_URL = "https://codexradar.com/data/intelligence-trends.json"
+TRENDS_SCHEMA = "intelligence-trends/1"
+SCORE_MAX = 150
 USER_AGENT = "labrastro-effort-tuner/1"
 REQUEST_TIMEOUT_S = 130   # cold-cache requests hang ~2min then return 524
 FETCH_BUDGET_S = int(os.environ.get("EFFORT_TUNER_BUDGET_S", "600"))
-# ^ whole fetch round (binding + every score request, retries included) is
-# capped by this deadline; env-overridable for ops
-MULTICA = "multica"
+# ^ whole fetch round stays within this deadline; env-overridable for ops
+MULTICA = os.environ.get("MULTICA_CLI_PATH", "multica")
 EXCLUDE_BLOCK = "effort-tuner-exclude"
 COMMENT_FILE = "effort-tuner-comment.md"
 
@@ -39,6 +41,9 @@ EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
 MODEL_EFFORTS = {
     "gpt-6-astra": EFFORT_ORDER,
     "gpt-6.1-sol": EFFORT_ORDER,
+    "gpt-6.1-terra": EFFORT_ORDER,
+    "gpt-6.2-sol": EFFORT_ORDER,
+    "gpt-6.2-astra": EFFORT_ORDER,
     "gpt-6-sol": EFFORT_ORDER,
     "gpt-5.6-sol": EFFORT_ORDER,
     "gpt-5.6-terra": EFFORT_ORDER,
@@ -82,6 +87,19 @@ def http_get_json(url, timeout=REQUEST_TIMEOUT_S):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def parse_ts(value):
+    """Parse an ISO-8601 timestamp into an aware UTC datetime, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
 def parse_exclude_list(description):
     """Parse the ```effort-tuner-exclude fenced block -> set of agent IDs.
 
@@ -107,10 +125,10 @@ def parse_exclude_list(description):
 def list_managed_agents(exclude=(), multica=None):
     """Active agents on codex runtimes, keyed by ID, plus per-agent skip notes.
 
-    Excluded agents are dropped before any model check (spec §1.2 precedes
-    §1.3), so excluding an agent also silences its model problems. Agents with
-    an empty model or a model outside MODEL_EFFORTS are reported and left
-    alone: the daemon drops the effort setting for an empty model.
+    Excluded agents are dropped before any model check (spec OL-259 §1.2
+    precedes §1.3), so excluding an agent also silences its model problems.
+    Agents with an empty model or a model outside MODEL_EFFORTS are reported
+    and left alone: the daemon drops the effort setting for an empty model.
     """
     if multica is None:
         multica = globals()["run_multica"]
@@ -133,16 +151,166 @@ def list_managed_agents(exclude=(), multica=None):
     return managed, skipped
 
 
-def common_efforts_for(model, binding):
-    """Efforts present in both the script table and the website binding.
+def finite_number(value):
+    """Ints are always finite; floats must not be NaN/Inf (no int->float cast)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return isinstance(value, int) or math.isfinite(value)
+
+
+def score_max_ok(value):
+    """Value is a numeric 150; bool is not a number and NaN/Inf never match."""
+    if not finite_number(value):
+        return False
+    return value == SCORE_MAX
+
+
+def fetch_trends(deadline, http_get=None):
+    """Fetch intelligence-trends.json with one retry and validate its envelope.
+
+    Each attempt's timeout is capped by the time left before the deadline, so
+    the whole fetch stays inside FETCH_BUDGET_S. Raises TunerError on a failed
+    fetch or an incompatible payload: the round then changes nothing.
+    """
+    if http_get is None:
+        http_get = globals()["http_get_json"]
+    payload = None
+    for attempt_no in (1, 2):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            payload = http_get(TRENDS_URL, timeout=min(REQUEST_TIMEOUT_S, left))
+            break
+        except Exception as exc:  # timeouts, 524s, DNS — all retryable
+            print("trends fetch failed (attempt %d): %s" % (attempt_no, exc),
+                  file=sys.stderr)
+    if payload is None:
+        raise TunerError("intelligence-trends 抓取失败")
+    if not isinstance(payload, dict):
+        raise TunerError("intelligence-trends 返回格式不对：expected dict, got %s"
+                         % type(payload).__name__)
+    schema = payload.get("schema")
+    if schema != TRENDS_SCHEMA:
+        raise TunerError("intelligence-trends schema 不对：expected %s, got %s"
+                         % (safe(TRENDS_SCHEMA), safe(schema)))
+    score_max = payload.get("score_max")
+    if not score_max_ok(score_max):
+        raise TunerError("intelligence-trends score_max 不是 %d：%s"
+                         % (SCORE_MAX, safe(score_max)))
+    batches = payload.get("batches")
+    if not isinstance(batches, list):
+        raise TunerError("intelligence-trends batches 不是列表：got %s"
+                         % type(batches).__name__)
+    for batch in batches:
+        if not isinstance(batch, dict):
+            raise TunerError("intelligence-trends batches 含非对象元素：got %s"
+                             % type(batch).__name__)
+    return payload
+
+
+def batch_has_model(batch, model):
+    """True when `batch` carries at least one point measured for `model`."""
+    points = batch.get("points")
+    return isinstance(points, list) and any(
+        isinstance(p, dict) and p.get("model") == model for p in points)
+
+
+def batch_claims_model(batch, model):
+    """True when the batch declares or measures the model.
+
+    `model_efforts` membership catches a batch whose `points` structure is
+    corrupt: without it such a batch would look like it never tested the model
+    and an older batch would be used, hiding the defect.
+    """
+    model_efforts = batch.get("model_efforts")
+    if isinstance(model_efforts, dict) and model in model_efforts:
+        return True
+    return batch_has_model(batch, model)
+
+
+def point_structure_ok(point):
+    """A point is a dict with model, effort and score keys (score may be null)."""
+    return isinstance(point, dict) \
+        and isinstance(point.get("model"), str) and bool(point.get("model")) \
+        and isinstance(point.get("effort"), str) and bool(point.get("effort")) \
+        and "score" in point
+
+
+def batch_structure_ok(batch):
+    """Every entry in a batch's point list has the point shape."""
+    points = batch.get("points")
+    return isinstance(points, list) and all(
+        point_structure_ok(point) for point in points)
+
+
+def batch_score_max_ok(batch):
+    """The batch's own score_max is exactly 150 (bool excluded)."""
+    return score_max_ok(batch.get("score_max"))
+
+
+def parsed_batches(payload):
+    """Batches with a parseable UTC completed_at, newest first.
+
+    fetch_trends already guarantees a list of dicts. Unparseable timestamps are
+    dropped here; latest_batch reports them per model instead of letting a
+    model silently fall back to older data.
+    """
+    out = []
+    for batch in payload["batches"]:
+        completed = parse_ts(batch.get("completed_at"))
+        if completed is not None:
+            out.append((completed, batch))
+    out.sort(key=lambda item: item[0], reverse=True)
+    return out
+
+
+def latest_batch(model, payload):
+    """Newest UTC batch that measured `model`, with its score_max validated.
+
+    Batches are walked newest-first: a structurally valid batch that did not
+    test the model is skipped, so a later real batch is not vetoed by an older,
+    clearly-dated bad record. A batch that declares the model (model_efforts)
+    but whose point structure is malformed blocks the model instead of looking
+    untested. A batch carrying points for the model but an unparseable
+    completed_at makes recency unknowable and still blocks the model. The
+    chosen batch must also have score_max == 150 (bool excluded). Returns
+    (batch, completed_at) or (None, None).
+    """
+    claimed = [batch for batch in payload["batches"]
+               if batch_claims_model(batch, model)]
+    if not claimed:
+        return None, None
+    dated = []
+    for batch in claimed:
+        completed = parse_ts(batch.get("completed_at"))
+        if completed is None:
+            raise TunerError("model %s: 包含该模型的批次存在无法解析的 completed_at"
+                             % model)
+        dated.append((completed, batch))
+    for completed, batch in sorted(dated, key=lambda item: item[0], reverse=True):
+        if not batch_structure_ok(batch):
+            raise TunerError("model %s: 批次 points 结构损坏" % model)
+        if not batch_has_model(batch, model):
+            continue  # structurally valid and did not test this model
+        if not batch_score_max_ok(batch):
+            raise TunerError("model %s: 最新批次 score_max 不是 %d：%s"
+                             % (model, SCORE_MAX, safe(batch.get("score_max"))))
+        return batch, completed
+    return None, None
+
+
+def common_efforts_for(model, batch):
+    """Efforts present in both the script table and the batch's model_efforts.
 
     Returns (common, note) — common is cheapest-first; note is a disagreement
-    message (spec §3) or None. Single source of truth for "both sides have
-    it": used for the fetch list and inside pick_efforts.
+    message (spec OL-1463 §3) or None. Single source of truth for "both sides
+    have it": used for ranking and for the 7-day peak.
     """
     table = MODEL_EFFORTS[model]
-    site = sorted({e["effort"] for e in (binding.get("model_efforts") or [])
-                   if e.get("model") == model and e.get("effort")})
+    model_efforts = batch.get("model_efforts")
+    raw = model_efforts.get(model) if isinstance(model_efforts, dict) else None
+    site = [e for e in raw if isinstance(e, str)] if isinstance(raw, list) else []
     common = [e for e in table if e in site]
     note = None
     if set(table) != set(site):
@@ -152,109 +320,122 @@ def common_efforts_for(model, binding):
     return common, note
 
 
-def check_payload(model, effort, s):
-    """Raise TunerError when a fetched score payload cannot be interpreted.
+def model_scores(model, batch):
+    """{effort: score} for `model` in `batch`; raises on unusable point shapes.
 
-    A null score leaves the effort out of the ranking, but its coverage still
-    goes into the comment's score table, so a non-null non-int coverage is
-    rejected there too (agreed deviation on 供参考 1). Values are never
-    echoed — only type names — so malformed payloads cannot smuggle strings
-    into comments.
+    A null score stays in the map (it is displayed as missing and never ranks).
+    Bool, non-numeric, NaN and infinite scores are format errors rather than
+    quietly-dropped candidates. Values are never echoed — only type names —
+    so malformed payloads cannot smuggle strings into comments.
     """
-    if not isinstance(s, dict):
-        raise TunerError("malformed payload for %s/%s: expected dict, got %s"
-                         % (model, effort, type(s).__name__))
-    score, cov = s.get("score"), s.get("coverage")
-    if isinstance(score, bool) or (score is not None
-                                   and not isinstance(score, (int, float))):
-        raise TunerError("score for %s/%s is not a number: %s"
-                         % (model, effort, type(score).__name__))
-    if score is None:
-        # score-null efforts never rank, but their coverage reaches the score
-        # table, so null/int still passes and anything else is rejected
-        ok_cov = cov is None or isinstance(cov, int)
-    else:
-        ok_cov = isinstance(cov, int)
-    if isinstance(cov, bool) or not ok_cov:
-        raise TunerError("coverage for %s/%s is not an integer: %s"
-                         % (model, effort, type(cov).__name__))
+    points = batch.get("points")
+    if not isinstance(points, list):
+        raise TunerError("batch points 格式不对：expected list, got %s"
+                         % type(points).__name__)
+    scores = {}
+    for p in points:
+        if not isinstance(p, dict) or p.get("model") != model:
+            continue
+        effort = p.get("effort")
+        if not isinstance(effort, str) or not effort:
+            raise TunerError("effort for %s is not a non-empty string: %s"
+                             % (model, type(effort).__name__))
+        if effort in scores:
+            raise TunerError("duplicate point for %s/%s" % (model, safe(effort)))
+        score = p.get("score")
+        if score is None:
+            scores[effort] = None
+            continue
+        if not finite_number(score):
+            raise TunerError("score for %s/%s is not a finite number: %s"
+                             % (model, safe(effort), type(score).__name__))
+        if not 0 <= score <= SCORE_MAX:
+            raise TunerError("score for %s/%s is outside the 0..%d range: %s"
+                             % (model, safe(effort), SCORE_MAX,
+                                type(score).__name__))
+        scores[effort] = score
+    return scores
 
 
-def pick_efforts(model, binding, scores):
-    """Selection rule (spec §4). Returns (target, S, common_efforts, notes).
+def pick_efforts(model, batch, scores):
+    """Selection rule (spec OL-1463 §3). Returns (target, S, common, notes).
 
     target is None when no effort qualifies (model untouched this round).
-    Raises TunerError when a payload is malformed or candidate efforts
-    disagree with the binding's benchmark / task_set_sha256.
+    Raises TunerError when a candidate score is malformed.
     """
-    common, note = common_efforts_for(model, binding)
+    common, note = common_efforts_for(model, batch)
     notes = [note] if note else []
-    ref = (binding.get("benchmark"), binding.get("task_set_sha256"))
-    candidates = []
-    for e in common:
-        s = scores.get(e)
-        if s is None:
-            continue
-        check_payload(model, e, s)
-        if s.get("score") is None:
-            continue  # score-null efforts never rank; coverage may be null too
-        if s.get("coverage") < COVERAGE_MIN:
-            continue
-        if (s.get("benchmark"), s.get("task_set_sha256")) != ref:
-            raise TunerError("benchmark/task_set mismatch for %s/%s: got %s, "
-                             "binding has %s"
-                             % (model, e,
-                                safe_all((s.get("benchmark"),
-                                          s.get("task_set_sha256"))),
-                                safe_all(ref)))
-        candidates.append(e)
+    candidates = [e for e in common if scores.get(e) is not None]
     if not candidates:
         return None, None, common, notes
-    s_max = max(scores[e]["score"] for e in candidates)
-    target = min((e for e in candidates if scores[e]["score"] >= s_max - TIE_RANGE),
+    s_max = max(scores[e] for e in candidates)
+    target = min((e for e in candidates if scores[e] >= s_max - TIE_RANGE),
                  key=EFFORT_ORDER.index)
     return target, s_max, common, notes
 
 
-def degrade_peak(scores, today):
-    """Peak score over the last HISTORY_WINDOW_DAYS UTC days ending at today.
-
-    Per UTC day, the max score across efforts among coverage-filtered points;
-    the window is [today-6, today] regardless of how stale the data is.
-    Malformed history points are skipped (the degrade alert is advisory).
-    Returns (peak, day) or (None, None).
-    """
-    days = {}
-    for s in scores.values():
-        if not isinstance(s, dict):
+def batch_best(model, batch):
+    """Best usable score for `model` in one batch, or None (advisory path)."""
+    if not batch_score_max_ok(batch):
+        return None
+    common, _ = common_efforts_for(model, batch)
+    points = batch.get("points")
+    if not isinstance(points, list):
+        return None
+    best = None
+    for p in points:
+        if not isinstance(p, dict) or p.get("model") != model:
             continue
-        for p in (s.get("history") or {}).get("points") or []:
-            if not isinstance(p, dict):
-                continue
-            at = p.get("at")
-            if not isinstance(at, str):
-                continue
-            cov, score = p.get("coverage"), p.get("score")
-            if isinstance(cov, bool) or not isinstance(cov, int) or cov < COVERAGE_MIN:
-                continue
-            if isinstance(score, bool) or not isinstance(score, (int, float)):
-                continue
-            day = at[:10]
-            if day:
-                days.setdefault(day, []).append(score)
+        if p.get("effort") not in common:
+            continue
+        score = p.get("score")
+        if not finite_number(score) or not 0 <= score <= SCORE_MAX:
+            continue
+        if best is None or score > best:
+            best = score
+    return best
+
+
+def degrade_peak(model, payload, compatibility_key, now):
+    """Peak score over the last HISTORY_WINDOW_DAYS UTC days ending at now.
+
+    Only batches with the same non-empty compatibility_key count: a judge or
+    rubric change makes older scores incomparable. Historical batches whose
+    score_max is not 150 (bool included) or whose key is not a non-empty string
+    are skipped. Per UTC day, the max across that day's batches; the window is
+    [today-6, today] regardless of staleness. Returns (peak, day) or
+    (None, None).
+    """
+    if not isinstance(compatibility_key, str) or not compatibility_key:
+        return None, None
+    today = now.astimezone(timezone.utc).date()
+    cutoff = today - timedelta(days=HISTORY_WINDOW_DAYS - 1)
+    days = {}
+    for completed, batch in parsed_batches(payload):
+        if not batch_score_max_ok(batch):
+            continue
+        batch_key = batch.get("compatibility_key")
+        if not isinstance(batch_key, str) or not batch_key \
+                or batch_key != compatibility_key:
+            continue
+        if completed > now + timedelta(hours=FUTURE_TOLERANCE_HOURS):
+            continue  # a future completion cannot be a real past measurement
+        day = completed.date()
+        if not (cutoff <= day <= today):
+            continue
+        best = batch_best(model, batch)
+        if best is None:
+            continue
+        days[day] = max(days.get(day, best), best)
     if not days:
         return None, None
-    cutoff = (today - timedelta(days=HISTORY_WINDOW_DAYS - 1)).isoformat()
-    window = {d: v for d, v in days.items() if cutoff <= d <= today.isoformat()}
-    if not window:
-        return None, None
-    peak_day = max(window, key=lambda d: max(window[d]))
-    return max(window[peak_day]), peak_day
+    peak_day = max(days, key=lambda d: days[d])
+    return days[peak_day], peak_day.isoformat()
 
 
-def degrade_check(model, scores, s_max, today):
+def degrade_check(model, payload, compatibility_key, s_max, now):
     """Alert string when S fell DEGRADE_THRESHOLD below the 7-day peak."""
-    peak, peak_day = degrade_peak(scores, today)
+    peak, peak_day = degrade_peak(model, payload, compatibility_key, now)
     if peak is None or s_max is None or s_max > peak - DEGRADE_THRESHOLD:
         return None
     return ("degrade: %s best %.1f vs 7-day peak %.1f on %s (down %.1f pts)"
@@ -262,17 +443,20 @@ def degrade_check(model, scores, s_max, today):
 
 
 def plan_changes(managed, targets, scores):
-    """Decide per-agent writes (spec §5). Returns (changes, anomalies).
+    """Decide per-agent writes (spec OL-259 §5). Returns (changes, anomalies).
 
     A model is blocked for the round when any of its managed agents sits on an
-    effort that is in the table but was not fetched: that agent must not move,
-    and all agents of a model share one effort, so none of them move.
+    effort that is in the table but has no usable score in the chosen batch:
+    that agent must not move, and all agents of a model share one effort, so
+    none of them move.
     """
     anomalies, blocked = [], set()
     for a in managed.values():
         model, current = a["model"], a.get("thinking_level") or ""
-        if current and current in MODEL_EFFORTS[model] \
-                and scores.get(model, {}).get(current) is None:
+        # only models evaluated this round: models skipped for a model-level
+        # anomaly (no batch, stale data, format error) are already named there
+        if current and current in MODEL_EFFORTS[model] and model in scores \
+                and scores[model].get(current) is None:
             anomalies.append("agent %s (%s): current effort %s missing this round; "
                              "model %s not changed" % (a["id"], a.get("name", ""),
                                                        current, model))
@@ -280,7 +464,7 @@ def plan_changes(managed, targets, scores):
     changes = []
     for a in managed.values():
         model, current = a["model"], a.get("thinking_level") or ""
-        target = None if a["model"] in blocked else targets.get(model)
+        target = None if model in blocked else targets.get(model)
         if target and target != current:
             changes.append((a["id"], a.get("name", ""), current or "(empty)", target))
     # same wording as the mismatch anomaly: name every agent left untouched
@@ -294,80 +478,35 @@ def plan_changes(managed, targets, scores):
     return changes, anomalies
 
 
-def fetch_round(models, site_efforts, deadline, http_get=None):
-    """Sequential fetch, one retry pass, bounded by the overall deadline.
-
-    Each request's timeout is capped by the time left before the deadline, so
-    the whole round (this plus the binding fetch) stays inside FETCH_BUDGET_S.
-    Returns {model: {effort: payload-or-None}} — None = missing this round.
-    """
-    if http_get is None:
-        http_get = globals()["http_get_json"]
-    results, failed = {}, {}
-
-    def attempt(model, effort):
-        left = deadline - time.monotonic()
-        if left <= 0:
-            return None  # out of budget: treated as missing, like a failed fetch
-        try:
-            return http_get(SCORE_URL.format(model=model, effort=effort),
-                            timeout=min(REQUEST_TIMEOUT_S, left))
-        except Exception as exc:  # timeouts, 524s, DNS — all retryable
-            print("fetch %s/%s failed: %s" % (model, effort, exc), file=sys.stderr)
-            return None
-
-    for model in sorted(models):
-        results.setdefault(model, {})
-        for effort in site_efforts.get(model, ()):  # cheapest-first table order
-            results[model][effort] = attempt(model, effort)
-            if results[model][effort] is None:
-                failed.setdefault(model, []).append(effort)
-    for model, efforts in failed.items():  # one retry pass after everything else
-        for effort in efforts:
-            results[model][effort] = attempt(model, effort)
-    return results
-
-
-def fetch_binding(deadline, http_get=None):
-    """Fetch the binding doc with one retry; None when both attempts fail."""
-    if http_get is None:
-        http_get = globals()["http_get_json"]
-    for attempt_no in (1, 2):
-        left = deadline - time.monotonic()
-        if left <= 0:
-            break
-        try:
-            return http_get(BINDING_URL, timeout=min(REQUEST_TIMEOUT_S, left))
-        except Exception as exc:
-            print("binding fetch failed (attempt %d): %s" % (attempt_no, exc),
-                  file=sys.stderr)
-    return None
-
-
 def fmt_score(x):
     return "null" if x is None else "%.1f" % x
 
 
-def render_comment(changes, anomalies, alerts, scores, common_by_model):
+def render_comment(changes, anomalies, alerts, scores, common_by_model,
+                   batch_days=None):
+    batch_days = batch_days or {}
     lines = []
     if changes:
         lines.append("**换档**")
         lines.extend("- %s (%s): %s → %s" % c for c in changes)
         lines.append("")
-        lines.append("scores (max 150):")
+        lines.append("scores (max %d):" % SCORE_MAX)
         for model in sorted(common_by_model):
+            day = batch_days.get(model)
             for e in common_by_model[model]:
                 s = scores.get(model, {}).get(e)
+                suffix = " (batch %s)" % safe(day) if day else ""
                 if s is None:
-                    lines.append("- `%s/%s`: missing this round" % (model, e))
+                    lines.append("- `%s/%s`: missing this round%s"
+                                 % (model, e, suffix))
                 else:
-                    cov = s.get("coverage")
-                    lines.append("- `%s/%s`: score %s, coverage %s/64"
-                                 % (model, e, fmt_score(s.get("score")),
-                                    "null" if cov is None else cov))
+                    lines.append("- `%s/%s`: score %s%s"
+                                 % (model, e, fmt_score(s), suffix))
         lines.append("")
-        lines.append("params: tie_range=%d coverage_min=%d degrade_threshold=%d window=%dd"
-                     % (TIE_RANGE, COVERAGE_MIN, DEGRADE_THRESHOLD, HISTORY_WINDOW_DAYS))
+        lines.append("params: tie_range=%d freshness=%dh future=%dh "
+                     "degrade_threshold=%d window=%dd"
+                     % (TIE_RANGE, FRESHNESS_HOURS, FUTURE_TOLERANCE_HOURS,
+                        DEGRADE_THRESHOLD, HISTORY_WINDOW_DAYS))
     if anomalies:
         if lines:
             lines.append("")
@@ -382,7 +521,7 @@ def render_comment(changes, anomalies, alerts, scores, common_by_model):
 
 
 def apply_changes(changes, dry_run=False, multica=None):
-    """Write per-agent effort changes (spec §5.2). Returns (applied, issues).
+    """Write per-agent effort changes (spec OL-259 §5.2). Returns (applied, issues).
 
     A failed update or a mismatched read-back is recorded as an issue and the
     round moves on to the next agent; already-applied changes are kept and
@@ -419,21 +558,25 @@ def apply_changes(changes, dry_run=False, multica=None):
     return applied, issues
 
 
-def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, today=None):
+def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, now=None):
     """One full round: read, fetch, decide, write, report. Returns exit code.
 
-    multica / http_get / today are injection points for the offline tests.
+    multica / http_get / now are injection points for the offline tests; `now`
+    drives both freshness and the 7-day degrade window.
     """
     if multica is None:
         multica = globals()["run_multica"]
     if http_get is None:
         http_get = globals()["http_get_json"]
-    if today is None:
-        today = datetime.now(timezone.utc).date()
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     issues = []
 
-    def finish(changes, alerts, scores, common_by_model):
-        body = render_comment(changes, issues, alerts, scores, common_by_model)
+    def finish(changes, alerts, scores, common_by_model, batch_days):
+        body = render_comment(changes, issues, alerts, scores, common_by_model,
+                              batch_days)
         if body is None:
             print("nothing to report")
             return 0
@@ -456,40 +599,65 @@ def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, today=
     try:
         exclude = parse_exclude_list(issue.get("description") or "")
     except TunerError as exc:
-        # spec §1.2: nothing is changed at all this round; the error is reported
+        # spec OL-259 §1.2: nothing is changed at all this round
         issues.append("%s；本轮未改任何 agent" % exc)
-        return finish([], [], [], {})
+        return finish([], [], {}, {}, {})
 
     managed, skipped = list_managed_agents(exclude, multica=multica)
     for agent_id, name, why in skipped:
         issues.append("agent %s (%s) skipped: %s；本轮未改该 agent" % (agent_id, name, why))
 
-    targets, common_by_model, alerts, scores = {}, {}, [], {}
-    changes = []
+    targets, common_by_model, batch_days = {}, {}, {}
+    alerts, scores, changes = [], {}, []
     if managed:
         deadline = time.monotonic() + FETCH_BUDGET_S
-        binding = fetch_binding(deadline, http_get=http_get)
-        if binding is None:
-            issues.append("binding 抓取失败；本轮未改任何 agent")
-            return finish([], [], [], {})
-        models = {a["model"] for a in managed.values()}
-        fetch_lists = {m: common_efforts_for(m, binding)[0] for m in models}
-        scores = fetch_round(models, fetch_lists, deadline, http_get=http_get)
-        for model in sorted(models):
-            model_agents = ["%s (%s)" % (a["id"], a.get("name", ""))
-                            for a in managed.values() if a["model"] == model]
+        try:
+            payload = fetch_trends(deadline, http_get=http_get)
+        except TunerError as exc:
+            issues.append("%s；本轮未改任何 agent" % exc)
+            return finish([], [], {}, {}, {})
+        models = sorted({a["model"] for a in managed.values()})
+        for model in models:
+            model_agents = "、".join("%s (%s)" % (a["id"], a.get("name", ""))
+                                    for a in managed.values()
+                                    if a["model"] == model)
             try:
-                target, s_max, common, notes = pick_efforts(model, binding,
-                                                            scores.get(model, {}))
+                batch, completed = latest_batch(model, payload)
             except TunerError as exc:
-                issues.append("%s；本轮未改该模型的 agent：%s"
-                              % (exc, "、".join(model_agents)))
+                issues.append("%s；本轮未改该模型的 agent：%s" % (exc, model_agents))
+                continue
+            if batch is None:
+                issues.append("model %s: intelligence-trends 中没有包含该模型的有效批次；"
+                              "本轮未改该模型的 agent：%s" % (model, model_agents))
+                continue
+            if completed > now + timedelta(hours=FUTURE_TOLERANCE_HOURS):
+                issues.append("model %s: 最新批次完成于 %s，晚于当前时间超过 %d 小时；"
+                              "本轮未改该模型的 agent：%s"
+                              % (model, safe(completed.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                                 FUTURE_TOLERANCE_HOURS, model_agents))
+                continue
+            age = now - completed
+            if age > timedelta(hours=FRESHNESS_HOURS):
+                issues.append("model %s: 最新有效批次完成于 %s，距今 %.1f 小时，超过 %d 小时新鲜度阈值；"
+                              "本轮未改该模型的 agent：%s"
+                              % (model, safe(completed.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                                 age.total_seconds() / 3600.0, FRESHNESS_HOURS,
+                                 model_agents))
+                continue
+            try:
+                model_points = model_scores(model, batch)
+                target, s_max, common, notes = pick_efforts(model, batch, model_points)
+            except TunerError as exc:
+                issues.append("%s；本轮未改该模型的 agent：%s" % (exc, model_agents))
                 continue
             issues.extend(notes)
+            scores[model] = model_points
             targets[model] = target
             common_by_model[model] = common
+            batch_days[model] = completed.date().isoformat()
             if target is not None:
-                alert = degrade_check(model, scores.get(model, {}), s_max, today)
+                alert = degrade_check(model, payload,
+                                      batch.get("compatibility_key"), s_max, now)
                 if alert:
                     alerts.append(alert)
         changes, plan_issues = plan_changes(managed, targets, scores)
@@ -497,7 +665,7 @@ def run_round(tracking_issue, dry_run=False, multica=None, http_get=None, today=
 
     applied, write_issues = apply_changes(changes, dry_run=dry_run, multica=multica)
     issues.extend(write_issues)
-    return finish(applied, alerts, scores, common_by_model)
+    return finish(applied, alerts, scores, common_by_model, batch_days)
 
 
 def main(argv=None):
