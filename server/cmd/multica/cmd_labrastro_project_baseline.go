@@ -64,6 +64,7 @@ func newLabrastroProjectBaselineCmd() *cobra.Command {
 			sub.Flags().String("page", "", "Page slug or UUID (required)")
 			sub.Flags().String("base", "", "Revision number the write is based on (required)")
 			sub.Flags().String("content-file", "", "UTF-8 Markdown file inside the current directory")
+			sub.Flags().StringArray("attachment", nil, "File inside the current directory to upload and bind to this page (repeatable)")
 			sub.Flags().String("section", "", "Replace one section by title or anchor")
 			sub.Flags().String("delete-section", "", "Remove one section by title or anchor")
 			sub.Flags().String("summary", "", "Change summary")

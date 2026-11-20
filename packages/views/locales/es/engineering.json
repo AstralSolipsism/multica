@@ -188,6 +188,8 @@
     "outlineTitle": "On this page",
     "outlineEmpty": "Esta página no tiene secciones.",
     "bodyLabel": "Cuerpo de la página",
+    "canvasInstructionCopied": "Instrucción copiada para el chat",
+    "canvasInstructionCopyFailed": "No se pudo copiar la instrucción",
     "actorAgent": "Agente",
     "actorAgentBadge": " · Agente",
     "linkCreate": "Crear una página con este nombre",

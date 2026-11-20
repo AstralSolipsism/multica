@@ -166,6 +166,22 @@ func (h *Handler) LabrastroReadWikiPage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response := map[string]any{"page": wikiPageJSON(page), "revision": wikiRevisionJSON(revision)}
+	// Page artifacts: the body references them by bare filename, so the reader
+	// (and `baseline lint`) resolves `src="..."` against this list. Metadata
+	// only — the HTML body is fetched through /api/attachments/{id}/content.
+	pageAttachments, err := s.q.ListAttachmentsByBaselinePage(r.Context(), db.ListAttachmentsByBaselinePageParams{
+		BaselinePageID: page.ID,
+		WorkspaceID:    s.project.WorkspaceID,
+	})
+	if err != nil {
+		writeEngineeringError(w, err)
+		return
+	}
+	attachments := make([]AttachmentResponse, 0, len(pageAttachments))
+	for _, att := range pageAttachments {
+		attachments = append(attachments, h.attachmentToResponse(att, attachmentURLModeFromRequest(r)))
+	}
+	response["attachments"] = attachments
 	if sectionParam != "" {
 		// One-hop [[ref]] definitions resolve across every unarchived page;
 		// the page itself reads from the requested revision when historical.

@@ -16,6 +16,7 @@ import {
   AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose, MessageSquare,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
+import { copyText } from "@multica/ui/lib/clipboard";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@multica/ui/components/ui/dialog";
@@ -48,6 +49,8 @@ import { IssueMentionCard } from "../../issues/components/issue-mention-card";
 import { plainWikiExcerpt } from "./engineering-baseline-excerpt";
 import type { WikiEditorSourceIssue } from "./engineering-baseline-editor";
 import { WikiReadingHighlights } from "./engineering-baseline-reading-highlights";
+import { EntityAttachmentsProvider } from "../../rich-content";
+import { HtmlBlockHostActionsProvider } from "../../editor/html-block-host-actions";
 
 const EMPTY_THREADS: WikiThread[] = [];
 
@@ -612,7 +615,21 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
 
   const maskOpen = leftOpen || rightOpen;
 
+  // The wiki has no comment composer under the article, so a canvas
+  // "copy as instruction" action lands in the system clipboard here instead of
+  // growing a wiki-only branch inside the shared editor surface.
+  const canvasHostActions = useMemo(() => ({
+    fillComment: async (content: string) => {
+      const copied = await copyText(content);
+      if (copied) toast.success(t(($) => $.wiki.canvasInstructionCopied));
+      else toast.error(t(($) => $.wiki.canvasInstructionCopyFailed));
+      return copied;
+    },
+  }), [t]);
+
   return (
+    <EntityAttachmentsProvider attachments={read?.attachments} phase="settled">
+    <HtmlBlockHostActionsProvider value={canvasHostActions}>
     <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden bg-page-canvas @container" data-wiki-shell>
       {/* Left column: static ≥1024px, overlay drawer below. */}
       <aside
@@ -877,6 +894,8 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-1 opacity-70" aria-hidden="true"><LoaderCircle className="size-4 animate-spin text-muted-foreground" /></div>
       ) : null}
     </div>
+    </HtmlBlockHostActionsProvider>
+    </EntityAttachmentsProvider>
   );
 }
 

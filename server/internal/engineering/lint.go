@@ -3,6 +3,7 @@ package engineering
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,6 +15,10 @@ import (
 type LintPage struct {
 	WikiPageContent
 	Parent string
+	// Attachments are the HTML artifact filenames bound to the page. nil means
+	// "not loaded" (offline --dir lint skips existence checks); a non-nil empty
+	// slice means the page authoritatively has none.
+	Attachments []string
 }
 
 type LintDiagnostic struct {
@@ -87,7 +92,8 @@ func Lint(pages []LintPage, page string) LintResult {
 			}
 			if block, ok := n.(*ast.FencedCodeBlock); ok {
 				var lines []lintSourceLine
-				mermaid := string(block.Language(source)) == "mermaid"
+				language := string(block.Language(source))
+				mermaid := language == "mermaid"
 				for j := 0; j < block.Lines().Len(); j++ {
 					segment := block.Lines().At(j)
 					value := string(segment.Value(source))
@@ -100,8 +106,13 @@ func Lint(pages []LintPage, page string) LintResult {
 						l.add("warning", "wiki_link_in_fence", segment.Start+m[0], "Move [[...]] to a navigation line immediately below the diagram; fenced links have no preview or backlinks")
 					}
 				}
-				if mermaid {
+				switch language {
+				case "mermaid":
 					l.lintMermaid(lines)
+				case "likec4", "c4":
+					l.lintC4Source(lines, fenceOffset(block))
+				case "html":
+					l.lintHtmlFence(fenceAttribute(fenceInfo(block, source), "src"), fenceOffset(block))
 				}
 				return ast.WalkSkipChildren, nil
 			}
@@ -236,4 +247,109 @@ func (l *pageLinter) lintGates(doc ast.Node, source []byte) {
 			l.add("error", "gate_counterexample", h.start, "死守底线 needs a concrete 反例: ... or an explicit violation condition in its item/sublist")
 		}
 	}
+}
+
+func fenceInfo(block *ast.FencedCodeBlock, source []byte) string {
+	if block.Info == nil {
+		return ""
+	}
+	return string(block.Info.Segment.Value(source))
+}
+
+func fenceOffset(block *ast.FencedCodeBlock) int {
+	if block.Info != nil {
+		return block.Info.Segment.Start
+	}
+	if block.Lines().Len() > 0 {
+		return block.Lines().At(0).Start
+	}
+	return 0
+}
+
+// lintC4Source accepts `likec4` and `c4` fences as the architecture source of
+// truth. Deep structure rules live in the Stage 1B skill tooling; the baseline
+// linter only rejects a fence that carries no source at all.
+func (l *pageLinter) lintC4Source(lines []lintSourceLine, offset int) {
+	for _, line := range lines {
+		if strings.TrimSpace(line.text) != "" {
+			return
+		}
+	}
+	l.add("error", "c4_source_empty", offset, "C4 source fence is empty; keep the model that renders the canvas attachment")
+}
+
+// lintHtmlFence validates the `src="name.html"` reference on an html fence.
+// Online lint loads the page's attachment list, so a missing artifact is an
+// error (the canvas would silently fall back to the one-line fence body);
+// offline --dir lint can only check the reference shape.
+func (l *pageLinter) lintHtmlFence(src string, offset int) {
+	if src == "" {
+		return
+	}
+	if !attachmentFilename(src) {
+		l.add("error", "html_attachment_src", offset, `html fence src must be a bare .html filename, not a path or URL`)
+		return
+	}
+	if l.page.Attachments == nil {
+		return
+	}
+	if !slices.Contains(l.page.Attachments, src) {
+		l.add("error", "html_attachment_missing", offset, fmt.Sprintf("html attachment %s is not bound to this page; upload it with `baseline write --attachment %s`", src, src))
+	}
+}
+
+var attachmentHtmlExt = regexp.MustCompile(`(?i)\.html?$`)
+var attachmentURLScheme = regexp.MustCompile(`^[a-z][a-z\d+.-]*:`)
+
+// attachmentFilename mirrors resolveEntityHtmlAttachment on the web: one bare
+// filename with an .html/.htm extension.
+func attachmentFilename(src string) bool {
+	return src != "" &&
+		!strings.ContainsAny(src, `/\`) &&
+		!attachmentURLScheme.MatchString(src) &&
+		attachmentHtmlExt.MatchString(src)
+}
+
+// fenceAttribute reads one `name=value` attribute out of a fence info string
+// (`html src="architecture.html" title="…"`), accepting single, double or no
+// quotes. It mirrors parseFenceMeta in streaming-fence.ts so CLI lint and the
+// renderer agree on which attachment a fence names.
+func fenceAttribute(info, name string) string {
+	for index := 0; index < len(info); {
+		for index < len(info) && (info[index] == ' ' || info[index] == '\t' || info[index] == '\n' || info[index] == '\r') {
+			index++
+		}
+		start := index
+		for index < len(info) && info[index] != '=' && info[index] != ' ' && info[index] != '\t' && info[index] != '\n' && info[index] != '\r' {
+			index++
+		}
+		key := info[start:index]
+		if index >= len(info) || info[index] != '=' {
+			continue
+		}
+		index++
+		value := ""
+		if index < len(info) && (info[index] == '"' || info[index] == '\'') {
+			quote := info[index]
+			index++
+			valueStart := index
+			for index < len(info) && info[index] != quote {
+				index++
+			}
+			value = info[valueStart:index]
+			if index < len(info) {
+				index++
+			}
+		} else {
+			valueStart := index
+			for index < len(info) && info[index] != ' ' && info[index] != '\t' && info[index] != '\n' && info[index] != '\r' {
+				index++
+			}
+			value = info[valueStart:index]
+		}
+		if key == name {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

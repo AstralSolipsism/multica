@@ -60,6 +60,11 @@ const HEIGHT_CACHE_PREFIX = "multica:html-block:height:";
 // inside, once it has loaded and stayed silent this long.
 const BRIDGE_TIMEOUT_MS = 1000;
 const UNMEASURED_HEIGHT_PX = DYNAMIC_BLOCK_COLLAPSE_AT_PX;
+// An in-frame app often keeps the previous pixel height on an inner container
+// for a React commit or two after the viewport shrinks. Measuring that window
+// would grow the block straight back to the old height, so reports are ignored
+// until the document has settled at the re-measure viewport.
+const NAVIGATION_SETTLE_MS = 500;
 
 function readCachedHeight(html: string): number | null {
   if (typeof window === "undefined") return null;
@@ -227,6 +232,8 @@ function HtmlBlockBody({
   const [cachedHeight, setCachedHeight] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
+  const [navigation, setNavigation] = useState(0);
+  const navigationSettledAt = useRef(0);
 
   useLayoutEffect(() => {
     setMeasured(INITIAL_HTML_BLOCK_HEIGHT);
@@ -270,11 +277,22 @@ function HtmlBlockBody({
         onErrorRef.current({ message: message.message, line: message.line || undefined });
         return;
       }
+      if (message.type === "navigate") {
+        // A document laid out at 100vh reports the previous frame height back,
+        // so an in-frame route change (gallery → one view) would keep the tall
+        // inline box and squash the new view into the bottom. Drop to the
+        // preview viewport first; the re-measure then sees the real content.
+        if (!activeRef.current) return;
+        navigationSettledAt.current = Date.now() + NAVIGATION_SETTLE_MS;
+        setMeasured({ height: DYNAMIC_BLOCK_COLLAPSE_AT_PX, step: 0, streak: 0, frozen: false });
+        setNavigation((key) => key + 1);
+        return;
+      }
       // A hidden frame lays out at zero width; what it reports is not its
       // height. It reports again once it is shown and resized back.
-      if (activeRef.current) {
-        setMeasured((previous) => nextHtmlBlockHeight(previous, message.height));
-      }
+      if (!activeRef.current) return;
+      if (Date.now() < navigationSettledAt.current) return;
+      setMeasured((previous) => nextHtmlBlockHeight(previous, message.height));
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -284,6 +302,22 @@ function HtmlBlockBody({
   useEffect(() => {
     if (height != null && height > 0) writeCachedHeight(html, height);
   }, [html, height]);
+
+  // Let the document settle at the reset viewport, then ask for the height the
+  // bridge now sees. Reports that arrive before the settle window are ignored
+  // by the listener above, so a stale pre-navigation height cannot regrow the
+  // block.
+  useEffect(() => {
+    if (!navigation) return;
+    const timer = setTimeout(() => {
+      navigationSettledAt.current = 0;
+      iframeRef.current?.contentWindow?.postMessage(
+        { [HTML_BLOCK_MESSAGE_KEY]: 1, type: "measure" },
+        "*",
+      );
+    }, NAVIGATION_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [navigation, iframeRef]);
 
   useEffect(() => {
     if (!loaded || height != null) return;

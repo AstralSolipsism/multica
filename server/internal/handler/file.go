@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/imagemetadata"
+	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -512,6 +513,48 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			}
 			params.CommentID = comment.ID
 		}
+		// Baseline-wiki artifacts (the compiled LikeC4 canvas) bind to the page
+		// that references them, so the page read can resolve `src="name.html"`
+		// against its own attachment list exactly like Issue and Chat do.
+		var baselinePage *db.ProjectBaselinePage
+		if pageID := r.FormValue("baseline_page_id"); pageID != "" {
+			pageUUID, ok := parseUUIDOrBadRequest(w, pageID, "baseline_page_id")
+			if !ok {
+				return
+			}
+			page, err := h.Queries.LabrastroGetBaselinePage(r.Context(), db.LabrastroGetBaselinePageParams{
+				WorkspaceID: parseUUID(workspaceID),
+				ID:          pageUUID,
+			})
+			if err != nil || page.ArchivedAt.Valid {
+				writeError(w, http.StatusForbidden, "invalid baseline_page_id")
+				return
+			}
+			if !h.requireProjectVisible(w, r, workspaceID, page.ProjectID, http.StatusForbidden, "invalid baseline_page_id") {
+				return
+			}
+			params.BaselinePageID = page.ID
+			baselinePage = &page
+			if revisionID := r.FormValue("baseline_revision_id"); revisionID != "" {
+				revisionUUID, ok := parseUUIDOrBadRequest(w, revisionID, "baseline_revision_id")
+				if !ok {
+					return
+				}
+				revision, err := h.Queries.LabrastroGetBaselineRevision(r.Context(), db.LabrastroGetBaselineRevisionParams{
+					WorkspaceID: page.WorkspaceID,
+					ProjectID:   page.ProjectID,
+					ID:          revisionUUID,
+				})
+				if err != nil || revision.PageID != page.ID {
+					writeError(w, http.StatusForbidden, "invalid baseline_revision_id")
+					return
+				}
+				params.BaselineRevisionID = revision.ID
+			}
+		} else if r.FormValue("baseline_revision_id") != "" {
+			writeError(w, http.StatusBadRequest, "baseline_revision_id requires baseline_page_id")
+			return
+		}
 		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
 			// Require the member-visible Chat projection as well as private-agent
 			// access. A cached command-only session id must not accept uploads that
@@ -577,6 +620,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// GC classify the row consistently before it gains a message id.
 			params.ChatSessionID = task.ChatSessionID
 		}
+		// One upload has exactly one owner. A mixed row would let an Issue or
+		// Chat claim a private wiki artifact (or the reverse), so refuse it
+		// before anything is stored.
+		if params.BaselinePageID.Valid && (params.IssueID.Valid || params.CommentID.Valid || params.ChatSessionID.Valid || params.TaskID.Valid) {
+			writeError(w, http.StatusBadRequest, "baseline_page_id cannot be combined with issue_id, comment_id, chat_session_id or task_id")
+			return
+		}
 
 		if dimensions, ok := imagemetadata.DimensionsFromReader(file); ok {
 			params.Width = pgtype.Int4{Int32: dimensions.Width, Valid: true}
@@ -598,7 +648,8 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		params.Url = link
 
 		var att db.CreateAttachmentRow
-		if params.CommentID.Valid {
+		switch {
+		case params.CommentID.Valid:
 			// A comment attachment is written under the comment's lock, so a
 			// delete that commits while the object uploaded cannot leave it on
 			// a tombstone. A refused upload takes its stored object with it.
@@ -612,7 +663,24 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
-		} else {
+		case params.BaselinePageID.Valid:
+			att, err = h.createBaselinePageAttachment(r.Context(), r, params, baselinePage.ProjectID)
+			if err != nil {
+				// The page (or its project/revision) disappeared or was archived
+				// while the bytes uploaded; never leave an unreachable object.
+				h.deleteS3Objects(r.Context(), []string{link})
+				if writeRequestCancellation(w, r, err) {
+					return
+				}
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(w, http.StatusForbidden, "invalid baseline_page_id")
+					return
+				}
+				slog.Error("failed to create baseline attachment record", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to create attachment record")
+				return
+			}
+		default:
 			att, err = wakeupWrite(h, r, func(q *db.Queries) (db.CreateAttachmentRow, error) {
 				return q.CreateAttachment(r.Context(), params)
 			})
@@ -631,6 +699,15 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, uploaderType, uploaderID, map[string]any{
 					"issue_id":       uuidToString(att.IssueID),
 					"issue_revision": att.IssueRevision,
+				})
+			}
+			if baselinePage != nil {
+				// The page revision was written before its artifact uploaded;
+				// this event lets open readers pick the canvas up without a
+				// manual refresh.
+				h.publish(protocol.EventProjectBaselineChanged, workspaceID, uploaderType, uploaderID, map[string]any{
+					"project_id": uuidToString(baselinePage.ProjectID), "page_id": uuidToString(baselinePage.ID),
+					"slug": baselinePage.Slug, "change": "attachments", "revision_number": baselinePage.LastRevisionNumber,
 				})
 			}
 			if att.CommentRevision > 0 && att.CommentID.Valid {
@@ -672,6 +749,138 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		"id":       id.String(),
 		"url":      link,
 		"filename": header.Filename,
+	})
+}
+
+// createBaselinePageAttachment writes a page-owned attachment under a fixed
+// lock order: workspace share lock, the permission-bearing member rows (sorted),
+// the project row, project-member rows, then a fresh page/revision
+// revalidation. Member removal and project deletion either land before these
+// locks (and the revalidation refuses) or wait until the attachment commits;
+// an upload that races a deletion therefore cannot leave an orphan row.
+func (h *Handler) createBaselinePageAttachment(ctx context.Context, r *http.Request, params db.CreateAttachmentParams, projectID pgtype.UUID) (db.CreateAttachmentRow, error) {
+	return wakeupWrite(h, r, func(q *db.Queries) (db.CreateAttachmentRow, error) {
+		if _, err := q.LockWorkspaceForAttachmentUpload(ctx, params.WorkspaceID); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if _, err := q.LabrastroLockEngineeringProject(ctx, db.LabrastroLockEngineeringProjectParams{
+			WorkspaceID: params.WorkspaceID,
+			ID:          projectID,
+		}); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		// Re-check the CURRENT principals, not the snapshot from before the
+		// bytes uploaded: membership and private-project access may have been
+		// revoked in the meantime. An agent run is bounded by the same two
+		// humans as hiddenProjectsForAgentRun (task originator/accountable user
+		// and the agent owner); a human upload by that user alone.
+		principals := make([]pgtype.UUID, 0, 2)
+		if params.UploaderType == "agent" {
+			if r.Header.Get("X-Actor-Source") != "task_token" {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			taskUUID, err := util.ParseUUID(r.Header.Get("X-Task-ID"))
+			if err != nil {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			task, err := q.GetAgentTask(ctx, taskUUID)
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			agent, err := q.GetAgent(ctx, params.UploaderID)
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			// Liveness gate: a cancelled task or an archived agent must not
+			// keep writing through a stale capability. Both rows are read in
+			// this transaction after the project lock.
+			if task.AgentID != params.UploaderID || task.Status == "cancelled" {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			if agent.WorkspaceID != params.WorkspaceID || agent.ArchivedAt.Valid {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			principals = append(principals, projectaccess.RunPrincipals(task, agent.OwnerID)...)
+			// A task with no human originator/accountable principal must not
+			// collapse to the agent owner alone.
+			if len(principals) == 0 || !principals[0].Valid {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+		} else {
+			userUUID, err := util.ParseUUID(requestUserID(r))
+			if err != nil {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+			principals = append(principals, userUUID)
+		}
+		seen := map[[16]byte]struct{}{}
+		unique := principals[:0]
+		for _, principal := range principals {
+			if !principal.Valid {
+				continue
+			}
+			if _, ok := seen[principal.Bytes]; ok {
+				continue
+			}
+			seen[principal.Bytes] = struct{}{}
+			unique = append(unique, principal)
+		}
+		if len(unique) == 0 {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		// Lock order is fixed as workspace -> project -> member ->
+		// project_member. Member revocation takes a member row FOR UPDATE and
+		// private-project removal takes a project_member row, so a revocation
+		// either lands before these reads (and the upload is refused) or waits
+		// until the attachment commits.
+		lockedMembers, err := q.LockAttachmentAccessMembers(ctx, db.LockAttachmentAccessMembersParams{
+			WorkspaceID: params.WorkspaceID,
+			UserIds:     unique,
+		})
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if len(lockedMembers) != len(unique) {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		if _, err := q.LockAttachmentAccessProjectMembers(ctx, db.LockAttachmentAccessProjectMembersParams{
+			WorkspaceID: params.WorkspaceID,
+			ProjectID:   projectID,
+			UserIds:     unique,
+		}); err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		hidden, err := projectaccess.ForPrincipals(ctx, q, params.WorkspaceID, unique...)
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if !hidden.CanSeeProject(projectID) {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		page, err := q.LabrastroGetBaselinePage(ctx, db.LabrastroGetBaselinePageParams{
+			WorkspaceID: params.WorkspaceID,
+			ID:          params.BaselinePageID,
+		})
+		if err != nil {
+			return db.CreateAttachmentRow{}, err
+		}
+		if page.ArchivedAt.Valid || page.ProjectID != projectID {
+			return db.CreateAttachmentRow{}, pgx.ErrNoRows
+		}
+		if params.BaselineRevisionID.Valid {
+			revision, err := q.LabrastroGetBaselineRevision(ctx, db.LabrastroGetBaselineRevisionParams{
+				WorkspaceID: params.WorkspaceID,
+				ProjectID:   projectID,
+				ID:          params.BaselineRevisionID,
+			})
+			if err != nil {
+				return db.CreateAttachmentRow{}, err
+			}
+			if revision.PageID != page.ID {
+				return db.CreateAttachmentRow{}, pgx.ErrNoRows
+			}
+		}
+		return q.CreateAttachment(ctx, params)
 	})
 }
 

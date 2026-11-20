@@ -456,7 +456,7 @@ export function createZhDict(): LandingDict {
           "技能列表支持搜索。",
           "可以在智能体属性侧栏查看和设置思考级别，Kiro 也会按设置的思考级别运行。",
           "守护进程的空闲和工具静默 watchdog 可以写在配置文件里，也可以用启动参数覆盖；设为 0s 关闭对应限制。",
-          "可以用 MULTICA_MAX_PREVIEW_SIZE 设置文本和 HTML 附件的内联预览上限，默认 2 MiB，最高 16 MiB。",
+          "可以用 MULTICA_MAX_PREVIEW_SIZE 设置文本和 HTML 附件的内联预览上限，默认 8 MiB，最高 16 MiB。",
           "评论里的图片滚动到才加载，并预留好尺寸，长讨论不再频繁跳动。",
           "聊天历史和智能体的最近工作列表很长时也保持流畅。",
           "运行时侧栏显示在线机器数量。",

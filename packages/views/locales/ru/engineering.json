@@ -188,6 +188,8 @@
     "outlineTitle": "На этой странице",
     "outlineEmpty": "На этой странице нет разделов.",
     "bodyLabel": "Содержимое страницы",
+    "canvasInstructionCopied": "Инструкция скопирована для чата",
+    "canvasInstructionCopyFailed": "Не удалось скопировать инструкцию",
     "actorAgent": "Агент",
     "actorAgentBadge": " · Агент",
     "linkCreate": "Создать страницу с этим названием",

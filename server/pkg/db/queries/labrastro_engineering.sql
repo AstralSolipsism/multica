@@ -25,6 +25,11 @@ RETURNING *;
 SELECT * FROM project_baseline_page WHERE workspace_id = $1 AND project_id = $2
     ORDER BY parent_id NULLS FIRST, position, created_at, id;
 
+-- name: LabrastroGetBaselinePage :one
+-- Upload validation resolves an attachment's target page (and from it the
+-- project that owns access) before the row is written.
+SELECT * FROM project_baseline_page WHERE workspace_id = $1 AND id = $2;
+
 -- name: LabrastroLockBaselinePage :one
 SELECT * FROM project_baseline_page WHERE workspace_id = $1 AND project_id = $2 AND id = $3 FOR UPDATE;
 
@@ -146,6 +151,8 @@ ORDER BY i.created_at, i.id LIMIT 201;
 -- name: LabrastroDeleteProjectEngineering :exec
 WITH comments AS (DELETE FROM project_baseline_comment WHERE workspace_id = $1 AND project_id = $2),
 threads AS (DELETE FROM project_baseline_thread WHERE workspace_id = $1 AND project_id = $2),
+attachments AS (DELETE FROM attachment a USING project_baseline_page p
+    WHERE a.baseline_page_id = p.id AND p.workspace_id = $1 AND p.project_id = $2),
 revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1 AND project_baseline_revision.project_id = $2),
 pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1 AND project_baseline_page.project_id = $2)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND project_engineering.project_id = $2;
@@ -153,6 +160,8 @@ DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1 AND 
 -- name: LabrastroDeleteWorkspaceEngineering :exec
 WITH comments AS (DELETE FROM project_baseline_comment WHERE workspace_id = $1),
 threads AS (DELETE FROM project_baseline_thread WHERE workspace_id = $1),
+attachments AS (DELETE FROM attachment a USING project_baseline_page p
+    WHERE a.baseline_page_id = p.id AND p.workspace_id = $1),
 revisions AS (DELETE FROM project_baseline_revision WHERE project_baseline_revision.workspace_id = $1),
 pages AS (DELETE FROM project_baseline_page WHERE project_baseline_page.workspace_id = $1)
 DELETE FROM project_engineering WHERE project_engineering.workspace_id = $1;

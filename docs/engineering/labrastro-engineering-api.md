@@ -23,7 +23,7 @@ mismatched credentials return 403 `baseline_credential_denied`. Routes use
 | PATCH | `/engineering` | Updated `engineering` configuration (human-only; decider checks now error `engineering_not_decider`) |
 | GET | `/baseline/tree` | Page tree with slugs, titles, versions, depths, section outlines and revision counts; `sections=false` drops outlines |
 | POST | `/baseline/pages` | Create a page; publishes `create` revision v1 |
-| GET | `/baseline/pages/{page}` | Page + revision; `?revision=N`, `?section=S`, `?with=links,backlinks,related_issues` |
+| GET | `/baseline/pages/{page}` | Page + revision + bound `attachments` metadata; `?revision=N`, `?section=S`, `?with=links,backlinks,related_issues` |
 | PUT | `/baseline/pages/{page}/content` | Whole-page or single-section write (`section` / `delete_section`), returns `rebased` |
 | PATCH | `/baseline/pages/{page}` | Rename (`title`/`slug`) or move (`parent`/`after`) — one kind per request |
 | POST | `/baseline/pages/{page}/archive` | Soft-delete; `recursive` archives the subtree, one revision per flipped page |
@@ -53,6 +53,12 @@ legacy rows and evolved the shapes in place; 9068–9070 add the wiki indexes):
   archived), `title` (1–200 runes), `position` (dense 0..n-1 per sibling set
   including archived slots), `current_revision_id`, `last_revision_number`
   (monotonic allocator), `archived_at`, timestamps.
+- `attachment.baseline_page_id` / `baseline_revision_id` (migrations
+  9077–9078) bind rendered artifacts to a wiki page. Metadata is returned on
+  the page read; the HTML body stays behind
+  `GET /api/attachments/{id}/content`. Ownership is validated in application
+  code (no foreign keys), and project/workspace deletion removes them in the
+  same transaction.
 - `project_baseline_revision`: immutable full snapshot per write — `page_id`,
   `revision_number` (> 0, unique per page), `revision_kind` ∈
   {create, content, rename, move, archive, restore, rollback}, structure
@@ -80,6 +86,39 @@ Indexes: `idx_project_baseline_doc_id` (kept name), `idx_project_baseline_revisi
   revision numbers.
 - **I4** slugs are project-unique, archived pages keep theirs.
 - **I5** comment data never enters Project Context, `tree` or page reads.
+
+## Page artifacts
+
+Large rendered artifacts (the `likec4 build --output-single-file` canvas) live
+as attachments, never in `content_markdown`: the page keeps the `.c4` source
+and one ```html src="architecture.html"``` fence whose body is a one-line
+fallback hint. `POST /api/upload-file` accepts `baseline_page_id` (required for
+this owner) and optional `baseline_revision_id`; both must belong to the
+project the caller can see, and the revision must belong to that page. Other
+owner fields (`issue_id`, `comment_id`, `task_id`, …) remain unchanged.
+
+A page artifact has exactly one owner: `baseline_page_id` cannot be combined
+with `issue_id`, `comment_id`, `chat_session_id` or `task_id`, and the
+Issue/Chat/Comment claim queries all exclude page-bound rows, so a private
+wiki artifact cannot be adopted by another entity. Uploads take the same fixed
+lock order as engineering writes: workspace share lock, project row
+(`FOR UPDATE`), the permission-bearing member rows (sorted by `user_id`; for an
+agent run both the task originator/accountable user and the agent owner), then
+project-member rows. The transaction revalidates those principals' workspace
+membership, private-project access, task/agent liveness, and the page/revision
+before the insert. Member removal and project deletion either land
+first (and the revalidation refuses, removing the stored object) or wait until
+the attachment commits.
+Deletion collects the stored URLs before the metadata transaction and removes
+the objects after it commits.
+
+`GET /baseline/pages/{page}` returns every artifact ever bound to the page,
+oldest first. Readers resolve a fence by bare filename against the newest
+upload, exactly like Issue and Chat; the same-name row with the latest
+`created_at` wins. `baseline get` still prints only the Markdown body, so no
+HTML enters an agent's context. The inline text preview limit
+(`MULTICA_MAX_PREVIEW_SIZE`, 8 MiB default, 16 MiB maximum) is sized for a
+~3.7 MiB LikeC4 single-file canvas.
 
 ## Write model
 

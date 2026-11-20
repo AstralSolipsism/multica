@@ -471,7 +471,7 @@ export function createEnDict(): LandingDict {
           "Search the skill list.",
           "See and set an agent's thinking level from its properties sidebar. Kiro now uses the thinking level you set.",
           "Set the daemon's idle and silent-tool watchdogs in the config file or with flags. 0s turns a watchdog off.",
-          "Set the inline preview limit for text and HTML attachments with MULTICA_MAX_PREVIEW_SIZE: 2 MiB by default, up to 16 MiB.",
+          "Set the inline preview limit for text and HTML attachments with MULTICA_MAX_PREVIEW_SIZE: 8 MiB by default, up to 16 MiB.",
           "Images in comments load as you scroll and keep their space, so long threads jump less.",
           "Long chat histories and an agent's recent work list stay fast.",
           "The Runtimes sidebar shows how many machines are online.",

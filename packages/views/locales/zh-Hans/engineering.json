@@ -188,6 +188,8 @@
     "outlineTitle": "On this page",
     "outlineEmpty": "本页没有小节。",
     "bodyLabel": "页面正文",
+    "canvasInstructionCopied": "已复制为对话指令",
+    "canvasInstructionCopyFailed": "复制对话指令失败",
     "actorAgent": "智能体",
     "actorAgentBadge": " · 智能体",
     "linkCreate": "按此名创建页面",
