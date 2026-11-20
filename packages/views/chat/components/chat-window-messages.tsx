@@ -6,6 +6,10 @@ import { motion, useIsPresent } from "motion/react";
 import type { AgentAvailability } from "@multica/core/agents";
 import type { ChatPendingTask, ChatQuickAction } from "@multica/core/types";
 import { chatMessagesPageOptions } from "@multica/core/chat/queries";
+import {
+  chatMessageAttachmentsStatus,
+  useDeferredOlderPageFetch,
+} from "../lib/message-metadata";
 import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
@@ -44,12 +48,24 @@ export function ChatWindowMessages({
   const {
     data,
     isLoading,
-    isError: messagesError,
-    isRefetching: messagesRefetching,
+    status: messagesState,
+    fetchStatus: messagesFetchStatus,
+    isFetchNextPageError: olderMessagesError,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery(chatMessagesPageOptions(sessionId ?? ""));
+  const { fetchOlderMessages, olderPageActive } = useDeferredOlderPageFetch({
+    sessionId,
+    fetchStatus: messagesFetchStatus,
+    fetchNextPage,
+  });
+  const attachmentsStatus = chatMessageAttachmentsStatus({
+    status: messagesState,
+    fetchStatus: messagesFetchStatus,
+    isFetchNextPageError: olderMessagesError,
+    olderPageActive,
+  });
   const pages = sessionId ? data?.pages ?? [] : [];
   const messages = hideQueuedChatMessages(
     [...pages].reverse().flatMap((page) => page.messages),
@@ -86,11 +102,7 @@ export function ChatWindowMessages({
           revealKey={sessionId}
           onRevealed={onReady}
           messages={messages}
-          attachmentsStatus={messagesError
-            ? "error"
-            : messagesRefetching
-              ? "loading"
-              : "ready"}
+          attachmentsStatus={attachmentsStatus}
           pendingTask={pendingTask}
           availability={availability}
           firstItemIndex={messages.length > 0
@@ -98,7 +110,7 @@ export function ChatWindowMessages({
             : 0}
           hasOlderMessages={!!hasNextPage}
           isFetchingOlderMessages={isFetchingNextPage}
-          onLoadOlderMessages={() => void fetchNextPage()}
+          onLoadOlderMessages={fetchOlderMessages}
           onQuickAction={onQuickAction}
           quickActionsDisabled={quickActionsDisabled}
           onRegenerateQuickActions={(message) => sessionId

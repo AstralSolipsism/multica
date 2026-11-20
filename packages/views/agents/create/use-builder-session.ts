@@ -20,7 +20,7 @@ import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { ChatMessage } from "@multica/core/types";
 import { useAppForeground } from "../../common/use-app-foreground";
-import type { EntityAttachmentsStatus } from "../../rich-content/entity-attachments-context";
+import { chatMessageAttachmentsStatus } from "../../chat/lib/message-metadata";
 import { useChatDraftRestore } from "../../chat/components/use-chat-draft-restore";
 import { useT } from "../../i18n";
 
@@ -88,11 +88,7 @@ export function useBuilderSession(options: {
 
   const messagesQuery = useQuery(chatMessagesOptions(sessionId));
   const pendingQuery = useQuery(pendingChatTaskOptions(sessionId));
-  const attachmentsStatus: EntityAttachmentsStatus = messagesQuery.isError
-    ? "error"
-    : messagesQuery.isRefetching
-      ? "loading"
-      : "ready";
+  const attachmentsStatus = chatMessageAttachmentsStatus(messagesQuery);
   const messages = messagesQuery.data ?? EMPTY_CHAT_MESSAGES;
   const pending = !!pendingQuery.data?.task_id;
   // The conversation named by the URL is gone — discarded here, deleted from
