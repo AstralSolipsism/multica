@@ -118,6 +118,7 @@ import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { CommentInput, type CommentInputRef } from "./comment-input";
 import { useCommentAnnotations } from "./use-comment-annotations";
 import { CurrentIssueRenderContextProvider } from "../current-issue-render-context";
+import { HtmlBlockHostActionsProvider } from "../../editor/html-block-host-actions";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadParticipants, collectThreadReplies, deriveThreadResolution } from "./thread-utils";
@@ -1838,6 +1839,10 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
     // A cold composer activates and focuses through its draft subscription.
     composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
   }, [id]);
+  const htmlBlockHostActions = useMemo(() => ({
+    submitComment: submitHtmlComment,
+    fillComment: fillHtmlCommentDraft,
+  }), [submitHtmlComment, fillHtmlCommentDraft]);
   const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
   const enteringRunIds = useNewRunIds(id, commentTasks);
   const previousCommentRuns = useRef(new Map<string, CommentRun[]>());
@@ -3039,11 +3044,9 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
         ? {
             id: resolvedIssueId,
             identifier: resolvedIssueIdentifier,
-            submitComment: submitHtmlComment,
-            fillCommentDraft: fillHtmlCommentDraft,
           }
         : null,
-    [resolvedIssueId, resolvedIssueIdentifier, submitHtmlComment, fillHtmlCommentDraft],
+    [resolvedIssueId, resolvedIssueIdentifier],
   );
 
   if (issueReadState.loadFailed) {
@@ -3586,6 +3589,7 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
 
   const detailContent = (
     <CurrentIssueRenderContextProvider value={currentIssueRenderContext}>
+    <HtmlBlockHostActionsProvider value={htmlBlockHostActions}>
     <div
       data-mc="issue-detail"
       data-status={issue.status}
@@ -4416,6 +4420,7 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
           />
         )}
       </div>
+    </HtmlBlockHostActionsProvider>
     </CurrentIssueRenderContextProvider>
   );
 

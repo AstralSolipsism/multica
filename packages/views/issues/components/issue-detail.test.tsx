@@ -18,7 +18,7 @@ import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
 import enForkUi from "../../locales/en/fork-ui.json";
-import { useCurrentIssueRenderContext, type CurrentIssueRenderContextValue } from "../current-issue-render-context";
+import { useHtmlBlockHostActions, type HtmlBlockHostActions } from "../../editor/html-block-host-actions";
 import { useIssueSidebarSectionsStore } from "@multica/core/issues/stores/issue-sidebar-sections-store";
 
 vi.mock("./issue-wakeup-header-chip", () => ({
@@ -31,7 +31,7 @@ const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIss
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 const archiveSectionProps = vi.hoisted(() => ({ current: undefined as unknown }));
-const renderedIssueContext = vi.hoisted(() => ({ current: null as CurrentIssueRenderContextValue | null }));
+const renderedHtmlActions = vi.hoisted(() => ({ current: null as HtmlBlockHostActions | null }));
 const mockLocalDirectoryHint = vi.hoisted(() => vi.fn());
 vi.mock("../../projects/components/local-directory-hint", () => ({
   LocalDirectoryHint: (props: unknown) => {
@@ -218,7 +218,7 @@ vi.mock("../../editor", async () => ({
   ),
   isPreviewable: () => false,
   ReadonlyContent: ({ content }: { content: string }) => {
-    renderedIssueContext.current = useCurrentIssueRenderContext();
+    renderedHtmlActions.current = useHtmlBlockHostActions();
     readonlyContentRenders.push(content);
     return <div data-testid="readonly-content">{content}</div>;
   },
@@ -831,7 +831,7 @@ describe("IssueDetail (shared)", () => {
     descriptionSelectionAction.current = undefined;
     mockViewport.isMobile = false;
     archiveSectionProps.current = undefined;
-    renderedIssueContext.current = null;
+    renderedHtmlActions.current = null;
     // Default: issue loads successfully
     mockApiObj.getIssue.mockResolvedValue(mockIssue);
     mockApiObj.listPins.mockResolvedValue([]);
@@ -932,15 +932,15 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.createComment.mockResolvedValue(created);
     renderIssueDetail();
     await screen.findByText("Implement authentication");
-    await waitFor(() => expect(renderedIssueContext.current?.submitComment).toBeDefined());
+    await waitFor(() => expect(renderedHtmlActions.current?.submitComment).toBeDefined());
     let ok: boolean | undefined;
-    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("answer"); });
+    await act(async () => { ok = await renderedHtmlActions.current!.submitComment!("answer", "card"); });
     expect(ok).toBe(true);
     expect(mockApiObj.createComment).toHaveBeenCalledWith(mockIssue.id, "answer", undefined, undefined, undefined, undefined, undefined);
     await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalled());
     scrollToIndexSpy.mockClear();
     mockApiObj.createComment.mockRejectedValueOnce(new Error("offline"));
-    await act(async () => { ok = await renderedIssueContext.current!.submitComment!("retry"); });
+    await act(async () => { ok = await renderedHtmlActions.current!.submitComment!("retry", "card"); });
     expect(ok).toBe(false);
     expect(scrollToIndexSpy).not.toHaveBeenCalled();
   });
@@ -948,10 +948,10 @@ describe("IssueDetail (shared)", () => {
   it("writes decision-card answers to this issue's draft and scrolls to its composer", async () => {
     renderIssueDetail();
     await screen.findByText("Implement authentication");
-    await waitFor(() => expect(renderedIssueContext.current?.fillCommentDraft).toBeDefined());
+    await waitFor(() => expect(renderedHtmlActions.current?.fillComment).toBeDefined());
     const setDraft = vi.fn();
     const getState = vi.spyOn(useCommentDraftStore, "getState").mockReturnValue({ ...useCommentDraftStore.getState(), setDraft });
-    act(() => renderedIssueContext.current!.fillCommentDraft!("answer"));
+    act(() => renderedHtmlActions.current!.fillComment!("answer"));
     expect(setDraft).toHaveBeenCalledWith(`new:${mockIssue.id}`, "answer");
     expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "end" });
     getState.mockRestore();
@@ -963,7 +963,7 @@ describe("IssueDetail (shared)", () => {
     fireEvent.click(screen.getByTestId("comment-composer-shell"));
     const editor = await screen.findByPlaceholderText("Leave a comment...");
     fireEvent.change(editor, { target: { value: "existing draft" } });
-    act(() => renderedIssueContext.current!.fillCommentDraft!("panel answer"));
+    act(() => renderedHtmlActions.current!.fillComment!("panel answer"));
     expect(editor).toHaveValue("panel answer");
   });
 

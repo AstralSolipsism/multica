@@ -2,59 +2,22 @@
 
 import {
   createContext,
-  useCallback,
-  useContext,
+  use,
+  useImperativeHandle,
   useMemo,
   useRef,
-  useState,
   type ReactNode,
+  type RefObject,
 } from "react";
-import type { Attachment, ChatSendAttempt } from "@multica/core/types";
+import type { ChatSendAttempt } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 import { useChatStore } from "@multica/core/chat";
+import { HtmlBlockHostActionsProvider, type HtmlBlockHostActions } from "../editor/html-block-host-actions";
+import type { useChatController } from "./components/use-chat-controller";
 
-/**
- * Reply actions for HTML blocks rendered inside a chat conversation (a
- * decision card's "submit" / "fill" buttons). Provided by both chat surfaces —
- * the full page and the floating window — around their message list and
- * composer, so the SAME card markup works in an issue detail page (whose
- * `CurrentIssueRenderContext` still wins, see use-html-comment-actions) and in
- * a conversation.
- */
-export type ChatReplyActions = Readonly<{
-  /**
-   * Send `content` as the user's next message in the active session through
-   * the surface's own `handleSend`, so queueing, failure handling and the
-   * archived-agent guards all apply. `cardKey` is the card's stable identity
-   * (hashSource of its html).
-   */
-  submit: (content: string, cardKey: string) => Promise<boolean>;
-  /** Replace the compose draft with `content` and focus the composer. */
-  fill: (content: string) => void;
-}>;
-
-/**
- * The chat composer's send entry — `useChatController().handleSend` on the
- * full page, the floating window's own copy.
- */
-export type ChatSurfaceSend = (
-  content: string,
-  attachmentIds?: string[],
-  commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
-  draftAttachments?: Attachment[],
-  attempt?: ChatSendAttempt,
-) => Promise<boolean>;
-
-const ChatReplyActionsContext = createContext<ChatReplyActions | null>(null);
-
-/**
- * The latest `fill` request, consumed by the ChatInput mounted inside the
- * provider. Carried in its own context so the actions value can stay
- * referentially stable — a card's in-flight request must not be dropped just
- * because another card filled the composer (see use-html-comment-actions).
- */
-type ChatReplyAdoptRequest = { id: number; content: string };
-const ChatReplyAdoptContext = createContext<ChatReplyAdoptRequest | null>(null);
+type ChatSurfaceSend = ReturnType<typeof useChatController>["handleSend"];
+type FillDraft = (content: string) => void;
+const ChatReplyDraftContext = createContext<RefObject<FillDraft | null> | null>(null);
 
 export function ChatReplyActionsProvider({
   handleSend,
@@ -63,20 +26,13 @@ export function ChatReplyActionsProvider({
   handleSend: ChatSurfaceSend;
   children: ReactNode;
 }) {
-  // One attempt per [sessionId, cardKey], kept across FAILED sends so an
-  // unchanged answer retried after a lost response reuses the same submission
-  // UUID and the server replays the first acceptance — same rule as the
-  // composer's sendAttemptsRef (chat-input.tsx). Component-local by design:
-  // not in Zustand, not persisted. A success deletes the record; a changed
-  // answer replaces it with a fresh id.
-  const attemptsRef = useRef(
-    new Map<string, { content: string; attempt: ChatSendAttempt }>(),
-  );
-  const [adoptRequest, setAdoptRequest] = useState<ChatReplyAdoptRequest | null>(null);
-  const nextAdoptIdRef = useRef(0);
+  // A retry of the same answer reuses the server receipt's submission ID.
+  const attemptsRef = useRef(new Map<string, { content: string; attempt: ChatSendAttempt }>());
+  const fillDraftRef = useRef<FillDraft>(null);
 
-  const submit = useCallback(
-    async (content: string, cardKey: string): Promise<boolean> => {
+  const actions = useMemo<HtmlBlockHostActions>(() => ({
+    fillComment: (content) => fillDraftRef.current?.(content),
+    submitComment: async (content, cardKey) => {
       const sessionId = useChatStore.getState().activeSessionId ?? "";
       const key = `${sessionId}:${cardKey}`;
       let record = attemptsRef.current.get(key);
@@ -84,42 +40,22 @@ export function ChatReplyActionsProvider({
         record = { content, attempt: { submissionId: createSafeId() } };
         attemptsRef.current.set(key, record);
       }
-      let ok = false;
-      try {
-        ok = await handleSend(content, undefined, undefined, [], record.attempt);
-      } catch {
-        ok = false;
-      }
-      if (ok) attemptsRef.current.delete(key);
+      const ok = await handleSend(content, undefined, undefined, [], record.attempt);
+      if (ok && attemptsRef.current.get(key) === record) attemptsRef.current.delete(key);
       return ok;
     },
-    [handleSend],
-  );
-
-  const fill = useCallback((content: string) => {
-    setAdoptRequest({ id: ++nextAdoptIdRef.current, content });
-  }, []);
-
-  const actions = useMemo(() => ({ submit, fill }), [submit, fill]);
+  }), [handleSend]);
 
   return (
-    <ChatReplyActionsContext.Provider value={actions}>
-      <ChatReplyAdoptContext.Provider value={adoptRequest}>
+    <HtmlBlockHostActionsProvider value={actions}>
+      <ChatReplyDraftContext.Provider value={fillDraftRef}>
         {children}
-      </ChatReplyAdoptContext.Provider>
-    </ChatReplyActionsContext.Provider>
+      </ChatReplyDraftContext.Provider>
+    </HtmlBlockHostActionsProvider>
   );
 }
 
-/** The chat reply actions, or null outside a chat surface. */
-export function useChatReplyActions(): ChatReplyActions | null {
-  return useContext(ChatReplyActionsContext);
-}
-
-/**
- * The pending fill request for the composer inside the provider. Id-keyed so
- * ChatInput applies each request exactly once.
- */
-export function useChatReplyAdoptRequest(): ChatReplyAdoptRequest | null {
-  return useContext(ChatReplyAdoptContext);
+export function useRegisterChatReplyDraft(fillDraft: FillDraft) {
+  const ref = use(ChatReplyDraftContext);
+  useImperativeHandle(ref, () => fillDraft, [fillDraft]);
 }
