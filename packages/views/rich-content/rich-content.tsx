@@ -72,6 +72,11 @@ import { AttachmentDownloadProvider } from "../editor/attachment-download-contex
 import { useDownloadAttachment } from "../editor/use-download-attachment";
 import { Attachment as AttachmentRenderer } from "../editor/attachment";
 import { computeClosedFences, type ClosedFence } from "./streaming-fence";
+import {
+  EntityAttachmentsProvider,
+  type EntityAttachment,
+  type EntityAttachmentsStatus,
+} from "./entity-attachments-context";
 import { remarkRepairCjkStrongTrailingWhitespace } from "./cjk-emphasis";
 import {
   CodeBlockShell,
@@ -408,6 +413,7 @@ function RichCode({ className, children, node, ...props }: RichCodeProps) {
           language={language}
           body={String(children).replace(/\n$/, "")}
           title={fence?.title}
+          src={fence?.src}
         />
       );
     }
@@ -541,12 +547,15 @@ export interface RichContentProps {
    * Attachments associated with the surrounding entity (comment / issue body /
    * chat message). Inline `<img>` and file-card URLs matching one of these get
    * their download URL re-signed at click time instead of using the possibly
-   * stale link embedded in the markdown.
+   * stale link embedded in the markdown. A closed ```html src="file.html"
+   * fence also resolves its filename against this same-record list.
    *
    * Callers SHOULD pass a stable reference; a fresh array on every parent
    * render busts the memo.
    */
-  attachments?: Attachment[];
+  attachments?: readonly EntityAttachment[];
+  /** Metadata lifecycle for attachment-backed blocks; inherited when omitted. */
+  attachmentsStatus?: EntityAttachmentsStatus;
   /** CSS density only — never changes the semantic DOM. */
   density?: RichContentDensity;
   /**
@@ -560,6 +569,7 @@ export interface RichContentProps {
 export const RichContent = memo(function RichContent({
   content,
   attachments,
+  attachmentsStatus,
   density = "document",
   phase = "settled",
   className,
@@ -588,6 +598,10 @@ export const RichContent = memo(function RichContent({
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hover = useLinkHover(wrapperRef);
+  const downloadAttachments = useMemo(
+    () => attachments?.filter((attachment): attachment is Attachment => "url" in attachment),
+    [attachments],
+  );
 
   // Memoize the react-markdown subtree on its only real inputs. Unrelated
   // parent re-renders (a sibling agent task streaming over WebSocket fires one
@@ -615,7 +629,7 @@ export const RichContent = memo(function RichContent({
   );
 
   return (
-    <AttachmentDownloadProvider attachments={attachments}>
+    <AttachmentDownloadProvider attachments={downloadAttachments}>
       <div
         ref={wrapperRef}
         data-rich-content=""
@@ -628,7 +642,13 @@ export const RichContent = memo(function RichContent({
           className,
         )}
       >
-        {markdown}
+        <EntityAttachmentsProvider
+          attachments={attachments}
+          phase={phase}
+          status={attachmentsStatus}
+        >
+          {markdown}
+        </EntityAttachmentsProvider>
         <LinkHoverCard {...hover} />
       </div>
     </AttachmentDownloadProvider>

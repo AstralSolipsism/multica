@@ -42,6 +42,7 @@ import {
   reservedHtmlBlockHeightPx,
 } from "../editor/html-block-preview";
 import { highlightCode } from "../editor/syntax-highlight";
+import { AttachmentHtmlBlock } from "../editor/attachment-html-block";
 import { LazyRichBlock } from "./lazy-rich-block";
 
 /**
@@ -73,6 +74,7 @@ export function shouldUpgradeFence(
 // memo additionally keeps it from re-rendering.
 const MemoMermaidBlock = memo(MermaidBlock);
 const MemoHtmlBlockPreview = memo(HtmlBlockPreview);
+const MemoAttachmentHtmlBlock = memo(AttachmentHtmlBlock);
 
 /**
  * Static lowlight-highlighted `<code>`, matching the editable Tiptap code
@@ -184,13 +186,27 @@ export function RichFenceBlock({
   language,
   body,
   title,
+  src,
 }: {
   language: RichFenceLanguage;
   body: string;
   /** From the fence info string: ```html title="…". */
   title?: string | null;
+  /** An HTML attachment filename owned by the surrounding entity. */
+  src?: string | null;
 }) {
-  const reservedHeightPx = useReservedHeightPx(language, body);
+  const attachmentBacked = language === "html" && src != null;
+  const reservedHeightPx = useReservedHeightPx(language, attachmentBacked ? null : body);
+  if (attachmentBacked) {
+    return (
+      <MemoAttachmentHtmlBlock
+        src={src}
+        fallbackHtml={body}
+        title={title}
+        reservedHeightPx={reservedHeightPx}
+      />
+    );
+  }
   return (
     <LazyRichBlock reservedHeightPx={reservedHeightPx} sourceKey={body}>
       {language === "mermaid" ? (
@@ -223,10 +239,12 @@ const cachedReservedPx: Record<RichFenceLanguage, (body: string) => number> = {
  * and does NOT repair. Deferring the read to an effect keeps the first frame
  * identical everywhere and still gets the zero-shift benefit immediately after.
  */
-function useReservedHeightPx(language: RichFenceLanguage, body: string): number {
+function useReservedHeightPx(language: RichFenceLanguage, body: string | null): number {
   const [height, setHeight] = useState(DEFAULT_RESERVED_PX[language]);
   useEffect(() => {
-    const cached = cachedReservedPx[language](body);
+    const cached = body == null
+      ? DEFAULT_RESERVED_PX[language]
+      : cachedReservedPx[language](body);
     setHeight((current) => (current === cached ? current : cached));
   }, [language, body]);
   return height;

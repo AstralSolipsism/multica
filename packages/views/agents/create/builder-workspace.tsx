@@ -320,6 +320,7 @@ export function BuilderWorkspace({
             sessionId={sessionId}
             messages={displayMessages}
             loading={builder.messagesLoading}
+            attachmentsStatus={builder.attachmentsStatus}
             pendingTask={builder.pendingTask}
             runtimeOnline={selectedRuntime?.status === "online"}
             onSend={builder.send}

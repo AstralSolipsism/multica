@@ -13,6 +13,10 @@ import { getCurrentWsId } from "@multica/core/platform";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { canAssignAgent } from "../../issues/components/pickers/assignee-picker";
+import {
+  chatMessageAttachmentsStatus,
+  useDeferredOlderPageFetch,
+} from "../lib/message-metadata";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import {
   isAgentRuntimeBound as hasAgentRuntime,
@@ -206,7 +210,10 @@ export function useChatController(opts?: { isActive?: boolean }) {
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
-    fetchNextPage: fetchOlderMessages,
+    status: messagesState,
+    fetchStatus: messagesFetchStatus,
+    isFetchNextPageError: olderMessagesError,
+    fetchNextPage,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
   } = useInfiniteQuery({
@@ -214,6 +221,18 @@ export function useChatController(opts?: { isActive?: boolean }) {
     // The floating window stays mounted while closed; it must not load a
     // persisted session's transcript nobody is looking at.
     enabled: !!activeSessionId && isActive,
+  });
+
+  const { fetchOlderMessages, olderPageActive } = useDeferredOlderPageFetch({
+    sessionId: activeSessionId,
+    fetchStatus: messagesFetchStatus,
+    fetchNextPage,
+  });
+  const attachmentsStatus = chatMessageAttachmentsStatus({
+    status: messagesState,
+    fetchStatus: messagesFetchStatus,
+    isFetchNextPageError: olderMessagesError,
+    olderPageActive,
   });
 
   const messagePages = activeSessionId ? rawMessagePages?.pages ?? [] : [];
@@ -874,6 +893,7 @@ export function useChatController(opts?: { isActive?: boolean }) {
     availability,
     // messages
     messages,
+    attachmentsStatus,
     pendingTask,
     pendingTaskLoading,
     pendingTaskId,

@@ -12,8 +12,9 @@ import type { Root, RootContent, Code } from "mdast";
  *
  * This module answers one question — "which fenced code blocks in this source
  * are closed?" — and returns their offsets. Since it holds the only parse that
- * still sees a fence's info string, it also reads the block title from it
- * (```html title="Weekly p95", MUL-7649): rehype-raw rebuilds the tree and
+ * still sees a fence's info string, it also reads the block title and optional
+ * HTML attachment source from it (```html title="Weekly p95", MUL-7649):
+ * rehype-raw rebuilds the tree and
  * drops the `meta` the code renderer would otherwise have received. It
  * deliberately does NOT render.
  * Rendering stays in the single ReactMarkdown pipeline; a gate that rendered
@@ -88,8 +89,21 @@ export function parseFenceTitle(meta: string | null | undefined): string | null 
   return title || null;
 }
 
+const FENCE_ATTRIBUTE_RE = /(?:^|\s)([\w-]+)=(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+
+function parseFenceSrc(meta: string | null | undefined): string | null {
+  if (!meta) return null;
+  for (const match of meta.matchAll(FENCE_ATTRIBUTE_RE)) {
+    if (match[1] !== "src") continue;
+    const src = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+    if (src) return src;
+  }
+  return null;
+}
+
 export interface ClosedFence {
   title: string | null;
+  src: string | null;
 }
 
 /**
@@ -120,7 +134,10 @@ export function computeClosedFences(source: string): Map<number, ClosedFence> {
     const end = node.position?.end.offset;
     if (start == null || end == null) continue;
     if (endsWithClosingFence(source.slice(start, end))) {
-      closed.set(start, { title: parseFenceTitle(node.meta) });
+      closed.set(start, {
+        title: parseFenceTitle(node.meta),
+        src: parseFenceSrc(node.meta),
+      });
     }
   }
 

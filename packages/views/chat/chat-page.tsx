@@ -334,6 +334,7 @@ export function ChatPage() {
         <ChatMessageList
           key={c.activeSessionId}
           messages={c.messages}
+          attachmentsStatus={c.attachmentsStatus}
           pendingTask={c.pendingTask}
           availability={c.availability}
           firstItemIndex={c.firstItemIndex}

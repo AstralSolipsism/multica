@@ -12,11 +12,13 @@ import {
   ChatMessageSkeleton,
 } from "../../chat/components/chat-message-list";
 import { useT } from "../../i18n";
+import type { EntityAttachmentsStatus } from "../../rich-content/entity-attachments-context";
 
 export function BuilderConversation({
   sessionId,
   messages,
   loading,
+  attachmentsStatus,
   pendingTask,
   runtimeOnline,
   onSend,
@@ -29,6 +31,7 @@ export function BuilderConversation({
   sessionId: string;
   messages: ChatMessage[];
   loading: boolean;
+  attachmentsStatus: EntityAttachmentsStatus;
   pendingTask:
     | { task_id?: string; status?: string; created_at?: string }
     | undefined;
@@ -81,6 +84,7 @@ export function BuilderConversation({
       ) : messages.length > 0 || pending ? (
         <ChatMessageList
           messages={messages}
+          attachmentsStatus={attachmentsStatus}
           pendingTask={pendingTask}
           availability={runtimeOnline ? "online" : "offline"}
           // Applies to the live stream as well as history, which is what keeps
