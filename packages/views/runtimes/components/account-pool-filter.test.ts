@@ -14,7 +14,7 @@ const pool = (id: string): QuotaAccountPoolState =>
     exhausted: false,
     resumesAt: null,
     tone: "ok",
-    windows: [],
+    windows: [{}],
     accounts: [],
   }) as unknown as QuotaAccountPoolState;
 

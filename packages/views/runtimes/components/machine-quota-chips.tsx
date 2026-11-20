@@ -56,7 +56,10 @@ export function MachineQuotaChips({
       });
     }
   }
-  const runtimeChips = machine.quotaChips;
+  const runtimeChips = machine.quotaChips.filter((chip) => {
+    const accountPoolView = accountPoolViews.get(chip.runtimeId);
+    return !accountPoolView || accountPoolView.partition.serving.length > 0;
+  });
   if (runtimeChips.length === 0) return null;
 
   const visibleChips = runtimeChips.slice(0, MAX_VISIBLE_CHIPS);
@@ -151,11 +154,9 @@ function QuotaOverflowHoverCard({
 // The single precedence decision behind a chip's visible text AND its
 // aria-label: a limit outranks any percentage the snapshot still carries.
 export function quotaChipState(chip: MachineQuotaChip):
-  | { kind: "empty" }
   | { kind: "limited" }
   | { kind: "unknown" }
   | { kind: "percent"; percent: number } {
-  if (chip.empty) return { kind: "empty" };
   if (chip.limited) return { kind: "limited" };
   if (chip.remainingPercent == null) return { kind: "unknown" };
   return { kind: "percent", percent: chip.remainingPercent };
@@ -201,13 +202,11 @@ function QuotaChipFace({
         : null;
       const value = relogin
         ? t(($) => $.account_pools.pool_needs_relogin)
-        : pool.windows.length === 0
-          ? t(($) => $.no_snapshot_chip)
-          : pool.exhausted
-            ? t(($) => $.exhausted)
-            : percent == null
-              ? t(($) => $.unknown)
-              : `${displayRemainingPercent(percent)}%`;
+        : pool.exhausted
+          ? t(($) => $.exhausted)
+          : percent == null
+            ? t(($) => $.unknown)
+            : `${displayRemainingPercent(percent)}%`;
       return {
         key: pool.id,
         label: accountPoolProviderLabel(pool.id),
@@ -215,7 +214,7 @@ function QuotaChipFace({
         percent,
         tone: pool.tone,
         aria: accountPoolAriaLabel(pool, t),
-        muted: pool.windows.length === 0 || (!relogin && !pool.exhausted && percent == null),
+        muted: !relogin && !pool.exhausted && percent == null,
         relogin,
       };
     });
@@ -241,13 +240,11 @@ function QuotaChipFace({
     });
   } else {
     const summary = quotaChipState(chip);
-    const value = summary.kind === "empty"
-      ? t(($) => $.no_snapshot_chip)
-      : summary.kind === "limited"
-        ? t(($) => $.exhausted)
-        : summary.kind === "unknown"
-          ? t(($) => $.unknown)
-          : `${displayRemainingPercent(summary.percent)}%`;
+    const value = summary.kind === "limited"
+      ? t(($) => $.exhausted)
+      : summary.kind === "unknown"
+        ? t(($) => $.unknown)
+        : `${displayRemainingPercent(summary.percent)}%`;
     summaries = [{
       key: "runtime",
       label: null,
@@ -257,7 +254,7 @@ function QuotaChipFace({
       aria: summary.kind === "percent"
         ? t(($) => $.remaining, { percent: displayRemainingPercent(summary.percent) })
         : value,
-      muted: summary.kind === "empty" || summary.kind === "unknown",
+      muted: summary.kind === "unknown",
     }];
   }
 
@@ -270,7 +267,7 @@ function QuotaChipFace({
       tabIndex={interactive ? 0 : undefined}
       aria-label={ariaLabel}
       className={`inline-flex max-w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md border border-border/70 px-1.5 py-1 text-micro font-medium tabular-nums ${
-        chip.empty || chip.interrupted ? "bg-muted" : "bg-card"
+        chip.interrupted ? "bg-muted" : "bg-card"
       } ${interactive ? "outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""} ${rest.className ?? ""}`}
     >
       <span aria-hidden="true" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">

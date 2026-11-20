@@ -1208,9 +1208,18 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
 
 	// scope=title_desc drops comment matching entirely (OL-458): long comment
-	// threads carry process noise that buries title/description hits. Any other
-	// (or absent) value keeps the default all-field scope.
-	titleDescOnly := r.URL.Query().Get("scope") == searchScopeTitleDesc
+	// threads carry process noise that buries title/description hits. An absent
+	// or empty value keeps the default all-field scope; anything outside the
+	// all|title_desc whitelist is rejected so a typo cannot silently widen the
+	// result set.
+	scope := r.URL.Query().Get("scope")
+	switch scope {
+	case "", searchScopeAll, searchScopeTitleDesc:
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid scope %q: valid values are all, title_desc", scope))
+		return
+	}
+	titleDescOnly := scope == searchScopeTitleDesc
 
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {

@@ -11,6 +11,7 @@ import {
 } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
+import { accountPoolHasQuotaContent } from "./account-pool-filter";
 
 export type RuntimeMachineSection = "local" | "remote" | "cloud";
 export type RuntimeMachineFilter = "all" | "online" | "issues";
@@ -29,8 +30,6 @@ export interface MachineQuotaChip {
   remainingPercent: number | null;
   limited: boolean;
   tone: QuotaTone;
-  /** The runtime is online but has not reported a usable quota snapshot. */
-  empty?: boolean;
   /** The collector stopped: the last balance stays, uncolored and flagged. */
   interrupted: boolean;
 }
@@ -331,9 +330,9 @@ function finalizeRuntimeMachine(
   };
 }
 
-// Quota pills for an online machine: exactly one per Runtime. Provider and
-// model pools stay nested inside that Runtime's pill and hover card.
-// Interrupted collections keep their last balance instead of disappearing.
+// Quota pills for an online machine: at most one per Runtime with displayable
+// quota content. Provider and model pools stay nested inside that Runtime's
+// pill and hover card. Interrupted collections keep their last balance.
 function machineQuotaChips(
   runtimes: AgentRuntime[],
   now: number,
@@ -345,6 +344,7 @@ function machineQuotaChips(
       : null;
     const accountPools = quota ? evaluatePlanQuotaPools(quota, now) : null;
     if (quota && accountPools) {
+      if (!accountPools.pools.some(accountPoolHasQuotaContent)) continue;
       chips.push({
         key: runtime.id,
         runtimeId: runtime.id,
@@ -353,25 +353,11 @@ function machineQuotaChips(
         limited: accountPools.exhausted,
         tone: accountPools.tone,
         interrupted: isQuotaCollectionInterrupted(quota, now),
-        empty: accountPools.pools.every((pool) => pool.windows.length === 0),
       });
       continue;
     }
     const state = planQuotaState(runtime.plan_quota, now);
-    if (!state) {
-      if (runtime.plan_quota != null && parsePlanQuota(runtime.plan_quota) == null) continue;
-      chips.push({
-        key: runtime.id,
-        runtimeId: runtime.id,
-        provider: runtime.provider,
-        remainingPercent: null,
-        limited: false,
-        tone: "ok",
-        interrupted: false,
-        empty: true,
-      });
-      continue;
-    }
+    if (!state) continue;
     chips.push({
       key: runtime.id,
       runtimeId: runtime.id,
