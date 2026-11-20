@@ -434,8 +434,13 @@ describe("OMP account pools", () => {
   });
 
   it("moves a multi-account pool's resets into each account row", async () => {
+    const first = ompAccount("19*", "exhausted", 0, 65);
+    const second = ompAccount("as*", "ok", 85, 80);
+    second.windows[0]!.resets_at = NOW_SEC + 2 * HOUR;
+    second.windows[1]!.resets_at = NOW_SEC + 5 * DAY;
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [first, second])] });
     renderWithI18n(
-      <RuntimeQuotaCell runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+      <RuntimeQuotaCell runtime={runtime} now={NOW} agents={servingAgents()} />,
     );
     await userEvent.hover(
       screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!,
@@ -449,11 +454,14 @@ describe("OMP account pools", () => {
       expect(row).not.toHaveTextContent(/resets at |recovers at /);
     }
 
-    // Three accounts, two windows each: the exhausted 5h window recovers, the
-    // other five report their own reset.
-    expect(within(section).getAllByText(`resets at ${at(NOW_SEC + HOUR)}`)).toHaveLength(2);
-    expect(within(section).getAllByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toHaveLength(3);
-    expect(within(section).getByText(`recovers at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
+    const firstRow = within(section).getByRole("row", { name: /#1 \(19\*\)/ });
+    const secondRow = within(section).getByRole("row", { name: /#2 \(as\*\)/ });
+    const firstCells = within(firstRow).getAllByRole("cell");
+    const secondCells = within(secondRow).getAllByRole("cell");
+    expect(firstCells[1]).toHaveTextContent("recovers at " + at(NOW_SEC + HOUR));
+    expect(firstCells[2]).toHaveTextContent("resets at " + at(NOW_SEC + 4 * DAY));
+    expect(secondCells[1]).toHaveTextContent("resets at " + at(NOW_SEC + 2 * HOUR));
+    expect(secondCells[2]).toHaveTextContent("resets at " + at(NOW_SEC + 5 * DAY));
   });
 
   it("keeps the aggregated reset for a single-account pool", async () => {
@@ -639,7 +647,10 @@ describe("OMP account pools", () => {
     expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "1 idle provider pool" }));
     expect(screen.getByText("Claude").parentElement).toHaveTextContent("· Not used");
-    expect(screen.getByRole("cell", { name: "72%" })).toBeInTheDocument();
+    const idleRow = screen.getByRole("row", { name: /#1 \(idle\)/ });
+    const fiveHour = within(idleRow).getAllByRole("cell")[1]!;
+    expect(within(fiveHour).getByText("72%")).toBeInTheDocument();
+    expect(within(fiveHour).getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
   });
 
   it("derives account table columns from reported windows", () => {

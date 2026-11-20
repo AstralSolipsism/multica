@@ -747,8 +747,8 @@ describe("multi-account provider pools (OMP)", () => {
           note: null,
           windows: [
             { name: "limit_custom_a", used_percent: 15, window_minutes: null, resets_at: null },
-            { name: "7d", used_percent: 67, window_minutes: 10080, resets_at: reset7d },
-            { name: "limit_7d", used_percent: 62, window_minutes: null, resets_at: null },
+            { name: "7d", used_percent: 67, window_minutes: 10080, resets_at: null },
+            { name: "limit_7d", used_percent: 62, window_minutes: null, resets_at: reset7d },
             { name: "limit_custom_b", used_percent: 25, window_minutes: null, resets_at: null },
           ],
         }],
