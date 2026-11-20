@@ -79,6 +79,7 @@ function AccountPoolQuotaSubject({
                 window={window}
                 now={now}
                 interrupted={interrupted}
+                showReset={pool.accounts.length <= 1}
               />
             ))}
           </div>
@@ -88,7 +89,7 @@ function AccountPoolQuotaSubject({
             </p>
           )}
           {pool.accounts.length > 0 && pool.windows.length > 0 && (
-            <AccountPoolAccountsTable pool={pool} interrupted={interrupted} />
+            <AccountPoolAccountsTable pool={pool} interrupted={interrupted} now={now} />
           )}
         </>
       )}
@@ -231,10 +232,14 @@ function QuotaCardWindow({
   window,
   now,
   interrupted,
+  showReset = true,
 }: {
   window: QuotaWindowState;
   now: number;
   interrupted: boolean;
+  /** False for a multi-account pool: its aggregate reset is a merge of
+   *  independent accounts, not a pool reset. Account rows show their own. */
+  showReset?: boolean;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -246,7 +251,7 @@ function QuotaCardWindow({
   const reset = quotaWindowResetText(window, now, t, formatTime);
   const showBar = window.remainingPercent != null && !window.notApplicable;
   return (
-    <div className="space-y-1">
+    <div data-pool-window className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-caption text-muted-foreground">
           {t(($) => $.window_label, { label })}
@@ -271,7 +276,7 @@ function QuotaCardWindow({
           barClassName={interrupted ? MUTED_BAR_CLASS : undefined}
         />
       )}
-      {reset != null && (
+      {showReset && reset != null && (
         <p className="text-micro tabular-nums text-faint-foreground">{reset}</p>
       )}
     </div>
