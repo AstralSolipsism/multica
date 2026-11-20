@@ -84,10 +84,15 @@ function AccountPoolTooltipWindow({
   window,
   now,
   interrupted,
+  showReset = true,
 }: {
   window: QuotaWindowState;
   now: number;
   interrupted: boolean;
+  /** False for a multi-account pool's aggregated row: one merged reset would
+   *  read as the pool's own reset. Each account's resets live in its table
+   *  row instead. */
+  showReset?: boolean;
 }) {
   const { t } = useT("quota");
   const formatTime = useQuotaTimeFormatter();
@@ -99,8 +104,11 @@ function AccountPoolTooltipWindow({
       ? quotaWindowValueText(window, t) ?? "--"
       : `${displayRemainingPercent(window.remainingPercent)}%`;
   return (
-    <span className="grid grid-cols-[1.75rem_minmax(2rem,1fr)_auto] items-center gap-1.5">
-      <span className="text-muted-foreground">{label}</span>
+    <span
+      data-pool-window
+      className="grid grid-cols-[minmax(1.75rem,auto)_minmax(3rem,1fr)_auto] items-center gap-1.5"
+    >
+      <span className="min-w-0 max-w-20 truncate whitespace-nowrap text-muted-foreground">{label}</span>
       <AccountPoolBar window={window} interrupted={interrupted} label={label} />
       <span className="flex flex-wrap items-center justify-end gap-x-2 text-right">
         <span
@@ -113,7 +121,9 @@ function AccountPoolTooltipWindow({
         >
           {value}
         </span>
-        {reset && <span className="whitespace-nowrap text-micro text-muted-foreground">{reset}</span>}
+        {showReset && reset && (
+          <span className="whitespace-nowrap text-micro text-muted-foreground">{reset}</span>
+        )}
       </span>
     </span>
   );
@@ -133,75 +143,92 @@ function accountWindowFor(
 export function AccountPoolAccountsTable({
   pool,
   interrupted,
+  now,
   limit,
 }: {
   pool: QuotaAccountPoolState;
   interrupted: boolean;
+  now: number;
   limit?: number;
 }) {
   const { t } = useT("quota");
+  const formatTime = useQuotaTimeFormatter();
   const accounts = limit == null ? pool.accounts : pool.accounts.slice(0, limit);
   const hidden = pool.accounts.length - accounts.length;
   return (
     <>
-      <table className="w-full text-left text-caption">
-        <thead className="text-micro text-faint-foreground">
-          <tr>
-            <th className="py-1 pr-2 font-normal">{t(($) => $.account_pools.account)}</th>
-            {pool.windows.map((window, index) => (
-              <th key={`${window.name}-${index}`} className="w-12 px-2 py-1 text-right font-normal">
-                {formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {accounts.map((account, index) => {
-            const disabled = account.status === "disabled";
-            return (
-              <tr key={`${account.label}-${index}`} className="border-t border-border/60">
-                <td className="max-w-0 py-1.5 pr-2">
-                  <span className="flex min-w-0 items-center truncate tabular-nums">
-                    <span className="truncate">#{index + 1} ({account.label})</span>
-                    {account.status === "reserve" && (
-                      <span className="shrink-0 text-faint-foreground">
-                        {" · "}{t(($) => $.account_pools.idle)}
-                      </span>
-                    )}
-                  </span>
-                </td>
-                {disabled ? (
-                  <td
-                    colSpan={Math.max(pool.windows.length, 1)}
-                    className="px-2 py-1.5 text-right text-warning"
-                  >
-                    {t(($) => $.account_pools.account_relogin)}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-caption">
+          <thead className="text-micro text-faint-foreground">
+            <tr>
+              <th className="py-1 pr-2 font-normal">{t(($) => $.account_pools.account)}</th>
+              {pool.windows.map((window, index) => (
+                <th key={`${window.name}-${index}`} className="min-w-12 whitespace-nowrap px-2 py-1 text-right font-normal">
+                  {formatQuotaWindowLabel(window.windowMinutes, t) ?? window.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((account, index) => {
+              const disabled = account.status === "disabled";
+              return (
+                <tr key={`${account.label}-${index}`} className="border-t border-border/60">
+                  <td className="max-w-0 min-w-24 py-1.5 pr-2">
+                    <span className="flex min-w-0 items-center truncate tabular-nums">
+                      <span className="truncate">#{index + 1} ({account.label})</span>
+                      {account.status === "reserve" && (
+                        <span className="shrink-0 text-faint-foreground">
+                          {" · "}{t(($) => $.account_pools.idle)}
+                        </span>
+                      )}
+                    </span>
                   </td>
-                ) : (
-                  pool.windows.map((template, windowIndex) => {
-                    const window = accountWindowFor(account, template);
-                    return (
-                      <td
-                        key={`${template.name}-${windowIndex}`}
-                        className={cn(
-                          "px-2 py-1.5 text-right tabular-nums",
-                          window?.remainingPercent != null
-                            ? quotaValueClass(window.tone, interrupted)
-                            : "text-faint-foreground",
-                        )}
-                      >
-                        {window?.remainingPercent == null
-                          ? "--"
-                          : `${displayRemainingPercent(window.remainingPercent)}%`}
-                      </td>
-                    );
-                  })
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  {disabled ? (
+                    <td
+                      colSpan={Math.max(pool.windows.length, 1)}
+                      className="px-2 py-1.5 text-right text-warning"
+                    >
+                      {t(($) => $.account_pools.account_relogin)}
+                    </td>
+                  ) : (
+                    pool.windows.map((template, windowIndex) => {
+                      const window = accountWindowFor(account, template);
+                      const reset = window == null
+                        ? null
+                        : quotaWindowResetText(window, now, t, formatTime);
+                      return (
+                        <td
+                          key={`${template.name}-${windowIndex}`}
+                          className="px-2 py-1.5 text-right align-top tabular-nums"
+                        >
+                          <span
+                            className={cn(
+                              "block whitespace-nowrap",
+                              window?.remainingPercent != null
+                                ? quotaValueClass(window.tone, interrupted)
+                                : "text-faint-foreground",
+                            )}
+                          >
+                            {window?.remainingPercent == null
+                              ? "--"
+                              : `${displayRemainingPercent(window.remainingPercent)}%`}
+                          </span>
+                          {reset && (
+                            <span className="mt-0.5 block whitespace-nowrap text-micro text-faint-foreground">
+                              {reset}
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       {hidden > 0 && (
         <p className="pt-1.5 text-micro text-faint-foreground">
           {t(($) => $.account_pools.more_accounts, { count: hidden })}
@@ -315,6 +342,7 @@ function QuotaHoverCardBody({
                           window={window}
                           now={now}
                           interrupted={interrupted}
+                          showReset={pool.accounts.length <= 1}
                         />
                       ))}
                     </div>
@@ -324,7 +352,12 @@ function QuotaHoverCardBody({
                       </p>
                     )}
                     {pool.accounts.length > 0 && (
-                      <AccountPoolAccountsTable pool={pool} interrupted={interrupted} limit={4} />
+                      <AccountPoolAccountsTable
+                        pool={pool}
+                        interrupted={interrupted}
+                        now={now}
+                        limit={4}
+                      />
                     )}
                   </>
                 )}

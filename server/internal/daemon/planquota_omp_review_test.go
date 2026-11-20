@@ -271,6 +271,68 @@ func TestOmpUsageToPlanQuota_KimiWeeklyWindowWithoutDuration(t *testing.T) {
 	}
 }
 
+func TestOmpUsageToPlanQuota_KimiAliasesDeduplicateAndSort(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	raw, _ := json.Marshal(map[string]any{
+		"generatedAt": now.UnixMilli(),
+		"reports": []any{map[string]any{
+			"provider": "kimi-code",
+			"limits": []any{
+				ompLimitJSON("kimi-custom", "limit_custom", 0, 0, 0.2, "ok"),
+				ompLimitJSON("kimi-7d", "7d", 604_800_000, ompReset7d, 0.62, "ok"),
+				ompLimitJSON("kimi-limit5h", "limit5h", 0, ompReset5h, 0.4, "ok"),
+				ompLimitJSON("kimi-limit7d", "limit_7d", 0, ompReset7d+86400000, 0.67, "ok"),
+			},
+			"metadata": map[string]any{"email": "19*"},
+		}},
+	})
+	quota, err := ompUsageToPlanQuota(raw, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows := quota.AccountPools[0].Accounts[0].Windows
+	if len(windows) != 3 {
+		t.Fatalf("windows = %+v, want deduplicated 5h, 7d, and custom", windows)
+	}
+	if windows[0].Name != "5h" || windows[0].WindowMinutes == nil || *windows[0].WindowMinutes != 300 {
+		t.Fatalf("first window = %+v, want 5h", windows[0])
+	}
+	weekly := windows[1]
+	if weekly.Name != "7d" || weekly.WindowMinutes == nil || *weekly.WindowMinutes != 10080 {
+		t.Fatalf("second window = %+v, want canonical 7d", weekly)
+	}
+	if weekly.UsedPercent == nil || *weekly.UsedPercent != 67 {
+		t.Fatalf("7d used_percent = %v, want highest alias reading 67", weekly.UsedPercent)
+	}
+	if weekly.ResetsAt == nil || *weekly.ResetsAt != now.Unix()+3*86400 {
+		t.Fatalf("7d resets_at = %v, want earliest reported reset", weekly.ResetsAt)
+	}
+	if windows[2].Name != "limit_custom" || windows[2].WindowMinutes != nil {
+		t.Fatalf("unknown custom window was not preserved last: %+v", windows[2])
+	}
+}
+
+func TestOmpWindowMinutesStandardAliases(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit *ompUsageLimit
+		want  int64
+	}{
+		{name: "duration wins", limit: &ompUsageLimit{Window: &ompUsageWindow{ID: "limit_7d", DurationMs: 18_000_000}}, want: 300},
+		{name: "window alias ignores case", limit: &ompUsageLimit{Window: &ompUsageWindow{ID: "LIMIT-5H"}}, want: 300},
+		{name: "scope fallback", limit: &ompUsageLimit{Scope: ompUsageScope{WindowID: "limit_1w"}}, want: 10080},
+		{name: "limit fallback", limit: &ompUsageLimit{ID: "limit30d"}, want: 43200},
+		{name: "custom remains unknown", limit: &ompUsageLimit{ID: "limit_custom"}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ompWindowMinutes(tt.limit); got != tt.want {
+				t.Fatalf("ompWindowMinutes() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // #9: the REAL exec path must fail soft on a hanging subprocess — the
 // injected timeout kills it and collection reports an error instead of
 // blocking forever.

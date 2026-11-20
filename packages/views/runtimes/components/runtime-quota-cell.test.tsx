@@ -8,6 +8,7 @@ import type { QuotaAccountPoolState } from "@multica/core/runtimes";
 import type {
   Agent,
   AgentRuntime,
+  RuntimePlanQuotaWindow,
 } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { buildRuntimeMachines } from "./runtime-machines";
@@ -101,15 +102,11 @@ function ompAccount(
   remaining7d: number,
   note: string | null = null,
 ) {
-  return {
-    label,
-    status,
-    note,
-    windows: status === "disabled" ? [] : [
-      { name: "5h", used_percent: 100 - remaining5h, window_minutes: 300, resets_at: NOW_SEC + HOUR },
-      { name: "7d", used_percent: 100 - remaining7d, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
-    ],
-  };
+  const windows: RuntimePlanQuotaWindow[] = status === "disabled" ? [] : [
+    { name: "5h", used_percent: 100 - remaining5h, window_minutes: 300, resets_at: NOW_SEC + HOUR },
+    { name: "7d", used_percent: 100 - remaining7d, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+  ];
+  return { label, status, note, windows };
 }
 
 function ompPool(id: string, accounts: ReturnType<typeof ompAccount>[]) {
@@ -406,6 +403,100 @@ describe("OMP account pools", () => {
     await waitFor(() => expect(screen.queryByText("#1 (19*)")).not.toBeInTheDocument());
   });
 
+  it("deduplicates legacy Kimi windows and keeps long custom labels out of the meter column", async () => {
+    const account = {
+      ...ompAccount("19*", "ok", 60, 38),
+      windows: [
+        { name: "7d", used_percent: 62, window_minutes: 10080, resets_at: NOW_SEC + 4 * DAY },
+        { name: "limit_7d", used_percent: 62, window_minutes: null, resets_at: NOW_SEC + 4 * DAY },
+        { name: "limit_5h", used_percent: 40, window_minutes: null, resets_at: NOW_SEC + HOUR },
+        { name: "limit_custom_window", used_percent: 20, window_minutes: null, resets_at: NOW_SEC + 2 * DAY },
+      ] satisfies RuntimePlanQuotaWindow[],
+    };
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    const trigger = screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!;
+    await userEvent.hover(trigger);
+
+    const accountRow = await screen.findByText("#1 (19*)");
+    const card = accountRow.closest<HTMLElement>('[data-slot="hover-card-content"]')!;
+    const customLabel = within(card).getByText("limit_custom_window", { selector: "span" });
+    expect(within(card).queryByText("limit_7d")).not.toBeInTheDocument();
+    expect(within(card).queryByText("limit_5h")).not.toBeInTheDocument();
+    expect(within(card).getAllByRole("columnheader", { name: "5h" })).toHaveLength(1);
+    expect(within(card).getAllByRole("columnheader", { name: "7d" })).toHaveLength(1);
+    expect(customLabel).toHaveClass("max-w-20", "truncate", "whitespace-nowrap");
+    expect(customLabel.parentElement).toHaveClass(
+      "grid-cols-[minmax(1.75rem,auto)_minmax(3rem,1fr)_auto]",
+    );
+    expect(within(card).getByRole("columnheader", { name: "limit_custom_window" }))
+      .toHaveClass("min-w-12", "whitespace-nowrap");
+  });
+
+  it("moves a multi-account pool's resets into each account row", async () => {
+    const first = ompAccount("19*", "exhausted", 0, 65);
+    const second = ompAccount("as*", "ok", 85, 80);
+    second.windows[0]!.resets_at = NOW_SEC + 2 * HOUR;
+    second.windows[1]!.resets_at = NOW_SEC + 5 * DAY;
+    const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [first, second])] });
+    renderWithI18n(
+      <RuntimeQuotaCell runtime={runtime} now={NOW} agents={servingAgents()} />,
+    );
+    await userEvent.hover(
+      screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!,
+    );
+
+    const accountRow = await screen.findByText("#1 (19*)");
+    const section = accountRow.closest<HTMLElement>('[data-hover-account-pool="kimi-code"]')!;
+    const poolWindows = Array.from(section.querySelectorAll<HTMLElement>("[data-pool-window]"));
+    expect(poolWindows).toHaveLength(2);
+    for (const row of poolWindows) {
+      expect(row).not.toHaveTextContent(/resets at |recovers at /);
+    }
+
+    const firstRow = within(section).getByRole("row", { name: /#1 \(19\*\)/ });
+    const secondRow = within(section).getByRole("row", { name: /#2 \(as\*\)/ });
+    const firstCells = within(firstRow).getAllByRole("cell");
+    const secondCells = within(secondRow).getAllByRole("cell");
+    expect(firstCells[1]).toHaveTextContent("recovers at " + at(NOW_SEC + HOUR));
+    expect(firstCells[2]).toHaveTextContent("resets at " + at(NOW_SEC + 4 * DAY));
+    expect(secondCells[1]).toHaveTextContent("resets at " + at(NOW_SEC + 2 * HOUR));
+    expect(secondCells[2]).toHaveTextContent("resets at " + at(NOW_SEC + 5 * DAY));
+  });
+
+  it("keeps the aggregated reset for a single-account pool", async () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [ompPool("kimi-code", [ompAccount("19*", "ok", 85, 80)])],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    await userEvent.hover(
+      screen.getByText("Kimi Code").closest<HTMLElement>('[data-slot="hover-card-trigger"]')!,
+    );
+
+    const accountRow = await screen.findByText("#1 (19*)");
+    const section = accountRow.closest<HTMLElement>('[data-hover-account-pool="kimi-code"]')!;
+    const poolWindows = Array.from(section.querySelectorAll<HTMLElement>("[data-pool-window]"));
+    expect(poolWindows[0]).toHaveTextContent(`resets at ${at(NOW_SEC + HOUR)}`);
+    expect(poolWindows[1]).toHaveTextContent(`resets at ${at(NOW_SEC + 4 * DAY)}`);
+    expect(within(section).getAllByText(`resets at ${at(NOW_SEC + HOUR)}`)).toHaveLength(2);
+  });
+
+  it("shows each account's resets in Runtime details instead of the pool aggregate", () => {
+    const { container } = renderWithI18n(
+      <RuntimeQuotaCard runtime={ompRuntime()} now={NOW} agents={servingAgents()} />,
+    );
+
+    const matrix = container.querySelector<HTMLElement>('[data-account-pool-matrix="kimi-code"]')!;
+    const poolWindows = Array.from(matrix.querySelectorAll<HTMLElement>("[data-pool-window]"));
+    expect(poolWindows).toHaveLength(2);
+    for (const row of poolWindows) {
+      expect(row).not.toHaveTextContent(/resets at |recovers at /);
+    }
+    expect(within(matrix).getAllByText(`resets at ${at(NOW_SEC + 4 * DAY)}`)).toHaveLength(3);
+    expect(within(matrix).getAllByText(`resets at ${at(NOW_SEC + HOUR)}`)).toHaveLength(2);
+    expect(within(matrix).getByText(`recovers at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
+  });
+
   it("opens on keyboard focus", async () => {
     const user = userEvent.setup();
     renderWithI18n(
@@ -556,7 +647,10 @@ describe("OMP account pools", () => {
     expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "1 idle provider pool" }));
     expect(screen.getByText("Claude").parentElement).toHaveTextContent("· Not used");
-    expect(screen.getByRole("cell", { name: "72%" })).toBeInTheDocument();
+    const idleRow = screen.getByRole("row", { name: /#1 \(idle\)/ });
+    const fiveHour = within(idleRow).getAllByRole("cell")[1]!;
+    expect(within(fiveHour).getByText("72%")).toBeInTheDocument();
+    expect(within(fiveHour).getByText(`resets at ${at(NOW_SEC + HOUR)}`)).toBeInTheDocument();
   });
 
   it("derives account table columns from reported windows", () => {
