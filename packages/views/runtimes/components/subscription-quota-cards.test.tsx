@@ -45,59 +45,44 @@ function source(overrides: Partial<WorkspaceQuotaSource> = {}): WorkspaceQuotaSo
   };
 }
 
-function chip(label: string) {
-  return screen.getByText(label).closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
+function card(name: string) {
+  return screen.getByText(name).closest<HTMLElement>('[data-slot="tooltip-trigger"]')!;
 }
 
 describe("SubscriptionQuotaCards", () => {
-  it("renders channel, custom name, visibility and distinct GLM windows without plan or absolute usage", () => {
-    renderWithI18n(<SubscriptionQuotaCards sources={[source()]} now={NOW} />);
+  it("renders compact tiles with short windows and drops the duplicated channel, visibility and timestamp noise", () => {
+    const { container } = renderWithI18n(<SubscriptionQuotaCards sources={[source()]} now={NOW} />);
 
     expect(screen.getByText("Primary GLM")).toBeInTheDocument();
-    expect(screen.getByText("Zhipu GLM Coding Plan")).toBeInTheDocument();
-    expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getByText("5-hour tokens")).toBeInTheDocument();
-    expect(screen.getByText("7d tokens")).toBeInTheDocument();
-    expect(screen.getByText("Monthly tool credits")).toBeInTheDocument();
-    expect(screen.getByText("70% left")).toBeInTheDocument();
-    expect(screen.getByText("40% left")).toBeInTheDocument();
-    expect(screen.getByText("84% left")).toBeInTheDocument();
-    expect(screen.queryByText("MAX")).not.toBeInTheDocument();
-    expect(screen.queryByText(/95 \/ 100/)).not.toBeInTheDocument();
-    expect(screen.getByText("updated 2m ago")).toBeInTheDocument();
+    expect(screen.getByText("7d 40%")).toBeInTheDocument();
+    expect(screen.getByText("5h 70%")).toBeInTheDocument();
+    expect(screen.getByText("Monthly tool credits 84%")).toBeInTheDocument();
+
+    // The icon already names the channel; the type label and the visibility
+    // badge were pure noise on the status tiles.
+    expect(screen.queryByText("Zhipu GLM Coding Plan")).not.toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shared")).not.toBeInTheDocument();
+    // Last-updated moved into the hover tooltip.
+    expect(screen.queryByText(/updated 2m ago/)).not.toBeInTheDocument();
+
+    const region = container.querySelector("section")!;
+    expect(region.className).toContain("flex-wrap");
+    const tile = card("Primary GLM");
+    expect(tile.tagName).toBe("ARTICLE");
+    expect(tile.className).toContain("inline-flex");
+    // The workspace card response carries no `enabled` (disabled sources are
+    // filtered server-side), so a healthy tile must never be dimmed.
+    expect(tile.className).not.toContain("opacity-60");
   });
 
-  // OL-1205 review #4②: credit pools must carry their real period too —
-  // two CREDIT_LIMIT windows render distinct 5h / weekly credit labels,
-  // never two identical "credit" chips.
-  it("labels 5-hour and weekly CREDIT_LIMIT windows distinctly", () => {
-    const creditSource = source({
-      name: "GLM Credit Plan",
-      quota: {
-        provider: "glm",
-        status: "ok",
-        source: "subscription",
-        observed_at: NOW_SEC - 120,
-        windows: [
-          { name: "credits_300", group: "credits", used_percent: 20, window_minutes: 300, resets_at: NOW_SEC + 3600 },
-          { name: "credits_10080", group: "credits", used_percent: 55, window_minutes: 10080, resets_at: NOW_SEC + 86400 },
-        ],
-      },
-    });
-    renderWithI18n(<SubscriptionQuotaCards sources={[creditSource]} now={NOW} />);
-
-    expect(screen.getByText("5-hour credits")).toBeInTheDocument();
-    expect(screen.getByText("7d credits")).toBeInTheDocument();
-    expect(screen.getAllByText("5-hour credits")).toHaveLength(1);
-    expect(screen.queryByText("Credit window")).not.toBeInTheDocument();
-  });
-
-  it("shows each window's reset time and snapshot age in its tooltip", async () => {
+  it("opens the tile tooltip with full window names, reset time and snapshot age", async () => {
     const user = userEvent.setup();
     renderWithI18n(<SubscriptionQuotaCards sources={[source()]} now={NOW} />);
 
-    await user.hover(chip("5-hour tokens"));
-    const reset = await screen.findByText(
+    await user.hover(card("Primary GLM"));
+    expect(await screen.findByText("5-hour tokens · 70% left")).toBeInTheDocument();
+    const reset = screen.getByText(
       `resets at ${formatQuotaTime(NOW_SEC + 3600, NOW, "Asia/Shanghai", "en")}`,
     );
     expect(reset.closest('[data-slot="tooltip-content"]')).toHaveTextContent("updated 2m ago");
@@ -118,11 +103,12 @@ describe("SubscriptionQuotaCards", () => {
     });
     const { container } = renderWithI18n(<SubscriptionQuotaCards sources={[custom]} now={NOW} />);
     const triggers = container.querySelectorAll('[data-slot="tooltip-trigger"]');
-    expect(triggers[0]).toHaveTextContent("7d tokens40% left");
-    expect(screen.getByText("100% left")).toBeInTheDocument();
+    expect(triggers[0]).toHaveTextContent("7d 40%");
+    expect(screen.getByText("5h 100%")).toBeInTheDocument();
   });
 
-  it("renders ZenMux windows and an owner-visible collection error", () => {
+  it("renders ZenMux windows and a compact error hint without the visibility badge", async () => {
+    const user = userEvent.setup();
     const zenmux = source({
       kind: "zenmux",
       name: "Shared ZenMux",
@@ -141,10 +127,14 @@ describe("SubscriptionQuotaCards", () => {
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[zenmux]} now={NOW} />);
 
-    expect(screen.getByText("Shared")).toBeInTheDocument();
-    expect(screen.getByText("5h subscription")).toBeInTheDocument();
-    expect(screen.getByText("7d subscription")).toBeInTheDocument();
-    expect(screen.getByText(/The provider rejected this credential/)).toBeInTheDocument();
+    expect(screen.queryByText("Shared")).not.toBeInTheDocument();
+    expect(screen.queryByText("ZenMux")).not.toBeInTheDocument();
+    expect(screen.getByText("5h 75%")).toBeInTheDocument();
+    expect(screen.getByText("7d 20%")).toBeInTheDocument();
+    expect(screen.getByText("Error")).toBeInTheDocument();
+
+    await user.hover(card("Shared ZenMux"));
+    expect(await screen.findByText(/The provider rejected this credential/)).toBeInTheDocument();
   });
 
   it("keeps a stale snapshot visible but marks collection interrupted", () => {
@@ -153,10 +143,11 @@ describe("SubscriptionQuotaCards", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[stale]} now={NOW} />, { locale: "zh-Hans" });
 
     expect(screen.getByText(/采集中断/)).toBeInTheDocument();
-    expect(screen.getAllByText(/剩 \d+%/).length).toBeGreaterThan(0);
+    expect(screen.getByText("7d 40%")).toBeInTheDocument();
   });
 
-  it("renders a DeepSeek money balance with topped-up/granted breakdown in the tooltip", async () => {
+  it("renders a compact DeepSeek money balance and keeps the 30-day spend in the tooltip", async () => {
+    const user = userEvent.setup();
     const deepseek = source({
       id: "source-ds",
       kind: "deepseek",
@@ -169,20 +160,25 @@ describe("SubscriptionQuotaCards", () => {
         available: true,
         windows: [],
         balances: [
-          { currency: "CNY", total_balance: 48.5, granted_balance: 0.5, topped_up_balance: 48 },
+          { currency: "CNY", total_balance: 48.5, granted_balance: 0.5, topped_up_balance: 48, spend_30d: 14.2 },
         ],
       },
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[deepseek]} now={NOW} />);
 
-    expect(screen.getByText("CNY")).toBeInTheDocument();
-    expect(screen.getAllByText("Available · balance ¥48.50").length).toBeGreaterThan(0);
-    await userEvent.hover(chip("Available · balance ¥48.50"));
-    expect(await screen.findByText("Topped-up balance ¥48.00")).toBeInTheDocument();
+    const surface = screen.getByText("¥48.50");
+    expect(surface.className).toContain("text-success");
+    expect(screen.queryByText(/Available · balance/)).not.toBeInTheDocument();
+
+    await user.hover(card("DeepSeek 充值"));
+    expect(await screen.findByText("Available balance ¥48.50")).toBeInTheDocument();
+    expect(screen.getByText("Spent in the last 30 days ¥14.20")).toBeInTheDocument();
+    expect(screen.getByText("Topped-up balance ¥48.00")).toBeInTheDocument();
     expect(screen.getByText("Granted balance ¥0.50")).toBeInTheDocument();
+    expect(screen.getByText("updated 2m ago")).toBeInTheDocument();
   });
 
-  it("flags an exhausted or unavailable balance destructively", () => {
+  it("flags an exhausted balance destructively and clamps the surface amount", () => {
     const drained = source({
       id: "source-ds2",
       kind: "deepseek",
@@ -199,11 +195,12 @@ describe("SubscriptionQuotaCards", () => {
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[drained]} now={NOW} />);
 
-    const exhaustedPill = screen.getAllByText("Balance exhausted / unavailable")[0];
-    expect(exhaustedPill?.parentElement?.className).toContain("text-destructive");
+    const pill = screen.getByText("¥0.00 · Balance exhausted");
+    expect(pill.className).toContain("text-destructive");
   });
 
-  it("renders the jev_free health probe with latency", () => {
+  it("renders the jev_free health probe as a latency pill", async () => {
+    const user = userEvent.setup();
     const free = source({
       id: "source-free",
       kind: "jev_free",
@@ -220,9 +217,12 @@ describe("SubscriptionQuotaCards", () => {
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[free]} now={NOW} />);
 
-    const pill = screen.getByText("Healthy · 340ms").closest("span")!;
+    const pill = screen.getByText("340ms");
     expect(pill.className).toContain("text-success");
     expect(screen.queryByText("Waiting for the first collection")).not.toBeInTheDocument();
+
+    await user.hover(card("免费通道"));
+    expect(await screen.findByText("Healthy · 340ms")).toBeInTheDocument();
   });
 
   it("never labels an unavailable probe as healthy (402 / Insufficient balance snapshot)", () => {
@@ -243,7 +243,7 @@ describe("SubscriptionQuotaCards", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[unavailable]} now={NOW} />);
 
     expect(screen.queryByText(/Healthy ·/)).not.toBeInTheDocument();
-    const pill = screen.getByText("Abnormal").closest("span")!;
+    const pill = screen.getByText("Abnormal");
     expect(pill.className).toContain("text-destructive");
   });
 
@@ -264,11 +264,12 @@ describe("SubscriptionQuotaCards", () => {
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[drained]} now={NOW} />);
 
-    const pill = screen.getByText("Balance exhausted / unavailable").closest("span")!;
+    const pill = screen.getByText("Balance exhausted / unavailable");
     expect(pill.className).toContain("text-destructive");
   });
 
-  it("renders a rate-limited jev_free monitor with its error reason and check time", () => {
+  it("renders a rate-limited jev_free monitor compactly and keeps its last check time", async () => {
+    const user = userEvent.setup();
     const limited = source({
       id: "source-free2",
       kind: "jev_free",
@@ -279,12 +280,19 @@ describe("SubscriptionQuotaCards", () => {
     });
     renderWithI18n(<SubscriptionQuotaCards sources={[limited]} now={NOW} />);
 
-    const pill = screen.getByText("Rate limited").closest("span")!;
+    const pill = screen.getByText("Rate limited");
     expect(pill.className).toContain("text-warning");
-    expect(screen.getByText("The provider is rate limiting requests. Try again later.")).toBeInTheDocument();
+    // One compact hint is enough on the surface; the long reason is in the
+    // tooltip only.
+    expect(screen.queryByText(/The provider is rate limiting requests/)).not.toBeInTheDocument();
+
+    // No successful snapshot yet: the tooltip still reports when the probe ran.
+    await user.hover(card("免费通道"));
+    expect(await screen.findByText("updated 1m ago")).toBeInTheDocument();
+    expect(screen.getByText(/The provider is rate limiting requests/)).toBeInTheDocument();
   });
 
-  it("renders an enabled source with no snapshot as waiting", () => {
+  it("renders a source with no snapshot as waiting", () => {
     renderWithI18n(<SubscriptionQuotaCards sources={[source({ quota: null })]} now={NOW} />);
     expect(screen.getByText("Waiting for the first collection")).toBeInTheDocument();
   });

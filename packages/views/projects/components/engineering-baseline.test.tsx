@@ -91,6 +91,7 @@ function pageRead(): WikiPageRead {
     links: [{ raw: "架构", display: "架构", target: "架构", section: "", kind: "page", state: "resolved", targetSlug: "architecture", sectionAnchor: null, candidates: [] }],
     backlinks: [{ slug: "architecture", title: "架构", sectionAnchor: "", snippet: "引用概览" }],
     relatedIssues: [{ id: "99999999-9999-4999-8999-999999999999", identifier: "OL-1304", title: "Refund policy", status: "blocked" }],
+    attachments: [],
   };
 }
 

@@ -26,6 +26,9 @@ type baselineTestCall struct {
 	Method, Path string
 	Query        url.Values
 	Body         map[string]any
+	// Fields carries multipart form values (and the uploaded filename under
+	// "file") from an attachment upload.
+	Fields map[string]string
 }
 
 func serveBaseline(t *testing.T, respond func(http.ResponseWriter, *http.Request, map[string]any)) (*httptest.Server, func() []baselineTestCall) {
@@ -37,13 +40,27 @@ func serveBaseline(t *testing.T, respond func(http.ResponseWriter, *http.Request
 			t.Error("request lost task credentials or workspace")
 		}
 		var body map[string]any
-		if r.Method == "POST" || r.Method == "PATCH" || r.Method == "PUT" {
+		fields := map[string]string{}
+		contentType := r.Header.Get("Content-Type")
+		switch {
+		case r.Method == "POST" && strings.HasPrefix(contentType, "multipart/form-data"):
+			if err := r.ParseMultipartForm(4 << 20); err != nil {
+				t.Error(err)
+				break
+			}
+			for name, values := range r.MultipartForm.Value {
+				fields[name] = values[0]
+			}
+			if _, header, err := r.FormFile("file"); err == nil {
+				fields["file"] = header.Filename
+			}
+		case r.Method == "POST" || r.Method == "PATCH" || r.Method == "PUT":
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
 		}
 		mu.Lock()
-		calls = append(calls, baselineTestCall{r.Method, r.URL.Path, r.URL.Query(), body})
+		calls = append(calls, baselineTestCall{r.Method, r.URL.Path, r.URL.Query(), body, fields})
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		respond(w, r, body)

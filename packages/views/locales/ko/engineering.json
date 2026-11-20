@@ -188,6 +188,8 @@
     "outlineTitle": "On this page",
     "outlineEmpty": "이 페이지에는 섹션이 없습니다.",
     "bodyLabel": "페이지 본문",
+    "canvasInstructionCopied": "대화 지시로 복사했습니다",
+    "canvasInstructionCopyFailed": "지시를 복사하지 못했습니다",
     "actorAgent": "에이전트",
     "actorAgentBadge": " · 에이전트",
     "linkCreate": "이 이름으로 페이지 만들기",

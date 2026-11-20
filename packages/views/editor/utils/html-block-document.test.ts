@@ -33,6 +33,30 @@ describe.each(["submit-comment", "fill-comment"])("HTML block action %s", (type)
 });
 
 describe("HTML block bridge", () => {
+  it("announces in-frame navigation so the host can re-measure", () => {
+    const listeners = new Map<string, (event?: unknown) => void>();
+    const parent = { postMessage: vi.fn() };
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent,
+      window: { addEventListener: (type: string, listener: (event?: unknown) => void) => listeners.set(type, listener) },
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+    parent.postMessage.mockClear();
+
+    listeners.get("hashchange")!();
+    expect(parent.postMessage).toHaveBeenLastCalledWith({ [HTML_BLOCK_MESSAGE_KEY]: 1, type: "navigate" }, "*");
+    listeners.get("popstate")!();
+    expect(parent.postMessage).toHaveBeenCalledTimes(2);
+  });
+
   it("repeats an unchanged height only when its parent requests a measurement", () => {
     const listeners = new Map<string, (event?: unknown) => void>();
     const parent = { postMessage: vi.fn() };
@@ -65,6 +89,84 @@ describe("HTML block bridge", () => {
     expect(parent.postMessage).toHaveBeenLastCalledWith(height, "*");
     listeners.get("load")!();
     expect(parent.postMessage).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("HTML block bridge storage", () => {
+  it("gives a sandboxed origin private in-memory storage instead of throwing", () => {
+    const windowStub: { addEventListener: (type: string, fn: () => void) => void; localStorage: Storage; sessionStorage: Storage } = {
+      addEventListener: vi.fn(),
+      get localStorage(): Storage {
+        throw new Error("SecurityError: sandboxed origin");
+      },
+      get sessionStorage(): Storage {
+        throw new Error("SecurityError: sandboxed origin");
+      },
+    };
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent: { postMessage: vi.fn() },
+      window: windowStub,
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+
+    windowStub.localStorage.setItem("view", "index");
+    expect(windowStub.localStorage.getItem("view")).toBe("index");
+    expect(windowStub.localStorage.length).toBe(1);
+    expect(windowStub.sessionStorage.getItem("view")).toBeNull();
+    windowStub.localStorage.removeItem("view");
+    expect(windowStub.localStorage.getItem("view")).toBeNull();
+  });
+});
+
+describe("HTML block bridge history", () => {
+  it("applies a fragment when the sandbox rejects a host-origin history entry", () => {
+    const hash: string[] = [];
+    const replaceState = vi.fn((_state?: unknown, _title?: string, _url?: string) => {
+      throw new Error("SecurityError: origin is opaque");
+    });
+    const windowStub = {
+      addEventListener: vi.fn(),
+      history: { replaceState },
+      location: { hash: "" },
+    };
+    Object.defineProperty(windowStub.location, "hash", {
+      get: () => hash[hash.length - 1] ?? "",
+      set: (value: string) => {
+        hash.push(value);
+      },
+    });
+    runInNewContext(__HTML_BLOCK_BRIDGE__, {
+      parent: { postMessage: vi.fn() },
+      window: windowStub,
+      location: windowStub.location,
+      document: {
+        readyState: "complete",
+        body: { children: [] },
+        createRange: () => ({
+          selectNodeContents: () => {},
+          getBoundingClientRect: () => ({ width: 100, height: 200, bottom: 200 }),
+        }),
+      },
+      getComputedStyle: () => ({}),
+    });
+
+    expect(() => windowStub.history.replaceState({}, "", "srcdoc#/view")).not.toThrow();
+    expect(replaceState).toHaveBeenCalledWith({}, "", "srcdoc#/view");
+    expect(hash).toEqual(["#/view"]);
+  });
+});
+
+describe("HTML block messages", () => {
+  it("parses a navigation notice", () => {
+    expect(readHtmlBlockMessage({ __multicaHtmlBlock: 1, type: "navigate" })).toEqual({ type: "navigate" });
   });
 });
 

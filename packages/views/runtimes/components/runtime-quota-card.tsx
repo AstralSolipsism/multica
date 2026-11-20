@@ -69,7 +69,7 @@ function AccountPoolQuotaSubject({
       {relogin ? (
         <p className="text-caption text-warning">{t(($) => $.account_pools.all_relogin)}</p>
       ) : pool.windows.length === 0 ? (
-        <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
+        <p className="text-caption text-destructive">{t(($) => $.exhausted)}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
@@ -127,16 +127,16 @@ export function RuntimeQuotaCard({
   const canIdentifyUnusedPools = partition != null && !agentsPending &&
     (!hasActiveAgents || partition.filtered);
 
+  if (!state || (accountPools && partition?.all.length === 0)) return null;
+
   return (
     <section className="rounded-lg border bg-card">
       <h3 className="border-b px-4 py-2.5 text-caption font-semibold">
         {t(($) => $.title)}
       </h3>
       <div className="p-4">
-        {!state ? (
-          <p className="text-caption text-faint-foreground">{t(($) => $.no_snapshot)}</p>
-        ) : (
-          <>
+        <>
+            {(!accountPools || !partition || partition.serving.length > 0) && (
             <div className="divide-y divide-border">
               {accountPools && partition
                 ? partition.serving.map((pool) => (
@@ -175,8 +175,9 @@ export function RuntimeQuotaCard({
                     </div>
                   ))}
             </div>
+            )}
             {accountPools && partition && partition.idle.length > 0 && (
-              <div className="mt-4 border-t border-border pt-3">
+              <div className={cn(partition.serving.length > 0 && "mt-4 border-t border-border pt-3")}>
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-left text-caption font-medium text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -222,7 +223,6 @@ export function RuntimeQuotaCard({
                   })}
             </p>
           </>
-        )}
       </div>
     </section>
   );

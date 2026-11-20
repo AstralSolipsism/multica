@@ -3,11 +3,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
+
+// baselineAttachmentMaxBytes mirrors the server's /api/upload-file cap so an
+// oversized artifact fails here instead of after the page write has committed.
+const baselineAttachmentMaxBytes int64 = 100 << 20
 
 func baselineCreate(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base, content string) error {
 	body := map[string]any{"title": mustString(cmd, "title")}
@@ -52,11 +61,136 @@ func baselineWrite(ctx context.Context, cmd *cobra.Command, client *cli.APIClien
 	if err := baselineWriteMetadata(ctx, cmd, client, body); err != nil {
 		return err
 	}
+	// Read every --attachment before the page write commits: a missing or
+	// oversized local file must fail without leaving a new revision behind.
+	type pendingAttachment struct {
+		data     []byte
+		filename string
+	}
+	paths, _ := cmd.Flags().GetStringArray("attachment")
+	attachments := make([]pendingAttachment, 0, len(paths))
+	for _, path := range paths {
+		data, filename, err := baselineReadAttachment(path)
+		if err != nil {
+			return err
+		}
+		attachments = append(attachments, pendingAttachment{data: data, filename: filename})
+	}
 	var raw json.RawMessage
 	if err := client.PutJSON(ctx, base+"/pages/"+url.PathEscape(mustString(cmd, "page"))+"/content", body, &raw); err != nil {
 		return baselineRequestError(err, true)
 	}
-	return baselinePrintWriteResult(cmd, raw, "written")
+	if len(attachments) == 0 {
+		return baselinePrintWriteResult(cmd, raw, "written")
+	}
+	var written struct {
+		Page     baselineCLIPage     `json:"page"`
+		Revision baselineCLIRevision `json:"revision"`
+	}
+	if json.Unmarshal(raw, &written) != nil || written.Page.ID == "" || written.Revision.ID == "" {
+		return baselineFailure(1, "invalid baseline write response")
+	}
+	// The page write is authoritative and already committed. Emit it first so a
+	// failed canvas upload still reports which revision the body landed on.
+	jsonOutput := mustString(cmd, "output") == "json"
+	if !jsonOutput {
+		if err := baselinePrintWriteResult(cmd, raw, "written"); err != nil {
+			return err
+		}
+	}
+	uploaded := make([]cli.AttachmentResponse, 0, len(attachments))
+	var failures []baselineAttachmentFailure
+	for _, attachment := range attachments {
+		att, err := client.UploadBaselinePageAttachment(ctx, attachment.data, attachment.filename, written.Page.ID, written.Revision.ID)
+		if err != nil {
+			failures = append(failures, baselineAttachmentFailure{Filename: attachment.filename, Error: baselineUploadError(err)})
+			// Progress and per-file errors go to stderr; stdout stays a single
+			// machine-readable result.
+			fmt.Fprintf(cmd.ErrOrStderr(), "attachment %s: upload failed (%s)\n", attachment.filename, baselineUploadError(err))
+			continue
+		}
+		uploaded = append(uploaded, att)
+		if jsonOutput {
+			continue
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "attachment: %s (%d bytes) → %s\n", att.Filename, att.SizeBytes, att.ID)
+	}
+	if jsonOutput {
+		var result map[string]any
+		if err := json.Unmarshal(raw, &result); err != nil || result == nil {
+			return baselineFailure(1, "invalid baseline write response")
+		}
+		result["attachments"] = uploaded
+		if len(failures) > 0 {
+			result["attachment_errors"] = failures
+		}
+		if err := cli.PrintJSON(cmd.OutOrStdout(), result); err != nil {
+			return err
+		}
+	}
+	if len(failures) > 0 {
+		return baselineFailure(1, "%s v%d written, but %d of %d attachments failed to upload; re-run with --output json for details", written.Page.Slug, written.Revision.Number, len(failures), len(attachments))
+	}
+	return nil
+}
+
+type baselineAttachmentFailure struct {
+	Filename string `json:"filename"`
+	Error    string `json:"error"`
+}
+
+func baselineUploadError(err error) string {
+	var e *cli.HTTPError
+	if errors.As(err, &e) {
+		return fmt.Sprintf("HTTP %d", e.StatusCode)
+	}
+	return err.Error()
+}
+
+// baselineReadAttachment reads one --attachment file. It must be a regular
+// file inside the current directory (the same boundary --content-file uses)
+// so a stray absolute path cannot ship an arbitrary local file.
+func baselineReadAttachment(path string) ([]byte, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, "", baselineFailure(2, "cannot locate current directory")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, "", baselineFailure(2, "invalid --attachment path")
+	}
+	rel, err := filepath.Rel(cwd, absolute)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, "", baselineFailure(2, "--attachment must be inside the current directory")
+	}
+	root, err := os.OpenRoot(cwd)
+	if err != nil {
+		return nil, "", baselineFailure(2, "cannot open current directory")
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, "", baselineFailure(2, "--attachment must be a regular file inside the current directory")
+	}
+	if info.Size() == 0 {
+		return nil, "", baselineFailure(2, "--attachment %s is empty", filepath.Base(rel))
+	}
+	if info.Size() > baselineAttachmentMaxBytes {
+		return nil, "", baselineFailure(2, "--attachment %s exceeds the 100 MiB upload limit", filepath.Base(rel))
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return nil, "", baselineFailure(2, "cannot open --attachment inside the current directory")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, baselineAttachmentMaxBytes+1))
+	if err != nil {
+		return nil, "", baselineFailure(2, "cannot read --attachment")
+	}
+	if int64(len(data)) > baselineAttachmentMaxBytes {
+		return nil, "", baselineFailure(2, "--attachment %s exceeds the 100 MiB upload limit", filepath.Base(rel))
+	}
+	return data, filepath.Base(rel), nil
 }
 
 func baselineRenameMove(ctx context.Context, cmd *cobra.Command, client *cli.APIClient, base string, renaming bool) error {

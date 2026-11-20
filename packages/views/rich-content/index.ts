@@ -22,3 +22,9 @@ export {
 } from "./rich-content";
 export { RichTableSourceContext, RICH_TABLE_CHROME_ATTRIBUTE } from "./rich-table";
 export { computeClosedFences } from "./streaming-fence";
+export {
+  EntityAttachmentsProvider,
+  resolveEntityHtmlAttachment,
+  useEntityAttachments,
+  type EntityAttachment,
+} from "./entity-attachments-context";

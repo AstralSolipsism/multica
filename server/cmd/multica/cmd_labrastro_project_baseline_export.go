@@ -15,10 +15,16 @@ import (
 )
 
 type baselineSnapshotPage struct {
-	Page     baselineCLIPage     `json:"page"`
-	Revision baselineCLIRevision `json:"revision"`
-	Content  string              `json:"content_markdown"`
-	Parent   string
+	Page        baselineCLIPage     `json:"page"`
+	Revision    baselineCLIRevision `json:"revision"`
+	Content     string              `json:"content_markdown"`
+	Parent      string
+	Attachments []baselineCLIAttachment `json:"attachments"`
+}
+
+type baselineCLIAttachment struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
 }
 
 func baselineLoadSnapshot(ctx context.Context, client *cli.APIClient, base string) ([]baselineSnapshotPage, error) {

@@ -520,6 +520,31 @@ func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename st
 // issue exists, its `markdown_url` goes into the description, and the create
 // call binds it via `attachment_ids`.
 func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, filename string, issueID string) (AttachmentResponse, error) {
+	return c.uploadAttachmentForm(ctx, fileData, filename, map[string]string{"issue_id": issueID})
+}
+
+// UploadChatAttachment uploads a file via multipart form to /api/upload-file
+// tagged with a chat task (task_id). The server binds the row to the assistant
+// reply that task produces on completion. Returns the full AttachmentResponse
+// (id + markdown_url) so the agent can embed the image inline in its reply.
+func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
+	return c.uploadAttachmentForm(ctx, fileData, filename, map[string]string{"task_id": taskID})
+}
+
+// UploadBaselinePageAttachment uploads a rendered artifact (the compiled
+// LikeC4 canvas) bound to an engineering-baseline wiki page. The revision id
+// is optional traceability for the revision that referenced the file.
+func (c *APIClient) UploadBaselinePageAttachment(ctx context.Context, fileData []byte, filename, pageID, revisionID string) (AttachmentResponse, error) {
+	return c.uploadAttachmentForm(ctx, fileData, filename, map[string]string{
+		"baseline_page_id":     pageID,
+		"baseline_revision_id": revisionID,
+	})
+}
+
+// uploadAttachmentForm is the one multipart writer for /api/upload-file.
+// Owner fields differ per surface (issue_id, task_id, baseline_page_id), so
+// callers pass the fields instead of each growing a copy of this request.
+func (c *APIClient) uploadAttachmentForm(ctx context.Context, fileData []byte, filename string, fields map[string]string) (AttachmentResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -530,13 +555,14 @@ func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, 
 	if _, err := part.Write(fileData); err != nil {
 		return AttachmentResponse{}, fmt.Errorf("write file data: %w", err)
 	}
-
-	if issueID != "" {
-		if err := writer.WriteField("issue_id", issueID); err != nil {
-			return AttachmentResponse{}, fmt.Errorf("write issue_id field: %w", err)
+	for name, value := range fields {
+		if value == "" {
+			continue
+		}
+		if err := writer.WriteField(name, value); err != nil {
+			return AttachmentResponse{}, fmt.Errorf("write %s field: %w", name, err)
 		}
 	}
-
 	if err := writer.Close(); err != nil {
 		return AttachmentResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
@@ -550,70 +576,6 @@ func (c *APIClient) UploadIssueAttachment(ctx context.Context, fileData []byte, 
 
 	// Honor a longer context deadline for large files: callers widen the
 	// context for uploads, which the default client timeout would shadow.
-	// Same shape as UploadChatAttachment / UploadFileWithURL.
-	httpClient := c.HTTPClient
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining > httpClient.Timeout {
-			clientCopy := *httpClient
-			clientCopy.Timeout = remaining
-			httpClient = &clientCopy
-		}
-	}
-
-	resp, err := httpClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return AttachmentResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return AttachmentResponse{}, newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result AttachmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("decode upload response: %w", wrapBodyRead(req, err))
-	}
-	if result.ID == "" {
-		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
-	}
-	return result, nil
-}
-
-// UploadChatAttachment uploads a file via multipart form to /api/upload-file
-// tagged with a chat task (task_id). The server binds the row to the assistant
-// reply that task produces on completion. Returns the full AttachmentResponse
-// (id + markdown_url) so the agent can embed the image inline in its reply.
-func (c *APIClient) UploadChatAttachment(ctx context.Context, fileData []byte, filename, taskID string) (AttachmentResponse, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return AttachmentResponse{}, fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("write file data: %w", err)
-	}
-	if taskID != "" {
-		if err := writer.WriteField("task_id", taskID); err != nil {
-			return AttachmentResponse{}, fmt.Errorf("write task_id field: %w", err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return AttachmentResponse{}, fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
-	if err != nil {
-		return AttachmentResponse{}, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	// Honor a longer context deadline for large images, same as UploadFileWithURL.
 	httpClient := c.HTTPClient
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)

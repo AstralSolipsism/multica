@@ -8,7 +8,13 @@ import (
 )
 
 const (
-	DefaultMaxSizeBytes int64 = 2 << 20
+	// DefaultMaxSizeBytes bounds inline text previews. 2 MiB was too small for
+	// the attachment-backed artifacts the engineering baseline stores: a
+	// LikeC4 `build --output-single-file` canvas is ~3.7 MiB uncompressed even
+	// for a small multi-view model, because the whole viewer runtime is inlined.
+	// 8 MiB keeps the whole canvas inlined (OL-1427) while staying well under
+	// the 16 MiB hard ceiling operators can already opt into.
+	DefaultMaxSizeBytes int64 = 8 << 20
 	// Text previews buffer the complete body and render it in the browser.
 	MaxSizeBytes int64 = 16 << 20
 )
@@ -16,7 +22,7 @@ const (
 func ConfiguredMaxSizeBytes(raw string) int64 {
 	size, err := parseMaxSizeBytes(raw)
 	if err != nil {
-		slog.Warn("invalid MULTICA_MAX_PREVIEW_SIZE, using 2 MiB default", "error", err)
+		slog.Warn("invalid MULTICA_MAX_PREVIEW_SIZE, using 8 MiB default", "error", err)
 		return DefaultMaxSizeBytes
 	}
 	return size

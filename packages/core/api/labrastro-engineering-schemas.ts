@@ -127,6 +127,30 @@ const WikiReferencedSectionSchema = z.object({
 }).transform((v) => ({ page: v.page, anchor: v.anchor, title: v.title, level: v.level, definition: v.definition, why: v.why }));
 export type WikiReferencedSection = z.infer<typeof WikiReferencedSectionSchema>;
 
+// A page artifact (the compiled LikeC4 canvas). The full attachment shape is
+// parsed so the shared EntityAttachmentsContext can resolve it by filename;
+// defaults keep a partially-shaped older response readable.
+export const WikiAttachmentSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  issue_id: z.string().nullable().default(null),
+  comment_id: z.string().nullable().default(null),
+  chat_session_id: z.string().nullable().default(null),
+  chat_message_id: z.string().nullable().default(null),
+  uploader_type: z.string().default("member"),
+  uploader_id: z.string().default(""),
+  filename: z.string().default(""),
+  url: z.string().default(""),
+  download_url: z.string().default(""),
+  markdown_url: z.string().default(""),
+  content_type: z.string().default(""),
+  size_bytes: z.number().default(0),
+  created_at: z.string().default(""),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+}).loose();
+export type WikiAttachment = z.infer<typeof WikiAttachmentSchema>;
+
 export const WikiPageReadSchema = z.object({
   page: WikiPageSchema,
   revision: WikiRevisionSchema,
@@ -136,11 +160,13 @@ export const WikiPageReadSchema = z.object({
   links: z.array(WikiLinkSchema).default([]),
   backlinks: z.array(WikiBacklinkSchema).default([]),
   related_issues: z.array(WikiRelatedIssueSchema).default([]),
+  attachments: z.array(WikiAttachmentSchema).default([]),
 }).transform((v) => ({
   page: v.page, revision: v.revision,
   contentMarkdown: v.content_markdown ?? null,
   sections: v.sections ?? [], referencedSections: v.referenced_sections ?? [],
   links: v.links, backlinks: v.backlinks, relatedIssues: v.related_issues,
+  attachments: v.attachments,
 }));
 export type WikiPageRead = z.infer<typeof WikiPageReadSchema>;
 

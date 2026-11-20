@@ -262,26 +262,25 @@ describe("grouped Runtime detail cards", () => {
 });
 
 describe("snapshot availability and interruption", () => {
-  it("shows a neutral no-snapshot chip and an explicit empty hover state", async () => {
+  it("omits machine chips when a runtime has no snapshot", () => {
     const runtime = claudeRuntime();
     runtime.plan_quota = null;
-    renderChips(runtime);
+    const { container } = renderChips(runtime);
 
-    const trigger = chipTrigger(/Claude: No snapshot$/);
-    expect(trigger).toHaveClass("bg-muted");
-    await userEvent.hover(trigger);
-    expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("No snapshot")).not.toBeInTheDocument();
   });
 
-  it("uses the same empty copy in the table and detail card", () => {
+  it("uses the shared empty cell value and omits the empty detail card", () => {
     const runtime = claudeRuntime();
     runtime.plan_quota = null;
     const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("No quota snapshot")).not.toBeInTheDocument();
     cell.unmount();
 
-    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    const card = renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(card.container).toBeEmptyDOMElement();
   });
 
   it("keeps interrupted values muted and reports the last update", async () => {
@@ -516,6 +515,46 @@ describe("OMP account pools", () => {
     expect(screen.getByText("1 more account; open Runtime details to view it")).toBeInTheDocument();
   });
 
+  it("keeps remaining windows visible when only one pool window is exhausted", () => {
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("kimi-code", [ompAccount("ex*", "exhausted", 0, 65)]),
+      ],
+    });
+    renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+
+    const subject = screen.getByText("Kimi Code").closest<HTMLElement>("[data-account-pool]")!;
+    expect(within(subject).getByText("5h")).toBeInTheDocument();
+    expect(within(subject).getByText("7d")).toBeInTheDocument();
+    expect(within(subject).getByText("65%")).toBeInTheDocument();
+    expect(within(subject).queryByText("Rate limited")).not.toBeInTheDocument();
+  });
+
+  it("keeps a no-window exhausted pool visible across every quota surface", async () => {
+    const account = ompAccount("ex*", "exhausted", 0, 0);
+    account.windows = [];
+    const runtime = quotaRuntime("omp", {
+      account_pools: [ompPool("kimi-code", [account])],
+    });
+
+    const chips = renderChips(runtime);
+    const chip = chipTrigger(/^Omp: Kimi Code:/);
+    expect(within(chip).getByText("Rate limited")).toBeInTheDocument();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
+    const subject = screen.getByText("Kimi Code").closest<HTMLElement>("[data-account-pool]")!;
+    expect(within(subject).getByText("Rate limited")).toBeInTheDocument();
+    await userEvent.hover(subject.closest<HTMLElement>('[data-slot="hover-card-trigger"]')!);
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="hover-card-content"]')).toHaveTextContent("Rate limited");
+    });
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(document.querySelector('[data-account-pool-matrix="kimi-code"]')).toHaveTextContent("Rate limited");
+  });
+
   it("shows one re-login warning when every account is invalid", async () => {
     const runtime = quotaRuntime("omp", {
       account_pools: [
@@ -576,6 +615,33 @@ describe("OMP account pools", () => {
     expect(screen.getByText("Re-login required")).toBeInTheDocument();
   });
 
+  it("keeps idle pools idle when the bound serving pool has no snapshot", async () => {
+    const emptyAccount = ompAccount("empty", "ok", 85, 80);
+    emptyAccount.windows = [];
+    const runtime = quotaRuntime("omp", {
+      account_pools: [
+        ompPool("kimi-code", [emptyAccount]),
+        ompPool("anthropic", [ompAccount("idle", "ok", 72, 60)]),
+      ],
+    });
+    const agents = [quotaAgent("kimi-code/k2.5")];
+
+    const chips = renderChips(runtime, "en", agents);
+    expect(chips.container).toBeEmptyDOMElement();
+    chips.unmount();
+
+    const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} agents={agents} />);
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    cell.unmount();
+
+    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} agents={agents} />);
+    expect(screen.queryByText("Kimi Code")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "1 idle provider pool" }));
+    expect(screen.getByText("Claude").parentElement).toHaveTextContent("· Not used");
+    expect(screen.getByRole("cell", { name: "72%" })).toBeInTheDocument();
+  });
+
   it("derives account table columns from reported windows", () => {
     const account = ompAccount("a", "ok", 85, 80);
     account.windows = [
@@ -592,23 +658,22 @@ describe("OMP account pools", () => {
     expect(within(table).queryByRole("columnheader", { name: "7d" })).not.toBeInTheDocument();
   });
 
-  it("uses the no-snapshot state for a pool without windows", async () => {
+  it("omits a pool without windows or alerts from every quota surface", () => {
     const account = ompAccount("a", "ok", 85, 80);
     account.windows = [];
     const runtime = quotaRuntime("omp", { account_pools: [ompPool("kimi-code", [account])] });
     const chips = renderChips(runtime);
-    const trigger = chipTrigger(/Omp: Kimi Code: 1 of 1 accounts available/);
-    expect(within(trigger).getByText("No snapshot")).toBeInTheDocument();
-    await userEvent.hover(trigger);
-    expect(await screen.findByText("No quota snapshot")).toBeInTheDocument();
+    expect(chips.container).toBeEmptyDOMElement();
+    expect(screen.queryByText("No snapshot")).not.toBeInTheDocument();
     chips.unmount();
 
     const cell = renderWithI18n(<RuntimeQuotaCell runtime={runtime} now={NOW} />);
-    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("No quota snapshot")).not.toBeInTheDocument();
     cell.unmount();
 
-    renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
-    expect(screen.getByText("No quota snapshot")).toBeInTheDocument();
+    const card = renderWithI18n(<RuntimeQuotaCard runtime={runtime} now={NOW} />);
+    expect(card.container).toBeEmptyDOMElement();
   });
 
   it.each(["k2.5", "other/model"])(

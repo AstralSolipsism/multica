@@ -19,6 +19,7 @@ export type {
   QuotaSource,
   QuotaSourceError,
   QuotaSourceKind,
+  QuotaSourceOpenCodeMode,
   QuotaSourceListResponse,
   QuotaSourceVisibility,
   QuotaSourceBalance,

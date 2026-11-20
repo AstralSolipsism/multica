@@ -64,6 +64,26 @@ func DriverFor(kind string) Driver {
 	}
 }
 
+// DefaultName is the short channel name a quota source falls back to when the
+// user leaves the optional name field blank. Kept in sync with the form's
+// fallback in packages/views/runtimes/components/quota-source-shared.tsx.
+func DefaultName(kind string) string {
+	switch kind {
+	case "glm":
+		return "GLM"
+	case "zenmux":
+		return "ZenMux"
+	case "deepseek":
+		return "DeepSeek"
+	case "opencode":
+		return "OpenCode"
+	case "jev_free":
+		return "Jev Free"
+	default:
+		return "Subscription"
+	}
+}
+
 // fetchJSON is the shared HTTP boilerplate: GET with the raw key in
 // Authorization, 1 MiB body cap.
 func fetchJSON(ctx context.Context, client *http.Client, url, credential string, out any) error {
