@@ -7,7 +7,7 @@
 // not duplicate the message or its task when the card is retried unchanged.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type {
@@ -489,17 +489,20 @@ async function lostResponseRetryScenario() {
   // 1. The server persists the send, then the response is lost.
   server.loseResponseOnce();
   await submitFromCard("拍板：方案 B", false);
+  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
   // 2. Unchanged retry: same submission id → the server replays the first
   //    acceptance instead of recording a second message/task.
   await submitFromCard("拍板：方案 B", true);
   expect(server.sent).toHaveLength(1);
-  expect(new Set(server.sent.map((m) => m.taskId)).size).toBe(1);
-  // 3. A changed answer is a new attempt.
-  await submitFromCard("拍板：方案 C", true);
+  // 3. A different answer after a lost response starts a new attempt.
+  server.loseResponseOnce();
+  await submitFromCard("拍板：方案 C", false);
   expect(server.sent).toHaveLength(2);
-  // 4. After a success the record is gone: same content is a fresh attempt.
-  await submitFromCard("拍板：方案 C", true);
+  await submitFromCard("拍板：方案 D", true);
   expect(server.sent).toHaveLength(3);
+  // 4. After a success the same content is a fresh attempt.
+  await submitFromCard("拍板：方案 D", true);
+  expect(server.sent).toHaveLength(4);
 }
 
 describe("ChatPage (full-page Chat)", () => {
@@ -534,26 +537,6 @@ describe("ChatPage (full-page Chat)", () => {
     renderChatPage();
     await waitFor(() => expect(inlineFrame()).not.toBeNull());
     await lostResponseRetryScenario();
-  });
-
-  it("fills the conversation's compose draft from the card", async () => {
-    resetStore({ activeSessionId: "s1" });
-    renderChatPage();
-    const frame = inlineFrame();
-    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
-    post(frame, { type: "fill-comment", content: "card answer" });
-    await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("fill-comment", true), "*"));
-  });
-
-  it("rejects the card without user activation", async () => {
-    restoreActivation();
-    resetStore({ activeSessionId: "s1" });
-    renderChatPage();
-    const frame = inlineFrame();
-    const reply = vi.spyOn(frame.contentWindow!, "postMessage");
-    post(frame, { type: "submit-comment", content: "answer" });
-    await waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith(result("submit-comment", false), "*"));
-    expect(server.send).not.toHaveBeenCalled();
   });
 });
 

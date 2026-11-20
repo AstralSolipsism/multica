@@ -25,8 +25,7 @@
  * `<NodeViewContent as="code" />` so the user can continue typing.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { flushSync } from "react-dom";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { HtmlPreviewSurface } from "./html-preview-surface";
 import { useT } from "../i18n";
@@ -126,19 +125,6 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
   const [error, setError] = useState<DynamicBlockError | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const { handleAction } = useHtmlCommentActions(
-    iframeRef,
-    `${reloadKey}:${srcDoc}`,
-    () => {
-      // Release the native modal and scroll lock before the draft callback focuses
-      // the page's composer; a batched close would restore focus over that focus.
-      if (fullscreen) flushSync(() => setFullscreen(false));
-    },
-    // Stable across reload/theme rebuilds (the documentKey above is not), so a
-    // retried chat submission keeps its dedup identity for the same card.
-    hashSource(html),
-  );
   // The body's laid-out height, reported by HtmlBlockBody below. The frame
   // turns it into the collapse decision in the same paint the height lands
   // (see the flicker note in the file header).
@@ -178,8 +164,6 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
           <HtmlBlockBody
             key={html}
             html={html}
-            iframeRef={iframeRef}
-            onCommentAction={handleAction}
             srcDoc={srcDoc}
             title={frameTitle}
             active={active}
@@ -199,8 +183,6 @@ export function HtmlBlockPreview({ html, title }: HtmlBlockPreviewProps) {
 
 function HtmlBlockBody({
   html,
-  iframeRef,
-  onCommentAction,
   srcDoc,
   title,
   active,
@@ -213,8 +195,6 @@ function HtmlBlockBody({
   onError,
 }: {
   html: string;
-  iframeRef: RefObject<HTMLIFrameElement | null>;
-  onCommentAction: ReturnType<typeof useHtmlCommentActions>["handleAction"];
   srcDoc: string | null;
   title: string;
   active: boolean;
@@ -227,7 +207,10 @@ function HtmlBlockBody({
   onBodyHeightChange: (height: number) => void;
   onError: (error: DynamicBlockError) => void;
 }) {
-  const onCommentActionRef = useRef(onCommentAction);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  useHtmlCommentActions(
+    iframeRef, srcDoc, reloadKey, html, fullscreen ? () => onFullscreenChange(false) : undefined,
+  );
   const [measured, setMeasured] = useState(INITIAL_HTML_BLOCK_HEIGHT);
   const [cachedHeight, setCachedHeight] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -249,7 +232,6 @@ function HtmlBlockBody({
     // A full-size document's bridge must not overwrite its inline height.
     activeRef.current = active && !fullscreen;
     onErrorRef.current = onError;
-    onCommentActionRef.current = onCommentAction;
   });
 
   useEffect(() => {
@@ -269,10 +251,6 @@ function HtmlBlockBody({
       if (!frame || event.source !== frame.contentWindow) return;
       const message = readHtmlBlockMessage(event.data);
       if (!message) return;
-      if (message.type === "submit-comment" || message.type === "fill-comment") {
-        onCommentActionRef.current(message);
-        return;
-      }
       if (message.type === "error") {
         onErrorRef.current({ message: message.message, line: message.line || undefined });
         return;

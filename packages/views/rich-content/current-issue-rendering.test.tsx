@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Attachment, Issue } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import { renderWithI18n } from "../test/i18n";
+import { HtmlBlockHostActionsProvider } from "../editor/html-block-host-actions";
 import { NavigationProvider } from "../navigation/context";
 import type { NavigationAdapter } from "../navigation/types";
 import {
@@ -222,12 +223,12 @@ describe("RichContent current-issue rendering", () => {
     renderWithI18n(
       <QueryClientProvider client={client}>
         <NavigationProvider value={adapter()}>
-          <CurrentIssueRenderContextProvider value={{ ...CURRENT_CONTEXT, submitComment }}>
+          <HtmlBlockHostActionsProvider value={{ submitComment }}>
             <RichContent
               content={'```html src="decision.html"\n<p>fallback</p>\n```'}
               attachments={[attachment]}
             />
-          </CurrentIssueRenderContextProvider>
+          </HtmlBlockHostActionsProvider>
         </NavigationProvider>
       </QueryClientProvider>,
     );
@@ -241,6 +242,6 @@ describe("RichContent current-issue rendering", () => {
       }));
     });
 
-    expect(submitComment).toHaveBeenCalledExactlyOnceWith("approved");
+    expect(submitComment).toHaveBeenCalledExactlyOnceWith("approved", expect.any(String));
   });
 });

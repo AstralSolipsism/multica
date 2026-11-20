@@ -187,7 +187,8 @@ vi.mock("@multica/core/chat", () => {
 
 import { ChatInput } from "./chat-input";
 import { useChatStore } from "@multica/core/chat";
-import { ChatReplyActionsProvider, useChatReplyActions } from "../chat-reply-actions-context";
+import { ChatReplyActionsProvider } from "../chat-reply-actions-context";
+import { useHtmlBlockHostActions } from "../../editor/html-block-host-actions";
 
 const TEST_RESOURCES = { en: { common: enCommon, chat: enChat, editor: enEditor } };
 
@@ -530,24 +531,25 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     // adoptContent: the synchronized `value` path would SKIP permanently while
     // the editor is focused-and-dirty — precisely the state below, where the
     // debounce from `type()` has not fired yet.
-    const fill: { current: (() => void) | null } = { current: null };
+    let fill: (() => void) | undefined;
     const onSend = vi.fn().mockResolvedValue(true);
     function FillProbe() {
-      const chat = useChatReplyActions();
-      fill.current = chat ? () => chat.fill("card answer") : null;
+      const actions = useHtmlBlockHostActions();
+      fill = () => { actions?.fillComment?.("card answer"); };
       return null;
     }
-    render(
+    const conversation = () => (
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
         <ChatReplyActionsProvider handleSend={onSend}>
           <FillProbe />
           <ChatInput onSend={onSend} agentName="Multica" />
         </ChatReplyActionsProvider>
-      </I18nProvider>,
+      </I18nProvider>
     );
+    const { rerender } = render(conversation());
     type("unfinished local text");
 
-    act(() => fill.current!());
+    act(() => fill!());
 
     // The draft slot holds the card's answer, the document was force-adopted
     // past the dirty guard, and the composer took focus for the next keystroke.
@@ -558,33 +560,9 @@ describe("ChatInput draft isolation across a composer switch (real debounce)", (
     });
     expect(mockEditorFocus).toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it("applies a fill request once — switching sessions afterwards leaves the other draft alone", () => {
-    // Without the applied-id guard, the effect re-runs on every draftKey or
-    // submitting change with the stale adoptRequest in scope and would write
-    // the card's answer into whatever session is selected by then.
-    const fill: { current: (() => void) | null } = { current: null };
-    function FillProbe() {
-      const chat = useChatReplyActions();
-      fill.current = chat ? () => chat.fill("card answer") : null;
-      return null;
-    }
-    const withProvider = () => (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <ChatReplyActionsProvider handleSend={vi.fn().mockResolvedValue(true)}>
-          <FillProbe />
-          <ChatInput onSend={vi.fn()} agentName="Multica" />
-        </ChatReplyActionsProvider>
-      </I18nProvider>
-    );
-    const { rerender } = render(withProvider());
-    act(() => fill.current!());
-    expect(store().inputDrafts["__new__"]).toBe("card answer");
 
     store().activeSessionId = "session-b";
-    rerender(withProvider());
-
+    rerender(conversation());
     expect(store().inputDrafts["session-b"]).toBeUndefined();
     expect(store().inputDrafts["__new__"]).toBe("card answer");
   });
