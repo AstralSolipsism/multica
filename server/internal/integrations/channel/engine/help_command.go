@@ -21,8 +21,8 @@ const (
 
 	// Slack's native /issue uses quick-create rather than the message parser.
 	SlackHelpText = helpCommandsEnglish +
-		"- `/issue <description>` — Ask the agent to create an issue. You'll receive a Multica notification when it's ready.\n\n" +
-		"In channels, use `@Multica /new` or `@Multica /clear` in the target thread."
+		"- `/issue <description>` — Ask the agent to create an issue. You'll receive a Labrastro notification when it's ready.\n\n" +
+		"In channels, use `@Labrastro /new` or `@Labrastro /clear` in the target thread."
 )
 
 // IsHelpCommand recognizes /help using the same first-line and token rules as

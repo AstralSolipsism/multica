@@ -17,17 +17,17 @@ func (o *Outbound) Reply(ctx context.Context, inst engine.ResolvedInstallation, 
 	var text string
 	switch result.Outcome {
 	case engine.OutcomeAgentOffline:
-		text = "This agent is offline. Start its runtime in Multica, then send your message again."
+		text = "This agent is offline. Start its runtime in Labrastro, then send your message again."
 	case engine.OutcomeAgentArchived:
-		text = "This agent is archived. Restore it in Multica before continuing."
+		text = "This agent is archived. Restore it in Labrastro before continuing."
 	case engine.OutcomeInvokeDenied:
-		text = "You no longer have permission to run this agent. Check your workspace access in Multica."
+		text = "You no longer have permission to run this agent. Check your workspace access in Labrastro."
 	case engine.OutcomeNeedsBinding:
-		text = "Reconnect WeChat in Multica to link this account."
+		text = "Reconnect WeChat in Labrastro to link this account."
 	case engine.OutcomeFreshPending:
 		text = "Your next message will start with fresh context."
 	case engine.OutcomeChatStarted:
-		text = "Started a new Multica chat. Send your next message here."
+		text = "Started a new Labrastro chat. Send your next message here."
 	case engine.OutcomeHelp:
 		text = strings.ReplaceAll(engine.HelpTextEnglish, "`", "")
 	case engine.OutcomeIssueUsage:
@@ -41,7 +41,7 @@ func (o *Outbound) Reply(ctx context.Context, inst engine.ResolvedInstallation, 
 		}
 	case engine.OutcomeDropped:
 		if result.DropReason == engine.DropReasonNonWorkspaceMember {
-			text = "You are no longer a member of this Multica workspace."
+			text = "You are no longer a member of this Labrastro workspace."
 		}
 	}
 	if text == "" {

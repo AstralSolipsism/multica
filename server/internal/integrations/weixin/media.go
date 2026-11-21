@@ -182,7 +182,7 @@ func (r *mediaResolver) ResolveMedia(ctx context.Context, inst engine.ResolvedIn
 		if err != nil {
 			// Be explicit in the persisted prompt: a placeholder is not a file
 			// the model received. The original message stays in WeChat.
-			msg.Text += "\n[WeChat attachment unavailable: file " + strconv.Itoa(i+1) + "; send it again or upload it in Multica.]"
+			msg.Text += "\n[WeChat attachment unavailable: file " + strconv.Itoa(i+1) + "; send it again or upload it in Labrastro.]"
 			continue
 		}
 		msg.MediaRefs = append(msg.MediaRefs, ref)

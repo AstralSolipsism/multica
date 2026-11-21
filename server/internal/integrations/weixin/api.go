@@ -241,7 +241,7 @@ func (c *apiClient) request(ctx context.Context, method, endpoint string, body a
 }
 
 func baseInfo() map[string]string {
-	return map[string]string{"channel_version": protocolVersion, "bot_agent": "Multica"}
+	return map[string]string{"channel_version": protocolVersion, "bot_agent": "Labrastro"}
 }
 
 func (c *apiClient) QRCode(ctx context.Context, tokens ...string) (qrResult, error) {

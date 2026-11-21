@@ -265,7 +265,7 @@ func (o *Outbound) deliverReply(ctx context.Context, reply outboundReply) error 
 		return settle("send_result_unknown")
 	}
 	if event.Type == protocol.EventTaskFailed {
-		payload.Content = "This run failed. Open Multica to review the error and try again."
+		payload.Content = "This run failed. Open Labrastro to review the error and try again."
 	}
 	if event.Type == protocol.EventTaskCancelled {
 		return settle("cancelled")
@@ -295,7 +295,7 @@ func (o *Outbound) deliverReply(ctx context.Context, reply outboundReply) error 
 		} else {
 			item, prepErr := o.attachment(ctx, api, creds.UserID, attachments[i-len(chunks)])
 			if prepErr != nil {
-				msg = textMessage(creds.UserID, token, msg.ClientID, "This file could not be sent to WeChat. It is still attached to the reply in Multica.")
+				msg = textMessage(creds.UserID, token, msg.ClientID, "This file could not be sent to WeChat. It is still attached to the reply in Labrastro.")
 				o.logger.WarnContext(ctx, "weixin: attachment unavailable", "error", prepErr)
 			} else {
 				msg.Items = []messageItem{item}

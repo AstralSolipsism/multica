@@ -432,8 +432,8 @@ var kindMessages = map[ErrorKind][2]string{
 		"无法与 Labrastro 服务器建立安全连接（TLS/证书错误）。请检查系统时间和 CA 证书。",
 	},
 	KindNetworkIncompleteResponse: {
-		"The response ended before it was complete. If this keeps happening, check the Multica server or proxy logs.",
-		"响应在完整接收前已结束。如果问题持续发生，请检查 Multica 服务器或代理日志。",
+		"The response ended before it was complete. If this keeps happening, check the Labrastro server or proxy logs.",
+		"响应在完整接收前已结束。如果问题持续发生，请检查 Labrastro 服务器或代理日志。",
 	},
 	KindNetworkOffline: {
 		"Could not reach the Labrastro server. Check your network connection.",
