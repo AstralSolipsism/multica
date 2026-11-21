@@ -158,7 +158,7 @@ func TestReply_HelpAdvertisesMentionCommands(t *testing.T) {
 				t.Fatalf("wrong help reply target: %+v", sender.sent)
 			}
 			for _, command := range []string{"/help", "/new [message]", "/clear [message]", "/issue <title>"} {
-				if !strings.Contains(sender.sent.Text, "`@Multica "+command+"`") {
+				if !strings.Contains(sender.sent.Text, "`@Labrastro "+command+"`") {
 					t.Errorf("help must advertise the mention form of %s: %q", command, sender.sent.Text)
 				}
 			}
