@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeDsh records every invocation and its PATH, then exits per the args it
@@ -675,6 +676,14 @@ func TestDshProvisionOutput(t *testing.T) {
 			t.Fatalf("Unicode tail was discarded: got %d bytes, want %d", len(got), len(want))
 		}
 	})
+	t.Run("preserves multibyte tails", func(t *testing.T) {
+		for _, runeText := range []string{"错", "😀", "é"} {
+			got := dshDiagnosticOutput([]byte(strings.Repeat(runeText, 3000)))
+			if !utf8.ValidString(got) || !strings.HasSuffix(got, runeText) || len(got) > dshProvisionOutputBytes+len("…") {
+				t.Fatalf("invalid or discarded UTF-8 tail: bytes=%d suffix=%q", len(got), got[max(0, len(got)-12):])
+			}
+		}
+	})
 	t.Run("bounded from the tail", func(t *testing.T) {
 		long := strings.Repeat("x", dshProvisionOutputBytes*2) + "THE-END"
 		got := dshDiagnosticOutput([]byte(long))
@@ -861,6 +870,61 @@ func TestDshProfileMigrationUsesLauncherHomeAndRefusesInstall(t *testing.T) {
 			got, err := os.ReadFile(filepath.Join(home, "profiles", dshMulticaProfileName, "package.json"))
 			if err != nil || string(got) != manifest {
 				t.Fatalf("existing bridge changed: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+// The shared redactor only knows the token shapes it was taught; a package
+// manager also echoes structured JSON lines, where a quoted credential field is
+// not one of those shapes. Losing this scrub leaks a token into the daemon log.
+func TestDshDiagnosticOutputRedactsQuotedCredentials(t *testing.T) {
+	for _, key := range []string{"access_token", "apiKey", "password", "client_secret", "refresh_token", "authorization"} {
+		raw := `prefixed startup: {"` + key + `":"opaque-synthetic-value","message":"permission denied"}`
+		got := dshDiagnosticOutput([]byte(raw))
+		if strings.Contains(got, "opaque-synthetic-value") {
+			t.Errorf("quoted %s credential survived", key)
+		}
+		if !strings.Contains(got, "permission denied") {
+			t.Errorf("%s lost useful diagnostic", key)
+		}
+	}
+}
+
+// A profile may appear between discovery and provisioning (another daemon, a
+// manual install). Re-checking the launcher's current manifest before each
+// candidate keeps the daemon from overwriting a profile that is already there.
+func TestProvisionDshMulticaProfileRechecksCurrentManifest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake CLI")
+	}
+	for _, existing := range []bool{true, false} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			dshPath, record := fakeDshScript(t, dshProfileWriteCommand(installedDshProfileManifest())+"\nexit 1")
+			t.Setenv(dshProfileBundleEnv, "first,second")
+			home := dshLauncherHome(dshPath)
+			if home == "" {
+				t.Fatal("the fake launcher must declare DSH_HOME")
+			}
+			if existing {
+				writeDshProfileManifest(t, home, installedDshProfileManifest())
+			}
+			want := installedDshProfileManifest()
+			err := provisionDshMulticaProfile(context.Background(), dshPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			calls := strings.Count(readRecord(t, record), "args=")
+			expected := 1
+			if existing {
+				expected = 0
+			}
+			if calls != expected {
+				t.Errorf("install calls=%d, want %d", calls, expected)
+			}
+			if !existing && err == nil {
+				t.Error("partial failed install reported success")
+			}
+			got, readErr := os.ReadFile(filepath.Join(home, "profiles", dshMulticaProfileName, "package.json"))
+			if readErr != nil || string(got) != want {
+				t.Fatalf("populated manifest changed: %v", readErr)
 			}
 		})
 	}
