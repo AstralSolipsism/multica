@@ -231,6 +231,7 @@ vi.mock("@multica/core/chat/queries", () => ({
   pendingChatTasksOptions: () => ({ queryKey: ["chat", "pending-tasks"] }),
   taskMessagesOptions: () => ({ queryKey: ["chat", "task-messages"] }),
   chatQuickActionsPendingOptions: () => ({ queryKey: ["chat", "quick-actions-pending"] }),
+  chatWakeupsOptions: (sessionId: string) => ({ queryKey: ["chat", "wakeups", sessionId], queryFn: async () => [] }),
 }));
 vi.mock("@multica/core/chat/mutations", () => ({
   useCreateChatSession: () => ({ mutateAsync: vi.fn(async () => ({ id: "new-session" })) }),
@@ -240,6 +241,7 @@ vi.mock("@multica/core/chat/mutations", () => ({
   useUpdateChatSession: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
   useConsumeChatDraftRestore: () => ({ mutate: vi.fn() }),
   useRegenerateChatQuickActions: () => ({ mutateAsync: vi.fn() }),
+  useCancelChatWakeup: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock("@multica/core/realtime", () => ({
   removeChatMessageFromCaches: vi.fn(),

@@ -39,7 +39,7 @@ func TestHermesInstallsReuseSource(t *testing.T) {
 					}
 				}
 				for turn := 0; turn < 2; turn++ {
-					prepared, err := prepareHermesHome(taskHome, source, false, nil, nil, "", store, testLogger(), nil)
+					prepared, err := prepareHermesHome(taskHome, source, false, nil, nil, "", store, testLogger())
 					if err != nil {
 						t.Fatalf("prepare turn %d: %v", turn, err)
 					}
@@ -72,7 +72,7 @@ func TestHermesInstallsRecoverDanglingLink(t *testing.T) {
 			installs := filepath.Join(home, "installs")
 			if scenario == "source-removed" {
 				mustWrite(t, filepath.Join(source, "installs", "record"), "SOURCE")
-				if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger(), nil); err != nil {
+				if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger()); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.RemoveAll(filepath.Join(source, "installs")); err != nil {
@@ -81,14 +81,14 @@ func TestHermesInstallsRecoverDanglingLink(t *testing.T) {
 			} else if err := os.Symlink(filepath.Join(source, "installs"), installs); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
-			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger(), nil); err != nil {
+			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger()); err != nil {
 				t.Fatalf("prepare with a stale dependency link: %v", err)
 			}
 			if _, err := os.Lstat(installs); !os.IsNotExist(err) {
 				t.Fatalf("stale dependency link should be removed for PM initialization: %v", err)
 			}
 			mustWrite(t, filepath.Join(installs, "record"), "LOCAL REPAIR")
-			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger(), nil); err != nil {
+			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger()); err != nil {
 				t.Fatal(err)
 			}
 			if got, err := os.ReadFile(filepath.Join(installs, "record")); err != nil || string(got) != "LOCAL REPAIR" {
@@ -110,7 +110,7 @@ func TestHermesInstallsPreserveSharedLinkWithoutSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger(), nil); err != nil {
+	if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger()); err != nil {
 		t.Fatalf("prepare rejected a reusable dependency link: %v", err)
 	}
 	after, err := os.Lstat(installs)
@@ -149,7 +149,7 @@ func TestHermesInstallsPersistAcrossPrepare(t *testing.T) {
 				if conversation {
 					store = filepath.Join(t.TempDir(), "conversation")
 				}
-				first, err := prepareHermesHome(taskHome, source, false, nil, nil, "", store, testLogger(), nil)
+				first, err := prepareHermesHome(taskHome, source, false, nil, nil, "", store, testLogger())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -202,7 +202,7 @@ func TestHermesInstallsPersistAcrossPrepare(t *testing.T) {
 				if conversation {
 					taskHome = filepath.Join(t.TempDir(), "next-task")
 				}
-				next, err := prepareHermesHome(taskHome, nextSource, false, nil, nil, "", store, testLogger(), nil)
+				next, err := prepareHermesHome(taskHome, nextSource, false, nil, nil, "", store, testLogger())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -288,7 +288,7 @@ func TestHermesInstallsRejectsUnsafeEntries(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger(), nil); err == nil || !strings.Contains(err.Error(), "installs") {
+			if _, err := prepareHermesHome(home, source, false, nil, nil, "", "", testLogger()); err == nil || !strings.Contains(err.Error(), "installs") {
 				t.Fatalf("expected explicit installs validation error, got %v", err)
 			}
 			if kind == "file" {

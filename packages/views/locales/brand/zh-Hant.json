@@ -6,7 +6,11 @@
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro 將不再接收該安裝的 webhook。已有的 PR 映象與關聯會保留，再次連線即可恢復同步。"
+      "errors": {
+        "missing_authorization": "GitHub 未傳回使用者授權。請重新連線並完成授權。如果已有安裝反覆出現此問題，請聯絡 Labrastro 維運人員。",
+        "verification_failed": "無法驗證你對 GitHub 安裝的管理權限。請重新連線；若仍失敗，請聯絡 Labrastro 維運人員檢查 GitHub App 設定。",
+        "persist_failed": "無法儲存 GitHub 連線。請從設定 → 程式碼重試；若仍失敗，請聯絡 Labrastro 維運人員。"
+      }
     },
     "lark": {
       "install_error_bot_info": "授權完成，但 Labrastro 無法獲取 Bot 身份資訊，請重試。"

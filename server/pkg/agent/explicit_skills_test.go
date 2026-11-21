@@ -428,3 +428,31 @@ cat >/dev/null
 		t.Fatalf("skill-only handshake did not honor its budget: %+v", result)
 	}
 }
+
+func TestClaudeSkillInitializationReleasesOnEarlyExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	path := filepath.Join(t.TempDir(), "fake-claude")
+	// Exit before answering the initialize request: the shutdown path must
+	// release the command-discovery handshake, not the timeout budget.
+	writeTestExecutable(t, path, []byte("#!/bin/sh\nexit 1\n"))
+	backend := &claudeBackend{cfg: Config{ExecutablePath: path, Logger: slog.Default(), Env: map[string]string{"IS_SANDBOX": "1"}}}
+	skill := testSkillInvocation(t)
+	started := time.Now()
+	session, err := backend.Execute(t.Context(), skill.FallbackPrompt(), ExecOptions{
+		SkillInvocation: skill, HandshakeTimeout: 5 * time.Second, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status == "completed" {
+		t.Fatalf("early exit must fail the run: %+v", result)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("early exit waited for the handshake budget: %s (%+v)", elapsed, result)
+	}
+}

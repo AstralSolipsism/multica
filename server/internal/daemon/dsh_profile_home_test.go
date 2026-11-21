@@ -102,11 +102,11 @@ esac
 			if _, err := os.Stat(filepath.Join(selected, "profiles", "multica", "package.json")); err != nil {
 				t.Fatal(err)
 			}
-			if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeOK {
+			if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeOK {
 				t.Fatalf("installed profile probe: %v, want compatible", got)
 			}
 			t.Setenv("DSH_TEST_PROBE_FAIL", "1")
-			if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeUnavailable {
+			if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeUnavailable {
 				t.Fatalf("transient probe failure: %v, want unavailable", got)
 			}
 			d := &Daemon{
@@ -142,7 +142,7 @@ esac
 	// An unrelated manifest in the daemon home must not hide the missing
 	// profile in the home selected by the launcher.
 	writeDshProfileManifest(t, inherited, `{"dsh":{"profile":{"bundles":["dsh-profile-multica"]}}}`)
-	if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeMissingProfile {
+	if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeMissingProfile {
 		t.Fatalf("before install: %v, want missing", got)
 	}
 	t.Setenv(dshProfileBundleEnv, "fixture-bundle")
@@ -150,7 +150,7 @@ esac
 	if err := provisionDshMulticaProfile(context.Background(), launcher, logger); err != nil {
 		t.Fatal(err)
 	}
-	if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeOK {
+	if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeOK {
 		t.Fatalf("after install: %v, want compatible", got)
 	}
 	d := &Daemon{cfg: Config{Agents: map[string]AgentEntry{"dsh": {Path: launcher}}}}
@@ -163,7 +163,7 @@ esac
 	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexport DSH_HOME='"+selected+"'\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeUnavailable {
+	if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeUnavailable {
 		t.Fatalf("transient boot failure: %v, want unavailable", got)
 	}
 }
@@ -184,7 +184,7 @@ esac`)
 	if got := dshMulticaProfileState(launcher); got != dshProfileUnknown {
 		t.Fatalf("dynamic home: %v, want unknown", got)
 	}
-	if got := probeDshMulticaProfile(context.Background(), launcher); got != dshProbeUnavailable {
+	if got := probeDshMulticaProfile(context.Background(), launcher).verdict; got != dshProbeUnavailable {
 		t.Fatalf("opaque probe: %v, want unavailable", got)
 	}
 	d := &Daemon{

@@ -6,7 +6,11 @@
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro はこのインストールの Webhook 受信を停止します。既存の PR ミラーとリンクは保持され、いつでも再接続して更新を再開できます。"
+      "errors": {
+        "missing_authorization": "GitHub からユーザー認証が返されませんでした。再接続して認証を完了してください。既存のインストールで繰り返す場合は、Labrastro の運用担当者に連絡してください。",
+        "verification_failed": "GitHub インストールへの管理権限を確認できませんでした。再接続し、繰り返す場合は Labrastro の運用担当者に GitHub App の設定確認を依頼してください。",
+        "persist_failed": "GitHub 接続を保存できませんでした。設定 → コードから再試行し、繰り返す場合は Labrastro の運用担当者に連絡してください。"
+      }
     },
     "lark": {
       "install_error_bot_info": "承認はされましたが、Labrastro がボットの識別子を取得できませんでした。もう一度お試しください。"

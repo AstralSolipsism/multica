@@ -158,10 +158,13 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // state for local_directory tasks. Callers that don't need cleanup —
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
-// installed, when non-nil, receives each successful skill write's absolute
-// directory by skill ID (OL-200 explicit invocation); the returned names are the
-// allocated invocation names in input order (#7941).
-func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest, installed map[string]string) ([]string, error) {
+func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) ([]string, error) {
+	return writeContextFilesTracked(workDir, provider, ctx, manifest, nil)
+}
+
+// writeContextFilesTracked additionally records, when installed is non-nil,
+// each successful skill write's absolute directory keyed by skill ID.
+func writeContextFilesTracked(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest, installed map[string]string) ([]string, error) {
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return nil, err
 	}
@@ -179,7 +182,7 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 			}
 			// Codex skills are written to codex-home in Prepare; skip here.
 			if provider != "codex" {
-				preparedSkillNames, err = writeSkillFilesWithNames(skillsDir, ctx.AgentSkills, manifest, installed)
+				preparedSkillNames, err = writeSkillFilesWithNamesTracked(skillsDir, ctx.AgentSkills, manifest, installed)
 				if err != nil {
 					return nil, fmt.Errorf("write skill files: %w", err)
 				}
@@ -588,8 +591,9 @@ func isFrontmatterValidYAML(content string) bool {
 	return yaml.Unmarshal([]byte(fmBody), &m) == nil
 }
 
-// SkillBody removes a complete frontmatter block for explicit prompt injection.
-// Malformed/unclosed frontmatter is preserved instead of dropping skill text.
+// SkillBody removes a complete frontmatter block for explicit prompt
+// injection. Malformed/unclosed frontmatter is preserved instead of dropping
+// skill text.
 func SkillBody(content string) string {
 	_, body, _ := frontmatterParts(content)
 	return body
@@ -961,17 +965,27 @@ func sanitizeSkillName(name string) string {
 // overwrite user bytes (the bug PR #3444 review caught) or skip the
 // skill entirely (which would silently drop a Multica skill the agent
 // expects to see).
-// installed, when non-nil, receives each successful write's absolute directory
-// by skill ID, so explicit invocation never has to repeat the allocator.
-func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
-	_, err := writeSkillFilesWithNames(skillsDir, skills, manifest, installed)
+func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) error {
+	return writeSkillFilesTracked(skillsDir, skills, manifest, nil)
+}
+
+// writeSkillFilesTracked additionally records, when installed is non-nil,
+// each successful write's absolute directory by skill ID.
+func writeSkillFilesTracked(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) error {
+	_, err := writeSkillFilesWithNamesTracked(skillsDir, skills, manifest, installed)
 	return err
 }
 
 // writeSkillFilesWithNames returns the allocated invocation names in input
 // order, including suffixes needed to preserve user-owned skill directories.
-// installed has the same meaning as on writeSkillFiles.
-func writeSkillFilesWithNames(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) ([]string, error) {
+func writeSkillFilesWithNames(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) ([]string, error) {
+	return writeSkillFilesWithNamesTracked(skillsDir, skills, manifest, nil)
+}
+
+// writeSkillFilesWithNamesTracked additionally records, when installed is
+// non-nil, each successful write's absolute directory by skill ID, so
+// explicit invocation never has to repeat the allocator.
+func writeSkillFilesWithNamesTracked(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest, installed map[string]string) ([]string, error) {
 	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
 		return nil, fmt.Errorf("create skills dir: %w", err)
 	}

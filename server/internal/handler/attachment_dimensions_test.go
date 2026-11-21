@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -83,7 +84,18 @@ func TestUploadFileImageDimensions(t *testing.T) {
 			}
 		})
 	}
-	if len(store.files) != 3 || store.uploadStreamCalls != 3 {
-		t.Fatalf("stored %d objects with %d stream calls, want three originals", len(store.files), store.uploadStreamCalls)
+	// Upload prewarms each image's thumbnail in the background, so count only
+	// the originals; the thumbnail key is the original key plus ".thumb".
+	store.mu.Lock()
+	originals := 0
+	for key := range store.files {
+		if !strings.HasSuffix(key, ".thumb") {
+			originals++
+		}
+	}
+	streamCalls := store.uploadStreamCalls
+	store.mu.Unlock()
+	if originals != 3 || streamCalls != 3 {
+		t.Fatalf("stored %d originals with %d stream calls, want three originals", originals, streamCalls)
 	}
 }

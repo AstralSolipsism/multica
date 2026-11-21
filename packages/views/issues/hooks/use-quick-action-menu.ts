@@ -8,6 +8,7 @@ import type { Node } from "@tiptap/pm/model";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { isDeletedComment } from "@multica/core/issues/comment-deletion";
 import { parseMentions } from "@multica/core/issues/comment-trigger-outcomes";
 import { issueDetailOptions, issueKeys } from "@multica/core/issues/queries";
 import { buildQuickActionBody, quickActionListOptions } from "@multica/core/quick-actions";
@@ -60,7 +61,7 @@ function resolveThreadSlashTargetIds(
     timeline.filter((entry) => entry.type === "comment").map((entry) => [entry.id, entry]),
   );
   const parent = comments.get(parentId);
-  if (!parent || parent.deleted_at) return [];
+  if (!parent || isDeletedComment(parent)) return [];
   if (parent.actor_type === "agent") return parent.actor_id ? [parent.actor_id] : [];
 
   const root = threadRoot(parent, comments);
@@ -74,7 +75,8 @@ function resolveThreadSlashTargetIds(
       return squad && !squad.archived_at ? [squad.leader_id] : [];
     }
     const ownerIds = (tasks ?? [])
-      .filter((task) => task.trigger_comment_id === root.id)
+      .filter((task) =>
+        task.trigger_comment_id === root.id || task.coalesced_comment_ids?.includes(root.id))
       .map((task) => task.agent_id);
     for (const comment of comments.values()) {
       if (comment.actor_type === "agent" && threadRoot(comment, comments)?.id === root.id) {

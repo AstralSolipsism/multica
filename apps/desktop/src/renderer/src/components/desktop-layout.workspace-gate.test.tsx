@@ -123,6 +123,7 @@ vi.mock("@/platform/chat-session-handoff", () => ({
   DesktopChatSessionBridge: () => <div data-testid="chat-session-bridge" />,
 }));
 vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => <div data-testid="whats-new-deck" /> }));
+vi.mock("@multica/views/billing", () => ({ WorkspaceTrialNotices: () => null }));
 
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
 vi.mock("./window-overlay", () => ({ WindowOverlay: () => null }));

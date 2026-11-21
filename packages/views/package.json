@@ -57,6 +57,9 @@
     "./workspace/no-access-page": "./workspace/no-access-page.tsx",
     "./workspace/use-workspace-seen": "./workspace/use-workspace-seen.ts",
     "./layout": "./layout/index.ts",
+    "./extensions": "./extensions/index.ts",
+    "./layout/collection-list": "./layout/collection-list/index.ts",
+    "./common/pill-button": "./common/pill-button.tsx",
     "./layout/route-icon-components": "./layout/route-icon-components.tsx",
     "./auth": "./auth/index.ts",
     "./search": "./search/index.ts",
@@ -95,7 +98,8 @@
     "./locales/effective/ja": "./locales/effective/ja.ts",
     "./locales/effective/fr": "./locales/effective/fr.ts",
     "./locales/effective/es": "./locales/effective/es.ts",
-    "./locales/effective/ru": "./locales/effective/ru.ts"
+    "./locales/effective/ru": "./locales/effective/ru.ts",
+    "./docs": "./docs/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
@@ -184,7 +188,7 @@
     "@typescript-eslint/parser": "^8.35.0",
     "@typescript/native": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "eslint": "^9.0.0",
+    "eslint": "catalog:",
     "eslint-plugin-i18next": "catalog:",
     "jsdom": "catalog:",
     "typescript": "catalog:",

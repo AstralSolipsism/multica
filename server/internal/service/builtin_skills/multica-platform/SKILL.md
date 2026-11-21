@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Labrastro platform actions this brief does not fully cover: issue and PR contracts, sub-issues, prerequisites, batch changes, saved views, charts and files, mentions, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes. Not for product code."
+description: "Use for Labrastro platform actions this brief does not fully cover: issue and PR contracts, sub-issues, prerequisites, batch changes, saved views, charts and files, mentions, inbox, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes. Not for product code."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -33,6 +33,7 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/environments.md` | Local environments in the issue sidebar: writing `.multica/environments.toml`, `multica env start` / `stop` / `list`, detected servers |
 | `references/skill-import.md` | Importing skills; managing skill folders, placements and packages; exporting or migrating skill organization |
 | `references/themes.md` | Building or changing a Labrastro app theme: the format, the checker, delivering to Desktop's themes folder or as a `.zip` |
+| `references/inbox.md` | Going through the runtime owner's inbox for them: listing unread notifications, marking read or unread, archiving, snoozing, bulk clean-up (`multica inbox`) |
 
 Open what the task needs. A single-domain task usually needs one; a task that
 crosses domains needs each domain it touches — creating a squad, assigning it an

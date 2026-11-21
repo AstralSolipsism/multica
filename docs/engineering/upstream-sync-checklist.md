@@ -6,9 +6,9 @@ remain acceptance criteria. A clean merge is insufficient. The external
 conversation boundary of [upstream-sync-20261002.md](upstream-sync-20261002.md)
 was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
-Current upstream baseline: **v0.10.0**, commit
-`2fcb424b72b024f65161809081009063846ea44d`.
-The [2026-11-17 sync record](upstream-sync-20261117.md) records the merge
+Current upstream baseline: **v0.11.1**, commit
+`e1fe10d6694848e35dd1aa00e08cd11d93e545ac`.
+The [2026-11-21 sync record](upstream-sync-20261121.md) records the merge
 lineage, migration evidence and insertion measurements.
 
 ## Migration identity and execution order
@@ -114,16 +114,21 @@ an upstream insertion requires updating this ledger in the same PR.
 | `server/cmd/multica/main.go` | baseline CLI exit code hook | `labrastroBaselineExitCode` | 1 |
 | `server/cmd/multica/cmd_project.go` | CLI subcommand registration | `newLabrastroProjectBaselineCmd`, `newLabrastroProjectEngineeringCmd` | 2 |
 | `server/internal/handler/project_resource.go` | claim-time engineering context injection | `appendEngineeringProjectDescription` | 1 |
-| `server/internal/handler/project.go` | delete-project cascade | `deleteProjectEngineering` (`labrastro_engineering.go`) | 2 |
+| `server/internal/handler/project.go` | delete-project cascade | `deleteProjectEngineering` (`labrastro_engineering.go`), baseline attachment cleanup | 4 |
 | `server/internal/service/issue.go` | lazy comment carrier: option, preparation, transactional binding | `BaselineThreadID`, `prepareBaselineThread`, `bindBaselineThread` | 3 |
-| `server/internal/handler/workspace.go` | delete-workspace cascade | `deleteWorkspaceEngineeringAndProjects` | 1 |
-| `packages/core/package.json` | engineering subpath export | `./projects/baseline-wiki-diff.ts` | 1 |
+| `server/internal/handler/workspace.go` | delete-workspace cascade | `deleteWorkspaceEngineeringAndProjects`, baseline attachment cleanup | 5 |
+| `packages/core/package.json` | engineering subpath exports | `./projects/baseline-wiki-diff`, `./projects/wikilink-resolution` | 2 |
 
 "Expected lines" uses one mechanical metric: added lines vs the recorded
 upstream base that mention an engineering/baseline identifier
 (`git diff -U0 <base> HEAD -- <file>`), using base
-`2fcb424b72b024f65161809081009063846ea44d` (v0.10.0). Table total: **54 lines**
-(51 existing + 3 carrier plugs). Exclude the unrelated YSK documentation
+`e1fe10d6694848e35dd1aa00e08cd11d93e545ac` (v0.11.1; identical counts against
+v0.10.0 `2fcb424b72b024f65161809081009063846ea44d`). Table total: **61 lines**
+(58 existing + 3 carrier plugs). The three raised cells were re-measured on
+2026-11-21 while syncing v0.11.1: baseline attachment cleanup in
+`project.go`/`workspace.go` and the wiki-link export in `package.json` landed
+after the previous count. Verified against `3eaed6ed6` that the delta predates
+this sync, so no plug was widened by it. Exclude the unrelated YSK documentation
 reference in `events.ts` and tab persistence's `tabStorage?.setBaseline`.
 The path builder has two identifier-bearing lines; the old ledger's nine
 counted its whole multiline body. When a file's
@@ -152,10 +157,10 @@ three fork plugs and dedicated implementation have been retired.
 
 | Anchor (function / symbol) | Fork file providing the implementation |
 | --- | --- |
-| `runHeartbeatTick` (~line 4647) and `handlePendingWorkHint` (~line 4792): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
-| `runTask` OnPlanQuota callback (~line 9151) and terminal report (~line 9412): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
-| Terminal usage conversion (~line 9420): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
-| `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1526, 1596, 1606): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
+| `runHeartbeatTick` (~line 4777) and `handlePendingWorkHint` (~line 4934): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
+| `runTask` OnPlanQuota callback (~line 9500) and terminal report (~line 9832): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
+| Terminal usage conversion (~line 9840): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
+| `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1539, 1609, 1619): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
 | `Daemon` struct fields `planQuotaCache`, `jevClient`, `jevSamples`, `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*` — field declarations stay in daemon.go; all methods live in fork files | `planquota_cache.go`, `jevprobe.go`, `hostmetrics.go`, `thinking_step.go`, `media.go` |
 | DSH reason consts `dshMissingProfileReason` etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
 

@@ -28,6 +28,7 @@ WITH active AS MATERIALIZED (
     SELECT id FROM anchors
 )
 SELECT i.*,
+       iss.number AS issue_number,
        iss.status AS issue_status,
        iss.priority AS issue_priority,
        iss.project_id AS issue_project_id,

@@ -126,7 +126,7 @@ func TestHermesManagedHomeRealACP(t *testing.T) {
 	var sessionID string
 	for turn := range 2 {
 		scratch := filepath.Join(t.TempDir(), "hermes-home")
-		home, err := prepareHermesHome(scratch, source, false, []SkillContextForEnv{{Name: "fixture", Content: "Local test"}}, nil, "", store, testLogger(), nil)
+		home, err := prepareHermesHome(scratch, source, false, []SkillContextForEnv{{Name: "fixture", Content: "Local test"}}, nil, "", store, testLogger())
 		if err != nil {
 			t.Fatal(err)
 		}

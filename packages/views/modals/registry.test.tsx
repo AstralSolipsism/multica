@@ -12,6 +12,7 @@ vi.mock("./mark-duplicate-issue", () => ({ MarkDuplicateIssueModal: () => null }
 vi.mock("./add-child-issue", () => ({ AddChildIssueModal: () => null }));
 vi.mock("./delete-issue-confirm", () => ({ DeleteIssueConfirmModal: () => null }));
 vi.mock("./issue-limit-upgrade-dialog", () => ({ IssueLimitUpgradeDialog: () => null }));
+vi.mock("./limit-recovery-dialog", () => ({ LimitRecoveryDialog: () => null }));
 vi.mock("./run-confirm", () => ({
   RunConfirmModal: () => <div role="dialog" aria-label="Run confirmation" />,
 }));

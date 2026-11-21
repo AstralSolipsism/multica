@@ -224,7 +224,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 						return
 					}
 					r.Header.Set("X-User-ID", userID)
-					r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash}))
+					r = r.WithContext(withPersonalAccessToken(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash})))
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -260,7 +260,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				// within the TTL window skip this write entirely.
 				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
 
-				r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash, ExpiresAt: expiresAt}))
+				r = r.WithContext(withPersonalAccessToken(auth.WithIdentity(r.Context(), auth.Identity{UserID: userID, CredentialKind: "pat", CredentialHash: hash, ExpiresAt: expiresAt})))
 				next.ServeHTTP(w, r)
 				return
 			}

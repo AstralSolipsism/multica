@@ -142,11 +142,11 @@ func buildJoinedWakeupsBlock(notes string) string {
 // common BuildPrompt(task, provider) call sites stay unchanged.
 type promptOpts struct {
 	sharedLocalDirectory        bool
-	worktreeReplayConflicts     []string
 	skillDirectories            map[string]string
 	omitChatMessage             bool
 	chatSkillRefs               []SlashSkillRef
 	triggerCommentStripped      bool
+	worktreeReplayConflicts     []string
 	worktreeBranch              string
 	worktreeBase                string
 	worktreeCommitsAllLeftovers bool
@@ -337,7 +337,7 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	for _, apply := range options {
 		apply(&opts)
 	}
-	body := buildPromptBody(task, provider, opts)
+	body := buildPromptBodyWithOptions(task, provider, opts)
 	// Run-scoped context is appended, never prepended: everything ahead of it
 	// is stable across runs of a resumed session, and appending keeps it after
 	// the cached prefix (MUL-5377).
@@ -350,7 +350,11 @@ func BuildPrompt(task Task, provider string, options ...PromptOption) string {
 	return body
 }
 
-func buildPromptBody(task Task, provider string, opts promptOpts) string {
+func buildPromptBody(task Task, provider string) string {
+	return buildPromptBodyWithOptions(task, provider, promptOpts{})
+}
+
+func buildPromptBodyWithOptions(task Task, provider string, opts promptOpts) string {
 	if task.WakeupID != "" {
 		var b strings.Builder
 		fmt.Fprintf(&b, "You are running as a local coding agent for a Labrastro workspace.\n\nYour assigned issue ID is: %s\n\n[WAKEUP]\n%s\n\n", task.IssueID, task.HandoffNote)
@@ -368,10 +372,10 @@ func buildPromptBody(task Task, provider string, opts promptOpts) string {
 		return b.String()
 	}
 	if task.ChatSessionID != "" {
-		return buildChatPrompt(task, opts)
+		return buildChatPromptWithOptions(task, opts)
 	}
 	if task.TriggerCommentID != "" {
-		return buildCommentPrompt(task, provider, opts)
+		return buildCommentPromptWithOptions(task, provider, opts)
 	}
 	if task.AutopilotRunID != "" {
 		return buildAutopilotPrompt(task)
@@ -497,7 +501,11 @@ func buildQuickCreatePrompt(task Task) string {
 // The reply instructions (including the current TriggerCommentID as --parent)
 // are re-emitted on every turn so resumed sessions cannot carry forward a
 // previous turn's --parent UUID.
-func buildCommentPrompt(task Task, provider string, opts promptOpts) string {
+func buildCommentPrompt(task Task, provider string) string {
+	return buildCommentPromptWithOptions(task, provider, promptOpts{})
+}
+
+func buildCommentPromptWithOptions(task Task, provider string, opts promptOpts) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Labrastro workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -765,7 +773,11 @@ func commentReplyThreads(task Task) []execenv.ThreadReplyTarget {
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
-func buildChatPrompt(task Task, opts promptOpts) string {
+func buildChatPrompt(task Task) string {
+	return buildChatPromptWithOptions(task, promptOpts{})
+}
+
+func buildChatPromptWithOptions(task Task, opts promptOpts) string {
 	// Legacy compatibility for historical proactive-introduction sessions.
 	// New agent creation no longer creates a chat or runs this prompt.
 	if task.ChatIntro {
@@ -864,7 +876,11 @@ func buildChatPrompt(task Task, opts promptOpts) string {
 		b.WriteString(block)
 	}
 	if !opts.omitChatMessage {
-		fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
+		message := task.ChatMessage
+		if task.PriorSessionID != "" && task.ChatResumeMessage != nil {
+			message = *task.ChatResumeMessage
+		}
+		fmt.Fprintf(&b, "User message:\n%s\n", message)
 	}
 	// List attachments by id + filename so the agent can fetch them via
 	// the CLI. We deliberately do NOT inline the URL: chat attachments

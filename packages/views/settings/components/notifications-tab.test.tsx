@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { notificationPreferenceKeys } from "@multica/core/notification-preferences/queries";
@@ -13,7 +14,6 @@ vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "ws-a", name: "Acme" }),
   useWorkspacePaths: () => ({ inbox: () => "/acme/inbox" }),
 }));
-const mutateMock = vi.hoisted(() => vi.fn());
 vi.mock("../../navigation", () => ({
   AppLink: ({ href, children, className }: { href: string; children: ReactNode; className?: string }) => (
     <a href={href} className={className}>
@@ -21,8 +21,9 @@ vi.mock("../../navigation", () => ({
     </a>
   ),
 }));
+const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
 vi.mock("@multica/core/notification-preferences/mutations", () => ({
-  useUpdateNotificationPreferences: () => ({ mutate: mutateMock }),
+  useUpdateNotificationPreferences: () => ({ mutate }),
 }));
 vi.mock("./browser-notification-setting", () => ({ BrowserNotificationSetting: () => null }));
 vi.mock("../../you-should-know/settings/personal-toggle", () => ({
@@ -36,7 +37,10 @@ vi.mock("../../message-delivery", async () => ({
   TeamSubscriptionsSection: (await import("../../message-delivery/components/team-subscriptions-section")).TeamSubscriptionsSection,
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mutate.mockReset();
+});
 
 function renderTab(preferences: Record<string, string> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
@@ -82,6 +86,24 @@ describe("Inbox notification settings", () => {
     ]);
     expect(within(inbox).getByRole("switch", { name: "Priority & Due date" })).not.toBeChecked();
     expect(within(inbox).getByRole("switch", { name: "Comments" })).toBeChecked();
+  });
+
+  it("leaves status changes off until you turn them on", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    const statusChanges = within(screen.getByRole("region", { name: "Inbox" })).getByRole("switch", {
+      name: "Status changes",
+    });
+    expect(statusChanges).not.toBeChecked();
+
+    await user.click(statusChanges);
+    expect(mutate).toHaveBeenCalledWith({ status_changes: "all" }, expect.anything());
+  });
+
+  it("shows status changes on once you turned them on", () => {
+    renderTab({ status_changes: "all" });
+    const inbox = screen.getByRole("region", { name: "Inbox" });
+    expect(within(inbox).getByRole("switch", { name: "Status changes" })).toBeChecked();
   });
 
   it.each<{ preferences: Record<string, string>; shown: string }>([
@@ -162,10 +184,10 @@ describe("NotificationsTab sections", () => {
 
   it("still toggles inbox preferences", () => {
     renderTab();
-    mutateMock.mockClear();
+    mutate.mockClear();
     const toggle = screen.getAllByRole("switch", { name: "Assignments" })[0]!;
     fireEvent.click(toggle);
-    expect(mutateMock).toHaveBeenCalledTimes(1);
-    expect(mutateMock.mock.calls[0]![0]).toMatchObject({ assignments: "muted" });
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0]![0]).toMatchObject({ assignments: "muted" });
   });
 });

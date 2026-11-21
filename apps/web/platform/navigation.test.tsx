@@ -329,3 +329,13 @@ describe("WebNavigationProvider pending navigation hash", () => {
     expect(scroll!.getViewState!("highlight:i2")).toBe("c1");
   });
 });
+
+describe("WebNavigationProvider prefetch", () => {
+  it("prefetches a route's full payload, not just its loading shell (MUL-9538)", () => {
+    const adapter = renderAdapter();
+
+    adapter().prefetch?.("/acme/issues/MUL-1");
+
+    expect(router.prefetch).toHaveBeenCalledWith("/acme/issues/MUL-1", { kind: "full" });
+  });
+});

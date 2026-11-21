@@ -330,6 +330,23 @@ describe("resolveIssueSlashSkills", () => {
     })).map((item) => item.id)).toEqual(["owner-skill"]);
   });
 
+  it("uses the conversation owner from a coalesced root comment", () => {
+    const owner = agent("owner", [skill("owner-skill")]);
+    const root = timelineComment("root");
+    const tasks = [{
+      agent_id: owner.id,
+      trigger_comment_id: "latest-comment",
+      coalesced_comment_ids: [root.id],
+    } as AgentTask];
+
+    expect(resolveIssueSlashSkills(docWithMentions(), context({
+      agents: [owner],
+      parentId: root.id,
+      timeline: [root],
+      tasks,
+    })).map((item) => item.id)).toEqual(["owner-skill"]);
+  });
+
   it("uses task and same-thread agent owners for a nested member reply", () => {
     const taskOwner = agent("task-owner", [skill("task-skill")]);
     const replyOwner = agent("reply-owner", [skill("reply-skill")]);
