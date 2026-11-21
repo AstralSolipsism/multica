@@ -104,7 +104,7 @@ selfhost: ## Build local development images, create .env if needed, and start th
 		echo "==> Generated random JWT_SECRET, POSTGRES_PASSWORD, and MULTICA_VCS_SECRET_KEY"; \
 	fi
 ifeq ($(wildcard .env),)
-	@$(MAKE) --no-print-directory selfhost
+	@$(MAKE) --no-print-directory selfhost ENV_FILE=.env
 else
 	@echo "==> Building Labrastro development images from this checkout..."
 	$(COMPOSE) -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml build backend frontend

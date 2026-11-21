@@ -1,13 +1,17 @@
 # Upstream v0.11.1 sync — 2026-11-21 (OL-1472 / OL-1481)
 
-Stages 1–3 share `sync/v0.11.1-ol-1472`, targeting
+Stages 1–4 share `sync/v0.11.1-ol-1472`, targeting
 `AstralSolipsism/multica:main`. Stage 1 (OL-1479) owns the two-parent merge
 base, six security/reliability backports, `server/ee` OSS stripping and
 server/CLI/migration gates; Stage 2 (OL-1480) owns three-way frontend/Core/Web/
 Desktop fusion, `packages/ee` OSS stripping and unified Runtime quota
 convergence; Stage 3 (OL-1481) owns independent PG17 four-path migration
-parity, isolated retained E2E, this sync record and the sole formal PR;
-Stage 4 (OL-1482) owns release and deployment of `v0.11.1-labrastro.1`.
+parity, isolated retained E2E, this sync record and opening the sole formal PR
+(PR #332, kept **OPEN** pending Stage 4 after two-stage cross-family review and
+green remote `CI required`); Stage 4 (OL-1483) owns the whole-branch
+file-by-file, line-by-line restraint and necessity audit (plus any trimming on
+the same branch before merge); Stage 5 (OL-1482) owns release and deployment of
+`v0.11.1-labrastro.1` only after project-owner sign-off.
 
 ## Ancestry
 
@@ -233,7 +237,9 @@ High-churn anchors survive with unchanged counts:
    (`e1fe10d6694848e35dd1aa00e08cd11d93e545ac`) via two-parent `--no-ff` merge
    `M1` and `cherry-pick -x` only `#10977`, `#10984`, `#10994`, `#10950`,
    `#11000` and `#10999` (zero DB migrations); exclude unreleased `697`–`702`
-   guest migrations. Stage 4 releases and deploys `v0.11.1-labrastro.1`.
+   guest migrations. After Stage 4 (OL-1483) completes the whole-branch
+   restraint audit and project-owner sign-off, Stage 5 (OL-1482) releases and
+   deploys `v0.11.1-labrastro.1`.
 2. **2A — Pure open-source boundary**: completely strip commercial `server/ee/`,
    `server/cmd/server/ee.go`, `packages/ee/`, `@multica/ee`, `registerEE()` and
    root `LICENSE` commercial clauses, while retaining `681`–`682` SQL migrations
@@ -321,21 +327,52 @@ Python 3.12.14, GoReleaser v2.18.0, Playwright 1.58.2 (Chrome Headless Shell
     skill menu, engineering baseline Wiki) were delivered in Stage 2 (OL-1480);
     the retained E2E HTML report is attached to OL-1481 rather than committed.
 
+- **Stage 3 first-review rework (`Makefile:107` & stage handoff alignment)**:
+  - Remote CI run `44909678077` on `0098ed19045a45343b65930ddaf2ad2f7a1fa3ae`
+    passed 23/24 independent checks (including `retained-e2e-tests`,
+    `backend-tests`, `backend-agent-tests`, `frontend`, `candidate-checks`,
+    `sqlc-check`, `backend-format`, `go-vulnerability-scan` and all installer
+    jobs) and failed solely in `script-checks` (`scripts/selfhost-config.test.sh`:
+    first-run `make selfhost` / `make selfhost-build` with `.env.worktree`
+    present). Root cause: `Makefile:5` selected `.env.worktree` and
+    `Makefile:29` exported `ENV_FILE=.env.worktree`, so the recursive
+    `$(MAKE) --no-print-directory selfhost` at `Makefile:107` kept reading
+    `.env.worktree` instead of the newly generated `.env`.
+  - Fixed by pinning `ENV_FILE=.env` on `Makefile:107` (`@$(MAKE)
+    --no-print-directory selfhost ENV_FILE=.env`), matching upstream `#10523`
+    while preserving Labrastro's local development build flow and candidate-tag
+    guards. Verified with an isolated real-`make` Compose-env capture harness
+    across all four combinations (`selfhost` / `selfhost-build` × empty /
+    `.env.worktree`-only), plus full `init-worktree-env.sh` worktree layout and
+    candidate-tag rejection (`MULTICA_IMAGE_TAG=v1.2.3-labrastro.1`,
+    `VERSION=1.2.3`, `LABRASTRO_RELEASE_TAG=...`). Application Go/TS code
+    remains unchanged from `1604840cd820504adec21976c6f1e0de12ca14cc`.
+
 ## Deployment and cross-family review handoff
 
-- **Stage 4 (OL-1482)**: tag and publish `v0.11.1-labrastro.1` from the merged
-  `AstralSolipsism/multica:main` SHA after remote `CI required` passes. Keep
-  `FF_DOCS_V1` unset/`false` and `MULTICA_WEIXIN_SECRET_KEY` unset in production;
-  note upstream `#10778` changes default `status_changes` notifications to
-  `"muted"` for members without an explicit preference (`you_should_know` stays
-  `"all"`). Preserve existing Feishu and environment-proxy settings.
-- **Author model families (conflict-of-interest declaration)**: commits on
-  `sync/v0.11.1-ol-1472` were authored jointly by the **DeepSeek** family
-  (`全栈补位专员`, Stage 1 + initial Stage 2) and the **Gemini** family
-  (`排障师`, Stage 2 convergence + Stage 3). Request **two sequential high-risk
-  reviews by experts from two different model families outside DeepSeek and
-  Gemini** (e.g., **Claude** + **Codex/Qwen**). The second reviewer merges into
-  `AstralSolipsism/multica:main` only after remote `CI required` passes on the
-  final PR head; the author does not merge or poll remote CI.
+- **Author model families & Stage 3 review handoff (keep PR #332 OPEN)**:
+  commits on `sync/v0.11.1-ol-1472` were authored jointly by the **DeepSeek**
+  family (`全栈补位专员`, Stage 1 + initial Stage 2) and the **Gemini** family
+  (`排障师`, Stage 2 convergence + Stage 3). Two sequential high-risk reviews
+  must be completed by experts from two different model families outside
+  DeepSeek and Gemini (First review: **Codex**; Second review: e.g., **Claude**).
+  Per OL-1481 handoff directive `01a1fe45-3c93-7a54-8f37-0a668cd0d4fe`, **do
+  NOT run `gh pr merge` in Stage 3**: after the second reviewer approves and
+  remote `CI required` passes on the final PR head, keep PR #332 **OPEN** and
+  advance OL-1481 to `done_2` (总结中); the author never merges or polls remote
+  CI.
+- **Stage 4 (OL-1483 — whole-branch restraint & necessity audit)**: perform a
+  file-by-file, line-by-line restraint and necessity audit on
+  `sync/v0.11.1-ol-1472` (applying any trimming directly on the open PR branch
+  and re-running gates). Merge PR #332 into `AstralSolipsism/multica:main` only
+  after Stage 4 concludes and the project owner explicitly approves release.
+- **Stage 5 (OL-1482 — release & production deployment)**: unlocked only after
+  Stage 4 sign-off and PR #332 merges into `AstralSolipsism/multica:main` with
+  green `CI required`. Tag and publish `v0.11.1-labrastro.1` from the merged
+  `main` SHA. Keep `FF_DOCS_V1` unset/`false` and `MULTICA_WEIXIN_SECRET_KEY`
+  unset in production; note upstream `#10778` changes default `status_changes`
+  notifications to `"muted"` for members without an explicit preference
+  (`you_should_know` stays `"all"`). Preserve existing Feishu and
+  environment-proxy settings.
 
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.
