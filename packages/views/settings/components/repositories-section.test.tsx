@@ -404,15 +404,25 @@ describe("RepositoriesSection", () => {
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
   });
 
-  it("honors can_manage for GitHub even when workspace editing is available", async () => {
-    githubRef.current.can_manage = false;
-    githubRef.current.installations = [{ id: "existing", account_login: "alice" }];
-    const user = userEvent.setup();
-    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
-    await openAddMenu(user);
-    expect(await screen.findByRole("menuitem", { name: "Enter a URL..." })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /GitHub|Add account/ })).toBeNull();
-  });
+  it.each([
+    ["an existing installation", () => {
+      githubRef.current.installations = [{ id: "existing", account_login: "alice" }];
+    }],
+    ["no installation yet", () => {
+      githubRef.current.installations = [];
+    }],
+  ])(
+    "honors can_manage for GitHub even when workspace editing is available (%s)",
+    async (_case, arrange) => {
+      githubRef.current.can_manage = false;
+      arrange();
+      const user = userEvent.setup();
+      render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+      await openAddMenu(user);
+      expect(await screen.findByRole("menuitem", { name: "Enter a URL..." })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /GitHub|Add account/ })).toBeNull();
+    },
+  );
 
   it.each([
     ["missing_authorization", /GitHub did not return user authorization/],
@@ -501,8 +511,7 @@ describe("RepositoriesSection", () => {
     [
       "the caller manages no GitHub accounts reusable here",
       () => {
-        githubRef.current = { ...githubRef.current, can_manage: false };
-        offerForReuse(outlune);
+        offerForReuse();
       },
     ],
     [

@@ -377,6 +377,12 @@ describe("CodeTab — GitHub", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
     expect(mockDeleteInstallation).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog", { name: "Disconnect beta?" });
+    // The upstream copy takes the account name as an interpolation, so a
+    // missing `login` would surface the literal placeholder in every locale.
+    expect(dialog.querySelector('[data-slot="alert-dialog-description"]') as HTMLElement).toHaveTextContent(
+      "Disconnect beta from this workspace?",
+    );
+    expect(dialog.querySelector('[data-slot="alert-dialog-description"]') as HTMLElement).not.toHaveTextContent("{{login}}");
     await user.click(within(dialog).getByRole("button", { name: "Disconnect" }));
 
     await waitFor(() =>
@@ -395,9 +401,14 @@ describe("CodeTab — GitHub", () => {
     await user.click(screen.getByRole("button", { name: "Actions for acme" }));
     await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
     const dialog = await screen.findByRole("alertdialog", { name: "Disconnect acme?" });
+    // Keep the outgoing description node: jsdom does not run the exit
+    // animation, and the account name must survive it.
+    const description = dialog.querySelector('[data-slot="alert-dialog-description"]') as HTMLElement;
+    expect(description).toHaveTextContent("Disconnect acme from this workspace?");
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(description).toHaveTextContent("Disconnect acme from this workspace?");
     expect(mockDeleteInstallation).not.toHaveBeenCalled();
   });
 

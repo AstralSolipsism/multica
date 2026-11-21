@@ -23,11 +23,39 @@ beforeEach(() => {
   for (const script of ["bundle-cli.mjs", "package.mjs"]) {
     copyFileSync(fileURLToPath(new URL(script, import.meta.url)), join(scripts, script));
   }
+  // package.mjs imports the shared release preflight by its repository path,
+  // and that preflight imports package.mjs back; mirror both ends of the cycle
+  // inside the fixture root so resolution matches the real checkout.
+  mkdirSync(join(root, "scripts"), { recursive: true });
+  copyFileSync(
+    fileURLToPath(new URL("../../../scripts/check-release.mjs", import.meta.url)),
+    join(root, "scripts", "check-release.mjs"),
+  );
   // Record staging without loading the native engine or fetching packages.
   writeFileSync(join(scripts, "bundle-voice-engine.mjs"), `
     import { appendFileSync } from "node:fs";
     appendFileSync(process.env.VOICE_MARKER, JSON.stringify(process.argv.slice(2)) + "\\n");
   `);
+
+  // The fork's package.mjs spawns each tool through the bin FILE its own
+  // package.json declares (never through a shell, so validated argv cannot be
+  // re-split). Provide those packages inside the fixture root: electron-vite
+  // exits cleanly, electron-builder records the argv the script actually
+  // spawned.
+  for (const [name, handler] of [
+    ["electron-vite", ""],
+    ["electron-builder",
+      `import { appendFileSync } from "node:fs";
+      appendFileSync(process.env.BUILDER_MARKER, process.argv.slice(2).join(" ") + "\\n");`],
+  ]) {
+    const packageDir = join(root, "node_modules", name);
+    mkdirSync(join(packageDir, "bin"), { recursive: true });
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name, version: "0.0.0", bin: { [name]: `bin/${name}.js` } }),
+    );
+    writeFileSync(join(packageDir, "bin", `${name}.js`), handler);
+  }
 
   // Isolate PATH so no Go toolchain or real Electron packager is used.
   if (process.platform === "win32") {

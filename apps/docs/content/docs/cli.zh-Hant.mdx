@@ -148,7 +148,7 @@ multica issue batch update MUL-123 MUL-124 --priority high --add-label QA
 multica issue batch update MUL-123 MUL-124 --property "Severity=High" --unset-property Reviewer
 ```
 
-`--add-label` 和 `--remove-label` 不影響其他標籤；`--clear-labels` 會先清空標籤，再執行新增。`--property` 設定屬性，`--unset-property` 清空屬性；多值屬性會整體取代。也支援狀態、負責人、項目、日期、父任務和階段。加上 `--no-start` 可套用修改而不啟動 智能體執行。
+`--add-label` 和 `--remove-label` 不影響其他標籤；`--clear-labels` 會先清空標籤，再執行新增。`--property` 設定屬性，`--unset-property` 清空屬性；多值屬性會整體取代。也支援狀態、負責人、項目、日期、父任務和階段。加上 `--no-start` 可套用修改而不啟動智能體執行。
 
 每條任務分別回傳 `updated`、`unchanged` 或帶原因的 `skipped`。只要有任務被略過，命令就會在輸出結果後以非零狀態結束，已成功的修改仍然保留。修正後只重試被略過的任務。`--dry-run` 只檢查並預覽擬議修改，不寫入資料。
 
@@ -229,7 +229,7 @@ multica issue wakeup runs MUL-123 <wakeup-id>
 
 ## 聊天喚醒 [#chat-wakeups]
 
-`chat wakeup` 僅供聊天執行中的 智能體使用，目標就是目前對話。不接受工作階段 ID，也不能從一般成員終端或任務執行中使用。使用者入口見[稍後跟進](/chat#follow-up-later)。
+`chat wakeup` 僅供聊天執行中的智能體使用，目標就是目前對話。不接受工作階段 ID，也不能從一般成員終端或任務執行中使用。使用者入口見[稍後跟進](/chat#follow-up-later)。
 
 ```bash
 multica chat wakeup create --title "Review ready" \
@@ -242,11 +242,11 @@ multica chat wakeup list
 
 從單個 `--until-*` 條件、`--at` / `--after`、`--every` 中選一種。創建和更新都需要 `--title` 與 `--instruction`（或 `--instruction-file`）。`update` 會取代設定，並從更新時重新計算相對截止時間，但不能在條件、提醒和定期檢查之間切換。條件等待和檢查默認 24 小時，可用 `--expires-in` 或 `--expires-at` 設定，最長 7 天；單次提醒最遠 30 天，不接受到期參數。檢查間隔至少 10 分鐘，截止時間內最多容納 100 次檢查：`--every 10m` 搭配默認 24 小時會達到 144 次而被拒絕，需要加大間隔或提前截止時間，例如 `--expires-in 16h`。
 
-條件包括 `--until-issue` 搭配 `--state` 或 `--status`、`--until-children-done` 搭配可選的 `--stage`、`--until-pr`、`--until-run`，以及 `--until-reply` 搭配可選的 `--from <user-id>`。PR 條件使用目前工作區已鏡像的 GitHub PR，格式爲 `owner/repo#N[:merged|closed|checks]`。`checks` 等待目前 head 的檢查結束，成功或失敗都算結束。只有伺服器能從 GitHub 讀取 CI 狀態時才能創建 `checks` 條件；自託管伺服器需要設定 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY`（見 [GitHub 整合](/github-integration)）。創建時已經結束的檢查結果會作爲基準，不會立即喚醒 智能體。
+條件包括 `--until-issue` 搭配 `--state` 或 `--status`、`--until-children-done` 搭配可選的 `--stage`、`--until-pr`、`--until-run`，以及 `--until-reply` 搭配可選的 `--from <user-id>`。PR 條件使用目前工作區已鏡像的 GitHub PR，格式爲 `owner/repo#N[:merged|closed|checks]`。`checks` 等待目前 head 的檢查結束，成功或失敗都算結束。只有伺服器能從 GitHub 讀取 CI 狀態時才能創建 `checks` 條件；自託管伺服器需要設定 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY`（見 [GitHub 整合](/github-integration)）。創建時已經結束的檢查結果會作爲基準，不會立即喚醒智能體。
 
 用 `list`、`get <id>` 查看記錄，`cancel <id>` 取消喚醒。定期檢查執行中，`checkin <id> --note "..."` 記錄進展但不傳送回覆；目標達成後用 `finish <id>` 結束檢查。到期的最後一次執行必須回報，不能靜默簽到。
 
-## 智能體和 skill
+##智能體和 skill
 
 ```bash
 multica agent list
@@ -288,7 +288,7 @@ multica agent update <agent-id> --mcp-config-file ./mcp.json
 - 誰能調用智能體用 `--permission-mode`：`private` 只有所有者，`public_to` 配合 `--public-to-workspace` 或 `--public-to-member <user-id>`。`--visibility private|workspace` 是舊寫法，會映射到 `--permission-mode`；兩者同時給出時以 `--permission-mode` 爲準。
 
 
-### 智能體執行記錄
+###智能體執行記錄
 
 `multica agent tasks <agent-id> --limit 200` 返回最新一頁執行記錄。默認與最大分頁大小都是 200。還有更多執行記錄時，stderr 會輸出一個 cursor；原樣帶入 `--before '<cursor>'` 即可讀取下一頁。`--output json` 維持數組輸出，且只包含該頁的用量。
 
@@ -536,7 +536,7 @@ CLI 配置文件包含可代表你訪問 Multica 的令牌。不要提交到倉�
 | `squad` | `list/get/create/update/delete` | 管理小隊（`delete` 爲歸檔） | |
 | | `member list/add/set-role/remove` | 管理小隊成員 | |
 | | `activity <issue-id> <outcome>` | 記錄隊長評價 | |
-| `chat` | `history`、`thread [id]` | 讀取 智能體當前正在處理的外部聊天會話 | `--limit`、`--before` |
+| `chat` | `history`、`thread [id]` | 讀取智能體當前正在處理的外部聊天會話 | `--limit`、`--before` |
 | | `wakeup create/list/get/update/cancel/finish/checkin` | 管理目前聊天執行的跟進；見[聊天喚醒](#chat-wakeups) | `--title`, `--instruction` / `--instruction-file`, `--until-*`, `--at` / `--after`, `--every`, `--expires-in` / `--expires-at`; `checkin`: `--note` |
 | `inbox` | `list` | [列出通知](/inbox)，不標爲已讀；`--archived` 或 `--snoozed` 改爲列出封存或稍後提醒的內容 | `--unread`、`--issue`、`--since`、`--project`、`--type`、`--output`（`table` 或 `json`）；`--archived` 讀取全部分頁 |
 | | `count` | 目前工作區及你所在各工作區的未讀數；智能體執行時只回傳所在工作區 | `--output` |

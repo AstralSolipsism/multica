@@ -561,86 +561,87 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
               <ChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-56">
-              {githubInstallations.length > 0 && canManageGitHub ? (
-                <DropdownMenuItem
-                  disabled={githubItemDisabled}
-                  onClick={openGitHubPicker}
-                >
-                  <GitHubMark className="size-4" />
-                  <span className="flex flex-col">
-                    <span>{t(($) => $.repositories.choose_from_github)}</span>
-                    {!githubBrowseConfigured ? (
-                      <span className="text-caption text-muted-foreground">
-                        {t(($) => $.repositories.github_browse_not_configured)}
-                      </span>
-                    ) : null}
-                  </span>
-                </DropdownMenuItem>
-              ) : reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
-                // Accounts managed elsewhere are bound in place; GitHub's
-                // install page cannot do it. An emptied list keeps the open
-                // submenu mounted, mirroring the Code tab's connect button.
-                <DropdownMenuSub
-                  open={gitHubAccountMenuOpen}
-                  onOpenChange={handleAccountMenuOpenChange}
-                >
-                  <DropdownMenuSubTrigger
-                    ref={accountMenuTriggerRef}
-                    disabled={githubItemDisabled}
-                    aria-busy={gitHubConnectBusy || undefined}
-                  >
-                    {gitHubConnectBusy ? (
-                      <LoaderCircle className="animate-spin" />
-                    ) : (
+              {canManageGitHub ? (
+                <>
+                  {githubInstallations.length > 0 ? (
+                    <DropdownMenuItem disabled={githubItemDisabled} onClick={openGitHubPicker}>
                       <GitHubMark className="size-4" />
-                    )}
-                    {t(($) => $.repositories.connect_github)}
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">
-                    <GitHubReuseMenuItems
-                      reusable={reusableGitHubAccounts}
-                      binding={bindingGitHubAccount}
-                      onBind={(item) => void bindGitHubAccount(item)}
-                      onInstall={() => void openGitHubInstall()}
-                    />
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ) : githubInstallations.length === 0 || canManageGitHub ? (
-                <DropdownMenuItem
-                  disabled={githubItemDisabled}
-                  closeOnClick={false}
-                  aria-busy={gitHubConnectBusy || undefined}
-                  onClick={() => void connectGitHub()}
-                >
-                  {gitHubConnectBusy ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : (
-                    <GitHubMark className="size-4" />
-                  )}
-                  <span className="flex flex-col">
-                    <span>{t(($) => $.repositories.connect_github)}</span>
-                    {!githubBrowseConfigured ? (
-                      <span className="text-caption text-muted-foreground">
-                        {t(($) => $.repositories.github_browse_not_configured)}
+                      <span className="flex flex-col">
+                        <span>{t(($) => $.repositories.choose_from_github)}</span>
+                        {!githubBrowseConfigured ? (
+                          <span className="text-caption text-muted-foreground">
+                            {t(($) => $.repositories.github_browse_not_configured)}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                </DropdownMenuItem>
-              ) : null}
-              {canManageGitHub && githubInstallations.length > 0 ? (
-                <DropdownMenuItem
-                  disabled={gitHubConnectBusy || !githubConnectConfigured}
-                  closeOnClick={false}
-                  aria-busy={gitHubConnectBusy || undefined}
-                  onClick={() => void connectFromSettings()}
-                >
-                  {gitHubConnectBusy ? (
-                    <LoaderCircle className="animate-spin" />
+                    </DropdownMenuItem>
+                  ) : reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
+                    // Accounts managed elsewhere are bound in place; GitHub's
+                    // install page cannot do it. An emptied list keeps the open
+                    // submenu mounted, mirroring the Code tab's connect button.
+                    <DropdownMenuSub
+                      open={gitHubAccountMenuOpen}
+                      onOpenChange={handleAccountMenuOpenChange}
+                    >
+                      <DropdownMenuSubTrigger
+                        ref={accountMenuTriggerRef}
+                        disabled={githubItemDisabled}
+                        aria-busy={gitHubConnectBusy || undefined}
+                      >
+                        {gitHubConnectBusy ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <GitHubMark className="size-4" />
+                        )}
+                        {t(($) => $.repositories.connect_github)}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">
+                        <GitHubReuseMenuItems
+                          reusable={reusableGitHubAccounts}
+                          binding={bindingGitHubAccount}
+                          onBind={(item) => void bindGitHubAccount(item)}
+                          onInstall={() => void openGitHubInstall()}
+                        />
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
                   ) : (
-                    <GitHubMark className="size-4" />
+                    <DropdownMenuItem
+                      disabled={githubItemDisabled}
+                      closeOnClick={false}
+                      aria-busy={gitHubConnectBusy || undefined}
+                      onClick={() => void connectGitHub()}
+                    >
+                      {gitHubConnectBusy ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : (
+                        <GitHubMark className="size-4" />
+                      )}
+                      <span className="flex flex-col">
+                        <span>{t(($) => $.repositories.connect_github)}</span>
+                        {!githubBrowseConfigured ? (
+                          <span className="text-caption text-muted-foreground">
+                            {t(($) => $.repositories.github_browse_not_configured)}
+                          </span>
+                        ) : null}
+                      </span>
+                    </DropdownMenuItem>
                   )}
-                  {t(($) => $.github.add_account)}
-                </DropdownMenuItem>
+                  {githubInstallations.length > 0 ? (
+                    <DropdownMenuItem
+                      disabled={gitHubConnectBusy || !githubConnectConfigured}
+                      closeOnClick={false}
+                      aria-busy={gitHubConnectBusy || undefined}
+                      onClick={() => void connectFromSettings()}
+                    >
+                      {gitHubConnectBusy ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : (
+                        <GitHubMark className="size-4" />
+                      )}
+                      {t(($) => $.github.add_account)}
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
               ) : null}
               <DropdownMenuItem
                 onClick={() => setDraft({ index: null, url: "", description: "" })}

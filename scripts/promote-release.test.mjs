@@ -124,11 +124,17 @@ test("promotion is serialized across tags and both upload paths use the gate", (
   assert.doesNotMatch(gate.concurrency.group, /\$\{\{/);
   assert.ok(gate.steps.some((s) => s.uses?.startsWith("actions/checkout@") && s.with.ref === "main"));
   assert.equal(gate["continue-on-error"], undefined);
+  // The fork publishes candidates only: release.yml writes a draft in its own
+  // `draft` job, and goreleaser is a disabled packaging helper that must never
+  // create or promote a Release of its own.
   const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
-  assert.ok(release.jobs.promote.needs.includes("desktop"));
-  assert.ok(release.jobs.promote.needs.includes("verify"));
-  assert.equal(release.jobs.promote.uses, "./.github/workflows/promote-release.yml");
+  assert.equal(release.env.LABRASTRO_RELEASE_MODE, "candidate");
+  assert.equal(release.jobs.promote, undefined);
+  assert.ok(release.jobs.draft);
+  assert.ok(release.jobs.draft.needs);
+  assert.equal(release.jobs.draft.permissions.contents, "write");
   const goreleaser = parse(readFileSync(new URL("../.goreleaser.yml", import.meta.url), "utf8"));
   assert.equal(goreleaser.release.make_latest, false);
-  assert.notEqual(goreleaser.release.draft, true);
+  assert.equal(goreleaser.release.draft, true);
+  assert.equal(goreleaser.release.disable, true);
 });
