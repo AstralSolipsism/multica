@@ -21,6 +21,7 @@ vi.mock("../../navigation", () => ({
     </a>
   ),
 }));
+const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
 vi.mock("@multica/core/notification-preferences/mutations", () => ({
   useUpdateNotificationPreferences: () => ({ mutate: mutateMock }),
 }));
@@ -36,7 +37,10 @@ vi.mock("../../message-delivery", async () => ({
   TeamSubscriptionsSection: (await import("../../message-delivery/components/team-subscriptions-section")).TeamSubscriptionsSection,
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mutate.mockReset();
+});
 
 function renderTab(preferences: Record<string, string> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
@@ -82,6 +86,24 @@ describe("Inbox notification settings", () => {
     ]);
     expect(within(inbox).getByRole("switch", { name: "Priority & Due date" })).not.toBeChecked();
     expect(within(inbox).getByRole("switch", { name: "Comments" })).toBeChecked();
+  });
+
+  it("leaves status changes off until you turn them on", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    const statusChanges = within(screen.getByRole("region", { name: "Inbox" })).getByRole("switch", {
+      name: "Status changes",
+    });
+    expect(statusChanges).not.toBeChecked();
+
+    await user.click(statusChanges);
+    expect(mutate).toHaveBeenCalledWith({ status_changes: "all" }, expect.anything());
+  });
+
+  it("shows status changes on once you turned them on", () => {
+    renderTab({ status_changes: "all" });
+    const inbox = screen.getByRole("region", { name: "Inbox" });
+    expect(within(inbox).getByRole("switch", { name: "Status changes" })).toBeChecked();
   });
 
   it.each<{ preferences: Record<string, string>; shown: string }>([

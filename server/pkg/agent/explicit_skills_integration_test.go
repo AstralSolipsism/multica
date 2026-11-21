@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -23,8 +24,9 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wire capture uses a bash wrapper")
 	}
-	for _, provider := range []string{"claude", "codex", "antigravity", "kimi", "hermes"} {
-		t.Run(provider, func(t *testing.T) {
+	for _, scenario := range []string{"claude", "codex", "codex-fallback", "antigravity", "hermes"} {
+		t.Run(scenario, func(t *testing.T) {
+			provider := strings.TrimSuffix(scenario, "-fallback")
 			command := provider
 			if provider == "antigravity" {
 				command = "agy"
@@ -46,13 +48,6 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 			if err := os.MkdirAll(cwd, 0755); err != nil {
 				t.Fatal(err)
 			}
-			if provider == "kimi" {
-				// Exercise the local_directory Git-subdirectory case where
-				// native project-root discovery can miss these skill files.
-				if output, err := exec.CommandContext(ctx, "git", "init", "--quiet", root).CombinedOutput(); err != nil {
-					t.Fatalf("initialize isolated Git root: %v: %s", err, output)
-				}
-			}
 			config := Config{Logger: slog.Default(), Env: map[string]string{"IS_SANDBOX": "1"}}
 			skillParent := filepath.Join(cwd, ".agents", "skills")
 			evidenceRoot := root
@@ -73,6 +68,11 @@ func TestExplicitSkillRealSmoke(t *testing.T) {
 				copySkillSmokeConfig(t, "CODEX_HOME", ".codex", home, []string{"config.toml", "auth.json"})
 				config.Env["CODEX_HOME"] = home
 				skillParent = filepath.Join(home, "skills")
+				if scenario == "codex-fallback" {
+					// A materialized skill outside Codex's discovery paths must
+					// reach the real runtime through the injection fallback.
+					skillParent = filepath.Join(root, "materialized-skills")
+				}
 			}
 			dir := filepath.Join(skillParent, "explicit-probe")
 			if err := os.MkdirAll(dir, 0755); err != nil {
@@ -117,10 +117,8 @@ exit "$result"
 				t.Fatal(err)
 			}
 			opts := ExecOptions{Cwd: cwd, Timeout: 120 * time.Second, SkillInvocation: invocation, Model: os.Getenv(strings.ToUpper(provider) + "_SKILL_SMOKE_MODEL")}
-			if provider == "kimi" {
-				opts.SystemPrompt = "Runtime brief: preserve the user's request and the platform token."
-			}
 			result := runSkillSmokeTurn(t, ctx, backend, invocation.FallbackPrompt(), opts)
+			t.Logf("Skill response: %q", result.Output)
 			if !strings.Contains(result.Output, "EXPLICIT_SKILL PLATFORM_OK USER_OK") {
 				t.Errorf("skill or message context lost: %q", result.Output)
 			}
@@ -132,6 +130,36 @@ exit "$result"
 					t.Fatal("no Claude command-name evidence; fallback is not native expansion")
 				}
 			case "codex":
+				if scenario == "codex-fallback" {
+					input, err := os.ReadFile(config.Env["SKILL_SMOKE_INPUT"])
+					if err != nil {
+						t.Fatal(err)
+					}
+					injected := false
+					for _, line := range strings.Split(strings.TrimSpace(string(input)), "\n") {
+						var request struct {
+							Method string `json:"method"`
+							Params struct {
+								Input []struct {
+									Text string `json:"text"`
+								} `json:"input"`
+							} `json:"params"`
+						}
+						if err := json.Unmarshal([]byte(line), &request); err != nil {
+							t.Fatal(err)
+						}
+						if request.Method == "turn/start" {
+							for _, block := range request.Params.Input {
+								injected = injected || (strings.Contains(block.Text, "<selected-skill>") && strings.Contains(block.Text, dir) && strings.Contains(block.Text, body))
+							}
+						}
+					}
+					t.Logf("Codex fallback body and directory evidence: %t", injected)
+					if !injected || skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<name>explicit-probe</name>") {
+						t.Fatal("expected injected skill body and directory without native skill expansion")
+					}
+					break
+				}
 				if !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<skill>") || !skillSmokeEvidence(filepath.Join(root, "codex-home", "sessions"), "<name>explicit-probe</name>") {
 					t.Fatal("no Codex native skill injection in rollout")
 				}
@@ -142,7 +170,7 @@ exit "$result"
 				}
 			}
 			if !t.Failed() {
-				t.Logf("%s selected skill passed; session=%s", provider, result.SessionID)
+				t.Logf("%s selected skill passed; session=%s", scenario, result.SessionID)
 			}
 		})
 	}
@@ -206,33 +234,4 @@ func skillSmokeEvidence(root, marker string) bool {
 		return nil
 	})
 	return found
-}
-
-// Kimi's leading native form is probed separately from the chosen injection
-// path. This test keeps the decision reproducible without making production
-// depend on discovery in a Git subdirectory or on ACP text-block ordering.
-func TestKimiNativeSkillRealProbe(t *testing.T) {
-	requireRealAgentSmoke(t)
-	binary, err := exec.LookPath("kimi")
-	if err != nil {
-		t.Skip("kimi unavailable")
-	}
-	root := t.TempDir()
-	dir := filepath.Join(root, ".agents", "skills", "explicit-native-probe")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: explicit-native-probe\ndescription: Explicit native probe\n---\nReply with exactly EXPLICIT_NATIVE_OK. Do not use tools.\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	backend, err := New("kimi", Config{ExecutablePath: binary, Logger: slog.Default()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
-	defer cancel()
-	result := runSkillSmokeTurn(t, ctx, backend, "/skill:explicit-native-probe Say hello.", ExecOptions{Cwd: root, Timeout: 80 * time.Second, Model: os.Getenv("KIMI_SKILL_SMOKE_MODEL")})
-	if !strings.Contains(result.Output, "EXPLICIT_NATIVE_OK") {
-		t.Fatalf("native Kimi skill did not expand: %q", result.Output)
-	}
 }

@@ -141,6 +141,7 @@ export function CodeTab() {
         <SettingsCard>
           <SettingsRow
             anchor="github"
+            size="none"
             label={
               <span className="flex min-w-0 items-center gap-3">
                 <HostMark>

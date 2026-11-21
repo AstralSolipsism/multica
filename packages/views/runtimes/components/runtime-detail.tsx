@@ -25,6 +25,7 @@ import {
   runtimeDisplayName,
   runtimeProfileListOptions,
 } from "@multica/core/runtimes";
+import { runtimeReportsRateLimits } from "@multica/core/runtimes/rate-limits";
 import {
   type AgentPresenceDetail,
   useWorkspacePresenceMap,
@@ -232,6 +233,12 @@ export function RuntimeDetail({
               agentHref={(id) => paths.agentDetail(id)}
             />
           </ObjectSection>
+
+          {canReadRuntime && runtimeReportsRateLimits(runtime.provider) && (
+            <ObjectSection title={t(($) => $.rate_limits.title)}>
+              <RateLimitSection runtime={runtime} />
+            </ObjectSection>
+          )}
 
           {canReadRuntime && (
             <RuntimeQuotaCard

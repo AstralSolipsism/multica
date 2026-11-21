@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/inbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -71,7 +72,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"workspace_id": workspaceID,
-				"preferences":  labrastroYSKPreferenceDefaults(nil),
+				"preferences":  labrastroYSKPreferenceDefaults(inbox.WithDefaults(nil)),
 			})
 			return
 		}
@@ -87,7 +88,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id": workspaceID,
-		"preferences":  labrastroYSKPreferenceDefaults(prefs),
+		"preferences":  labrastroYSKPreferenceDefaults(inbox.WithDefaults(prefs)),
 	})
 }
 
@@ -95,7 +96,9 @@ type updateNotifPrefRequest struct {
 	Preferences map[string]string `json:"preferences"`
 }
 
-func decodeNotificationPreferenceRequest(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+// decodeNotificationPreferenceRequest reads and validates the preferences in
+// a write request.
+func decodeNotificationPreferenceRequest(w http.ResponseWriter, r *http.Request) (map[string]string, bool) {
 	var req updateNotifPrefRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -118,7 +121,11 @@ func decodeNotificationPreferenceRequest(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	prefsJSON, err := json.Marshal(req.Preferences)
+	return req.Preferences, true
+}
+
+func marshalNotificationPreferences(w http.ResponseWriter, prefs map[string]string) ([]byte, bool) {
+	prefsJSON, err := json.Marshal(prefs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to marshal preferences")
 		return nil, false
@@ -126,6 +133,9 @@ func decodeNotificationPreferenceRequest(w http.ResponseWriter, r *http.Request)
 	return prefsJSON, true
 }
 
+// writeNotificationPreferenceResponse answers with the stored preferences plus
+// the groups muted by default (inbox.WithDefaults), so every client renders
+// those switches as off whichever defaults it was built with.
 func writeNotificationPreferenceResponse(
 	w http.ResponseWriter,
 	workspaceID string,
@@ -138,7 +148,7 @@ func writeNotificationPreferenceResponse(
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id": workspaceID,
-		"preferences":  labrastroYSKPreferenceDefaults(prefs),
+		"preferences":  labrastroYSKPreferenceDefaults(inbox.WithDefaults(prefs)),
 	})
 }
 
@@ -150,7 +160,13 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
-	prefsJSON, ok := decodeNotificationPreferenceRequest(w, r)
+	prefs, ok := decodeNotificationPreferenceRequest(w, r)
+	if !ok {
+		return
+	}
+	// Only clients built before PATCH existed send this full replacement, and
+	// they leave a group out to mean "on".
+	prefsJSON, ok := marshalNotificationPreferences(w, inbox.WithLegacyDefaults(prefs))
 	if !ok {
 		return
 	}
@@ -176,7 +192,11 @@ func (h *Handler) PatchNotificationPreferences(w http.ResponseWriter, r *http.Re
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
-	prefsJSON, ok := decodeNotificationPreferenceRequest(w, r)
+	prefs, ok := decodeNotificationPreferenceRequest(w, r)
+	if !ok {
+		return
+	}
+	prefsJSON, ok := marshalNotificationPreferences(w, prefs)
 	if !ok {
 		return
 	}

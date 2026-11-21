@@ -305,6 +305,7 @@ export function DesktopShell() {
                         click just froze until the destination committed
                         (MUL-6404). */}
                     <NavigationProgress />
+                    {slug && <WorkspaceTrialNotices />}
                     <TabContent />
                     {slug && <FloatingChat />}
                     {slug && <WhatsNewDeck />}

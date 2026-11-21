@@ -318,7 +318,7 @@ func TestHydrateCodexSkillsReturnsNamesOnConfigError(t *testing.T) {
 		{Name: "Review", Content: "First assigned review."},
 		{Name: "Review", Content: "Second assigned review."},
 	}
-	names, err := hydrateCodexSkills(codexHome, skills, []RuntimeSkillRefForEnv{
+	names, err := hydrateCodexSkillsTracked(codexHome, skills, []RuntimeSkillRefForEnv{
 		{Root: "provider", Key: "review-multica"},
 	}, testLogger(), nil)
 	if err == nil {

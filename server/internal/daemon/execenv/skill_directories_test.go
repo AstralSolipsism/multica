@@ -19,7 +19,7 @@ func TestWrittenSkillDirectoriesIncludeEveryCollision(t *testing.T) {
 		{ID: "two", Name: "A-B", Content: "second"},
 	}
 	installed := map[string]string{}
-	if err := writeSkillFiles(root, skills, nil, installed); err != nil {
+	if err := writeSkillFilesTracked(root, skills, nil, installed); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"one": filepath.Join(root, "a-b-multica"), "two": filepath.Join(root, "a-b-multica-multica")}
@@ -40,7 +40,7 @@ func TestPrepareAndReuseReturnSkillDirectories(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	t.Setenv("HERMES_HOME", t.TempDir())
 	task := TaskContextForEnv{ChatSessionID: "chat", AgentSkills: []SkillContextForEnv{{ID: "selected", Name: "Review Code", Content: "Use references/file.txt"}}}
-	for _, provider := range []string{"kimi", "codex", "hermes"} {
+	for _, provider := range []string{"amp", "codex", "hermes"} {
 		t.Run(provider, func(t *testing.T) {
 			root := t.TempDir()
 			sourceHome := t.TempDir()

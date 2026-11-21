@@ -496,7 +496,7 @@ WHERE id = $1;
 INSERT INTO chat_message (
     chat_session_id, role, content, task_id, failure_reason, elapsed_ms,
     message_kind, quick_actions, channel_media_pending_until, channel_ingested,
-    channel_context_revision, id
+    channel_context_revision, id, wakeup_id
 )
 VALUES (
     $1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms),
@@ -512,7 +512,8 @@ VALUES (
          ELSE now() + make_interval(secs => sqlc.narg(channel_media_pending_secs)::float8) END,
     COALESCE(sqlc.narg(channel_ingested)::boolean, FALSE),
     sqlc.narg(channel_context_revision),
-    COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
+    sqlc.narg(wakeup_id)::uuid
 )
 RETURNING *;
 
@@ -786,11 +787,19 @@ RETURNING task.*;
 -- member the product's internal prompt as their restored draft, and silently
 -- drop what they actually typed. Callers release the kickoff separately
 -- (ReleaseOnboardingKickoffFromTask) so the next send re-adopts it.
-DELETE FROM chat_message
-WHERE task_id = $1
-  AND role = 'user'
-  AND message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
-RETURNING *;
+DELETE FROM chat_message AS message
+WHERE message.task_id = $1
+  AND message.role = 'user'
+  AND message.message_kind NOT IN ('onboarding_kickoff', 'hidden_context')
+  -- A wakeup turn's input is the platform's, never a draft to restore.
+  AND message.message_kind <> 'wakeup'
+  -- Guidance already accepted into a run is conversation history, not the
+  -- original draft restored by Stop. A requeued message is editable normally.
+  AND NOT EXISTS (
+      SELECT 1 FROM chat_task_supplement s
+      WHERE s.message_id = message.id AND s.status <> 'requeued'
+  )
+RETURNING message.*;
 
 -- name: ReleaseOnboardingKickoffFromTask :exec
 -- Shared hidden-input lifecycle: includes generic hidden_context side chats.
@@ -1146,6 +1155,13 @@ WHERE id = $1;
 -- The chat sender (initiator) is a direct_human originator and accountable;
 -- attribution provenance is stamped so this path is not a NULL-source enqueue
 -- bypass (MUL-4302 §2).
+WITH enqueue_agent AS MATERIALIZED (
+    SELECT a.id, COALESCE(a.runtime_id, sqlc.narg(runtime_id)::uuid) AS runtime_id
+    FROM agent a
+    WHERE a.id = sqlc.arg(agent_id)
+      AND lock_task_owner_rows(a.id, NULL, COALESCE(a.runtime_id, sqlc.narg(runtime_id)::uuid))
+    FOR KEY SHARE OF a
+)
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, chat_session_id,
     initiator_user_id, originator_user_id, accountable_user_id, force_fresh_session, runtime_mcp_overlay,
@@ -1153,9 +1169,9 @@ INSERT INTO agent_task_queue (
     fire_at, channel_context_revision, id, context
 )
 SELECT
-    $1, $2, NULL,
+    sqlc.arg(agent_id), enqueue_agent.runtime_id, NULL,
     CASE WHEN sqlc.narg('fire_at')::timestamptz IS NULL THEN 'queued' ELSE 'deferred' END,
-    $3, $4, $5,
+    sqlc.arg(priority), sqlc.narg(chat_session_id), sqlc.narg(initiator_user_id),
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
@@ -1168,7 +1184,7 @@ SELECT
     sqlc.narg('channel_context_revision')::bigint,
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()),
     sqlc.narg('context')::jsonb
-WHERE lock_task_owner_rows($1, NULL, $2)
+FROM enqueue_agent
 RETURNING *;
 
 -- name: PromoteChannelChatTasksIfMediaReady :many
@@ -1401,10 +1417,12 @@ SELECT
     -- renderer reads it only for the waiting one.
     task.wait_reason,
     message.id AS message_id,
-    COALESCE(message.content, '')::text AS content
+    COALESCE(message.content, '')::text AS content,
+    COALESCE(message.message_kind, 'message')::text AS message_kind,
+    message.wakeup_id
 FROM agent_task_queue AS task
 LEFT JOIN LATERAL (
-    SELECT input.id, input.content
+    SELECT input.id, input.content, input.message_kind, input.wakeup_id
     FROM chat_message AS input
     WHERE input.task_id = COALESCE(task.chat_input_task_id, task.id)
       AND input.role = 'user'

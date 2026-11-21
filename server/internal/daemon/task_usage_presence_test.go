@@ -64,7 +64,7 @@ func TestHandleTaskPreservesReportedZeroUsage(t *testing.T) {
 			d.cancelPollInterval = time.Hour
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			d.handleTask(ctx, leaderReuseTestTask("task-usage"), 0)
+			d.handleTask(ctx, leaderReuseTestTask("task-usage"), newTestTaskSlot(0))
 			select {
 			case path := <-terminalReports:
 				if !strings.HasSuffix(path, "/complete") {

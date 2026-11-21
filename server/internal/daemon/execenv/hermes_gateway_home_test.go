@@ -13,7 +13,7 @@ func TestHermesConversationHomeOwnsDatabase(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "conversation")
 	first := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "review", Content: "Review code"}}
-	prepared, err := prepareHermesHome(first, shared, false, skills, nil, "", store, testLogger(), nil)
+	prepared, err := prepareHermesHomeTracked(first, shared, false, skills, nil, "", store, testLogger(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestHermesTaskDisablesGatewayIngress(t *testing.T) {
 	for _, name := range []string{"gateway.pid", "gateway.lock", "gateway_state.json", "gateway.sock.path", "gateway.json", "cron/jobs.json", "sessions/sessions.json", "logs/gateway.log"} {
 		mustWrite(t, filepath.Join(shared, name), "host-only")
 	}
-	if _, err := prepareHermesHome(home, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
+	if _, err := prepareHermesHomeTracked(home, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"gateway.pid", "gateway.lock", "gateway_state.json", "gateway.sock.path", "gateway.json", "cron/jobs.json", "sessions/sessions.json", "logs/gateway.log"} {
@@ -69,7 +69,7 @@ func TestHermesTaskDisablesGatewayIngress(t *testing.T) {
 	}
 	// Reuse keeps task-owned gateway state, while the host remains unchanged.
 	mustWrite(t, filepath.Join(home, "gateway_state.json"), "task-owned")
-	if _, err := prepareHermesHome(home, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
+	if _, err := prepareHermesHomeTracked(home, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{
@@ -85,7 +85,7 @@ func TestHermesTaskDisablesGatewayIngress(t *testing.T) {
 func TestHermesLegacySessionLinkMigration(t *testing.T) {
 	requireSymlinks(t)
 	shared, scratch, store := t.TempDir(), t.TempDir(), t.TempDir()
-	if _, err := prepareHermesHome(scratch, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
+	if _, err := prepareHermesHomeTracked(scratch, shared, false, nil, nil, "", "", testLogger(), nil); err != nil {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(store, "state.db"), "original transcript")
@@ -93,7 +93,7 @@ func TestHermesLegacySessionLinkMigration(t *testing.T) {
 	if err := os.Symlink(filepath.Join(store, "state.db"), filepath.Join(scratch, "state.db")); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := prepareHermesHome(scratch, shared, false, nil, nil, "", store, testLogger(), nil)
+	prepared, err := prepareHermesHomeTracked(scratch, shared, false, nil, nil, "", store, testLogger(), nil)
 	if err != nil || !prepared.HistoryPresent || prepared.Home != store {
 		t.Fatalf("legacy migration = %+v, %v", prepared, err)
 	}

@@ -41,6 +41,38 @@ func DimensionsFromReader(reader io.ReadSeeker) (Size, bool) {
 	return Size{Width: width, Height: height}, true
 }
 
+// JPEGOrientation returns the EXIF orientation (1-8) of a JPEG, or 1 when the
+// data is not a JPEG or carries no valid orientation tag.
+func JPEGOrientation(data []byte) int {
+	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
+		return 1
+	}
+	for offset := 2; offset+4 <= len(data); {
+		if data[offset] != 0xff {
+			break
+		}
+		marker := data[offset+1]
+		if marker == 0xff {
+			offset++
+			continue
+		}
+		if marker == 0xda || marker == 0xd9 {
+			break
+		}
+		length := int(binary.BigEndian.Uint16(data[offset+2:]))
+		end := offset + 2 + length
+		if length < 2 || end > len(data) {
+			break
+		}
+		payload := data[offset+4 : end]
+		if marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
+			return tiffOrientation(payload[6:])
+		}
+		offset = end
+	}
+	return 1
+}
+
 func tiffOrientation(data []byte) int {
 	if len(data) < 8 {
 		return 1

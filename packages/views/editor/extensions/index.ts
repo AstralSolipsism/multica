@@ -46,6 +46,7 @@ import {
 import { SlashCommandExtension } from "./slash-command-extension";
 import { createSlashCommandSuggestion, createBuiltinCommandSuggestion } from "./slash-command-suggestion";
 import type { BuiltinCommandSuggestionOptions } from "./slash-command-suggestion";
+import { createBlockInsertSuggestion } from "./block-insert-suggestion";
 import { SuggestionTriggerArmingExtension } from "./suggestion-trigger-arming";
 import { CodeBlockView } from "./code-block-view";
 import { TableView } from "./table-view";
@@ -176,7 +177,7 @@ export interface EditorExtensionsOptions {
    * - "skill" (default) — the chat picker listing the active agent's skills.
    * - "command" — Issue quick actions, skills matching a nonempty query, and /note.
    */
-  slashCommandMode?: "skill" | "command";
+  slashCommandMode?: "skill" | "command" | "blocks";
   /**
    * Quick actions and Issue target-agent skills offered in the "command" `/`
    * menu, plus the resolver that turns a quick-action pick into draft text.
@@ -294,11 +295,13 @@ export function createEditorExtensions(
       HTMLAttributes: { class: "slash-command" },
       suggestion: !options.enableSlashCommands
         ? { char: "/", allow: () => false }
-        : options.slashCommandMode === "command"
-          ? createBuiltinCommandSuggestion(options.quickActionMenu)
-          : options.queryClient
-            ? createSlashCommandSuggestion(options.queryClient)
-            : { char: "/", allow: () => false },
+        : options.slashCommandMode === "blocks"
+          ? createBlockInsertSuggestion(options.onUploadFileRef)
+          : options.slashCommandMode === "command"
+            ? createBuiltinCommandSuggestion(options.quickActionMenu)
+            : options.queryClient
+              ? createSlashCommandSuggestion(options.queryClient)
+              : { char: "/", allow: () => false },
     }),
     // Marked tries the last registered inline tokenizer first. Math must own
     // the whole inline scope so enclosing highlights also mark formula atoms.

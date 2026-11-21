@@ -154,7 +154,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 				task.PriorSessionID, task.PriorWorkDir = first.SessionID, first.WorkDir
 			}
 
-			d.handleTask(t.Context(), task, 0)
+			d.handleTask(t.Context(), task, newTestTaskSlot(0))
 			collector.Close()
 
 			switch scenario {
@@ -360,7 +360,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		d.handleTask(t.Context(), task, 0)
+		d.handleTask(t.Context(), task, newTestTaskSlot(0))
 	}()
 
 	// Shutdown closes the collector while the terminal report is still

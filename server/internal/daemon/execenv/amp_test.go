@@ -10,7 +10,7 @@ import (
 func TestAmpRuntimeBriefAndSkills(t *testing.T) {
 	dir := t.TempDir()
 	task := TaskContextForEnv{IssueID: "amp-issue", AgentSkills: []SkillContextForEnv{{Name: "Review", Content: "Review carefully."}}}
-	if _, err := writeContextFiles(dir, "amp", task, nil, nil); err != nil {
+	if _, err := writeContextFilesTracked(dir, "amp", task, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := InjectRuntimeConfig(dir, "amp", task); err != nil {

@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unicode/utf8"
 )
 
 // fakeDsh records every invocation and its PATH, then exits per the args it
@@ -402,12 +401,16 @@ func TestStartDshProfileProvision_RunsAtMostOnce(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(readRecord(t, record), "plugin --profile multica add") {
+		if !d.dshInstallInFlight.Load() {
+			got := readRecord(t, record)
+			if count := strings.Count(got, "args=plugin --profile multica add "); count != 1 {
+				t.Fatalf("install invocation count = %d, want 1; recorded %q", count, got)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("the install never ran; recorded %q", readRecord(t, record))
+	t.Fatalf("the install did not finish; recorded %q", readRecord(t, record))
 }
 
 func TestStartDshProfileProvision_UnconfiguredNeverStarts(t *testing.T) {
@@ -659,18 +662,22 @@ func TestDshProvisionCommand(t *testing.T) {
 }
 
 func TestDshProvisionOutput(t *testing.T) {
-	t.Run("preserves multibyte tails", func(t *testing.T) {
-		for _, runeText := range []string{"错", "😀", "é"} {
-			got := dshProvisionOutput([]byte(strings.Repeat(runeText, 3000)))
-			if !utf8.ValidString(got) || !strings.HasSuffix(got, runeText) || len(got) > dshProvisionOutputBytes+len("…") {
-				t.Fatalf("invalid or discarded UTF-8 tail: bytes=%d suffix=%q", len(got), got[max(0, len(got)-12):])
-			}
+	t.Run("invalid bytes keep readable diagnostic labels", func(t *testing.T) {
+		got := dshDiagnosticOutput([]byte("profile\xff startup failure"))
+		if got != "profile� startup failure" {
+			t.Fatal("diagnostic retained invalid UTF-8")
 		}
 	})
-
+	t.Run("retains a non-ASCII diagnostic tail", func(t *testing.T) {
+		got := dshDiagnosticOutput([]byte(strings.Repeat("界", dshProvisionOutputBytes)))
+		want := "…" + strings.Repeat("界", dshProvisionOutputBytes/len("界"))
+		if got != want {
+			t.Fatalf("Unicode tail was discarded: got %d bytes, want %d", len(got), len(want))
+		}
+	})
 	t.Run("bounded from the tail", func(t *testing.T) {
 		long := strings.Repeat("x", dshProvisionOutputBytes*2) + "THE-END"
-		got := dshProvisionOutput([]byte(long))
+		got := dshDiagnosticOutput([]byte(long))
 		if len(got) > dshProvisionOutputBytes+len("…") {
 			t.Fatalf("len = %d, want at most %d", len(got), dshProvisionOutputBytes+1)
 		}
@@ -690,7 +697,7 @@ func TestDshProvisionOutput(t *testing.T) {
 			{"npm ERR! 404 https://deploy:hunter2@registry.example.com/@acme/dsh-runtime", "hunter2"},
 			{"ERR_PNPM_FETCH_401 GET http://ci-bot:s3cr3t@npm.internal/@corp%2fdsh", "s3cr3t"},
 		} {
-			got := dshProvisionOutput([]byte(tc.raw))
+			got := dshDiagnosticOutput([]byte(tc.raw))
 			if strings.Contains(got, tc.secret) {
 				t.Errorf("output = %q, want %q redacted", got, tc.secret)
 			}
@@ -700,7 +707,7 @@ func TestDshProvisionOutput(t *testing.T) {
 	// The host has to survive: which registry refused the request is what an
 	// operator reads, and it is not the secret.
 	t.Run("keeps the host", func(t *testing.T) {
-		got := dshProvisionOutput([]byte("npm ERR! 404 https://deploy:hunter2@registry.example.com/pkg"))
+		got := dshDiagnosticOutput([]byte("npm ERR! 404 https://deploy:hunter2@registry.example.com/pkg"))
 		if !strings.Contains(got, "registry.example.com") {
 			t.Errorf("output = %q, want the host kept", got)
 		}
@@ -714,8 +721,8 @@ func TestDshProvisionOutput(t *testing.T) {
 			"cloning ssh://git@github.com/multica-ai/multica.git",
 			"see https://example.com/a:b for details",
 		} {
-			if got := dshProvisionOutput([]byte(raw)); got != raw {
-				t.Errorf("dshProvisionOutput(%q) = %q, want it unchanged", raw, got)
+			if got := dshDiagnosticOutput([]byte(raw)); got != raw {
+				t.Errorf("dshDiagnosticOutput(%q) = %q, want it unchanged", raw, got)
 			}
 		}
 	})
@@ -839,7 +846,7 @@ func TestDshProfileMigrationUsesLauncherHomeAndRefusesInstall(t *testing.T) {
 			if got := dshMulticaProfileState(launcher); got != dshProfileNeedsMigration {
 				t.Fatalf("state = %v, want needs migration", got)
 			}
-			if got := probeDshMulticaProfile(t.Context(), launcher); got != dshProbeNeedsMigration {
+			if got := probeDshMulticaProfile(t.Context(), launcher).verdict; got != dshProbeNeedsMigration {
 				t.Fatalf("probe = %v, want needs migration", got)
 			}
 			if (&Daemon{}).startDshProfileProvision(launcher) {

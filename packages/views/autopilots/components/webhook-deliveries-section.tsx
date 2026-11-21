@@ -30,6 +30,7 @@ import type {
   WebhookDeliveryStatus,
   WebhookSignatureStatus,
 } from "@multica/core/types";
+import { formatConditionValue } from "./webhook-payload-condition";
 
 // --- Status visuals -------------------------------------------------------
 
@@ -179,8 +180,11 @@ function DeliveryRow({
         <span className="w-20 shrink-0 text-caption text-muted-foreground truncate">
           {providerLabel}
         </span>
-        <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate font-mono">
-          {delivery.event || t(($) => $.webhook_payload.unknown_event)}
+        <span className="flex-1 min-w-0 text-caption text-muted-foreground">
+          <span className="block truncate font-mono">
+            {delivery.event || t(($) => $.webhook_payload.unknown_event)}
+          </span>
+          <DeliveryIgnoreReason delivery={delivery} />
         </span>
         {delivery.replayed_from_delivery_id && (
           <Badge variant="secondary" className="shrink-0">

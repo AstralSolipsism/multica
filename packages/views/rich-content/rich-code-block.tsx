@@ -25,7 +25,6 @@
  */
 
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
-import { toHtml } from "hast-util-to-html";
 import { Check, Copy } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -91,8 +90,7 @@ export function StaticCodeBody({
   const html = useMemo(() => {
     const code = body.replace(/\n$/, "");
     try {
-      const tree = highlightCode(code, language);
-      return toHtml(tree);
+      return highlightCodeHtml(code, language);
     } catch {
       return null;
     }

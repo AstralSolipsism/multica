@@ -23,6 +23,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/imagemetadata"
 	"github.com/multica-ai/multica/server/internal/projectaccess"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/thumbnail"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -110,6 +111,11 @@ type AttachmentResponse struct {
 	// Displayed image dimensions, absent for non-images and older uploads.
 	Width  *int32 `json:"width,omitempty"`
 	Height *int32 `json:"height,omitempty"`
+	// ThumbnailURL is the stable, auth-gated path of a downscaled copy for
+	// grid tiles, set only for large raster images. Durable like the stable
+	// download path; never a substitute for the original in viewers or
+	// downloads.
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 }
 
 // attachmentURLMode selects how DownloadURL is rendered on a response.
@@ -172,6 +178,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		URL:          a.Url,
 		DownloadURL:  util.AttachmentDownloadPath(id),
 		MarkdownURL:  h.buildMarkdownURL(a, id),
+		ThumbnailURL: h.attachmentThumbnailURL(a, id),
 		ContentType:  a.ContentType,
 		SizeBytes:    a.SizeBytes,
 		CreatedAt:    a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
@@ -695,6 +702,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// S3 upload succeeded but DB record failed — still return the link
 			// so the file is usable. Log the error for investigation.
 		} else {
+			h.prewarmAttachmentThumbnail(att.Attachment())
 			if att.IssueRevision > 0 && att.IssueID.Valid {
 				h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, uploaderType, uploaderID, map[string]any{
 					"issue_id":       uuidToString(att.IssueID),
@@ -1114,6 +1122,13 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 
 	workspaceID := uuidToString(att.WorkspaceID)
 	if workspaceID == "" {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return db.Attachment{}, false
+	}
+	// A task token acts only in the workspace it is bound to; Auth stamps
+	// that workspace into X-Workspace-ID. Membership alone is not enough:
+	// the task's user may belong to the attachment's other workspace too.
+	if r.Header.Get("X-Actor-Source") == "task_token" && r.Header.Get("X-Workspace-ID") != workspaceID {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
@@ -1851,22 +1866,27 @@ func (h *Handler) attachmentOwnerLockAttempt(ctx context.Context, att db.Attachm
 	return fresh, tx.Commit(ctx)
 }
 
-// deleteS3Object removes a single file from S3 by its CDN URL.
+// deleteS3Object removes a single file, and its thumbnail, from S3 by its CDN URL.
 func (h *Handler) deleteS3Object(ctx context.Context, url string) {
 	if h.Storage == nil || url == "" {
 		return
 	}
-	h.Storage.Delete(ctx, h.Storage.KeyFromURL(url))
+	h.deleteS3Objects(ctx, []string{url})
 }
 
-// deleteS3Objects removes multiple files from S3 by their CDN URLs.
+// deleteS3Objects removes multiple files, and their thumbnails, from S3 by
+// their CDN URLs.
 func (h *Handler) deleteS3Objects(ctx context.Context, urls []string) {
 	if h.Storage == nil || len(urls) == 0 {
 		return
 	}
-	keys := make([]string, len(urls))
-	for i, u := range urls {
-		keys[i] = h.Storage.KeyFromURL(u)
+	keys := make([]string, 0, len(urls))
+	for _, u := range urls {
+		key := h.Storage.KeyFromURL(u)
+		keys = append(keys, key)
+		if thumbKey, ok := thumbnail.StorageKey(key); ok {
+			keys = append(keys, thumbKey)
+		}
 	}
 	h.Storage.DeleteKeys(ctx, keys)
 }

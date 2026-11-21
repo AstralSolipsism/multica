@@ -85,3 +85,18 @@ func TestDirectChatSkillClaimUsesActualSender(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectChatSkillCapsuleBypassesSteerSupplement(t *testing.T) {
+	sessionID, taskID, _ := newChatSupplementFixture(t, true)
+	// A member message carrying an explicit skill capsule must not take the
+	// text-only supplement channel: the selection only pays off in a real
+	// turn, so it queues its own task even when steering would merge an
+	// ordinary plain-text message into the running one.
+	sent := sendChatGuidance(t, sessionID, map[string]any{"steer": true, "content": "[/review](slash://skill/selected) review this"})
+	if sent.Steered || !sent.Queued || sent.TaskID == taskID {
+		t.Fatalf("skill capsule steered into the text supplement channel: %+v", sent)
+	}
+	if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE chat_session_id=$1`, sessionID); n != 2 {
+		t.Fatalf("skill capsule did not create its own turn: %d", n)
+	}
+}

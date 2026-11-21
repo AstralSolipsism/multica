@@ -338,7 +338,13 @@ func hermesProfileDir(root, name string) (home string, mustExist bool, err error
 // The returned hermesSessionMount reports the effective home and whether the
 // store actually holds a transcript, so the caller never
 // tells a task it can resume history that is not there.
-func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger, installed map[string]string) (sessions hermesSessionMount, err error) {
+func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger) (sessions hermesSessionMount, err error) {
+	return prepareHermesHomeTracked(hermesHome, sourceHome, sourceMustExist, workspaceSkills, env, memoryStore, sessionStore, logger, nil)
+}
+
+// prepareHermesHomeTracked additionally records, when installed is non-nil,
+// each written skill's absolute directory by skill ID.
+func prepareHermesHomeTracked(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger, installed map[string]string) (sessions hermesSessionMount, err error) {
 	sharedHome := strings.TrimSpace(sourceHome)
 	if sharedHome == "" {
 		sharedHome = platformDefaultHermesHome()
@@ -901,9 +907,8 @@ func writeHermesBoundSkills(hermesHome string, workspaceSkills []SkillContextFor
 		// only source, matching un-redirected behavior.
 		return os.MkdirAll(skillsDir, 0o700)
 	}
-	// Skills live under env.RootDir/hermes-home, which the GC loop (cloud) or
-	// env teardown (local_directory) wipes wholesale — no sidecar manifest.
-	return writeSkillFiles(skillsDir, workspaceSkills, nil, installed)
+	// This directory is owned by the isolated home and replaced on every run.
+	return writeSkillFilesTracked(skillsDir, workspaceSkills, nil, installed)
 }
 
 // existingHermesExternalDirs reads the raw skills.external_dirs entries from a

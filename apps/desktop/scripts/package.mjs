@@ -640,6 +640,17 @@ function main() {
       },
     );
 
+    const binary = target.platform === "win" ? "multica.exe" : "multica";
+    const stagedCli = resolve(desktopRoot, "resources", "bin", binary);
+    const artifact = statSync(stagedCli, { throwIfNoEntry: false });
+    if (!artifact?.isFile() || artifact.size === 0) {
+      console.error(
+        `[package] Packaging ${formatTarget(target)} requires a bundled CLI at ${stagedCli}. ` +
+          "Install Go or provide a prebuilt CLI for the target.",
+      );
+      process.exit(1);
+    }
+
     console.log(`[package] bundling voice engine → ${formatTarget(target)}`);
     execFileSync(
       "node",
