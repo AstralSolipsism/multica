@@ -31,7 +31,7 @@ const roleRef = vi.hoisted(() => ({
 }));
 const githubRef = vi.hoisted(() => ({
   current: {
-    installations: [] as { id: string; account_login: string }[],
+    installations: [] as { id: string; installation_id?: number; account_login: string }[],
     configured: true,
     repository_browse_configured: true,
     can_manage: true,
@@ -394,14 +394,126 @@ describe("RepositoriesSection", () => {
   });
 
   it("keeps both browsing and adding an account available after connecting", async () => {
-    githubRef.current.installations = [{ id: "existing", account_login: "alice" }];
+    githubRef.current.installations = [{ id: "existing", installation_id: 101, account_login: "alice" }];
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
     const user = userEvent.setup();
     render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
     await openAddMenu(user);
     expect(await screen.findByRole("menuitem", { name: "Choose from GitHub" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Add account or organization" }));
-    expect(mockConnectGitHub).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(mockGetGitHubConnectURL).toHaveBeenCalledWith("workspace-1", "repositories");
+    });
+    expect(open).toHaveBeenCalledWith(INSTALL_URL, "_blank", "noopener");
+    expect(mockConnectGitHub).not.toHaveBeenCalled();
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("reuses another workspace's GitHub account from Add account or organization when one is already connected", async () => {
+    githubRef.current.installations = [{ id: "existing", installation_id: 101, account_login: "alice" }];
+    offerForReuse(
+      {
+        installation_id: 101,
+        account_login: "alice",
+        account_type: "User",
+        account_avatar_url: null,
+        connected: false,
+      },
+      outlune,
+    );
+    mockConnectInstallation.mockResolvedValue({
+      id: "inst-9",
+      installation_id: 202,
+      account_login: "outlune",
+      account_type: "Organization",
+    });
+    mockInvalidateQueries.mockImplementation(async () => {
+      githubRef.current = {
+        ...githubRef.current,
+        installations: [
+          { id: "existing", installation_id: 101, account_login: "alice" },
+          { id: "inst-9", installation_id: 202, account_login: "outlune" },
+        ],
+      };
+    });
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    expect(await screen.findByRole("menuitem", { name: "Choose from GitHub" })).toBeInTheDocument();
+    const trigger = screen.getByRole("menuitem", { name: "Add account or organization" });
+    act(() => trigger.focus());
+    await user.keyboard("{ArrowRight}");
+
+    expect(await screen.findByText("From other workspaces you manage")).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /alice/ })).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: "Install on another GitHub account" }),
+    ).toBeInTheDocument();
+    await activateMenuItem(user, /outlune/);
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("outlune connected"));
+    expect(mockConnectInstallation).toHaveBeenCalledWith("workspace-1", 202);
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+    expect(mockConnectGitHub).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog", { name: "Choose GitHub repositories" });
+    expect(within(dialog).getByRole("combobox", { name: "GitHub account" })).toHaveTextContent(
+      "outlune",
+    );
+    open.mockRestore();
+  });
+
+  it("disables Add account or organization when GitHub connect is not configured", async () => {
+    githubRef.current = {
+      ...githubRef.current,
+      configured: false,
+      installations: [{ id: "existing", installation_id: 101, account_login: "alice" }],
+    };
+    const user = userEvent.setup();
+    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    expect(await screen.findByRole("menuitem", { name: "Choose from GitHub" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    const addAccount = screen.getByRole("menuitem", { name: "Add account or organization" });
+    expect(addAccount).toHaveAttribute("aria-disabled", "true");
+    await user.click(addAccount);
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+  });
+
+  it("disables Add account or organization while a GitHub connect check is in flight", async () => {
+    githubRef.current.installations = [{ id: "existing", installation_id: 101, account_login: "alice" }];
+    appInstallationsRef.current = { status: "pending", data: undefined, isFetching: true };
+    const refresh = deferred<ListGitHubAppInstallationsResponse>();
+    mockFetchQuery.mockReturnValue(refresh.promise);
+    const user = userEvent.setup();
+    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+
+    await openAddMenu(user);
+    const addAccount = await screen.findByRole("menuitem", { name: "Add account or organization" });
+    await user.click(addAccount);
+
+    expect(addAccount).toHaveAttribute("aria-busy", "true");
+    expect(addAccount).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Choose from GitHub" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(mockGetGitHubConnectURL).not.toHaveBeenCalled();
+
+    const loaded = { configured: true, installations: [outlune] };
+    appInstallationsRef.current = { status: "success", data: loaded, isFetching: false };
+    await act(async () => refresh.resolve(loaded));
+
+    expect(await screen.findByRole("menuitem", { name: /outlune/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Add account or organization" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it.each([

@@ -152,7 +152,6 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const {
     connectedInstallationID,
-    connect: connectFromSettings,
     reset: resetConnection,
   } = connection;
   const [preselectInstallationID, setPreselectInstallationID] = useState("");
@@ -535,10 +534,15 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
 
   if (!workspace) return null;
 
-  const githubItemDisabled =
+  const githubBrowseItemDisabled = gitHubConnectBusy || !githubBrowseConfigured;
+  const githubConnectItemDisabled =
     gitHubConnectBusy ||
-    !githubBrowseConfigured ||
-    (!githubConnectConfigured && githubInstallations.length === 0);
+    !githubConnectConfigured ||
+    (githubInstallations.length === 0 && !githubBrowseConfigured);
+  const githubConnectLabel =
+    githubInstallations.length > 0
+      ? t(($) => $.github.add_account)
+      : t(($) => $.repositories.connect_github);
 
   return (
     <SettingsSection
@@ -564,7 +568,10 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
               {canManageGitHub ? (
                 <>
                   {githubInstallations.length > 0 ? (
-                    <DropdownMenuItem disabled={githubItemDisabled} onClick={openGitHubPicker}>
+                    <DropdownMenuItem
+                      disabled={githubBrowseItemDisabled}
+                      onClick={openGitHubPicker}
+                    >
                       <GitHubMark className="size-4" />
                       <span className="flex flex-col">
                         <span>{t(($) => $.repositories.choose_from_github)}</span>
@@ -575,7 +582,8 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                         ) : null}
                       </span>
                     </DropdownMenuItem>
-                  ) : reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
+                  ) : null}
+                  {reusableGitHubAccounts.length > 0 || gitHubAccountMenuOpen ? (
                     // Accounts managed elsewhere are bound in place; GitHub's
                     // install page cannot do it. An emptied list keeps the open
                     // submenu mounted, mirroring the Code tab's connect button.
@@ -585,7 +593,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                     >
                       <DropdownMenuSubTrigger
                         ref={accountMenuTriggerRef}
-                        disabled={githubItemDisabled}
+                        disabled={githubConnectItemDisabled}
                         aria-busy={gitHubConnectBusy || undefined}
                       >
                         {gitHubConnectBusy ? (
@@ -593,7 +601,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                         ) : (
                           <GitHubMark className="size-4" />
                         )}
-                        {t(($) => $.repositories.connect_github)}
+                        {githubConnectLabel}
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="w-auto min-w-56 max-w-80">
                         <GitHubReuseMenuItems
@@ -606,7 +614,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                     </DropdownMenuSub>
                   ) : (
                     <DropdownMenuItem
-                      disabled={githubItemDisabled}
+                      disabled={githubConnectItemDisabled}
                       closeOnClick={false}
                       aria-busy={gitHubConnectBusy || undefined}
                       onClick={() => void connectGitHub()}
@@ -616,31 +624,18 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                       ) : (
                         <GitHubMark className="size-4" />
                       )}
-                      <span className="flex flex-col">
-                        <span>{t(($) => $.repositories.connect_github)}</span>
-                        {!githubBrowseConfigured ? (
+                      {githubInstallations.length === 0 && !githubBrowseConfigured ? (
+                        <span className="flex flex-col">
+                          <span>{githubConnectLabel}</span>
                           <span className="text-caption text-muted-foreground">
                             {t(($) => $.repositories.github_browse_not_configured)}
                           </span>
-                        ) : null}
-                      </span>
+                        </span>
+                      ) : (
+                        githubConnectLabel
+                      )}
                     </DropdownMenuItem>
                   )}
-                  {githubInstallations.length > 0 ? (
-                    <DropdownMenuItem
-                      disabled={gitHubConnectBusy || !githubConnectConfigured}
-                      closeOnClick={false}
-                      aria-busy={gitHubConnectBusy || undefined}
-                      onClick={() => void connectFromSettings()}
-                    >
-                      {gitHubConnectBusy ? (
-                        <LoaderCircle className="animate-spin" />
-                      ) : (
-                        <GitHubMark className="size-4" />
-                      )}
-                      {t(($) => $.github.add_account)}
-                    </DropdownMenuItem>
-                  ) : null}
                 </>
               ) : null}
               <DropdownMenuItem
