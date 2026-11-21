@@ -739,12 +739,16 @@ Run 'make down' here first — a leftover instance answers /health with 200 and 
   fi
 
   launched_at="$(now_epoch)"
+  # Taken before the compile starts, so an edit made while it runs reads as
+  # stale next time instead of being assumed compiled in.
+  fingerprint="$(api_source_fingerprint)"
   # COMMIT is passed as a make argument, not an environment variable: a
   # variable on the outer make command line (e.g. make up COMMIT=<short>)
   # travels into this inner make through MAKEFLAGS and outranks the
   # environment, re-desyncing the injected commit from the one
   # checkout_commit just compared against.
   launch_detached api make -C "$REPO_ROOT" -s api-dev ENV_FILE="$ENV_FILE" COMMIT="$expected_commit"
+  printf '%s %s\n' "$(cat "$(pid_file api)")" "$fingerprint" > "$(api_build_file)"
   info "api launching (pid $(cat "$(pid_file api)")), log: $(log_file api)"
 
   while [ "$waited" -lt 300 ]; do
