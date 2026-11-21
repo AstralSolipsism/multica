@@ -54,7 +54,6 @@ function deriveWsUrl(): string | undefined {
 const WEB_VERSION =
   process.env.NEXT_PUBLIC_APP_VERSION || packageJson.version || "dev";
 
-
 export function WebProviders({
   children,
   locale,

@@ -241,7 +241,6 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	issuePrefix := h.getIssuePrefix(r.Context(), wsUUID)
 	if r.URL.Query().Get("view") == "grouped" {
 		items, err := runInboxRead(r.Context(), h, "list", func(ctx context.Context, q *db.Queries) ([]db.ListGroupedInboxItemsRow, error) {
 			return q.ListGroupedInboxItems(ctx, db.ListGroupedInboxItemsParams{
@@ -255,6 +254,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 			writeInboxReadError(w, err, "failed to list inbox")
 			return
 		}
+		issuePrefix := h.getIssuePrefix(r.Context(), wsUUID)
 		resp := make([]InboxItemResponse, len(items))
 		for i, item := range items {
 			resp[i] = inboxRowToResponse(db.ListInboxItemsRow(item), issuePrefix)
@@ -282,6 +282,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		h.InboxTrimmer.Mark(inbox.Recipient{WorkspaceID: wsUUID, RecipientType: "member", RecipientID: parseUUID(userID)})
 	}
 
+	issuePrefix := h.getIssuePrefix(r.Context(), wsUUID)
 	resp := make([]InboxItemResponse, len(items))
 	for i, item := range items {
 		resp[i] = inboxRowToResponse(item, issuePrefix)

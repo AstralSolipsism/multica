@@ -14,7 +14,7 @@ func TestSkillReceiptIncludesWrittenSupportingFiles(t *testing.T) {
 		{Path: "./SKILL.md", Content: "duplicate primary content is not written"},
 	}}}
 	dir := skillsDirPath(env.WorkDir, "kiro")
-	if err := writeSkillFilesTracked(dir, skills, nil, nil); err != nil {
+	if err := writeSkillFiles(dir, skills, nil); err != nil {
 		t.Fatal(err)
 	}
 	before := env.SkillReceipts("kiro", skills)[0]
@@ -58,7 +58,7 @@ func TestSkillReceiptUsesRuntimeHome(t *testing.T) {
 			home := t.TempDir()
 			env := &Environment{WorkDir: t.TempDir(), CodexHome: home, HermesHome: home, QwenpawWorkspace: home}
 			skills := []SkillContextForEnv{{Name: "check", Content: "check"}}
-			if err := writeSkillFilesTracked(filepath.Join(home, "skills"), skills, nil, nil); err != nil {
+			if err := writeSkillFiles(filepath.Join(home, "skills"), skills, nil); err != nil {
 				t.Fatal(err)
 			}
 			got := env.SkillReceipts(tc.provider, skills)[0]

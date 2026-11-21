@@ -81,15 +81,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var prefs map[string]string
-	if err := json.Unmarshal(pref.Preferences, &prefs); err != nil {
-		prefs = map[string]string{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace_id": workspaceID,
-		"preferences":  labrastroYSKPreferenceDefaults(inbox.WithDefaults(prefs)),
-	})
+	writeNotificationPreferenceResponse(w, workspaceID, pref)
 }
 
 type updateNotifPrefRequest struct {

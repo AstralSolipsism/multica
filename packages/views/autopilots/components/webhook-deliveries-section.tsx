@@ -341,8 +341,6 @@ function DeliveryDetailDialog({
   );
 }
 
-
-
 // --- Ignore reasons -------------------------------------------------------
 
 /**

@@ -1750,7 +1750,11 @@ cmd_down() {
   if [ "$failures" -gt 0 ]; then
     die "$failures component(s) of $NAME could not be stopped; see the warnings above."
   fi
-  printf '\n%s✓ %s stopped.%s Database, profile and slot kept — `make up` restarts in seconds.\n' "$C_GREEN" "$NAME" "$C_OFF"
+  if [ "$requested" = "$ALL_COMPONENTS" ]; then
+    printf '\n%s✓ %s stopped.%s Database, profile and slot kept — `make up` restarts in seconds.\n' "$C_GREEN" "$NAME" "$C_OFF"
+  else
+    printf '\n%s✓ %s: stopped %s.%s Other components were left as they were — `make status` shows them.\n' "$C_GREEN" "$NAME" "$requested" "$C_OFF"
+  fi
 }
 
 cmd_destroy() {

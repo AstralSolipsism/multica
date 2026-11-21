@@ -2488,7 +2488,7 @@ type codexClient struct {
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
-	// rateLimits is the newest rate_limits snapshot captured from live
+	// rawRateLimits is the newest rate_limits snapshot captured from live
 	// token_count events (legacy protocol). Guarded by usageMu; nil until a
 	// token_count event carrying rate_limits arrives.
 	rawRateLimits *codexRawRateLimits

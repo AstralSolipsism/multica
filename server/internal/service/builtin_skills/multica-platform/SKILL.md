@@ -40,9 +40,8 @@ crosses domains needs each domain it touches — creating a squad, assigning it 
 issue, then writing a mention needs `squads.md`, `issues.md` and `mentions.md`,
 and skipping one of those means acting on a contract you have not read.
 
-What is never right is reading all of them because you are not sure. Each
-reference states its own contracts in full and none depends on another, so
-pick by domain and skip the rest.
+Pick references by domain; do not read the whole set just because you are unsure.
+Follow a reference's link when the current task needs that additional contract.
 
 ## Invariants
 

@@ -29,6 +29,7 @@ the same branch before merge); Stage 5 (OL-1482) owns release and deployment of
 | `#10999` missed chat completion reply recovery (`cherry-pick -x`) | `677579813e111caea499b90473880c9aeb188976` |
 | Stage 1 reviewed head (OL-1479) | `b7e599992bacbd5e43c95e95b634cd04bcbb3083` |
 | Stage 2 reviewed head (OL-1480) | `1604840cd820504adec21976c6f1e0de12ca14cc` |
+| Stage 3 reviewed head (OL-1481) | `37157bc2ed8cb34c57ddf96840cf3d87aa1501c5` |
 
 All six backports retain `cherry-pick -x` provenance from
 `v0.11.1..upstream/main` (zero database migrations):
@@ -348,19 +349,86 @@ Python 3.12.14, GoReleaser v2.18.0, Playwright 1.58.2 (Chrome Headless Shell
     `VERSION=1.2.3`, `LABRASTRO_RELEASE_TAG=...`). Application Go/TS code
     remains unchanged from `1604840cd820504adec21976c6f1e0de12ca14cc`.
 
+## Stage 4 whole-branch restraint & necessity audit (OL-1483)
+
+Starting from the Stage 3 reviewed head (`37157bc2ed8cb34c57ddf96840cf3d87aa1501c5`),
+all **10,368** union paths across the 3-way baseline (`v0.10.0` `2fcb424b72`,
+fork `main` `3eaed6ed65`, upstream `v0.11.1` `e1fe10d669`, plus the six
+`cherry-pick -x` backports) were mechanically triaged into **9,892** trivial
+paths (8,989 untouched fork/same, 889 pure upstream sync, 14 converged) and
+**476** non-trivial paths (`AUTO_MERGE_CLEAN_EXACT` 221, `CONFLICT_RESOLVED` 81,
+`FORK_ONLY_BUT_EDITED` 52, `DELETED` 34, `UPSTREAM_ONLY_BUT_EDITED` 28,
+`AUTO_MERGE_CLEAN_BUT_MODIFIED` 21, `TOOK_OURS` 15, `TOOK_THEIRS` 12,
+`OTHER_MIXED` 10, `NEW_IN_BRANCH` 2). Every non-trivial path was audited
+file-by-file and line-by-line (zero blind spots), re-verifying the 22-file
+engineering insertion ledger (**61/61** lines), high-churn thin plugs in
+`daemon.go` and `cmd_issue.go`, and zero `server/ee` / `packages/ee` /
+`@multica/ee` / `registerEE` / `GateIssueCount` / `RateLimitSection` residue.
+
+Surgical slimming and merge-oversight fixes applied on `sync/v0.11.1-ol-1472`
+(**34 code/doc/locale files** + this sync record; non-trivial paths reduced from
+**476 → 462**):
+
+- **14 files restored to 0-diff upstream `v0.11.1`**:
+  - 13 Go test files (`server/internal/daemon/execenv/{codex_user_skills,codex_user_skills_windows,hermes_acp_integration,hermes_gateway_home,hermes_home_config_warn,hermes_home,hermes_installs,openclaw_config,prepared_skill_names,receipt,reserved_skill_path,skill_visibility}_test.go`
+    and `server/internal/daemon/prompt_edited_trigger_test.go`) whose sole diff
+    replaced backward-compatible wrapper calls with `*Tracked(..., nil)` /
+    `*WithOptions(..., promptOpts{})`.
+  - `packages/views/locales/ru/billing.json`, whose sole diff duplicated the
+    brand overlay already provided by `packages/views/locales/brand/ru.json`.
+- **9 partially customized Go test files slimmed**: removed redundant
+  `*Tracked(..., nil)` / `*WithOptions(..., promptOpts{})` call renames while
+  preserving genuine fork tests in `server/internal/daemon/execenv/{amp,droid,execenv,hermes_memory,hermes_sessions,kimi_skills,sidecar_manifest}_test.go`
+  and `server/internal/daemon/{prompt_source,prompt}_test.go`.
+- **4 merge oversights fixed**:
+  - `server/internal/handler/notification_preference.go`: deduplicated
+    `GetNotificationPreferences` to reuse `writeNotificationPreferenceResponse`.
+  - `server/internal/handler/inbox.go`: moved `h.getIssuePrefix` after
+    `runInboxRead` in both grouped and flat paths so overloaded requests rejected
+    by admission control perform no unguarded DB read first.
+  - `scripts/dev-env.sh`: restored upstream `v0.11.1`'s partial-stop output
+    branch (`if [ "$requested" = "$ALL_COMPONENTS" ]`) in `cmd_down`.
+  - `server/internal/service/builtin_skills/multica-platform/SKILL.md`: restored
+    fork commit `338c5e9e02`'s cross-reference guidance matching Labrastro's
+    split `issues.md` / `pull-requests.md` / `issue-dependencies.md` references.
+- **7 orphan/stray-diff cleanups**: removed orphaned
+  `serializeWebhookEventFilters` from `packages/core/autopilots/{webhook,index}.ts`;
+  restored 4 untouched neighbor rows in `apps/docs/content/docs/cli.zh-Hant.mdx`
+  so `#10984` modifies only the `workspace` row; removed stray blank lines in
+  `apps/desktop/src/renderer/src/main.tsx`, `apps/web/components/web-providers.tsx`
+  and `packages/views/autopilots/components/webhook-deliveries-section.tsx`;
+  fixed stale field comment `// rateLimits` → `// rawRateLimits` in
+  `server/pkg/agent/codex.go`.
+
+Stage 4 local verification (Go 1.27.4, Node 24.21.0, pnpm 10.28.2, native PG17):
+`go build ./...`, `go build -tags oss ./cmd/...`, `go vet ./...`,
+`go vet -tags oss ./...`, `bash scripts/check-gofmt.test.sh`,
+`bash scripts/check-gofmt.sh`, `bash scripts/dev-env.test.sh`,
+`go test -count=1 ./internal/branding ./internal/extension ./internal/inbox ./pkg/taskfailure`,
+`go test -count=1 ./internal/daemon/execenv -skip 'TestPrepareLocalWorktree'`
+(5.77s), `go test -count=1 ./internal/daemon` targeted prompt/chatskill/dsh/quota
+suite (0.58s), `go test -count=1 ./pkg/agent` targeted codex/dim/antigravity/explicit
+suite (7.30s), disposable PG17 `cmd/migrate up` (836 migrations) +
+`internal/handler` inbox/admission/notification/manifest tests (5.36s) + full
+`internal/service` (30.55s), `pnpm test:brand` (13 node + 19 Vitest), `pnpm knip`
+(zero issues), `pnpm check:ui-exports`, `pnpm check:ui-radii`,
+`pnpm check:deps-catalog`, `pnpm typecheck` (10/10 tasks), workspace `eslint` on
+all touched TS/TSX files, `pnpm test` (859 unit contract tests in 51.8s), and
+targeted Vitest (`packages/core/autopilots` 19 tests, `packages/views/autopilots`
+25 files / 580 tests, `desktop-layout.search-workspace.test.tsx` 3 tests) all
+passed; the disposable PG17 cluster was stopped and removed after verification.
+
 ## Deployment and cross-family review handoff
 
-- **Author model families & Stage 3 review handoff (keep PR #332 OPEN)**:
+- **Author model families & Stage 3/4 review handoff (keep PR #332 OPEN)**:
   commits on `sync/v0.11.1-ol-1472` were authored jointly by the **DeepSeek**
   family (`全栈补位专员`, Stage 1 + initial Stage 2) and the **Gemini** family
-  (`排障师`, Stage 2 convergence + Stage 3). Two sequential high-risk reviews
-  must be completed by experts from two different model families outside
-  DeepSeek and Gemini (First review: **Codex**; Second review: e.g., **Claude**).
-  Per OL-1481 handoff directive `01a1fe45-3c93-7a54-8f37-0a668cd0d4fe`, **do
-  NOT run `gh pr merge` in Stage 3**: after the second reviewer approves and
-  remote `CI required` passes on the final PR head, keep PR #332 **OPEN** and
-  advance OL-1481 to `done_2` (总结中); the author never merges or polls remote
-  CI.
+  (`排障师`, Stage 2 convergence + Stage 3 + Stage 4). Two sequential high-risk
+  reviews must be completed by experts from two different model families outside
+  DeepSeek and Gemini (e.g., **Codex** + **Claude** / **Kimi**).
+  Per OL-1481/OL-1483 handoff directives, **do NOT run `gh pr merge` before
+  Stage 4 review passes and the project owner explicitly approves release on
+  OL-1472**: keep PR #332 **OPEN**; the author never merges or polls remote CI.
 - **Stage 4 (OL-1483 — whole-branch restraint & necessity audit)**: perform a
   file-by-file, line-by-line restraint and necessity audit on
   `sync/v0.11.1-ol-1472` (applying any trimming directly on the open PR branch

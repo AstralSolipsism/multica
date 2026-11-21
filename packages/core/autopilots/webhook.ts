@@ -43,19 +43,6 @@ function stripTrailingSlash(s: string | undefined): string {
 }
 
 /**
- * Stable JSON form of an event-filter draft for dirty checks and query keys.
- * Normalizes omitted Actions to [] so omitted-vs-explicit-empty doesn't read
- * as a phantom difference.
- */
-export function serializeWebhookEventFilters(
-  filters: Pick<WebhookEventFilter, "event" | "actions">[],
-): string {
-  return JSON.stringify(
-    filters.map((f) => ({ event: f.event, actions: f.actions ?? [] })),
-  );
-}
-
-/**
  * Merge a server-derived filter suggestion into an existing draft (OL-78).
  * Pure append with coverage dedupe: a same-event row with empty actions
  * already accepts every action, and an identical row is already present in

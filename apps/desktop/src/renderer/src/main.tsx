@@ -51,7 +51,6 @@ if (import.meta.env.DEV && import.meta.env.VITE_REACT_GRAB) {
 // installUserTimingCap.
 if (import.meta.env.DEV) installUserTimingCap();
 
-
 // A window opened for a workspace starts on it rather than on whichever
 // workspace was last active in any window.
 const launchSlug = launchWorkspaceSlug();
