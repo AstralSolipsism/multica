@@ -18,8 +18,6 @@ function filterFiles(files) {
 for (const [name, files, selected] of [
   ["readme only", ["README.md"], []],
   ["stable release promotion", [".github/workflows/promote-release.yml"], ["scripts"]],
-  ["release orchestration", [".github/workflows/release.yml"], ["scripts"]],
-  ["release creation", [".goreleaser.yml"], ["scripts"]],
   ["docs only", ["apps/docs/content/docs/guide.mdx"], ["quality", "docs"]],
   ["docs test", ["apps/docs/lib/unrendered-bold.test.ts"], ["quality", "docs"]],
   ["web changelog", ["apps/web/features/landing/i18n/en.ts"], ["frontend", "quality", "e2e"]],
@@ -39,6 +37,7 @@ for (const [name, files, selected] of [
   ["desktop candidate staging", ["apps/desktop/scripts/stage-candidate.mjs"], ["frontend", "e2e", "quality", "candidate"]],
   ["deployment origin config", ["packages/core/deployment/origin.json"], ["frontend", "e2e", "quality", "candidate"]],
   ["release workflow", [".github/workflows/release.yml"], ["candidate"]],
+  ["release packaging", [".goreleaser.yml"], ["candidate"]],
   ["selfhost config", [".env.example"], ["backend", "scripts", "installer"]],
   ["selfhost compose", ["docker-compose.selfhost.yml"], ["backend", "scripts", "installer"]],
   ["local environment config", [".multica/environments.toml"], ["backend", "scripts"]],
