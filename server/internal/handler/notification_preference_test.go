@@ -169,8 +169,10 @@ func TestNotificationPreferencesReportStatusChangesMutedByDefault(t *testing.T) 
 		return response.Preferences
 	}
 
-	if got := call(http.MethodGet, nil); len(got) != 1 || got["status_changes"] != "muted" {
-		t.Fatalf("GET without a row = %#v, want status_changes muted", got)
+	// The fork keeps its you_should_know default at "all" on top of upstream's
+	// muted status_changes; both must be reported explicitly.
+	if got := call(http.MethodGet, nil); len(got) != 2 || got["status_changes"] != "muted" || got["you_should_know"] != "all" {
+		t.Fatalf("GET without a row = %#v, want status_changes muted and you_should_know all", got)
 	}
 
 	if got := call(http.MethodPatch, map[string]string{"comments": "muted"}); got["status_changes"] != "muted" || got["comments"] != "muted" {
@@ -192,7 +194,7 @@ func TestNotificationPreferencesReportStatusChangesMutedByDefault(t *testing.T) 
 	}
 
 	call(http.MethodPatch, map[string]string{"status_changes": "all"})
-	if got := call(http.MethodGet, nil); got["status_changes"] != "all" || got["comments"] != "muted" {
+	if got := call(http.MethodGet, nil); got["status_changes"] != "all" || got["comments"] != "muted" || got["you_should_know"] != "all" {
 		t.Fatalf("GET after turning status changes on = %#v", got)
 	}
 }
