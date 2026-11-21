@@ -36,7 +36,8 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-vi.mock("@multica/core/runtimes", () => ({
+vi.mock("@multica/core/runtimes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/runtimes")>()),
   deriveRuntimeHealth: () => "online",
   runtimeProfileListOptions: vi.fn((wsId: string) => ({
     queryKey: ["runtime-profiles", wsId, "list"],

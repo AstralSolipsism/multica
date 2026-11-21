@@ -33,6 +33,7 @@ vi.mock("../onboarding", () => ({
 }));
 // The provider's own behavior is covered in you-should-know/; here it only
 // marks where the layout mounts it.
+vi.mock("../billing/trial-notices", () => ({ WorkspaceTrialNotices: () => null }));
 vi.mock("../you-should-know", () => ({
   YouShouldKnowProvider: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="ysk-provider">{children}</div>

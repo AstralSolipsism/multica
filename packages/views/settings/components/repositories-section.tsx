@@ -152,6 +152,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const {
     connectedInstallationID,
+    connect: connectFromSettings,
     reset: resetConnection,
   } = connection;
   const [preselectInstallationID, setPreselectInstallationID] = useState("");
@@ -560,7 +561,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
               <ChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-56">
-              {canManageGitHub ? (githubInstallations.length > 0 ? (
+              {githubInstallations.length > 0 && canManageGitHub ? (
                 <DropdownMenuItem
                   disabled={githubItemDisabled}
                   onClick={openGitHubPicker}
@@ -604,7 +605,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                     />
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-              ) : (
+              ) : githubInstallations.length === 0 || canManageGitHub ? (
                 <DropdownMenuItem
                   disabled={githubItemDisabled}
                   closeOnClick={false}
@@ -625,13 +626,13 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                     ) : null}
                   </span>
                 </DropdownMenuItem>
-              )) : null}
+              ) : null}
               {canManageGitHub && githubInstallations.length > 0 ? (
                 <DropdownMenuItem
                   disabled={gitHubConnectBusy || !githubConnectConfigured}
                   closeOnClick={false}
                   aria-busy={gitHubConnectBusy || undefined}
-                  onClick={() => void connectGitHub()}
+                  onClick={() => void connectFromSettings()}
                 >
                   {gitHubConnectBusy ? (
                     <LoaderCircle className="animate-spin" />

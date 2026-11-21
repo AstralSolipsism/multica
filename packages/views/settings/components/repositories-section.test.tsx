@@ -932,7 +932,8 @@ describe("RepositoriesSection", () => {
   });
 
   it("uses the generic install callback failure", async () => {
-    searchParamsRef.current = new URLSearchParams("tab=github&github_error=persist_failed");
+    // persist_failed has its own message; an unknown code is what falls back.
+    searchParamsRef.current = new URLSearchParams("tab=github&github_error=unexpected_code");
 
     render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
 
