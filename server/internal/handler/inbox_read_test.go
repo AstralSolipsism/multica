@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/inboxread"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestInboxReadPostgresTimeoutAndLocalSettings(t *testing.T) {
@@ -96,6 +98,7 @@ func TestAllInboxReadHandlersShareCapacity(t *testing.T) {
 		handler http.HandlerFunc
 	}{
 		{"/api/inbox", h.ListInbox},
+		{"/api/inbox?view=grouped", h.ListInbox},
 		{"/api/inbox/unread-count", h.CountUnreadInbox},
 		{"/api/inbox/unread-summary", h.UnreadInboxSummary},
 		{"/api/inbox/snoozed", h.ListSnoozedInbox},
@@ -107,6 +110,65 @@ func TestAllInboxReadHandlersShareCapacity(t *testing.T) {
 			rec := testutil.Call(t, inboxWorkspaceHandler(endpoint.handler), inboxRequest(http.MethodGet, endpoint.path, testWorkspaceID)).Want(http.StatusServiceUnavailable)
 			if rec.Header().Get("Retry-After") != "1" {
 				t.Fatal("missing Retry-After")
+			}
+		})
+	}
+}
+
+type getWorkspaceCounter struct {
+	db.DBTX
+	reads atomic.Int32
+}
+
+func (c *getWorkspaceCounter) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.Contains(sql, "name: GetWorkspace") {
+		c.reads.Add(1)
+	}
+	return c.DBTX.QueryRow(ctx, sql, args...)
+}
+
+func TestListInboxAdmissionRejectionSkipsIssuePrefixQuery(t *testing.T) {
+	obs := &getWorkspaceCounter{DBTX: testPool}
+	h := *testHandler
+	h.Queries = db.New(obs)
+	h.InboxReads = inboxread.New(inboxread.Config{Concurrency: 1})
+
+	// Sanity check: admitted requests execute getIssuePrefix via GetWorkspace.
+	for _, path := range []string{"/api/inbox", "/api/inbox?view=grouped"} {
+		obs.reads.Store(0)
+		testutil.Call(t, inboxWorkspaceHandler(h.ListInbox), inboxRequest(http.MethodGet, path, testWorkspaceID)).Want(http.StatusOK)
+		if got := obs.reads.Load(); got != 1 {
+			t.Fatalf("admitted %s: GetWorkspace reads = %d, want 1", path, got)
+		}
+	}
+
+	// Saturate admission capacity; neither flat nor grouped ListInbox may run
+	// the workspace issue-prefix query before runInboxRead admits the request.
+	started, finish, result := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		result <- h.InboxReads.Run(context.Background(), "list", testPool, func(context.Context, pgx.Tx) error {
+			close(started)
+			<-finish
+			return nil
+		})
+	}()
+	<-started
+	defer func() {
+		close(finish)
+		if err := <-result; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	for _, path := range []string{"/api/inbox", "/api/inbox?view=grouped"} {
+		t.Run(path, func(t *testing.T) {
+			obs.reads.Store(0)
+			rec := testutil.Call(t, inboxWorkspaceHandler(h.ListInbox), inboxRequest(http.MethodGet, path, testWorkspaceID)).Want(http.StatusServiceUnavailable)
+			if rec.Header().Get("Retry-After") != "1" {
+				t.Fatal("missing Retry-After")
+			}
+			if got := obs.reads.Load(); got != 0 {
+				t.Fatalf("rejected %s executed %d GetWorkspace (issue_prefix) queries before admission", path, got)
 			}
 		})
 	}

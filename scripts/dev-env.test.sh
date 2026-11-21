@@ -451,7 +451,7 @@ if [ "$status" -ne 0 ]; then
   sed 's/^/  /' "$out" >&2
   fail "down on a stopped environment exited $status, want 0"
 fi
-require_contains "$out" "stopped"
+require_contains "$out" "probe-901: stopped api web."
 
 # `make down C=daemon` must reach the script as a component filter. Dropping C
 # here stops api and web too, which is what `make up C=...` users do not expect.

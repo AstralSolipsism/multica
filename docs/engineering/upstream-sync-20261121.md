@@ -365,12 +365,16 @@ engineering insertion ledger (**61/61** lines), high-churn thin plugs in
 `daemon.go` and `cmd_issue.go`, and zero `server/ee` / `packages/ee` /
 `@multica/ee` / `registerEE` / `GateIssueCount` / `RateLimitSection` residue.
 
-Surgical slimming and merge-oversight fixes applied on `sync/v0.11.1-ol-1472`
-(**34 code/doc/locale files** + this sync record; files diverging from upstream
-`v0.11.1` reduced from **2,627 → 2,613** (`-14` files), `main.tsx` and
-`web-providers.tsx` returned to 0-diff vs fork `main`, and custom-edited 3-way
-buckets shrank across `CONFLICT_RESOLVED` 81→80, `FORK_ONLY_BUT_EDITED` 52→41,
-and `UPSTREAM_ONLY_BUT_EDITED` 28→26):
+Surgical slimming, Decision 3A dead-code cleanup, merge-oversight fixes and
+regression tests applied on `sync/v0.11.1-ol-1472` (**40 code/test/doc/locale
+files** + this sync record; `+240 / -436`, net `-196` lines excluding this doc;
+files diverging from upstream `v0.11.1` reduced from **2,627 → 2,616** (`-11`
+net), `main.tsx`, `web-providers.tsx` and `packages/core/runtimes/queries.ts`
+returned to 0-diff vs fork `main`; final 3-way non-trivial set is **481** paths:
+`clean-exact` 219, `conflict` 80, `fork-only-edited` 41, `deleted` 36,
+`upstream-only-edited` 27, `took-upstream` 26, `clean-modified` 22, `took-fork`
+18, `other-mixed` 10, `new` 2; full 481-path file-by-file audit ledger with
+per-hunk manual-decision locations and rationales is attached to OL-1483):
 
 - **14 files restored to 0-diff upstream `v0.11.1`**:
   - 13 Go test files (`server/internal/daemon/execenv/{codex_user_skills,codex_user_skills_windows,hermes_acp_integration,hermes_gateway_home,hermes_home_config_warn,hermes_home,hermes_installs,openclaw_config,prepared_skill_names,receipt,reserved_skill_path,skill_visibility}_test.go`
@@ -383,17 +387,36 @@ and `UPSTREAM_ONLY_BUT_EDITED` 28→26):
   `*Tracked(..., nil)` / `*WithOptions(..., promptOpts{})` call renames while
   preserving genuine fork tests in `server/internal/daemon/execenv/{amp,droid,execenv,hermes_memory,hermes_sessions,kimi_skills,sidecar_manifest}_test.go`
   and `server/internal/daemon/{prompt_source,prompt}_test.go`.
-- **4 merge oversights fixed**:
+- **4 merge oversights fixed + red→green regression assertions**:
   - `server/internal/handler/notification_preference.go`: deduplicated
     `GetNotificationPreferences` to reuse `writeNotificationPreferenceResponse`.
-  - `server/internal/handler/inbox.go`: moved `h.getIssuePrefix` after
-    `runInboxRead` in both grouped and flat paths so overloaded requests rejected
-    by admission control perform no unguarded DB read first.
-  - `scripts/dev-env.sh`: restored upstream `v0.11.1`'s partial-stop output
-    branch (`if [ "$requested" = "$ALL_COMPONENTS" ]`) in `cmd_down`.
+  - `server/internal/handler/inbox.go` & `server/internal/handler/inbox_read_test.go`:
+    moved `h.getIssuePrefix` after `runInboxRead` in both grouped and flat paths
+    so overloaded requests rejected by admission control skip the workspace
+    issue-prefix query (private-project visibility lookup via
+    `requestInboxHiddenProjects` at `inbox.go:240` remains before admission to
+    fail closed on permissions). Added `/api/inbox?view=grouped` to
+    `TestAllInboxReadHandlersShareCapacity` and added
+    `TestListInboxAdmissionRejectionSkipsIssuePrefixQuery` covering both flat
+    and grouped paths (verified red against Stage 3 `inbox.go` via
+    `go test -overlay` and green on Stage 4).
+  - `scripts/dev-env.sh` & `scripts/dev-env.test.sh`: restored upstream
+    `v0.11.1`'s partial-stop output branch (`if [ "$requested" = "$ALL_COMPONENTS" ]`)
+    in `cmd_down`, and tightened `dev-env.test.sh:454` to assert
+    `probe-901: stopped api web.` (verified red on Stage 3 `dev-env.sh` and
+    green on Stage 4).
   - `server/internal/service/builtin_skills/multica-platform/SKILL.md`: restored
     fork commit `338c5e9e02`'s cross-reference guidance matching Labrastro's
     split `issues.md` / `pull-requests.md` / `issue-dependencies.md` references.
+- **Decision 3A orphan display-chain removal (4 files)**: after removing
+  upstream `RateLimitSection` and `RateLimitCell`, deleted the orphaned
+  Claude/Codex-only display helpers (`packages/core/runtimes/rate-limits.ts`
+  and `packages/core/runtimes/rate-limits.test.ts`), removed the
+  `./runtimes/rate-limits` subpath export from `packages/core/package.json`,
+  and removed the unused `runtimeKeys.rateLimits` / `runtimeRateLimitsOptions`
+  polling query from `packages/core/runtimes/queries.ts` (restoring 0-diff vs
+  fork `main`), while retaining the approved API client (`getRuntimeRateLimits`),
+  protocol schemas/types, backend routes and unified 8-provider quota UI.
 - **7 orphan/stray-diff cleanups**: removed orphaned
   `serializeWebhookEventFilters` from `packages/core/autopilots/{webhook,index}.ts`;
   restored 4 untouched neighbor rows in `apps/docs/content/docs/cli.zh-Hant.mdx`
@@ -406,20 +429,25 @@ and `UPSTREAM_ONLY_BUT_EDITED` 28→26):
 Stage 4 local verification (Go 1.27.4, Node 24.21.0, pnpm 10.28.2, native PG17):
 `go build ./...`, `go build -tags oss ./cmd/...`, `go vet ./...`,
 `go vet -tags oss ./...`, `bash scripts/check-gofmt.test.sh`,
-`bash scripts/check-gofmt.sh`, `bash scripts/dev-env.test.sh`,
+`bash scripts/check-gofmt.sh`, `bash scripts/dev-env.test.sh` (plus red check
+against Stage 3 `dev-env.sh`),
 `go test -count=1 ./internal/branding ./internal/extension ./internal/inbox ./pkg/taskfailure`,
 `go test -count=1 ./internal/daemon/execenv -skip 'TestPrepareLocalWorktree'`
 (5.77s), `go test -count=1 ./internal/daemon` targeted prompt/chatskill/dsh/quota
 suite (0.58s), `go test -count=1 ./pkg/agent` targeted codex/dim/antigravity/explicit
 suite (7.30s), disposable PG17 `cmd/migrate up` (836 migrations) +
-`internal/handler` inbox/admission/notification/manifest tests (5.36s) + full
+`internal/handler` inbox/admission/notification/manifest tests (including red
+`-overlay` check on Stage 3 `inbox.go` and green pass on flat + grouped
+`TestListInboxAdmissionRejectionSkipsIssuePrefixQuery`) + full
 `internal/service` (30.55s), `pnpm test:brand` (13 node + 19 Vitest), `pnpm knip`
 (zero issues), `pnpm check:ui-exports`, `pnpm check:ui-radii`,
 `pnpm check:deps-catalog`, `pnpm typecheck` (10/10 tasks), workspace `eslint` on
-all touched TS/TSX files, `pnpm test` (859 unit contract tests in 51.8s), and
-targeted Vitest (`packages/core/autopilots` 19 tests, `packages/views/autopilots`
-25 files / 580 tests, `desktop-layout.search-workspace.test.tsx` 3 tests) all
-passed; the disposable PG17 cluster was stopped and removed after verification.
+all touched TS/TSX files, `pnpm test` (859 unit contract tests in 49.7s), and
+targeted Vitest (`packages/core/runtimes` + `runtime-rate-limits-schema.test.ts`
+13 files / 181 tests, `packages/core/autopilots` 19 tests,
+`packages/views/autopilots` 25 files / 580 tests,
+`desktop-layout.search-workspace.test.tsx` 3 tests) all passed; disposable PG17
+clusters and temp directories were stopped and removed after verification.
 
 ## Deployment and cross-family review handoff
 
