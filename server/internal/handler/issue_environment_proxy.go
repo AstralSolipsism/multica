@@ -315,25 +315,17 @@ func (h *Handler) authorizeEnvironmentProxy(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, "task token is bound to a different workspace")
 		return claims, false
 	}
-	// The preview origin relays a browser request whose path belongs to the
-	// developer's own app, so guest policy must not be decided by r.URL.Path:
-	// a guest holding a valid bearer token could name any platform route and
-	// read its guest allowance. Resolve membership here instead, and hide both
-	// a non-member and a guest behind the same 404 as a missing environment.
+	// Preview paths belong to the user's app, so check role directly instead of
+	// requireWorkspaceMember's r.URL.Path guest allowlist, and hide non-members,
+	// guests and private projects behind the same 404 as a missing environment.
 	member, err := h.getWorkspaceMember(ctx, userID, wsID)
-	if err != nil {
-		if writeQueryCancellation(w, r, err) {
-			return claims, false
-		}
+	if writeQueryCancellation(w, r, err) {
+		return claims, false
+	}
+	if err != nil || projectaccess.IsGuestRole(member.Role) {
 		writeError(w, http.StatusNotFound, "environment not found")
 		return claims, false
 	}
-	if projectaccess.IsGuestRole(member.Role) {
-		writeError(w, http.StatusNotFound, "environment not found")
-		return claims, false
-	}
-	// A hidden object must be indistinguishable from one that does not exist,
-	// so a private project answers like the 404 above.
 	if !h.requireIssueIDVisible(w, r, wsID, row.IssueID, http.StatusNotFound, "environment not found") {
 		return claims, false
 	}

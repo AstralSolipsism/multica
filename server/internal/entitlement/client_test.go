@@ -677,89 +677,15 @@ func newTestClient(t *testing.T, baseURL string, mutate func(*Config)) *Client {
 	return client
 }
 
-func TestNormalizeEnvironmentProxyGate(t *testing.T) {
-	policy := samplePolicy(1, 1, 60, ActionEnforce)
-	fetched, err := normalizePolicy(policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fetched.snapshot.gates[GateEnvironmentProxy].Action != ActionOff ||
-		fetched.snapshot.gateReasons[GateEnvironmentProxy] != ReasonGateMissing ||
-		fetched.snapshot.gates[GateAutopilotRuns].Action != ActionEnforce {
-		t.Fatal("legacy policies must leave autopilot_runs enforceable and mark environment_proxy missing")
-	}
-	for _, limit := range []int{0, 3} {
-		policy.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: &limit}
-		fetched, err := normalizePolicy(policy)
+func TestEnvironmentProxyGate(t *testing.T) {
+	limit := func(v int) *int { return &v }
+	malformedBody := func(t *testing.T) string {
+		t.Helper()
+		raw, err := json.Marshal(samplePolicy(1, 0, 60, ActionEnforce))
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := fetched.snapshot.gates[GateEnvironmentProxy]
-		if got.Action != ActionEnforce || got.Limit == nil || *got.Limit != limit {
-			t.Fatalf("environment proxy gate = %+v, want limit %d", got, limit)
-		}
-		if _, hasFallback := fetched.snapshot.gateReasons[GateEnvironmentProxy]; hasFallback {
-			t.Fatalf("unexpected fallback reason for valid environment_proxy gate: %v", fetched.snapshot.gateReasons[GateEnvironmentProxy])
-		}
-	}
-	negative := -1
-	policy.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: &negative}
-	fetched, err = normalizePolicy(policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fetched.snapshot.gates[GateEnvironmentProxy].Action != ActionOff ||
-		fetched.snapshot.gateReasons[GateEnvironmentProxy] != ReasonGateInvalid ||
-		fetched.snapshot.gates[GateAutopilotRuns].Action != ActionEnforce {
-		t.Fatal("malformed environment_proxy gate must fail open alone without affecting autopilot_runs")
-	}
-}
-
-// TestEnvironmentProxyGateThroughPublicEntry exercises the merged
-// environment_proxy gate through Client.Gate, the entry the server actually
-// calls. normalizePolicy tests alone cannot catch a gate missing from
-// GateName.valid(): Gate would silently answer ReasonUnknownGate and the
-// preview quota would stop enforcing.
-func TestEnvironmentProxyGateThroughPublicEntry(t *testing.T) {
-	workspaceID := uuid.New()
-	withGate := func(t *testing.T, limit *int) wirePolicy {
-		t.Helper()
-		policy := samplePolicy(1, 0, 60, ActionEnforce)
-		policy.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: limit}
-		return policy
-	}
-	limit := func(v int) *int { return &v }
-	writeMalformedGate := func(t *testing.T, w http.ResponseWriter) {
-		t.Helper()
-		policy := samplePolicy(1, 0, 60, ActionEnforce)
-		raw, err := json.Marshal(policy)
-		if err != nil {
-			t.Fatalf("marshal policy: %v", err)
-		}
-		var body map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &body); err != nil {
-			t.Fatalf("decode policy: %v", err)
-		}
-		var gates map[string]json.RawMessage
-		if err := json.Unmarshal(body["gates"], &gates); err != nil {
-			t.Fatalf("decode gates: %v", err)
-		}
-		// A string where the gate object belongs: the wrong JSON shape must
-		// fail this gate alone, not the whole policy.
-		gates[string(GateEnvironmentProxy)] = json.RawMessage(`"enforce"`)
-		encoded, err := json.Marshal(gates)
-		if err != nil {
-			t.Fatalf("encode gates: %v", err)
-		}
-		body["gates"] = encoded
-		encoded, err = json.Marshal(body)
-		if err != nil {
-			t.Fatalf("encode policy: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write(encoded); err != nil {
-			t.Errorf("write policy: %v", err)
-		}
+		return strings.Replace(string(raw), `"gates":{`, `"gates":{"environment_proxy":"enforce",`, 1)
 	}
 	for _, tc := range []struct {
 		name       string
@@ -768,57 +694,33 @@ func TestEnvironmentProxyGateThroughPublicEntry(t *testing.T) {
 		wantLimit  *int
 		wantReason Reason
 	}{
-		{
-			name:       "missing gate leaves preview off and autopilot enforcing",
-			handler:    func(w http.ResponseWriter, r *http.Request) { writePolicy(t, w, samplePolicy(1, 0, 60, ActionEnforce)) },
-			wantAction: ActionOff,
-			wantReason: ReasonGateMissing,
-		},
-		{
-			name:       "limit zero enforces the plan's disabled preview",
-			handler:    func(w http.ResponseWriter, r *http.Request) { writePolicy(t, w, withGate(t, limit(0))) },
-			wantAction: ActionEnforce,
-			wantLimit:  limit(0),
-			wantReason: ReasonRefreshed,
-		},
-		{
-			name:       "positive limit enforces the concurrent preview cap",
-			handler:    func(w http.ResponseWriter, r *http.Request) { writePolicy(t, w, withGate(t, limit(3))) },
-			wantAction: ActionEnforce,
-			wantLimit:  limit(3),
-			wantReason: ReasonRefreshed,
-		},
-		{
-			name:       "negative limit fails this gate open",
-			handler:    func(w http.ResponseWriter, r *http.Request) { writePolicy(t, w, withGate(t, limit(-1))) },
-			wantAction: ActionOff,
-			wantReason: ReasonGateInvalid,
-		},
-		{
-			name:       "wrong JSON shape fails this gate open",
-			handler:    func(w http.ResponseWriter, r *http.Request) { writeMalformedGate(t, w) },
-			wantAction: ActionOff,
-			wantReason: ReasonGateInvalid,
-		},
+		{"missing", policyHandler(func(*wirePolicy) {}), ActionOff, nil, ReasonGateMissing},
+		{"disabled", policyHandler(func(p *wirePolicy) {
+			p.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: limit(0)}
+		}), ActionEnforce, limit(0), ReasonRefreshed},
+		{"capped", policyHandler(func(p *wirePolicy) {
+			p.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: limit(3)}
+		}), ActionEnforce, limit(3), ReasonRefreshed},
+		{"negative limit", policyHandler(func(p *wirePolicy) {
+			p.Gates[string(GateEnvironmentProxy)] = wireGate{Action: string(ActionEnforce), Limit: limit(-1)}
+		}), ActionOff, nil, ReasonGateInvalid},
+		{"wrong JSON shape", bodyHandler(http.StatusOK, malformedBody(t)), ActionOff, nil, ReasonGateInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(tc.handler)
 			defer server.Close()
 			client := newTestClient(t, server.URL, nil)
+			workspaceID := uuid.New()
+
 			decision := client.Gate(context.Background(), workspaceID, GateEnvironmentProxy)
-			if decision.Gate.Action != tc.wantAction || decision.Reason != tc.wantReason {
-				t.Fatalf("environment_proxy decision = %+v, want action %q reason %q", decision, tc.wantAction, tc.wantReason)
+			if decision.Gate.Action != tc.wantAction || decision.Reason != tc.wantReason || decision.Gate.PeriodStart != nil {
+				t.Fatalf("environment_proxy = %+v, want %q/%q without period", decision, tc.wantAction, tc.wantReason)
 			}
-			switch {
-			case tc.wantLimit == nil && decision.Gate.Limit != nil:
-				t.Fatalf("environment_proxy limit = %d, want none", *decision.Gate.Limit)
-			case tc.wantLimit != nil && (decision.Gate.Limit == nil || *decision.Gate.Limit != *tc.wantLimit):
-				t.Fatalf("environment_proxy limit = %v, want %d", decision.Gate.Limit, *tc.wantLimit)
+			if (tc.wantLimit == nil) != (decision.Gate.Limit == nil) || (tc.wantLimit != nil && *decision.Gate.Limit != *tc.wantLimit) {
+				t.Fatalf("environment_proxy limit = %v, want %v", decision.Gate.Limit, tc.wantLimit)
 			}
-			// One bad optional gate must never take the metered autopilot gate
-			// down with it.
 			if autopilot := client.Gate(context.Background(), workspaceID, GateAutopilotRuns); autopilot.Gate.Action != ActionEnforce {
-				t.Fatalf("autopilot decision = %+v, want %q", autopilot, ActionEnforce)
+				t.Fatalf("autopilot = %+v, want enforced", autopilot)
 			}
 		})
 	}
