@@ -366,8 +366,11 @@ engineering insertion ledger (**61/61** lines), high-churn thin plugs in
 `@multica/ee` / `registerEE` / `GateIssueCount` / `RateLimitSection` residue.
 
 Surgical slimming and merge-oversight fixes applied on `sync/v0.11.1-ol-1472`
-(**34 code/doc/locale files** + this sync record; non-trivial paths reduced from
-**476 → 462**):
+(**34 code/doc/locale files** + this sync record; files diverging from upstream
+`v0.11.1` reduced from **2,627 → 2,613** (`-14` files), `main.tsx` and
+`web-providers.tsx` returned to 0-diff vs fork `main`, and custom-edited 3-way
+buckets shrank across `CONFLICT_RESOLVED` 81→80, `FORK_ONLY_BUT_EDITED` 52→41,
+and `UPSTREAM_ONLY_BUT_EDITED` 28→26):
 
 - **14 files restored to 0-diff upstream `v0.11.1`**:
   - 13 Go test files (`server/internal/daemon/execenv/{codex_user_skills,codex_user_skills_windows,hermes_acp_integration,hermes_gateway_home,hermes_home_config_warn,hermes_home,hermes_installs,openclaw_config,prepared_skill_names,receipt,reserved_skill_path,skill_visibility}_test.go`
