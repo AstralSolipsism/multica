@@ -41,7 +41,7 @@ import {
   reservedHtmlBlockHeightPx,
 } from "../editor/html-block-preview";
 import { AttachmentHtmlBlock } from "../editor/attachment-html-block";
-import { highlightCode } from "../editor/syntax-highlight";
+import { highlightCodeHtml } from "../editor/syntax-highlight";
 import { LazyRichBlock } from "./lazy-rich-block";
 
 /**

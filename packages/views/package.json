@@ -98,7 +98,8 @@
     "./locales/effective/ja": "./locales/effective/ja.ts",
     "./locales/effective/fr": "./locales/effective/fr.ts",
     "./locales/effective/es": "./locales/effective/es.ts",
-    "./locales/effective/ru": "./locales/effective/ru.ts"
+    "./locales/effective/ru": "./locales/effective/ru.ts",
+    "./docs": "./docs/index.ts"
   },
   "dependencies": {
     "@base-ui/react": "catalog:",

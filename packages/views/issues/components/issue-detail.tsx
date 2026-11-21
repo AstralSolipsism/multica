@@ -3645,7 +3645,7 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
     metadata: <MetadataSection metadata={issue.metadata ?? {}} />,
   };
 
-  const sidebarContent = (
+  const sidebarContent = landingChromeHeld ? null : (
     <>
       <IssueSidebarSections
         sections={sidebarSections}
@@ -4574,15 +4574,17 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
             {stickyComposer && jumpToLatest.visible && (
               <JumpToLatestButton onClick={onJumpToLatest} label={jumpToLatestLabel} hasNew={!!firstNewCommentId} />
             )}
-            <CommentInput
-              key={id}
-              ref={commentInputRef}
-              issueId={id}
-              onSubmit={submitComment}
-              annotationComposer={descriptionAnnotations.composer}
-              onAccepted={scrollToTimelineBottom}
-              onEditAnnotation={(annotationId) => descriptionAnnotations.editAnnotation(annotationId, true)}
-            />
+            {!landingChromeHeld && (
+              <CommentInput
+                key={id}
+                ref={commentInputRef}
+                issueId={id}
+                onSubmit={submitComment}
+                annotationComposer={descriptionAnnotations.composer}
+                onAccepted={scrollToTimelineBottom}
+                onEditAnnotation={(annotationId) => descriptionAnnotations.editAnnotation(annotationId, true)}
+              />
+            )}
           </div>
         </div>
         </div>

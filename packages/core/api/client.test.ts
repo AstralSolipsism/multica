@@ -2324,6 +2324,7 @@ describe("ApiClient", () => {
       const [, init] = fetchMock.mock.calls[0]!;
       expect(JSON.parse(init?.body as string)).toEqual({
         content: "hello",
+        steer: true,
         submission_id: "646fed2d-71b3-4cbb-bdb3-e39675f005c3",
       });
     });
@@ -2341,7 +2342,7 @@ describe("ApiClient", () => {
       await client.sendChatMessage("session-1", "hello");
 
       const [, init] = fetchMock.mock.calls[0]!;
-      expect(JSON.parse(init?.body as string)).toEqual({ content: "hello" });
+      expect(JSON.parse(init?.body as string)).toEqual({ content: "hello", steer: true });
     });
 
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
@@ -2368,7 +2369,7 @@ describe("ApiClient", () => {
         message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z",
       }), { status: 201 }));
       vi.stubGlobal("fetch", fetchMock);
-      await new ApiClient("https://api.example.test").sendChatMessage("session-1", "next turn", undefined, { queue: true });
+      await new ApiClient("https://api.example.test").sendChatMessage("session-1", "next turn", undefined, undefined, { queue: true });
       expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({ content: "next turn", steer: false });
     });
 

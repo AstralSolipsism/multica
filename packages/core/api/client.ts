@@ -1,6 +1,28 @@
 import { ApiError, installLabrastroApi, parseRequiredResponse, IssueBatchUpdateSchema, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
 export { ApiError, dependencyErrorDetails, type DependencyErrorDetails } from "./labrastro-api";
 import { IssueUsageListSchema } from "./schemas";
+import type { ListWeixinInstallationsResponse, WeixinLogin } from "../types/weixin";
+import { ListWeixinInstallationsSchema, WeixinLoginSchema, EMPTY_WEIXIN_INSTALLATIONS, INVALID_WEIXIN_LOGIN } from "../weixin/schema";
+import {
+  DocSchema,
+  DocSummarySchema,
+  DocFolderSchema,
+  DocTreeSchema,
+  DocVersionSchema,
+  DocVersionListSchema,
+  DocSearchResponseSchema,
+} from "../docs/schemas";
+import type {
+  Doc,
+  DocSummary,
+  DocFolder,
+  SearchDocsResponse,
+  DocTree,
+  DocVersion,
+  CreateDocRequest,
+  UpdateDocRequest,
+  CreateDocFolderRequest,
+} from "../types/doc";
 import type { ZodType } from "zod";
 import { AgentRuntimeSchema, EMPTY_RUNTIME } from "../runtimes/schema";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
@@ -4454,13 +4476,14 @@ export class ApiClient {
     content: string,
     attachmentIds?: string[],
     submissionId?: string,
+    options?: { queue?: boolean },
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       steer: boolean;
       attachment_ids?: string[];
       submission_id?: string;
-    } = { content };
+    } = { content, steer: options?.queue !== true };
     // A stable submission UUID lets the server replay the original acceptance
     // when a response is lost and the same content is retried; omitting it
     // keeps the plain one-turn send (docs/engineering/chat-submissions.md).

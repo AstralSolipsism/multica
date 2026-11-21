@@ -568,7 +568,11 @@ export function RuntimesPage({
           }
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          ref={restoreScrollRef}
+          data-tab-scroll-root="runtimes"
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
           <div className="px-6 pt-6 empty:hidden">
             <SubscriptionQuotaCards sources={workspaceQuotaSourceData?.sources} now={now} />
           </div>

@@ -153,13 +153,18 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys.
-    // Includes fork dependency recovery, agent folders, project engineering
-    // reads and upstream account invitation invalidation (40 calls).
+    // Upstream v0.11.1's 39 (20 workspace-scoped [incl. property definitions,
+    // workflows, saved views, view preferences, and docs] + 6 per-issue
+    // prefixes + the workspace working-agents projection + 6 per-chat prefixes
+    // + workspaceKeys.list() + the cross-workspace inbox unread summary + issue
+    // unread marks + subscribed issue ids + the account invitation list) plus
+    // the fork's 3 (dependency recovery, agent folders, project engineering
+    // reads).
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(40));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(42));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {

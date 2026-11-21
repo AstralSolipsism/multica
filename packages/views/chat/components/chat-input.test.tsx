@@ -1019,7 +1019,7 @@ describe("ChatInput project context", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend).toHaveBeenCalledWith("follow-up", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith("follow-up", undefined, expect.any(Function), [], expect.anything());
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
     });
@@ -1032,7 +1032,7 @@ describe("ChatInput project context", () => {
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "use the new location" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend).toHaveBeenCalledWith("use the new location", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith("use the new location", undefined, expect.any(Function), [], expect.anything());
   });
 
   it("shows whether a draft will join the current run", () => {
@@ -1059,7 +1059,7 @@ describe("ChatInput project context", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Start after this run");
     expect(screen.queryByText("Add to current run")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith(content, undefined, expect.any(Function), []));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(content, undefined, expect.any(Function), [], expect.anything()));
 
     fireEvent.change(editor, { target: { value: "Write release notes" } });
     rerender(element(props));

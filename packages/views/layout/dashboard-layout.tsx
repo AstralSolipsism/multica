@@ -74,7 +74,10 @@ export function DashboardLayout({
               <div className="flex min-w-0 flex-1 flex-col">
                 <AppShellCard>
                   <NavigationProgress />
-                  <YouShouldKnowProvider>{children}</YouShouldKnowProvider>
+                  <YouShouldKnowProvider>
+                    <WorkspaceTrialNotices />
+                    {children}
+                  </YouShouldKnowProvider>
                   <ModalRegistry />
                   {SHOW_SOURCE_BACKFILL ? <SourceBackfillModal /> : null}
                   {extra}

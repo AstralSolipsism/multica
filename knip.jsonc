@@ -108,9 +108,6 @@
       // (packages/views/test/README.md); the glob below also admits it.
       "project": ["**/*.{ts,tsx}"]
     },
-    "packages/ee": {
-      "project": ["**/*.{ts,tsx}"]
-    },
     "packages/core": {
       "entry": ["eslint.config.mjs"],
       "project": ["**/*.{ts,tsx}"]

@@ -37,7 +37,7 @@
 // real `git describe` invocation against a throwaway repo.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { realpathSync, rmSync } from "node:fs";
+import { realpathSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

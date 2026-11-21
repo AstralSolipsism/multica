@@ -6,7 +6,11 @@
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro will stop receiving webhooks for this installation. Existing PR mirrors and links are kept; reconnect any time to resume updates."
+      "errors": {
+        "missing_authorization": "GitHub did not return user authorization. Retry connecting and complete authorization. If it repeats for an existing installation, ask your Labrastro operator for help.",
+        "verification_failed": "Could not verify your GitHub installation access. Retry connecting; if it repeats, ask your Labrastro operator to check the GitHub App configuration.",
+        "persist_failed": "Could not save the GitHub connection. Retry from Settings → Code; if it repeats, contact your Labrastro operator."
+      }
     },
     "lark": {
       "install_error_bot_info": "Authorized, but Labrastro couldn't fetch the Bot's identity. Try again."

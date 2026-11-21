@@ -176,6 +176,7 @@ export interface EditorExtensionsOptions {
    * Which `/` menu to attach when enableSlashCommands is true:
    * - "skill" (default) — the chat picker listing the active agent's skills.
    * - "command" — Issue quick actions, skills matching a nonempty query, and /note.
+   * - "blocks" — the document block menu: headings, lists, code, tables, uploads.
    */
   slashCommandMode?: "skill" | "command" | "blocks";
   /**

@@ -3,8 +3,8 @@ import type { SidebarProjectSettings } from "../issues/stores/sidebar-tree-store
 import type { Project } from "../types";
 
 /**
- * A project folder as the sidebar draws it. Folders come from an extension
- * (packages/ee); without one the sidebar has none.
+ * A project folder as the sidebar draws it. Folders come from a commercial
+ * extension; without one the sidebar has none.
  */
 export interface SidebarFolder {
   id: string;

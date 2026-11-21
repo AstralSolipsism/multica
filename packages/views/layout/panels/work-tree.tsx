@@ -202,8 +202,12 @@ export function ProjectsSection({
   const collapsed = useSidebarTreeStore((s) => s.projectsCollapsed);
   const prefsEnabled = open && !collapsed;
   const setCollapsed = useSidebarTreeStore((s) => s.setProjectsCollapsed);
+  const setExpanded = useSidebarTreeStore((s) => s.setExpanded);
+  const locate = useSidebarTreeStore((s) => s.locate);
   const { projectSettings, issueSettings, projectOrder } = useSidebarProjectPrefs(wsId, prefsEnabled);
   const updatePrefs = useUpdateSidebarProjectPrefs(wsId, prefsEnabled);
+  const folders = useProjectFolders(wsId);
+  const foldersExtension = getProjectFoldersExtension();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const { arm: armClickGuard, release: releaseClickGuard } = useDragClickGuard();
   const rows = useMemo(
@@ -303,14 +307,37 @@ export function ProjectsSection({
       action={
         <>
           <ProjectsSectionSettings wsId={wsId} enabled={prefsEnabled} className={SECTION_SETTINGS_REVEAL_CLASS} />
-          <IconButton
-            label={t(($) => $.panels.work.new_project)}
-            size="icon-xs"
-            className="text-muted-foreground"
-            onClick={() => useModalStore.getState().open("create-project")}
-          >
-            <Plus />
-          </IconButton>
+          {foldersExtension ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <IconButton
+                    label={t(($) => $.panels.work.new_project)}
+                    size="icon-xs"
+                    className="text-muted-foreground"
+                  >
+                    <Plus />
+                  </IconButton>
+                }
+              />
+              <DropdownMenuContent align="end" className="w-auto min-w-44">
+                <DropdownMenuItem onClick={() => useModalStore.getState().open("create-project")}>
+                  <FolderKanban className="size-3.5" />
+                  {t(($) => $.panels.work.new_project)}
+                </DropdownMenuItem>
+                <foldersExtension.AddMenuItems />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <IconButton
+              label={t(($) => $.panels.work.new_project)}
+              size="icon-xs"
+              className="text-muted-foreground"
+              onClick={() => useModalStore.getState().open("create-project")}
+            >
+              <Plus />
+            </IconButton>
+          )}
         </>
       }
     >

@@ -207,9 +207,16 @@ interface ContentEditorBaseProps {
   /**
    * Which `/` menu to show when enableSlashCommands is true: "skill" (default)
    * lists the active agent's skills (chat); "command" merges Issue quick
-   * actions, skills matching a nonempty query, and built-ins such as /note.
+   * actions, skills matching a nonempty query, and built-ins such as /note;
+   * "blocks" inserts document blocks (Docs).
    */
   slashCommandMode?: "skill" | "command" | "blocks";
+  /**
+   * Show a hover handle beside each block: "+" opens the block menu on a new
+   * line below, and the grip drags the block or opens turn-into, duplicate and
+   * delete. For long-form documents; pair it with `slashCommandMode="blocks"`.
+   */
+  showBlockHandles?: boolean;
   /**
    * Quick actions and Issue target-agent skills for the "command" `/` menu,
    * plus the resolver that turns a quick-action pick into draft text. Read

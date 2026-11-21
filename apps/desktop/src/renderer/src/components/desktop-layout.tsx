@@ -11,6 +11,7 @@ import {
   useSidebar,
 } from "@multica/ui/components/ui/sidebar";
 import { ModalRegistry } from "@multica/views/modals/registry";
+import { WorkspaceTrialNotices } from "@multica/views/billing";
 import {
   AppBottomBar,
   AppRail,

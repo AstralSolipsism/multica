@@ -8,13 +8,21 @@ import { INBOX_TRANSIENT_RETRIES } from "./retry";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["listInbox", "listSnoozedInbox", "getInboxUnreadSummary"] as const)(
+// listInbox takes an option object (the fork's grouped view lives there), the
+// other two keep upstream's positional signal.
+const inboxReads = {
+  listInbox: (client: ApiClient, signal: AbortSignal) => client.listInbox({ signal }),
+  listSnoozedInbox: (client: ApiClient, signal: AbortSignal) => client.listSnoozedInbox(signal),
+  getInboxUnreadSummary: (client: ApiClient, signal: AbortSignal) => client.getInboxUnreadSummary(signal),
+} as const;
+
+it.each(Object.keys(inboxReads) as (keyof typeof inboxReads)[])(
   "%s forwards cancellation to HTTP",
   async (method) => {
     const fetch = vi.fn().mockResolvedValue(Response.json([]));
     vi.stubGlobal("fetch", fetch);
     const controller = new AbortController();
-    await new ApiClient("https://api.example.test")[method](controller.signal);
+    await inboxReads[method](new ApiClient("https://api.example.test"), controller.signal);
     expect(fetch.mock.calls[0]![1].signal).toBe(controller.signal);
   },
 );

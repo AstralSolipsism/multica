@@ -74,7 +74,7 @@ import {
   EntityAttachmentsProvider,
   type EntityAttachment,
 } from "./entity-attachments-context";
-import { useDownloadAttachment } from "../editor/use-download-attachment";
+import { useOpenAttachmentLink } from "../editor/use-open-attachment-link";
 import { Attachment as AttachmentRenderer } from "../editor/attachment";
 import { computeClosedFences, type ClosedFence } from "./streaming-fence";
 import { remarkRepairCjkStrongTrailingWhitespace } from "./cjk-emphasis";
@@ -225,35 +225,6 @@ function unfurlableEntityLink(
   if (!entity) return null;
   if (entity.slug !== null && entity.slug !== currentSlug) return null;
   return entity;
-}
-
-function ownAttachmentDownloadId(
-  href: string,
-  appOrigin: string | null,
-  attachmentPublicUrl: string,
-): string | undefined {
-  const id = attachmentIdFromDownloadURL(href);
-  if (!id) return undefined;
-  if (href.startsWith("/") && !href.startsWith("//")) return id;
-
-  // The path and UUID alone do not establish which deployment owns a link.
-  // PublicURL can differ from both the web app origin and the browser's
-  // same-origin API proxy, so the server supplies that origin via /api/config.
-  try {
-    const target = new URL(href);
-    if (target.username || target.password) return undefined;
-    const ownOrigins = [appOrigin, api.getBaseUrl?.(), attachmentPublicUrl];
-    return ownOrigins.some((base) => {
-      if (!base) return false;
-      try {
-        return new URL(base).origin === target.origin;
-      } catch {
-        return false;
-      }
-    }) ? id : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export function RichLink({ href, children }: { href?: string; children?: ReactNode }) {

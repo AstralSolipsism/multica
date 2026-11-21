@@ -1,7 +1,11 @@
 {
   "settings": {
     "github": {
-      "disconnect_confirm_description": "Labrastro dejará de recibir webhooks de esta instalación. Los mirrors de PR y los enlaces existentes se conservan; vuelve a conectar cuando quieras para reanudar las actualizaciones."
+      "errors": {
+        "missing_authorization": "GitHub no devolvió la autorización del usuario. Vuelve a conectar y completa la autorización. Si se repite con una instalación existente, contacta con tu operador de Labrastro.",
+        "verification_failed": "No se pudo verificar tu acceso a la instalación de GitHub. Reintenta; si se repite, pide a tu operador de Labrastro que revise la configuración de la GitHub App.",
+        "persist_failed": "No se pudo guardar la conexión de GitHub. Reintenta desde Configuración → Código; si se repite, contacta con tu operador de Labrastro."
+      }
     },
     "lark": {
       "install_error_bot_info": "Autorizado, pero Labrastro no pudo obtener la identidad del Bot. Inténtalo de nuevo."

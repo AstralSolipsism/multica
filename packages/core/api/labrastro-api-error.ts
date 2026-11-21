@@ -6,12 +6,16 @@ export class ApiError extends Error {
   // error fields like `code` so callers can branch on machine-readable
   // identifiers instead of pattern-matching the human-readable message.
   readonly body?: unknown;
+  // How long the server asked the client to wait before trying again, from a
+  // `Retry-After` header (seconds or an HTTP date). Absent when not sent.
+  readonly retryAfterMs?: number;
 
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
+  constructor(message: string, status: number, statusText: string, body?: unknown, retryAfterMs?: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.statusText = statusText;
     this.body = body;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }

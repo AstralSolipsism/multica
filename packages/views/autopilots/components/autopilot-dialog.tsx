@@ -47,7 +47,7 @@ import {
   useUpdateAutopilot,
   useUpdateAutopilotTrigger,
 } from "@multica/core/autopilots/mutations";
-import { buildAutopilotWebhookUrl, serializeWebhookEventFilters } from "@multica/core/autopilots";
+import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
 import { api } from "@multica/core/api";
 import type {
   AutopilotAssigneeType,
@@ -113,13 +113,6 @@ const OUTPUT_MODE_ICONS: Record<AutopilotExecutionMode, typeof FilePlus2> = {
   create_issue: FilePlus2,
   run_only: Play,
 };
-
-// Webhook event-filter dirty detection
-
-// The edit-mode dirty check compares the current filters against the snapshot
-// taken on open via a stable serialization — shared with the delivery-detail
-// filter panel so both surfaces agree on what "unchanged" means.
-const serializeEventFilters = serializeWebhookEventFilters;
 
 // AutopilotDialog
 

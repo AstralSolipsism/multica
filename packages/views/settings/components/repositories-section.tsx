@@ -560,7 +560,7 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
               <ChevronDown />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto min-w-56">
-              {githubInstallations.length > 0 ? (
+              {canManageGitHub ? (githubInstallations.length > 0 ? (
                 <DropdownMenuItem
                   disabled={githubItemDisabled}
                   onClick={openGitHubPicker}
@@ -625,7 +625,22 @@ export function RepositoriesSection({ connection }: { connection: ReturnType<typ
                     ) : null}
                   </span>
                 </DropdownMenuItem>
-              )}
+              )) : null}
+              {canManageGitHub && githubInstallations.length > 0 ? (
+                <DropdownMenuItem
+                  disabled={gitHubConnectBusy || !githubConnectConfigured}
+                  closeOnClick={false}
+                  aria-busy={gitHubConnectBusy || undefined}
+                  onClick={() => void connectGitHub()}
+                >
+                  {gitHubConnectBusy ? (
+                    <LoaderCircle className="animate-spin" />
+                  ) : (
+                    <GitHubMark className="size-4" />
+                  )}
+                  {t(($) => $.github.add_account)}
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem
                 onClick={() => setDraft({ index: null, url: "", description: "" })}
               >

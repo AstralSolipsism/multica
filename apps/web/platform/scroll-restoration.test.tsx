@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { useRestoredScrollOffset, useScrollRestorationAdapter } from "@multica/views/platform";
+import {
+  useRestoredScrollEntry,
+  useRestoredScrollOffset,
+  useScrollRestorationAdapter,
+} from "@multica/views/platform";
 import { WebScrollRestorationProvider } from "./scroll-restoration";
 
 // The provider keys memento entries by React's pathname. Tests drive it

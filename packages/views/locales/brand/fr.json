@@ -6,7 +6,11 @@
       }
     },
     "github": {
-      "disconnect_confirm_description": "Labrastro cessera de recevoir les webhooks de cette installation. Les copies de PR et les liens existants sont conservés ; reconnectez à tout moment pour reprendre les mises à jour."
+      "errors": {
+        "missing_authorization": "GitHub n’a pas renvoyé d’autorisation utilisateur. Reconnectez-vous et terminez l’autorisation. Si cela se répète pour une installation existante, contactez votre opérateur Labrastro.",
+        "verification_failed": "Impossible de vérifier votre accès à l’installation GitHub. Réessayez ; si cela se répète, demandez à votre opérateur Labrastro de vérifier la configuration de la GitHub App.",
+        "persist_failed": "Impossible d’enregistrer la connexion GitHub. Réessayez depuis Paramètres → Code ; si cela se répète, contactez votre opérateur Labrastro."
+      }
     },
     "lark": {
       "install_error_bot_info": "Autorisation obtenue, mais Labrastro n'a pas pu récupérer l'identité du bot. Réessayez."

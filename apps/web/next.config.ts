@@ -55,6 +55,11 @@ const nextConfig: NextConfig = {
     // (packages/core/constants/upload.ts, server/internal/handler/file.go)
     // plus multipart framing so the backend stays the one enforcing it.
     proxyClientMaxBodySize: 101 * 1024 * 1024,
+    // Workspace pages are client components over TanStack Query, so a route's
+    // RSC payload is the same on every visit. Reusing a visited or prefetched
+    // one for 30s lets a click (an Inbox notification, back to an issue just
+    // read) render without a server round trip first (MUL-9538).
+    staleTimes: { dynamic: 30 },
   },
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
