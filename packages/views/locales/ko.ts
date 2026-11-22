@@ -1,4 +1,5 @@
 import type { LocaleResources } from "@multica/core/i18n";
+import koDocs from "./ko/docs.json";
 import koCommon from "./ko/common.json";
 import koQuota from "./ko/quota.json";
 import koThinking from "./ko/thinking.json";
@@ -38,6 +39,7 @@ import koYouShouldKnow from "./ko/you-should-know.json";
 import koEngineering from "./ko/engineering.json";
 
 const resources: LocaleResources = {
+  docs: koDocs,
   common: koCommon,
   quota: koQuota,
   thinking: koThinking,

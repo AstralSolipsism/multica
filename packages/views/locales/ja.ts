@@ -1,4 +1,5 @@
 import type { LocaleResources } from "@multica/core/i18n";
+import jaDocs from "./ja/docs.json";
 import jaCommon from "./ja/common.json";
 import jaQuota from "./ja/quota.json";
 import jaThinking from "./ja/thinking.json";
@@ -38,6 +39,7 @@ import jaYouShouldKnow from "./ja/you-should-know.json";
 import jaEngineering from "./ja/engineering.json";
 
 const resources: LocaleResources = {
+  docs: jaDocs,
   common: jaCommon,
   quota: jaQuota,
   thinking: jaThinking,

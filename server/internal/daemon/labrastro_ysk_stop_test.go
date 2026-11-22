@@ -164,7 +164,7 @@ func TestYouShouldKnowHandleTaskSharesShutdownWithRunner(t *testing.T) {
 	d.handleTask(ctx, Task{
 		ID: "task-1", RuntimeID: "rt-1", IssueID: "issue-1", Agent: &AgentData{Name: "test-agent"},
 		YouShouldKnow: json.RawMessage(yskContext),
-	}, 0)
+	}, newTestTaskSlot(0))
 	if !completed.Load() || failed.Load() {
 		t.Fatalf("YSK shutdown must let the main task complete: completed=%v failed=%v", completed.Load(), failed.Load())
 	}

@@ -115,7 +115,7 @@ func assertSnapshotEqual(t *testing.T, label string, want, got workdirSnapshot) 
 func runPrepareLikeCycle(t *testing.T, workDir, envRoot, provider string, ctx TaskContextForEnv) {
 	t.Helper()
 	manifest := &sidecarManifest{}
-	if _, err := writeContextFiles(workDir, provider, ctx, manifest, nil); err != nil {
+	if _, err := writeContextFiles(workDir, provider, ctx, manifest); err != nil {
 		t.Fatalf("writeContextFiles(%s): %v", provider, err)
 	}
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
@@ -913,7 +913,7 @@ func TestPrepareThenCleanupSidecarsMultiSkillCollisionFreeAllocation(t *testing.
 		AgentSkills: []SkillContextForEnv{
 			{Name: "Issue Review", Content: "Multica's version\n"},
 		},
-	}, manifest, nil); err != nil {
+	}, manifest); err != nil {
 		t.Fatalf("writeContextFiles: %v", err)
 	}
 

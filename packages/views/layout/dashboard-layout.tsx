@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { SidebarProvider } from "@multica/ui/components/ui/sidebar";
+import { WorkspaceTrialNotices } from "../billing/trial-notices";
 import { AppearanceSync } from "../common/appearance-sync";
 import { ModalRegistry } from "../modals/registry";
 import { SourceBackfillModal } from "../onboarding";
@@ -73,7 +74,10 @@ export function DashboardLayout({
               <div className="flex min-w-0 flex-1 flex-col">
                 <AppShellCard>
                   <NavigationProgress />
-                  <YouShouldKnowProvider>{children}</YouShouldKnowProvider>
+                  <YouShouldKnowProvider>
+                    <WorkspaceTrialNotices />
+                    {children}
+                  </YouShouldKnowProvider>
                   <ModalRegistry />
                   {SHOW_SOURCE_BACKFILL ? <SourceBackfillModal /> : null}
                   {extra}

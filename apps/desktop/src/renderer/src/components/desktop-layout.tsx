@@ -11,6 +11,7 @@ import {
   useSidebar,
 } from "@multica/ui/components/ui/sidebar";
 import { ModalRegistry } from "@multica/views/modals/registry";
+import { WorkspaceTrialNotices } from "@multica/views/billing";
 import {
   AppBottomBar,
   AppRail,
@@ -305,6 +306,7 @@ export function DesktopShell() {
                         click just froze until the destination committed
                         (MUL-6404). */}
                     <NavigationProgress />
+                    {slug && <WorkspaceTrialNotices />}
                     <TabContent />
                     {slug && <FloatingChat />}
                     {slug && <WhatsNewDeck />}

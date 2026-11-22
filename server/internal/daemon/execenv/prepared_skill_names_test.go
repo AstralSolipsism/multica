@@ -320,7 +320,7 @@ func TestHydrateCodexSkillsReturnsNamesOnConfigError(t *testing.T) {
 	}
 	names, err := hydrateCodexSkills(codexHome, skills, []RuntimeSkillRefForEnv{
 		{Root: "provider", Key: "review-multica"},
-	}, testLogger(), nil)
+	}, testLogger())
 	if err == nil {
 		t.Fatal("expected the user skill's disabled-policy config write to fail")
 	}

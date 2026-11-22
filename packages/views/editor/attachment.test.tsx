@@ -349,6 +349,10 @@ describe("Attachment — image dispatch", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View" }));
 
+    await waitFor(() =>
+      expect(document.querySelectorAll("img")).toHaveLength(2),
+    );
+
     const imageSrcs = [...document.querySelectorAll("img")].map((img) =>
       img.getAttribute("src"),
     );
@@ -368,7 +372,7 @@ describe("Attachment — image dispatch", () => {
     expect(getAttachmentBlobMock).toHaveBeenCalledWith(id);
   });
 
-  it("opens preview with the same resolved media URL when a reopened draft record has no download_url", () => {
+  it("opens preview with the same resolved media URL when a reopened draft record has no download_url", async () => {
     configStore.setState({ cdnDomain: "cdn.example.test" });
     const id = "11111111-2222-3333-4444-555555555555";
     const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
@@ -380,6 +384,7 @@ describe("Attachment — image dispatch", () => {
       download_url: "",
     });
     resolverState.attachments = [att];
+    getAttachmentMock.mockResolvedValue({ ...att, download_url: mediaUrl });
 
     renderWithQuery(
       <Attachment
@@ -393,6 +398,9 @@ describe("Attachment — image dispatch", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "View" }));
+
+    await waitFor(() =>
+      expect(document.querySelectorAll("img")).toHaveLength(2));
 
     const imageSrcs = [...document.querySelectorAll("img")].map((img) =>
       img.getAttribute("src"),

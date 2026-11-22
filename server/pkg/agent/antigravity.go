@@ -387,6 +387,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 	if opts.SkillInvocation != nil {
 		prompt = opts.SkillInvocation.antigravityPrompt(supportsAntigravitySlashSkills(runCtx, b.cfg, execPath, opts))
 	}
+
 	args := buildAntigravityArgs(prompt, logPath, timeout, opts, b.cfg.Logger)
 
 	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)

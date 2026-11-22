@@ -73,6 +73,7 @@
     "./inbox": "./inbox/index.ts",
     "./inbox/group": "./inbox/group.ts",
     "./inbox/queries": "./inbox/queries.ts",
+    "./inbox/retry": "./inbox/retry.ts",
     "./inbox/mutations": "./inbox/mutations.ts",
     "./inbox/filter-store": "./inbox/filter-store.ts",
     "./inbox/selection-store": "./inbox/selection-store.ts",
@@ -121,6 +122,7 @@
     "./projects/wikilink-resolution": "./projects/wikilink-resolution.ts",
     "./projects/access": "./projects/access.ts",
     "./projects/config": "./projects/config.ts",
+    "./projects/folder-tree": "./projects/folder-tree.ts",
     "./plugins": "./plugins/index.ts",
     "./plugins/queries": "./plugins/queries.ts",
     "./plugins/mutations": "./plugins/mutations.ts",
@@ -155,6 +157,7 @@
     "./issue-views/edit-store": "./issue-views/edit-store.ts",
     "./billing": "./billing/index.ts",
     "./billing/recovery": "./billing/recovery.ts",
+    "./billing/trial": "./billing/trial.ts",
     "./billing/queries": "./billing/queries.ts",
     "./billing/mutations": "./billing/mutations.ts",
     "./github": "./github/index.ts",
@@ -179,6 +182,7 @@
     "./dingtalk/queries": "./dingtalk/queries.ts",
     "./wecom": "./wecom/index.ts",
     "./wecom/queries": "./wecom/queries.ts",
+    "./weixin": "./weixin/index.ts",
     "./telegram": "./telegram/index.ts",
     "./telegram/queries": "./telegram/queries.ts",
     "./feedback": "./feedback/index.ts",
@@ -223,7 +227,8 @@
     "./you-should-know/anchors": "./you-should-know/anchors/index.ts",
     "./issues/dag": "./issues/dag/index.ts",
     "./issues/dag/*": "./issues/dag/*.ts",
-    "./runtimes/qoder": "./runtimes/qoder.ts"
+    "./runtimes/qoder": "./runtimes/qoder.ts",
+    "./docs": "./docs/index.ts"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "catalog:",

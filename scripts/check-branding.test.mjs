@@ -44,6 +44,7 @@ test("walks every product source root and checks JSX, templates, metadata, HTML 
     "apps/mobile/app/index.tsx": 'export default () => <Text>Welcome to Multica</Text>;',
     "apps/web/public/copy.json": JSON.stringify({ title: "Meet Mika" }),
     "packages/views/locales/brand/en.json": JSON.stringify({ onboarding: { title: "Start with Mika" } }),
+    "packages/views/locales/brand/ru.json": JSON.stringify({ settings: { github: { errors: { persist_failed: "обратитесь к оператору Multica." } } } }),
     "apps/mobile/locales/brand/zh-Hans.json": JSON.stringify({ auth: { title: "登录 Multica" } }),
   };
   const violations = checkSources(fixture(t, files));
@@ -52,7 +53,7 @@ test("walks every product source root and checks JSX, templates, metadata, HTML 
 
 test("skips declared source exceptions, upstream locales, attribution and non-production files", (t) => {
   const files = Object.fromEntries(policy.sourceExceptions.map(({ path }) => [path, 'export const title = "Multica";']));
-  for (const locale of ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr"]) {
+  for (const locale of ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "es", "ru"]) {
     files[`packages/views/locales/${locale}/onboarding.json`] = '{"title":"Start with Mika"}';
   }
   for (const locale of ["en", "zh-Hans"]) {

@@ -402,12 +402,16 @@ func TestStartDshProfileProvision_RunsAtMostOnce(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(readRecord(t, record), "plugin --profile multica add") {
+		if !d.dshInstallInFlight.Load() {
+			got := readRecord(t, record)
+			if count := strings.Count(got, "args=plugin --profile multica add "); count != 1 {
+				t.Fatalf("install invocation count = %d, want 1; recorded %q", count, got)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("the install never ran; recorded %q", readRecord(t, record))
+	t.Fatalf("the install did not finish; recorded %q", readRecord(t, record))
 }
 
 func TestStartDshProfileProvision_UnconfiguredNeverStarts(t *testing.T) {
@@ -659,18 +663,30 @@ func TestDshProvisionCommand(t *testing.T) {
 }
 
 func TestDshProvisionOutput(t *testing.T) {
+	t.Run("invalid bytes keep readable diagnostic labels", func(t *testing.T) {
+		got := dshDiagnosticOutput([]byte("profile\xff startup failure"))
+		if got != "profile� startup failure" {
+			t.Fatal("diagnostic retained invalid UTF-8")
+		}
+	})
+	t.Run("retains a non-ASCII diagnostic tail", func(t *testing.T) {
+		got := dshDiagnosticOutput([]byte(strings.Repeat("界", dshProvisionOutputBytes)))
+		want := "…" + strings.Repeat("界", dshProvisionOutputBytes/len("界"))
+		if got != want {
+			t.Fatalf("Unicode tail was discarded: got %d bytes, want %d", len(got), len(want))
+		}
+	})
 	t.Run("preserves multibyte tails", func(t *testing.T) {
 		for _, runeText := range []string{"错", "😀", "é"} {
-			got := dshProvisionOutput([]byte(strings.Repeat(runeText, 3000)))
+			got := dshDiagnosticOutput([]byte(strings.Repeat(runeText, 3000)))
 			if !utf8.ValidString(got) || !strings.HasSuffix(got, runeText) || len(got) > dshProvisionOutputBytes+len("…") {
 				t.Fatalf("invalid or discarded UTF-8 tail: bytes=%d suffix=%q", len(got), got[max(0, len(got)-12):])
 			}
 		}
 	})
-
 	t.Run("bounded from the tail", func(t *testing.T) {
 		long := strings.Repeat("x", dshProvisionOutputBytes*2) + "THE-END"
-		got := dshProvisionOutput([]byte(long))
+		got := dshDiagnosticOutput([]byte(long))
 		if len(got) > dshProvisionOutputBytes+len("…") {
 			t.Fatalf("len = %d, want at most %d", len(got), dshProvisionOutputBytes+1)
 		}
@@ -690,7 +706,7 @@ func TestDshProvisionOutput(t *testing.T) {
 			{"npm ERR! 404 https://deploy:hunter2@registry.example.com/@acme/dsh-runtime", "hunter2"},
 			{"ERR_PNPM_FETCH_401 GET http://ci-bot:s3cr3t@npm.internal/@corp%2fdsh", "s3cr3t"},
 		} {
-			got := dshProvisionOutput([]byte(tc.raw))
+			got := dshDiagnosticOutput([]byte(tc.raw))
 			if strings.Contains(got, tc.secret) {
 				t.Errorf("output = %q, want %q redacted", got, tc.secret)
 			}
@@ -700,7 +716,7 @@ func TestDshProvisionOutput(t *testing.T) {
 	// The host has to survive: which registry refused the request is what an
 	// operator reads, and it is not the secret.
 	t.Run("keeps the host", func(t *testing.T) {
-		got := dshProvisionOutput([]byte("npm ERR! 404 https://deploy:hunter2@registry.example.com/pkg"))
+		got := dshDiagnosticOutput([]byte("npm ERR! 404 https://deploy:hunter2@registry.example.com/pkg"))
 		if !strings.Contains(got, "registry.example.com") {
 			t.Errorf("output = %q, want the host kept", got)
 		}
@@ -714,8 +730,8 @@ func TestDshProvisionOutput(t *testing.T) {
 			"cloning ssh://git@github.com/multica-ai/multica.git",
 			"see https://example.com/a:b for details",
 		} {
-			if got := dshProvisionOutput([]byte(raw)); got != raw {
-				t.Errorf("dshProvisionOutput(%q) = %q, want it unchanged", raw, got)
+			if got := dshDiagnosticOutput([]byte(raw)); got != raw {
+				t.Errorf("dshDiagnosticOutput(%q) = %q, want it unchanged", raw, got)
 			}
 		}
 	})
@@ -839,7 +855,7 @@ func TestDshProfileMigrationUsesLauncherHomeAndRefusesInstall(t *testing.T) {
 			if got := dshMulticaProfileState(launcher); got != dshProfileNeedsMigration {
 				t.Fatalf("state = %v, want needs migration", got)
 			}
-			if got := probeDshMulticaProfile(t.Context(), launcher); got != dshProbeNeedsMigration {
+			if got := probeDshMulticaProfile(t.Context(), launcher).verdict; got != dshProbeNeedsMigration {
 				t.Fatalf("probe = %v, want needs migration", got)
 			}
 			if (&Daemon{}).startDshProfileProvision(launcher) {
@@ -854,6 +870,61 @@ func TestDshProfileMigrationUsesLauncherHomeAndRefusesInstall(t *testing.T) {
 			got, err := os.ReadFile(filepath.Join(home, "profiles", dshMulticaProfileName, "package.json"))
 			if err != nil || string(got) != manifest {
 				t.Fatalf("existing bridge changed: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+// The shared redactor only knows the token shapes it was taught; a package
+// manager also echoes structured JSON lines, where a quoted credential field is
+// not one of those shapes. Losing this scrub leaks a token into the daemon log.
+func TestDshDiagnosticOutputRedactsQuotedCredentials(t *testing.T) {
+	for _, key := range []string{"access_token", "apiKey", "password", "client_secret", "refresh_token", "authorization"} {
+		raw := `prefixed startup: {"` + key + `":"opaque-synthetic-value","message":"permission denied"}`
+		got := dshDiagnosticOutput([]byte(raw))
+		if strings.Contains(got, "opaque-synthetic-value") {
+			t.Errorf("quoted %s credential survived", key)
+		}
+		if !strings.Contains(got, "permission denied") {
+			t.Errorf("%s lost useful diagnostic", key)
+		}
+	}
+}
+
+// A profile may appear between discovery and provisioning (another daemon, a
+// manual install). Re-checking the launcher's current manifest before each
+// candidate keeps the daemon from overwriting a profile that is already there.
+func TestProvisionDshMulticaProfileRechecksCurrentManifest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake CLI")
+	}
+	for _, existing := range []bool{true, false} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			dshPath, record := fakeDshScript(t, dshProfileWriteCommand(installedDshProfileManifest())+"\nexit 1")
+			t.Setenv(dshProfileBundleEnv, "first,second")
+			home := dshLauncherHome(dshPath)
+			if home == "" {
+				t.Fatal("the fake launcher must declare DSH_HOME")
+			}
+			if existing {
+				writeDshProfileManifest(t, home, installedDshProfileManifest())
+			}
+			want := installedDshProfileManifest()
+			err := provisionDshMulticaProfile(context.Background(), dshPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			calls := strings.Count(readRecord(t, record), "args=")
+			expected := 1
+			if existing {
+				expected = 0
+			}
+			if calls != expected {
+				t.Errorf("install calls=%d, want %d", calls, expected)
+			}
+			if !existing && err == nil {
+				t.Error("partial failed install reported success")
+			}
+			got, readErr := os.ReadFile(filepath.Join(home, "profiles", dshMulticaProfileName, "package.json"))
+			if readErr != nil || string(got) != want {
+				t.Fatalf("populated manifest changed: %v", readErr)
 			}
 		})
 	}

@@ -1,4 +1,5 @@
 import type { LocaleResources } from "@multica/core/i18n";
+import enDocs from "./en/docs.json";
 import enCommon from "./en/common.json";
 import enQuota from "./en/quota.json";
 import enThinking from "./en/thinking.json";
@@ -38,6 +39,7 @@ import enYouShouldKnow from "./en/you-should-know.json";
 import enEngineering from "./en/engineering.json";
 
 const resources: LocaleResources = {
+  docs: enDocs,
   common: enCommon,
   quota: enQuota,
   thinking: enThinking,

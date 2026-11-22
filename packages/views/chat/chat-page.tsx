@@ -26,6 +26,7 @@ import { ChatMessageList, ChatMessageSkeleton } from "./components/chat-message-
 import { ChatReplyActionsProvider } from "./chat-reply-actions-context";
 import { ChatInput } from "./components/chat-input";
 import { ChatQueue } from "./components/chat-queue";
+import { ChatWakeupStrip, useChatWakeups } from "./components/chat-wakeups";
 import { ChatThreadList } from "./components/chat-thread-list";
 import { ChatSessionHeader } from "./components/chat-session-header";
 import { EmptyState } from "./components/chat-empty-state";
@@ -84,6 +85,7 @@ export function ChatPage() {
   useQuickActionsPendingTimeout(c.activeSessionId ?? null, quickActionsPending);
   // Toast when an accepted refresh later fails in the daemon (async half).
   useQuickActionsFailureToast(c.activeSessionId ?? null);
+  const wakeups = useChatWakeups(c.activeSessionId);
   const regenerateQuickActions = useRegenerateChatQuickActions();
   const annotations = useChatAnnotations({
     sessionId: c.activeSessionId,
@@ -366,6 +368,7 @@ export function ChatPage() {
           }
           quickActionsPendingMessageId={quickActionsPending?.message_id ?? null}
           annotations={annotations}
+          wakeups={wakeups}
         />
       ) : c.currentSession?.tip_source ? (
         <TipSideChatStarters
@@ -405,8 +408,11 @@ export function ChatPage() {
         <ChatAppRequests sessionId={c.activeSessionId} />
       </div>
 
+      <ChatWakeupStrip sessionId={c.activeSessionId} wakeups={wakeups} />
+
       <ChatQueue
         tasks={queuedTasks}
+        wakeups={wakeups}
         headStatus={c.pendingTask?.status}
         onSendNow={c.handleSendQueuedTaskNow}
         sendNowDisabled={c.isAgentAccessRevoked}
@@ -425,6 +431,7 @@ export function ChatPage() {
         onStop={c.handleStop}
         isRunning={!!c.pendingTaskId}
         allowSubmitWhileRunning={c.pendingTask?.supports_queue === true}
+        canSteerWhileRunning={c.pendingTask?.can_supplement}
         disabled={
           c.isSessionArchived ||
           c.isAgentArchived ||

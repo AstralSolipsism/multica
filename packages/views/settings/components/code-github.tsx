@@ -153,6 +153,9 @@ export function GitHubAccountRows({
   const qc = useQueryClient();
   const accountTypeLabel = useAccountTypeLabel();
   const [disconnectTarget, setDisconnectTarget] = useState<GitHubInstallation | null>(null);
+  // Kept apart from the target: the dialog's exit animation still renders the
+  // account name, so closing must not clear it in the same tick.
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
@@ -162,7 +165,7 @@ export function GitHubAccountRows({
       await api.deleteGitHubInstallation(wsId, disconnectTarget.id);
       await qc.invalidateQueries({ queryKey: githubKeys.all(wsId) });
       toast.success(t(($) => $.github.toast_disconnected));
-      setDisconnectTarget(null);
+      setDisconnectOpen(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_disconnect_failed));
     } finally {
@@ -222,7 +225,10 @@ export function GitHubAccountRows({
                 <DropdownMenuContent align="end" className="w-auto">
                   <DropdownMenuItem
                     variant="destructive"
-                    onClick={() => setDisconnectTarget(installation)}
+                    onClick={() => {
+                      setDisconnectTarget(installation);
+                      setDisconnectOpen(true);
+                    }}
                   >
                     <Unplug />
                     {t(($) => $.github.disconnect)}
@@ -235,9 +241,9 @@ export function GitHubAccountRows({
       })}
 
       <AlertDialog
-        open={!!disconnectTarget}
+        open={disconnectOpen}
         onOpenChange={(v) => {
-          if (!v && !disconnecting) setDisconnectTarget(null);
+          if (!v && !disconnecting) setDisconnectOpen(false);
         }}
       >
         <AlertDialogContent>
@@ -248,7 +254,9 @@ export function GitHubAccountRows({
               })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(($) => $.github.disconnect_confirm_description)}
+              {t(($) => $.github.disconnect_confirm_description, {
+                login: disconnectTarget?.account_login ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

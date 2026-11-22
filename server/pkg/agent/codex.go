@@ -1286,6 +1286,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		notificationProtocol:     "unknown",
 		acceptNotification:       turnNotificationGate.accept,
 		guardianRateLimitCircuit: &codexGuardianRateLimitCircuit{},
+		rateLimits:               newRateLimitTracker(opts.OnRateLimits),
 		onGuardianRateLimit: func() {
 			guardianRateLimitTripped.Store(true)
 			b.cfg.Logger.Warn("codex Guardian approval rate-limit circuit opened",
@@ -1618,11 +1619,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// Whether that notice asks the agent to tell the USER is the caller's
 		// call, not ours: it depends on whether this surface's conversation is
 		// still readable, which this package cannot see (MUL-5722).
+		turnPrompt := b.skillTurnPrompt(runCtx, c, prompt, opts)
 		turnParams := map[string]any{
 			"threadId": threadID,
+			"input":    codexTurnInput(turnPrompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice),
 		}
-		turnPrompt := b.skillTurnPrompt(runCtx, c, prompt, opts)
-		turnParams["input"] = codexTurnInput(turnPrompt, opts.ResumeExpected, resumed, opts.ResumeContinuityNotice)
 		// Per-turn reasoning override. Mirrors the per-thread injection in
 		// startOrResumeThread; keeping both in sync is enforced by the
 		// shared `codexReasoningInjection` fixture in codex_test.go (see
@@ -1911,7 +1912,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
-		liveRateLimits := c.rateLimits
+		liveRateLimits := c.rawRateLimits
 		c.usageMu.Unlock()
 
 		// Codex sometimes omits usage from JSON-RPC notifications, and can also
@@ -2454,6 +2455,9 @@ type codexClient struct {
 	onTurnDone               func(aborted bool)
 	guardianRateLimitCircuit *codexGuardianRateLimitCircuit
 	onGuardianRateLimit      func()
+	// rateLimits merges account/rateLimits/updated notifications; nil when
+	// the caller does not collect rate limits.
+	rateLimits *rateLimitTracker
 	// onFinalAnswer fires only for an agent message the app-server itself
 	// labelled `phase: "final_answer"` — the turn's deliverable, as opposed to
 	// the intermediate agent messages that narrate work between tool calls.
@@ -2484,10 +2488,10 @@ type codexClient struct {
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
-	// rateLimits is the newest rate_limits snapshot captured from live
+	// rawRateLimits is the newest rate_limits snapshot captured from live
 	// token_count events (legacy protocol). Guarded by usageMu; nil until a
 	// token_count event carrying rate_limits arrives.
-	rateLimits *codexRawRateLimits
+	rawRateLimits *codexRawRateLimits
 	// usageTotal is the last accepted cumulative v2 usage snapshot for the
 	// active turn. Comparing later snapshots against it makes replay and
 	// duplicate delivery idempotent while retaining multi-response turns.
@@ -3061,6 +3065,14 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	if p, ok := raw["params"]; ok {
 		_ = json.Unmarshal(p, &params)
 	}
+	// Rate limits belong to the account, not to a thread or turn, so they are
+	// read before the thread filter and the current-turn gate. The
+	// notification then continues down the usual path unchanged.
+	if method == "account/rateLimits/updated" {
+		if update, ok := parseCodexRateLimitsUpdated(params); ok {
+			c.rateLimits.apply(update)
+		}
+	}
 	// Filter multiplexed subagent threads before the current-turn gate. The
 	// gate mutates started/turnID on turn/started; letting another thread reach
 	// it first can replace the main turn ID and make subsequent main-thread
@@ -3549,7 +3561,7 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 			if data, err := json.Marshal(raw); err == nil {
 				if err := json.Unmarshal(data, &limits); err == nil && codexRateLimitsUsable(&limits) {
 					c.usageMu.Lock()
-					c.rateLimits = &limits
+					c.rawRateLimits = &limits
 					c.usageMu.Unlock()
 				}
 			}

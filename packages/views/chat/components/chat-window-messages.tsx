@@ -9,6 +9,7 @@ import { chatMessagesPageOptions } from "@multica/core/chat/queries";
 import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { useRegenerateChatQuickActions } from "@multica/core/chat/mutations";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { useChatWakeups } from "./chat-wakeups";
 
 /** Message-only observers leave with the fading list; the composer stays alive. */
 export function ChatWindowMessages({
@@ -38,6 +39,7 @@ export function ChatWindowMessages({
   children: ReactNode;
 }) {
   const isPresent = useIsPresent();
+  const wakeups = useChatWakeups(sessionId);
   const regenerateQuickActions = useRegenerateChatQuickActions();
   const {
     data,
@@ -90,6 +92,7 @@ export function ChatWindowMessages({
             : undefined}
           quickActionsPendingMessageId={quickActionsPendingMessageId}
           annotations={annotations}
+          wakeups={wakeups}
         />
       ) : children}
     </motion.div>

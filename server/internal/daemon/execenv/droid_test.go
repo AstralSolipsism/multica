@@ -10,7 +10,7 @@ import (
 func TestDroidRuntimeBriefAndSkills(t *testing.T) {
 	dir := t.TempDir()
 	task := TaskContextForEnv{IssueID: "droid-issue", AgentSkills: []SkillContextForEnv{{Name: "Review", Content: "Review carefully."}}}
-	if _, err := writeContextFiles(dir, "droid", task, nil, nil); err != nil {
+	if _, err := writeContextFiles(dir, "droid", task, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := InjectRuntimeConfig(dir, "droid", task); err != nil {

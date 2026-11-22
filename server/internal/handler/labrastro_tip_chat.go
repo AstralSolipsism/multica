@@ -71,7 +71,7 @@ func (h *Handler) LabrastroOpenTipChat(w http.ResponseWriter, r *http.Request) {
 	}
 	access := *h
 	access.Queries = q
-	if !access.requireProjectVisible(w, r, uuidToString(ws), issue.ProjectID, http.StatusNotFound, "issue not found") {
+	if !access.requireProjectVisible(w, r, uuidToString(ws), issue.ProjectID, http.StatusNotFound, "tip or source not found") {
 		return
 	}
 	if !access.requireChatProjectVisible(w, r, uuidToString(ws), issue.ProjectID, tip.AgentID) {

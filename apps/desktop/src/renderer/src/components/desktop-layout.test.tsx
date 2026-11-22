@@ -89,6 +89,7 @@ vi.mock("@multica/views/search", () => ({
 vi.mock("@multica/views/chat", () => ({ FloatingChat: () => null }));
 vi.mock("@/platform/chat-session-handoff", () => ({ DesktopChatSessionBridge: () => null }));
 vi.mock("@multica/views/whats-new", () => ({ WhatsNewDeck: () => <div data-testid="whats-new-deck" /> }));
+vi.mock("@multica/views/billing", () => ({ WorkspaceTrialNotices: () => null }));
 vi.mock("./tab-bar", () => ({ TabBar: () => null }));
 vi.mock("./window-overlay", () => ({ WindowOverlay: () => null }));
 

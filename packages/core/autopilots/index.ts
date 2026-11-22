@@ -19,4 +19,4 @@ export {
   useRotateAutopilotTriggerWebhookToken,
   useReplayAutopilotDelivery,
 } from "./mutations";
-export { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl, mergeWebhookFilterSuggestion, serializeWebhookEventFilters } from "./webhook";
+export { buildAutopilotWebhookUrl, maskAutopilotWebhookUrl, mergeWebhookFilterSuggestion } from "./webhook";

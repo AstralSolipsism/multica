@@ -171,9 +171,20 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]WorkspaceResponse, len(workspaces))
-	for i, ws := range workspaces {
-		resp[i] = h.workspaceToResponse(db.Workspace{
+	// A task token is bound to one workspace, and Auth stamps that workspace
+	// into X-Workspace-ID. List only that one, so an agent the owner started
+	// in one workspace never sees the owner's other workspaces.
+	boundWorkspaceID := ""
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		boundWorkspaceID = r.Header.Get("X-Workspace-ID")
+	}
+
+	resp := make([]WorkspaceResponse, 0, len(workspaces))
+	for _, ws := range workspaces {
+		if boundWorkspaceID != "" && uuidToString(ws.ID) != boundWorkspaceID {
+			continue
+		}
+		item := h.workspaceToResponse(db.Workspace{
 			ID: ws.ID, Name: ws.Name, Slug: ws.Slug, Description: ws.Description,
 			Settings: ws.Settings, CreatedAt: ws.CreatedAt, UpdatedAt: ws.UpdatedAt,
 			Context: ws.Context, Repos: ws.Repos, IssuePrefix: ws.IssuePrefix,
@@ -182,8 +193,9 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		})
 		if ws.PinnedAt.Valid {
 			pinnedAt := timestampToString(ws.PinnedAt)
-			resp[i].PinnedAt = &pinnedAt
+			item.PinnedAt = &pinnedAt
 		}
+		resp = append(resp, item)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1148,7 +1160,14 @@ func lockWorkspaceTaskOwners(ctx context.Context, qtx *db.Queries, workspaceID p
 	return nil
 }
 
+// DeleteWorkspace refuses machine credentials: a task token or cloud node PAT
+// authenticates as its owner, and deleting a workspace takes every issue, doc
+// and agent in it, so only a human may do it.
 func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	if isMachineCredentialActor(r) {
+		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
+		return
+	}
 	workspaceID := workspaceIDFromURL(r, "id")
 
 	// Defense in depth: the route is already gated by the
@@ -1297,6 +1316,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			name: "delete chat supplements",
+			run:  func() error { return qtx.DeleteChatTaskSupplementsByWorkspace(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete chat pins",
 			run:  func() error { return qtx.DeleteChatPinnedAgentsByWorkspace(ctx, requester.WorkspaceID) },
 		},
@@ -1349,6 +1372,14 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		{
 			name: "delete autopilot quota periods",
 			run:  func() error { return qtx.DeleteWorkspaceAutopilotQuotaPeriods(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete entitlement limit overages",
+			run:  func() error { return qtx.DeleteWorkspaceEntitlementLimitOverages(ctx, requester.WorkspaceID) },
+		},
+		{
+			name: "delete entitlement feature attempts",
+			run:  func() error { return qtx.DeleteWorkspaceEntitlementFeatureAttempts(ctx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete chat messages",
@@ -1406,6 +1437,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run: func() error {
 				return qtx.DeleteIssueWorkflowsForWorkspace(ctx, requester.WorkspaceID)
 			},
+		},
+		{
+			name: "delete docs",
+			run:  func() error { return qtx.DeleteWorkspaceDocs(ctx, requester.WorkspaceID) },
 		},
 		{
 			name: "delete autopilot children",

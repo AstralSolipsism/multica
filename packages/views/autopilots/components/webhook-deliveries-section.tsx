@@ -21,6 +21,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
+import { TruncatedTooltip } from "@multica/ui/components/common/truncated-tooltip";
 import { toast } from "sonner";
 import { useLocale, useT } from "../../i18n";
 import { ObjectSection, ObjectSectionCard, ObjectSectionEmpty } from "../../layout/object-page";
@@ -30,6 +31,7 @@ import type {
   WebhookDeliveryStatus,
   WebhookSignatureStatus,
 } from "@multica/core/types";
+import { formatConditionValue } from "./webhook-payload-condition";
 
 // --- Status visuals -------------------------------------------------------
 
@@ -179,8 +181,11 @@ function DeliveryRow({
         <span className="w-20 shrink-0 text-caption text-muted-foreground truncate">
           {providerLabel}
         </span>
-        <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate font-mono">
-          {delivery.event || t(($) => $.webhook_payload.unknown_event)}
+        <span className="flex-1 min-w-0 text-caption text-muted-foreground">
+          <span className="block truncate font-mono">
+            {delivery.event || t(($) => $.webhook_payload.unknown_event)}
+          </span>
+          <DeliveryIgnoreReason delivery={delivery} />
         </span>
         {delivery.replayed_from_delivery_id && (
           <Badge variant="secondary" className="shrink-0">
@@ -278,6 +283,7 @@ function DeliveryDetailDialog({
         <SignatureBadge status={full.signature_status as WebhookSignatureStatus} />
       </>}
       metaTooltips
+      afterMeta={<DeliveryIgnoreDetails delivery={full} />}
       meta={[
         { label: t(($) => $.deliveries.detail.received_at), value: formatDate(full.received_at, locale) },
         { label: t(($) => $.deliveries.detail.last_attempt_at), value: formatDate(full.last_attempt_at, locale) },
@@ -304,7 +310,7 @@ function DeliveryDetailDialog({
           mono: true,
         }] : []),
       ]}
-      error={full.error ? {
+      error={full.error && full.status !== "ignored" ? {
         label: t(($) => $.deliveries.detail.error_label),
         message: full.error,
       } : undefined}
@@ -335,7 +341,70 @@ function DeliveryDetailDialog({
   );
 }
 
+// --- Ignore reasons -------------------------------------------------------
 
+/**
+ * Why a received webhook became an `ignored` delivery. Servers predating
+ * `reason_code` stored these codes in `error`, so read both.
+ */
+function useDeliveryIgnoreReason(delivery: WebhookDelivery): string | null {
+  const { t } = useT("autopilots");
+  if (delivery.status !== "ignored") return null;
+  const code = delivery.reason_code ?? delivery.error;
+  switch (code) {
+    case "payload_filtered": return t(($) => $.deliveries.ignore.payload_filtered);
+    case "event_filtered": return t(($) => $.deliveries.ignore.event_filtered);
+    case "trigger_disabled": return t(($) => $.deliveries.ignore.trigger_disabled);
+    case "autopilot_paused": return t(($) => $.deliveries.ignore.autopilot_paused);
+    case "autopilot_archived": return t(($) => $.deliveries.ignore.autopilot_archived);
+    case "quota_exceeded": return t(($) => $.deliveries.ignore.quota_exceeded);
+    default: return code;
+  }
+}
+
+function DeliveryIgnoreReason({ delivery }: { delivery: WebhookDelivery }) {
+  const reason = useDeliveryIgnoreReason(delivery);
+  if (!reason) return null;
+  const path = delivery.payload_condition_failure?.condition.path;
+  const label = path ? `${reason} · ${path}` : reason;
+  return (
+    <TruncatedTooltip content={label}>
+      <span className="block truncate text-micro">{label}</span>
+    </TruncatedTooltip>
+  );
+}
+
+function DeliveryIgnoreDetails({ delivery }: { delivery: WebhookDelivery }) {
+  const { t } = useT("autopilots");
+  const reason = useDeliveryIgnoreReason(delivery);
+  const failure = delivery.payload_condition_failure;
+  if (!reason) return null;
+  return (
+    <section aria-label={t(($) => $.deliveries.ignore.title)} className="min-w-0 space-y-2 rounded-md border bg-muted/30 px-3 py-2 text-caption">
+      <div className="font-medium">{t(($) => $.deliveries.ignore.title)}</div>
+      <p className="text-muted-foreground">{reason}</p>
+      {failure && (
+        <>
+          <p className="break-all">
+            <code>{failure.condition.path}</code>{" "}
+            {t(($) => $.dialog.event_filter_condition_ops[failure.condition.op])}{" "}
+            {failure.condition.op !== "exists" && <code>{formatConditionValue(failure.condition)}</code>}
+            {failure.condition.ignore_case && <span className="ml-1 text-muted-foreground">({t(($) => $.dialog.event_filter_condition_ignore_case)})</span>}
+          </p>
+          <dl className="space-y-1">
+            <dt className="text-muted-foreground">{t(($) => $.deliveries.ignore.actual_value)}</dt>
+            <dd className="break-all font-mono">
+              {failure.missing
+                ? t(($) => $.deliveries.ignore.missing)
+                : failure.actual_values.length === 0 ? "[]" : failure.actual_values.join(", ")}
+            </dd>
+          </dl>
+          {failure.truncated && <p className="text-muted-foreground">{t(($) => $.deliveries.ignore.truncated)}</p>}
+        </>
+      )}
+    </section>
+  );
+}
 
 function SignatureBadge({ status }: { status: WebhookSignatureStatus | string }) {
   const { t } = useT("autopilots");

@@ -37,7 +37,8 @@ WITH active AS MATERIALIZED (
     UNION
     SELECT id FROM anchors
 )
-SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section, i.snoozed_until, i.snoozed_at,
+SELECT i.id, i.workspace_id, i.recipient_type, i.recipient_id, i.type, i.severity, i.issue_id, i.title, i.body, i.read, i.archived, i.created_at, i.actor_type, i.actor_id, i.details, i.section, i.snoozed_until, i.snoozed_at, i.returned_at,
+       iss.number AS issue_number,
        iss.status AS issue_status,
        iss.priority AS issue_priority,
        iss.project_id AS issue_project_id,
@@ -79,6 +80,8 @@ type ListGroupedInboxItemsRow struct {
 	Section           pgtype.Text        `json:"section"`
 	SnoozedUntil      pgtype.Timestamptz `json:"snoozed_until"`
 	SnoozedAt         pgtype.Timestamptz `json:"snoozed_at"`
+	ReturnedAt        pgtype.Timestamptz `json:"returned_at"`
+	IssueNumber       pgtype.Int4        `json:"issue_number"`
 	IssueStatus       pgtype.Text        `json:"issue_status"`
 	IssuePriority     pgtype.Text        `json:"issue_priority"`
 	IssueProjectID    pgtype.UUID        `json:"issue_project_id"`
@@ -124,6 +127,8 @@ func (q *Queries) ListGroupedInboxItems(ctx context.Context, arg ListGroupedInbo
 			&i.Section,
 			&i.SnoozedUntil,
 			&i.SnoozedAt,
+			&i.ReturnedAt,
+			&i.IssueNumber,
 			&i.IssueStatus,
 			&i.IssuePriority,
 			&i.IssueProjectID,

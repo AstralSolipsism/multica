@@ -1,4 +1,5 @@
 import type { LocaleResources } from "@multica/core/i18n";
+import zhHansDocs from "./zh-Hans/docs.json";
 import zhHansCommon from "./zh-Hans/common.json";
 import zhHansQuota from "./zh-Hans/quota.json";
 import zhHansThinking from "./zh-Hans/thinking.json";
@@ -38,6 +39,7 @@ import zhHansYouShouldKnow from "./zh-Hans/you-should-know.json";
 import zhHansEngineering from "./zh-Hans/engineering.json";
 
 const resources: LocaleResources = {
+  docs: zhHansDocs,
   common: zhHansCommon,
   quota: zhHansQuota,
   thinking: zhHansThinking,
