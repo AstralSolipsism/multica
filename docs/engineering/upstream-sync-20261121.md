@@ -13,6 +13,12 @@ file-by-file, line-by-line restraint and necessity audit (plus any trimming on
 the same branch before merge); Stage 5 (OL-1482) owns release and deployment of
 `v0.11.1-labrastro.1` only after project-owner sign-off.
 
+Stage 7 (OL-1485) reverses the `server/ee` and `packages/ee` stripping that
+Stage 1 and Stage 2 did under Decision 2A: the project owner superseded 2A
+with "reuse directly" after confirming with upstream, and the project-folder
+module is restored byte-identically from `v0.11.1` (see "Project folders"
+below).
+
 ## Ancestry
 
 | Boundary | Full SHA |
@@ -49,33 +55,41 @@ migrations (`697`–`702`) are not merged. `origin/main` remains at
 `git merge-tree --write-tree origin/main HEAD` confirms a clean merge.
 External upstream-PR branches in the fork were untouched.
 
-## Pure open-source boundary (`server/ee` and `packages/ee` stripping)
+## Project folders (`server/ee` and `packages/ee`): stripped under 2A, restored in Stage 7
 
-Upstream v0.11.1 added proprietary all-rights-reserved code under `server/ee/`
-and `packages/ee/` (project folders). Per Decision 2A, all 32 commercial files
-introduced by `v0.11.1` are stripped cleanly:
+Upstream v0.11.1 ships its project-folder feature (MUL-9390, `#10817`) as a
+commercial module under `server/ee/` and `packages/ee/`, each directory with
+its own `LICENSE` placeholder. PR #332 stripped all 32 files under Decision
+2A, so `v0.11.1-labrastro.1` ships the open-source slots (migrations
+`681`–`682`, `packages/core/projects/folder-tree.ts`,
+`packages/views/extensions/`, `server/internal/extension/`) and the What's
+New card without the feature itself.
 
-- **Backend (10 files removed in Stage 1)**: `server/ee/` (9 files: `LICENSE`,
-  `README.md`, `ee.go`, `projectfolder/handler.go`, `handler_test.go`,
-  `queries.sql`, `folderdb/{db,models,queries.sql}.go`) and
-  `server/cmd/server/ee.go`. Also removed `ee/projectfolder` from
-  `server/sqlc.yaml`, the commercial exception paragraph from root `LICENSE`,
-  and residual `server/ee` path filters from `.github/ci-paths.json` and
-  `.github/workflows/ci.yml`. Both `go build ./...` and
-  `go build -tags oss ./cmd/...` compile on the pure open-source path;
-  `go test ./internal/extension` verifies the OSS boundary.
-- **Frontend (22 files removed in Stage 2)**: entire `packages/ee/` workspace
-  removed (`LICENSE`, `README.md`, `package.json`, `index.ts`,
-  `project-folders/*`, locales and tests). Removed all `@multica/ee`
-  dependencies and `registerEE()` wiring from root `package.json`,
-  `pnpm-lock.yaml`, `apps/web`, `apps/desktop`, `apps/web/next.config.ts`,
-  `Dockerfile.web`, both Web/Desktop `globals.css` `@source` directives and
-  `knip.jsonc`. `ProjectFoldersExtension` keeps its open-source no-op fallback.
-  `git grep` confirms zero non-comment/non-archive references to `@multica/ee`,
-  `registerEE`, or commercial imports; `pnpm knip` reports zero issues.
-- **Migration ledger preserved**: `server/migrations/681_project_folder.{up,down}.sql`
-  and `682_project_folder_name_idx.{up,down}.sql` remain byte-identical to
-  `v0.11.1` so the `661`–`696` migration sequence stays 100% continuous.
+The project owner then confirmed with upstream and replaced 2A with "reuse
+directly" (OL-1485). Stage 7 restores the module from
+`e1fe10d6694848e35dd1aa00e08cd11d93e545ac` with zero edits, so later upstream
+syncs see no fork diff inside it:
+
+- **Backend (10 files)**: `server/ee/` (9 files) and `server/cmd/server/ee.go`
+  (`//go:build !oss`), plus the `ee/projectfolder` block in `server/sqlc.yaml`
+  and the `server/ee` path filters in `.github/ci-paths.json` and
+  `.github/workflows/ci.yml`; `make sqlc` regenerates `folderdb` unchanged.
+  Both `go build ./...` and `go build -tags oss ./cmd/...` compile.
+- **Frontend (22 files)**: `packages/ee/`, plus `@multica/ee` in `apps/web`
+  and `apps/desktop`, `registerEE()` in `web-providers.tsx` and Desktop
+  `main.tsx`, `@multica/ee` in `transpilePackages`, the `@source` directive
+  in both `globals.css`, the `packages/ee` entry in `knip.jsonc` and the
+  `packages/ee/package.json` copy in `Dockerfile.web`.
+- **Root `LICENSE`**: the commercial-license exception paragraph is back.
+- **Private-project isolation**: `project-folders/{id}` is classified again
+  in `server/cmd/server/private_project_routes_test.go`, and
+  `TestProjectFolderRoutesHidePrivateProjects` covers what the route probe
+  cannot judge, because these routes name a project in their body: a
+  workspace admin outside a private project does not see it in the folder
+  list, and filing it answers as for a project that does not exist.
+- **Migration ledger**: `681_project_folder.{up,down}.sql` and
+  `682_project_folder_name_idx.{up,down}.sql` were never touched and stay
+  byte-identical to `v0.11.1`.
 
 ## Fork candidate release chain retained (`ours` in M1)
 
@@ -241,10 +255,13 @@ High-churn anchors survive with unchanged counts:
    guest migrations. After Stage 4 (OL-1483) completes the whole-branch
    restraint audit and project-owner sign-off, Stage 5 (OL-1482) releases and
    deploys `v0.11.1-labrastro.1`.
-2. **2A — Pure open-source boundary**: completely strip commercial `server/ee/`,
-   `server/cmd/server/ee.go`, `packages/ee/`, `@multica/ee`, `registerEE()` and
-   root `LICENSE` commercial clauses, while retaining `681`–`682` SQL migrations
-   byte-identically. Self-hosted private projects remain unrestricted when
+2. **2A — Pure open-source boundary** (superseded in Stage 7, OL-1485): PR
+   #332 stripped commercial `server/ee/`, `server/cmd/server/ee.go`,
+   `packages/ee/`, `@multica/ee`, `registerEE()` and root `LICENSE`
+   commercial clauses, while retaining `681`–`682` SQL migrations
+   byte-identically. After confirming with upstream, the project owner
+   replaced 2A with "reuse directly": Stage 7 restores the module from
+   `v0.11.1` unedited. Self-hosted private projects remain unrestricted when
    `h.Features == nil` (`requireFeatureAddition` bypass verified).
 3. **3A — Unified 8-provider Runtime quota UI**: keep `673_runtime_rate_limit`
    and `@multica/core` protocol compatibility, while Web/Desktop Runtime list
@@ -362,8 +379,9 @@ paths (8,989 untouched fork/same, 889 pure upstream sync, 14 converged) and
 `OTHER_MIXED` 10, `NEW_IN_BRANCH` 2). Every non-trivial path was audited
 file-by-file and line-by-line (zero blind spots), re-verifying the 22-file
 engineering insertion ledger (**61/61** lines), high-churn thin plugs in
-`daemon.go` and `cmd_issue.go`, and zero `server/ee` / `packages/ee` /
-`@multica/ee` / `registerEE` / `GateIssueCount` / `RateLimitSection` residue.
+`daemon.go` and `cmd_issue.go`, and zero `GateIssueCount` / `RateLimitSection`
+residue (`server/ee` / `packages/ee` / `@multica/ee` / `registerEE` were
+absent as 2A required at the time; Stage 7 restored them).
 
 Surgical slimming, Decision 3A dead-code cleanup, merge-oversight fixes and
 regression tests applied on `sync/v0.11.1-ol-1472` (**40 code/test/doc/locale
@@ -473,5 +491,37 @@ clusters and temp directories were stopped and removed after verification.
   notifications to `"muted"` for members without an explicit preference
   (`you_should_know` stays `"all"`). Preserve existing Feishu and
   environment-proxy settings.
+
+## Stage 7 project-folder restoration verification (OL-1485)
+
+Run on the Stage 7 branch over `main` `97ac2129bfc6` with Go 1.27.4, Node
+24.21.0, pnpm 10.28.2 and a task-local PostgreSQL 17.12 database migrated by
+`cmd/migrate up` (836 migrations):
+
+- **Identity**: all 32 restored files hash to the same blobs as `e1fe10d669`
+  (`git diff e1fe10d669 -- server/ee packages/ee server/cmd/server/ee.go` is
+  empty) and `make sqlc` regenerates `folderdb` unchanged.
+- **Backend**: `go build ./...`, `go build -tags oss ./cmd/...`, `go vet` on
+  `./ee/...` and `./cmd/server/`, `bash scripts/check-gofmt.sh`, and
+  `go test -race -count=1 ./ee/... ./cmd/server/...` (426 top-level tests,
+  0 failures; the route probe covers 138 project-scoped routes) pass.
+  `TestProjectFolderRoutesHidePrivateProjects` fails with the
+  `RequireProjectVisible` check removed from `File` and with the `List`
+  visibility filter disabled, and passes on the restored code.
+- **Frontend**: `pnpm install` adds the `@multica/ee` importers (plus one
+  pnpm peer-metadata normalization on `@react-native/metro-config`) to
+  `pnpm-lock.yaml`, after which `pnpm install --frozen-lockfile --offline`
+  passes; `pnpm --filter @multica/ee test` (9 tests), `pnpm typecheck`
+  (11 tasks), `pnpm lint` (8 tasks, 0 errors), `pnpm knip` (zero issues),
+  `pnpm test:brand` (13 node + 19 Vitest), `node scripts/test-unit.mjs`
+  (61.6s), `pnpm check:deps-catalog` (14 workspaces), `pnpm check:ui-exports`,
+  `pnpm check:ui-radii` and `node scripts/ci-scope.test.mjs` (83 tests) pass.
+- **Production web build**: `STANDALONE=true next build` succeeds and its
+  standalone output carries `@multica/ee` in the server and client chunks.
+  Driving that build against the Go server in a real browser covered sidebar
+  folder create, rename, move (menu and drag), collapse/expand and the
+  Projects page folder grouping, all through `/api/project-folders` (200).
+  The Docker image build was not run locally (no Docker); CI `images` is
+  authoritative.
 
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.

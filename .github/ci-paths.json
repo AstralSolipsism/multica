@@ -72,6 +72,7 @@
   "sqlc": [
     "server/pkg/db/queries/**",
     "server/pkg/db/generated/**",
+    "server/ee/**",
     "server/migrations/**",
     "server/sqlc.yaml",
     "Makefile",

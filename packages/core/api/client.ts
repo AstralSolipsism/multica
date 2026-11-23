@@ -1285,7 +1285,7 @@ export class ApiClient {
   /**
    * A JSON request to an endpoint this client has no method for, with the
    * same auth, workspace scoping and errors. For packages that own their
-   * endpoints (app-level extensions); parse the result before using it.
+   * endpoints (packages/ee); parse the result before using it.
    */
   request(path: string, init?: RequestInit): Promise<unknown> {
     return this.fetch<unknown>(path, init);

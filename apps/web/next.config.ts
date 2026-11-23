@@ -40,6 +40,7 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
 
 const nextConfig: NextConfig = {
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
+  transpilePackages: ["@multica/core", "@multica/ui", "@multica/views", "@multica/ee"],
   experimental: {
     // The rewrite proxy times out upstream responses after 30s by default
     // (next/dist/server/lib/router-utils/proxy-request.js), which is shorter
@@ -61,7 +62,6 @@ const nextConfig: NextConfig = {
     // read) render without a server round trip first (MUL-9538).
     staleTimes: { dynamic: 30 },
   },
-  transpilePackages: ["@multica/core", "@multica/ui", "@multica/views"],
   ...(allowedDevOrigins && allowedDevOrigins.length > 0
     ? { allowedDevOrigins }
     : {}),

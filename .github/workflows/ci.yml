@@ -90,8 +90,8 @@ jobs:
       - name: Verify generated SQL is up to date
         run: |
           make sqlc
-          git diff --exit-code -- server/pkg/db/generated
-          untracked="$(git ls-files --others --exclude-standard -- server/pkg/db/generated)"
+          git diff --exit-code -- server/pkg/db/generated server/ee
+          untracked="$(git ls-files --others --exclude-standard -- server/pkg/db/generated server/ee)"
           if [ -n "$untracked" ]; then
             printf 'Untracked generated SQL files:\n%s\n' "$untracked"
             exit 1

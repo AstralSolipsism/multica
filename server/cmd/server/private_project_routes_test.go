@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -108,6 +109,7 @@ var routeParamsOutsideProjects = map[string]outsideProjectParam{
 	"issue-statuses/{id}":                 {why: "a workspace issue status"},
 	"issue-workflows/{id}":                {why: "a workspace workflow; the projects using it are filtered out of its payload"},
 	"handoffs/{status}":                   {why: "a workflow handoff status key"},
+	"project-folders/{id}":                {why: "a workspace folder of projects"},
 	"docs/{id}":                           {why: "a workspace doc"},
 	"doc-folders/{id}":                    {why: "a workspace folder of docs"},
 	"versions/{number}":                   {why: "a version of a workspace doc; the run that wrote it is recorded by id only"},
@@ -472,6 +474,41 @@ func (a routeAnswer) String() string {
 	return fmt.Sprintf("%d %s", a.status, strings.TrimSpace(a.body))
 }
 
+// privateRouteAdmin joins a fresh user to the workspace as an admin and
+// returns its id and session token.
+func privateRouteAdmin(fx *dbfx.Fixture, t *testing.T, workspaceID, name string) (string, string) {
+	t.Helper()
+	email := "private-routes-" + uuid.NewString() + "@example.test"
+	id := fx.User(t, name, email)
+	fx.Member(t, workspaceID, id, "admin")
+	token, err := generateTestJWT(id, email, name)
+	if err != nil {
+		t.Fatalf("sign %s token: %v", name, err)
+	}
+	return id, token
+}
+
+// privateRouteCall sends a request as a member session of workspaceID: a JSON
+// body for the methods that take one.
+func privateRouteCall(router http.Handler, workspaceID, token, method, path, body string) routeAnswer {
+	var req *http.Request
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		if body == "" {
+			body = "{}"
+		}
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+	default:
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return routeAnswer{rec.Code, rec.Body.String()}
+}
+
 // Every handler that loads an object by its own id must refuse one in a
 // private project the caller cannot see, answering exactly as for an id that
 // does not exist. Each handler has to remember that check, and it has been
@@ -491,18 +528,8 @@ func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
 
 	// Both callers are admins, so role checks pass and only project
 	// membership tells them apart: a workspace role grants no visibility.
-	newAdmin := func(name string) (string, string) {
-		email := "private-routes-" + uuid.NewString() + "@example.test"
-		id := fx.User(t, name, email)
-		fx.Member(t, fx.WorkspaceID, id, "admin")
-		token, err := generateTestJWT(id, email, name)
-		if err != nil {
-			t.Fatalf("sign %s token: %v", name, err)
-		}
-		return id, token
-	}
-	insiderID, insiderToken := newAdmin("Private routes insider")
-	outsiderID, outsiderToken := newAdmin("Private routes outsider")
+	insiderID, insiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private routes insider")
+	outsiderID, outsiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private routes outsider")
 
 	shared := privateRouteShared{insiderID: insiderID}
 	shared.runtimeID = fx.Runtime(t, "Private routes runtime", dbfx.Cols{"owner_id": insiderID})
@@ -527,22 +554,7 @@ func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
 	t.Setenv("LOCAL_UPLOAD_DIR", shared.uploadDir)
 	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
 	call := func(token, method, path, body string) routeAnswer {
-		var req *http.Request
-		switch method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch:
-			if body == "" {
-				body = "{}"
-			}
-			req = httptest.NewRequest(method, path, strings.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-		default:
-			req = httptest.NewRequest(method, path, nil)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-		return routeAnswer{rec.Code, rec.Body.String()}
+		return privateRouteCall(router, fx.WorkspaceID, token, method, path, body)
 	}
 
 	probe := func(t *testing.T, method, pattern string, params []routeParamRef, shape privateRouteRequest) {
@@ -660,5 +672,77 @@ func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
 		if !walked[key] {
 			t.Errorf("privateProjectRouteRequests lists %q, which the router no longer registers", key)
 		}
+	}
+}
+
+// Project folders carry no access of their own, so the probe above judges
+// nothing on their routes; but filing names a project, which may be private.
+// A workspace admin outside the project must not see where it is filed, and
+// moving it must answer as for a project that does not exist.
+func TestProjectFolderRoutesHidePrivateProjects(t *testing.T) {
+	fx := dbfx.New(testPool, testWorkspaceID, testUserID)
+	fx.WorkspaceID = fx.Workspace(t, "Private project folders", "private-folders-"+uuid.NewString())
+	fx.Cleanup(t, `DELETE FROM project_folder WHERE workspace_id = $1`, fx.WorkspaceID)
+	insiderID, insiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private folders insider")
+	_, outsiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private folders outsider")
+
+	privateID := fx.Project(t, "Private folders project", dbfx.Cols{"visibility": projectaccess.VisibilityPrivate})
+	publicID := fx.Project(t, "Public folders project")
+	fx.InsertNoID(t, "project_member", dbfx.Cols{"workspace_id": fx.WorkspaceID, "project_id": privateID, "user_id": insiderID},
+		"project_id = $1 AND user_id = $2", privateID, insiderID)
+
+	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
+	call := func(token, method, path, body string) routeAnswer {
+		return privateRouteCall(router, fx.WorkspaceID, token, method, path, body)
+	}
+	var folder struct {
+		ID string `json:"id"`
+	}
+	if created := call(insiderToken, http.MethodPost, "/api/project-folders/", `{"name":"Clients"}`); created.status != http.StatusCreated {
+		t.Fatalf("create folder: %v", created)
+	} else if err := json.Unmarshal([]byte(created.body), &folder); err != nil {
+		t.Fatalf("create folder answered %v: %v", created, err)
+	}
+	file := func(token, projectID string) routeAnswer {
+		return call(token, http.MethodPost, "/api/project-folders/file", fmt.Sprintf(`{"project_id":%q,"folder_id":%q}`, projectID, folder.ID))
+	}
+	// filedBy lists the projects the caller sees filed in folders.
+	filedBy := func(token string) []string {
+		list := call(token, http.MethodGet, "/api/project-folders/", "")
+		var resp struct {
+			Filed []struct {
+				ProjectID string `json:"project_id"`
+			} `json:"filed"`
+		}
+		if err := json.Unmarshal([]byte(list.body), &resp); err != nil {
+			t.Fatalf("list folders answered %v: %v", list, err)
+		}
+		var ids []string
+		for _, p := range resp.Filed {
+			ids = append(ids, p.ProjectID)
+		}
+		return ids
+	}
+
+	// Control: the member files both projects, and sees both.
+	for _, projectID := range []string{privateID, publicID} {
+		if moved := file(insiderToken, projectID); moved.status != http.StatusOK {
+			t.Fatalf("a project member files %s: %v", projectID, moved)
+		}
+		if !slices.Contains(filedBy(insiderToken), projectID) {
+			t.Errorf("a project member does not see %s filed", projectID)
+		}
+	}
+	// The outsider sees the public project where it is filed, and the private
+	// one nowhere: not in the list, and moving it answers as for a project
+	// that does not exist.
+	if !slices.Contains(filedBy(outsiderToken), publicID) {
+		t.Errorf("a workspace admin outside the project does not see the public project filed")
+	}
+	if slices.Contains(filedBy(outsiderToken), privateID) {
+		t.Errorf("a workspace admin outside the project sees the private project filed")
+	}
+	if hidden, missing := file(outsiderToken, privateID), file(outsiderToken, uuid.NewString()); hidden != missing {
+		t.Errorf("a workspace admin outside the project got %v; a project that does not exist gets %v", hidden, missing)
 	}
 }

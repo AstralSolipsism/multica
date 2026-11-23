@@ -113,7 +113,7 @@ afterEach(() => registerProjectFoldersExtension(null));
 const GROWTH: SidebarFolder = { id: "f1", name: "Growth" };
 const moveProject = vi.fn();
 
-/** Registers folders the way the commercial project-folders extension provides them. */
+/** Registers folders the way packages/ee provides them. */
 function provideFolders(folders: SidebarFolder[], folderOf: Record<string, string> = {}, canFile = true) {
   moveProject.mockReset();
   const value: ProjectFolders = {
