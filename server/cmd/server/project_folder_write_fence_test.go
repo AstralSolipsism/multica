@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +142,15 @@ func TestProjectFolderWritesCompleteOnAMinimalPool(t *testing.T) {
 	fx.Cleanup(t, `DELETE FROM project_folder WHERE workspace_id = $1`, fx.WorkspaceID)
 	_, token := privateRouteAdmin(fx, t, fx.WorkspaceID, "Folder pool admin")
 
-	smallPool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL")+"&pool_max_conns=2")
+	// Derive the two-connection pool from the test pool's config: appending
+	// pool_max_conns to the connection string breaks when the URL carries no
+	// query parameters.
+	cfg := testPool.Config().Copy()
+	cfg.MaxConns = 2
+	if cfg.MinConns > cfg.MaxConns {
+		cfg.MinConns = cfg.MaxConns
+	}
+	smallPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("open the small pool: %v", err)
 	}

@@ -278,6 +278,11 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 			}
 		}
 	}
+	// A valid id on a workspace with no private projects keeps the workspace
+	// fanout: the shortcut answers before the private map is consulted.
+	if fb := publishPayload(fakeAudienceQuerier{noPrivate: true}, map[string]any{"project_id": ppPrivate, "folder_id": "f"}); len(fb.workspaceCalls) != 1 {
+		t.Errorf("valid id on a workspace without private projects: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
 }
 
 func TestRegisterListeners_PrivateProjectAudienceFailureDropsEvent(t *testing.T) {

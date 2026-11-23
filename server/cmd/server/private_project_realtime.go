@@ -128,8 +128,11 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 	// project_id cannot be scoped, and the whole workspace is the wrong
 	// audience to fall back to. Checked before any audience is consulted,
 	// including the no-private-projects shortcut below.
+	var declaredID string
 	if extension.IsProjectEvent(e.Type) {
-		if _, ok := declaredProjectID(e.Payload); !ok {
+		var ok bool
+		declaredID, ok = declaredProjectID(e.Payload)
+		if !ok {
 			return nil, false, fmt.Errorf("project event %s does not name a project by a UUID string", e.Type)
 		}
 	}
@@ -139,6 +142,16 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 	}
 	if len(ws.projects) == 0 {
 		return nil, false, nil
+	}
+	if declaredID != "" {
+		// The validated id is the whole audience decision for a declared
+		// project event: it is already canonical, so the member map answers
+		// directly and no reference extraction runs.
+		projectMembers, ok := ws.projects[declaredID]
+		if !ok {
+			return nil, false, nil
+		}
+		return projectMembers, true, nil
 	}
 	projectIDs, err := a.eventProjectIDs(ctx, e)
 	if err != nil {
@@ -155,11 +168,8 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 			// to narrow by.
 			continue
 		}
-		// The payload spells the id however its producer did: a filing event
-		// echoes the requester's own text, which pgx accepts in more shapes
-		// than the database returns. The audience map is keyed by the
-		// canonical spelling, so normalize before the lookup; declared
-		// project events were already validated at the entry.
+		// The payload spells the id however its producer did; the audience map
+		// is keyed by the canonical spelling, so normalize before the lookup.
 		projectID, _ := canonicalProjectID(id)
 		projectMembers, ok := ws.projects[projectID]
 		if !ok {
