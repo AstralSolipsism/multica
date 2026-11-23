@@ -544,4 +544,19 @@ isolation probe moved behind `//go:build !oss`
 router: default and `-tags oss` `go test -race -count=1 ./cmd/server/...`
 pass against PG17.
 
+Stage 7 second-review rework (on `df7a7a90`): a declared project event that
+does not name its project by a UUID string — the id missing, null, another
+JSON type, empty or unparseable — is now dropped at the audience entry
+(`declaredProjectID` in `private_project_realtime.go`), before the
+no-private-projects shortcut, so no malformed payload can fall back to
+workspace fanout. The folder-write fence keys on the parsed workspace UUID
+(`advisorylock`), so equivalent spellings of one workspace share one lock, and
+its lock mechanics moved into `server/internal/advisorylock` (the
+seat-capacity locker now delegates there under its unchanged key space):
+same-process waiters queue without a connection, pinned connections stay
+bounded at min(4, MaxConns/4), and a session whose unlock fails is closed
+rather than returned to the pool. The race probe now also asserts the filing
+reports one of the two ordered outcomes (200 filed-then-cleared, 400 folder
+deleted first), not just reference integrity.
+
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.

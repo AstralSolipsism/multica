@@ -247,8 +247,27 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 	if fb := publish(filed, strings.ToUpper(ppPublic)); len(fb.workspaceCalls) != 1 {
 		t.Fatalf("uppercase public project id: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
 	}
-	if fb := publish(filed, "not-a-uuid"); len(fb.workspaceCalls) != 0 || len(privateAudienceScopes(fb)) != 0 {
-		t.Fatalf("unparseable project id on a declared project event: workspace=%d scoped=%v, want the event dropped", len(fb.workspaceCalls), privateAudienceScopes(fb))
+	// A declared project event that does not name its project by a UUID
+	// string — the id missing, null, another JSON type, empty, or unparseable
+	// — is dropped outright: no member delivery, no workspace broadcast.
+	publishPayload := func(payload any) *fakeBroadcaster {
+		bus := events.New()
+		fb := &fakeBroadcaster{}
+		registerListeners(bus, fb, newPrivateProjectAudience(fakeAudienceQuerier{}))
+		bus.Publish(events.Event{Type: filed, WorkspaceID: ppWorkspace, Payload: payload})
+		return fb
+	}
+	for name, payload := range map[string]any{
+		"missing":      map[string]any{"folder_id": "f"},
+		"null":         map[string]any{"project_id": nil, "folder_id": "f"},
+		"non-string":   map[string]any{"project_id": 42, "folder_id": "f"},
+		"empty string": map[string]any{"project_id": "", "folder_id": "f"},
+		"unparseable":  map[string]any{"project_id": "not-a-uuid", "folder_id": "f"},
+	} {
+		fb := publishPayload(payload)
+		if got := privateAudienceScopes(fb); len(fb.workspaceCalls) != 0 || len(got) != 0 {
+			t.Errorf("%s project_id: workspace broadcasts=%d delivered=%v, want the event dropped", name, len(fb.workspaceCalls), got)
+		}
 	}
 }
 

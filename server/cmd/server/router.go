@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/multica-ai/multica/server/internal/advisorylock"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attachmentpreview"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -2410,7 +2411,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// on project.folder_id, so the fence is what stops a filing from
 			// racing a folder deletion into a dangling reference.
 			r.Group(func(r chi.Router) {
-				r.Use(projectFolderWriteFence(h, pool))
+				r.Use(projectFolderWriteFence(h, advisorylock.New(pool, projectFolderLockKeySpace)))
 				extension.MountWorkspaceRoutes(r, h)
 			})
 

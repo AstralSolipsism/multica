@@ -123,6 +123,16 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 		delete(a.workspaces, e.WorkspaceID)
 		a.mu.Unlock()
 	}
+	// A package-declared project event must name its project outright, as a
+	// UUID string in its payload — a missing, null, non-string or unparseable
+	// project_id cannot be scoped, and the whole workspace is the wrong
+	// audience to fall back to. Checked before any audience is consulted,
+	// including the no-private-projects shortcut below.
+	if extension.IsProjectEvent(e.Type) {
+		if _, ok := declaredProjectID(e.Payload); !ok {
+			return nil, false, fmt.Errorf("project event %s does not name a project by a UUID string", e.Type)
+		}
+	}
 	ws, err := a.workspace(ctx, e.WorkspaceID)
 	if err != nil {
 		return nil, false, err
@@ -148,12 +158,9 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 		// The payload spells the id however its producer did: a filing event
 		// echoes the requester's own text, which pgx accepts in more shapes
 		// than the database returns. The audience map is keyed by the
-		// canonical spelling, so normalize before the lookup.
-		projectID, parsed := canonicalProjectID(id)
-		if !parsed && extension.IsProjectEvent(e.Type) {
-			return nil, false, fmt.Errorf("project event %s carries an unparseable project_id %q", e.Type, id)
-		}
-		projectMembers, ok := ws.projects[projectID]
+		// canonical spelling, so normalize before the lookup; declared
+		// project events were already validated at the entry.
+		projectMembers, ok := ws.projects[canonicalProjectID(id)]
 		if !ok {
 			continue
 		}
@@ -444,11 +451,40 @@ func logAudienceFailure(e events.Event, err error) {
 
 // canonicalProjectID normalizes the text an event payload spells a project id
 // with into the database's canonical form, the one the private-audience map is
-// keyed by. ok is false when the text names no UUID at all.
-func canonicalProjectID(id string) (string, bool) {
+// keyed by: payloads echo their producer's spelling, which pgx accepts in more
+// shapes than the database returns. Text that names no UUID comes back as-is
+// and simply matches no project.
+func canonicalProjectID(id string) string {
 	uid, err := util.ParseUUID(id)
 	if err != nil {
-		return id, false
+		return id
+	}
+	return util.UUIDToString(uid)
+}
+
+// declaredProjectID reports whether the payload names its project the way a
+// RegisterProjectEvent declaration promises — a top-level project_id string
+// holding a UUID — and returns that id in canonical form.
+func declaredProjectID(payload any) (string, bool) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return "", false
+	}
+	v, ok := top["project_id"]
+	if !ok {
+		return "", false
+	}
+	var s *string
+	if json.Unmarshal(v, &s) != nil || s == nil || *s == "" {
+		return "", false
+	}
+	uid, err := util.ParseUUID(*s)
+	if err != nil {
+		return "", false
 	}
 	return util.UUIDToString(uid), true
 }
