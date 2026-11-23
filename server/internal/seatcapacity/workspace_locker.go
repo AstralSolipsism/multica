@@ -28,7 +28,10 @@ type WorkspaceLocker interface {
 }
 
 // WorkspaceLockerOptions names the advisory-lock key space and the cooldown a
-// locker runs with. The zero value is the seat-capacity default.
+// locker runs with. An empty namespace falls back to the seat-capacity key
+// space; the cooldown is taken as given, so callers that need one set it
+// explicitly — seat capacity's default constructor passes the 75ms its Cloud
+// peer expects, folder writes pass none.
 type WorkspaceLockerOptions struct {
 	// Namespace prefixes the lock key: two lockers with different namespaces
 	// never block each other, however they share one pool.
@@ -63,7 +66,10 @@ type localWorkspaceLock struct {
 }
 
 func NewWorkspaceLocker(pool *pgxpool.Pool) WorkspaceLocker {
-	return NewWorkspaceLockerWithOptions(pool, WorkspaceLockerOptions{})
+	return NewWorkspaceLockerWithOptions(pool, WorkspaceLockerOptions{
+		Namespace: defaultWorkspaceLockNamespace,
+		Cooldown:  defaultWorkspaceCooldown,
+	})
 }
 
 // NewWorkspaceLockerWithOptions returns a locker under its own key space and
