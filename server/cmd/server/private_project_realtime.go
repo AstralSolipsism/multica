@@ -160,7 +160,8 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 		// than the database returns. The audience map is keyed by the
 		// canonical spelling, so normalize before the lookup; declared
 		// project events were already validated at the entry.
-		projectMembers, ok := ws.projects[canonicalProjectID(id)]
+		projectID, _ := canonicalProjectID(id)
+		projectMembers, ok := ws.projects[projectID]
 		if !ok {
 			continue
 		}
@@ -452,14 +453,14 @@ func logAudienceFailure(e events.Event, err error) {
 // canonicalProjectID normalizes the text an event payload spells a project id
 // with into the database's canonical form, the one the private-audience map is
 // keyed by: payloads echo their producer's spelling, which pgx accepts in more
-// shapes than the database returns. Text that names no UUID comes back as-is
-// and simply matches no project.
-func canonicalProjectID(id string) string {
+// shapes than the database returns. ok is false when the text names no UUID at
+// all.
+func canonicalProjectID(id string) (string, bool) {
 	uid, err := util.ParseUUID(id)
 	if err != nil {
-		return id
+		return id, false
 	}
-	return util.UUIDToString(uid)
+	return util.UUIDToString(uid), true
 }
 
 // declaredProjectID reports whether the payload names its project the way a
@@ -482,9 +483,5 @@ func declaredProjectID(payload any) (string, bool) {
 	if json.Unmarshal(v, &s) != nil || s == nil || *s == "" {
 		return "", false
 	}
-	uid, err := util.ParseUUID(*s)
-	if err != nil {
-		return "", false
-	}
-	return util.UUIDToString(uid), true
+	return canonicalProjectID(*s)
 }

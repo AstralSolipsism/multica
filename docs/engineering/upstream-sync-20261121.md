@@ -532,8 +532,8 @@ back to workspace fanout (`private_project_realtime.go`,
 `TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience` asserts
 members-only delivery for a non-canonical spelling, the public-project
 control, and the drop). Project-folder writes serialize per workspace behind
-an advisory lock held for the request (`project_folder_write_fence.go`
-wrapped around `extension.MountWorkspaceRoutes`), because `server/ee` keeps
+the shared seat-capacity workspace lock (see the rework notes below), because
+`server/ee` keeps
 no foreign key on `project.folder_id` and stays byte-identical to upstream:
 `TestProjectFolderWritesSerializePerWorkspace` proves the wait,
 `TestProjectFolderFileAndDeleteRaceKeepsReferencesResolvable` races filing
@@ -544,19 +544,24 @@ isolation probe moved behind `//go:build !oss`
 router: default and `-tags oss` `go test -race -count=1 ./cmd/server/...`
 pass against PG17.
 
-Stage 7 second-review rework (on `df7a7a90`): a declared project event that
-does not name its project by a UUID string — the id missing, null, another
-JSON type, empty or unparseable — is now dropped at the audience entry
-(`declaredProjectID` in `private_project_realtime.go`), before the
-no-private-projects shortcut, so no malformed payload can fall back to
-workspace fanout. The folder-write fence keys on the parsed workspace UUID
-(`advisorylock`), so equivalent spellings of one workspace share one lock, and
-its lock mechanics moved into `server/internal/advisorylock` (the
-seat-capacity locker now delegates there under its unchanged key space):
-same-process waiters queue without a connection, pinned connections stay
-bounded at min(4, MaxConns/4), and a session whose unlock fails is closed
-rather than returned to the pool. The race probe now also asserts the filing
-reports one of the two ordered outcomes (200 filed-then-cleared, 400 folder
-deleted first), not just reference integrity.
+Stage 7 second- and third-review rework (on `df7a7a90` and after): a declared
+project event that does not name its project by a UUID string — the id
+missing, null, another JSON type, empty or unparseable — is dropped at the
+audience entry (`declaredProjectID` in `private_project_realtime.go`), before
+the no-private-projects shortcut, in workspaces with and without private
+projects alike. The folder-write fence reuses the seat-capacity workspace
+lock through `NewWorkspaceLockerWithOptions`
+(`server/internal/seatcapacity/workspace_locker.go`; seat capacity keeps its
+default namespace and cooldown, folders run under
+`labrastro:project-folder-writes:` with no cooldown): same-process waiters
+queue without a connection, pinned connections stay bounded at
+clamp(MaxConns/4, 1, 4) — one on the smallest supported pool, so a holder
+always leaves the pool a second connection for the handler — and a session
+whose unlock fails is closed rather than returned to the pool. The lock keys
+on the parsed workspace UUID, so equivalent spellings share one lock, and the
+race probes assert the filing reports one of the two ordered outcomes with
+its contract body (200 echoing the filed ids, or 400 "folder not found in
+this workspace"), on the main pool and on a two-connection pool under
+concurrent filings and deletions.
 
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.

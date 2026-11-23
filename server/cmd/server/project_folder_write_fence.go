@@ -5,14 +5,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/multica-ai/multica/server/internal/advisorylock"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-// projectFolderLockKeySpace keeps folder-write locks off the seat-capacity
+// projectFolderLockNamespace keeps folder-write locks off the seat-capacity
 // lock keys.
-const projectFolderLockKeySpace = "labrastro:project-folder-writes:"
+const projectFolderLockNamespace = "labrastro:project-folder-writes:"
 
 // Project folders carry no foreign key between project.folder_id and
 // project_folder: upstream 681 maintains the reference by clearing filed
@@ -20,14 +20,16 @@ const projectFolderLockKeySpace = "labrastro:project-folder-writes:"
 // folder it names with its own snapshot, so a filing racing a folder deletion
 // can commit a folder_id the delete already removed. server/ee stays
 // byte-identical to upstream, so the host serializes the write kinds here:
-// the advisory lock makes a filing either finish before the delete's clear
+// the workspace lock makes a filing either finish before the delete's clear
 // (which then drops it) or see the folder gone (the handler's 400). The
 // workspace, not the folder, is the key because a filing names its folder
 // only inside the request body; writes are rare and human-paced, so
-// per-workspace is fine. The locker queues same-process waiters without a
-// connection and bounds the ones it pins, so the fence cannot starve the
-// pool the handlers themselves draw from.
-func projectFolderWriteFence(h *handler.Handler, locker *advisorylock.Locker) func(http.Handler) http.Handler {
+// per-workspace is fine. The lock is the seat-capacity workspace locker under
+// this namespace with no cooldown: same-process waiters queue without a
+// connection, pinned connections stay bounded so the pool keeps serving the
+// handlers' own queries, and a session whose unlock fails is closed rather
+// than returned to the pool.
+func projectFolderWriteFence(h *handler.Handler, locker seatcapacity.WorkspaceLocker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {

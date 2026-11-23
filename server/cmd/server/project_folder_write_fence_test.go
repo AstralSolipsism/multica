@@ -15,10 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/multica-ai/multica/server/internal/advisorylock"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -27,6 +27,45 @@ import (
 // spelling shares one key.
 func wsLockID(id string) uuid.UUID {
 	return uuid.UUID(util.MustParseUUID(id).Bytes)
+}
+
+// takeFolderFence holds the workspace's folder-write lock through the same
+// seat-capacity locker the fence uses, and returns its release.
+func takeFolderFence(t *testing.T, workspaceID string) func() {
+	t.Helper()
+	_, release, err := seatcapacity.NewWorkspaceLockerWithOptions(testPool, seatcapacity.WorkspaceLockerOptions{
+		Namespace: projectFolderLockNamespace,
+	}).Lock(context.Background(), wsLockID(workspaceID))
+	if err != nil {
+		t.Fatalf("take the fence: %v", err)
+	}
+	return release
+}
+
+// checkFilingAnswer asserts the racing filing reported one of the two
+// outcomes the fence orders, with the handler's contract body: 200 echoing
+// the filed ids when it landed (the delete's clear then emptied it), or 400
+// "folder not found in this workspace" when the folder was deleted first.
+// Anything else — a 500, say — is a filing failure the reference checks
+// would silently forgive.
+func checkFilingAnswer(t *testing.T, round int, answer routeAnswer, projectID, folderID string) {
+	t.Helper()
+	switch answer.status {
+	case http.StatusOK:
+		var resp struct {
+			ProjectID string `json:"project_id"`
+			FolderID  string `json:"folder_id"`
+		}
+		if err := json.Unmarshal([]byte(answer.body), &resp); err != nil || resp.ProjectID != projectID || resp.FolderID != folderID {
+			t.Fatalf("round %d: filing 200 body = %s, want project %s filed in %s", round, strings.TrimSpace(answer.body), projectID, folderID)
+		}
+	case http.StatusBadRequest:
+		if !strings.Contains(answer.body, "folder not found in this workspace") {
+			t.Fatalf("round %d: filing 400 body = %s, want the folder-not-found contract", round, strings.TrimSpace(answer.body))
+		}
+	default:
+		t.Fatalf("round %d: filing answer %v, want 200 (filed, then cleared) or 400 (folder deleted first)", round, answer)
+	}
 }
 
 // While the workspace's folder-write lock is held, a folder write request
@@ -39,11 +78,7 @@ func TestProjectFolderWritesSerializePerWorkspace(t *testing.T) {
 	_, token := privateRouteAdmin(fx, t, fx.WorkspaceID, "Folder fence admin")
 
 	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
-	conn, release, err := advisorylock.New(testPool, projectFolderLockKeySpace).Lock(context.Background(), wsLockID(fx.WorkspaceID))
-	if err != nil {
-		t.Fatalf("take the fence: %v", err)
-	}
-	defer conn.Release()
+	release := takeFolderFence(t, fx.WorkspaceID)
 	defer release()
 
 	done := make(chan routeAnswer, 1)
@@ -76,11 +111,7 @@ func TestProjectFolderWriteLockIgnoresWorkspaceSpelling(t *testing.T) {
 	_, token := privateRouteAdmin(fx, t, fx.WorkspaceID, "Folder spelling admin")
 
 	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
-	conn, release, err := advisorylock.New(testPool, projectFolderLockKeySpace).Lock(context.Background(), wsLockID(fx.WorkspaceID))
-	if err != nil {
-		t.Fatalf("take the fence: %v", err)
-	}
-	defer conn.Release()
+	release := takeFolderFence(t, fx.WorkspaceID)
 	defer release()
 
 	done := make(chan routeAnswer, 1)
@@ -103,10 +134,10 @@ func TestProjectFolderWriteLockIgnoresWorkspaceSpelling(t *testing.T) {
 	}
 }
 
-// The fence must not eat the pool its own handlers draw from: with a
-// two-connection pool and the lock held elsewhere, several writes queue
-// without pinning connections and all complete once the lock lifts.
-func TestProjectFolderWritesQueueWithinABoundedPool(t *testing.T) {
+// On the smallest supported pool the fence still completes every write: with
+// two connections, concurrent filings and folder deletions all finish, none
+// answers 5xx, and the committed references stay resolvable.
+func TestProjectFolderWritesCompleteOnAMinimalPool(t *testing.T) {
 	fx := dbfx.New(testPool, testWorkspaceID, testUserID)
 	fx.WorkspaceID = fx.Workspace(t, "Folder fence pool", "folder-pool-"+uuid.NewString())
 	fx.Cleanup(t, `DELETE FROM project_folder WHERE workspace_id = $1`, fx.WorkspaceID)
@@ -118,43 +149,73 @@ func TestProjectFolderWritesQueueWithinABoundedPool(t *testing.T) {
 	}
 	defer smallPool.Close()
 	router, _ := NewRouterWithOptions(smallPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
-	conn, release, err := advisorylock.New(testPool, projectFolderLockKeySpace).Lock(context.Background(), wsLockID(fx.WorkspaceID))
-	if err != nil {
-		t.Fatalf("take the fence: %v", err)
+	call := func(method, path, body string) routeAnswer {
+		return privateRouteCall(router, fx.WorkspaceID, token, method, path, body)
 	}
-	defer conn.Release()
-	defer release()
 
-	const writers = 3
-	done := make(chan routeAnswer, writers)
-	for i := range writers {
+	const pairs = 5
+	folders := make([]string, pairs)
+	projects := make([]string, pairs)
+	for i := range pairs {
+		var folder struct {
+			ID string `json:"id"`
+		}
+		if created := call(http.MethodPost, "/api/project-folders/", fmt.Sprintf(`{"name":"Pooled %d"}`, i)); created.status != http.StatusCreated {
+			t.Fatalf("create folder %d: %v", i, created)
+		} else if err := json.Unmarshal([]byte(created.body), &folder); err != nil {
+			t.Fatalf("create folder %d answered %v: %v", i, created, err)
+		}
+		folders[i] = folder.ID
+		projects[i] = fx.Project(t, fmt.Sprintf("Pooled round %d", i))
+	}
+
+	type racing struct {
+		kind   string
+		pair   int
+		answer routeAnswer
+	}
+	answers := make(chan racing, 2*pairs)
+	for i := range pairs {
 		go func() {
-			done <- privateRouteCall(router, fx.WorkspaceID, token, http.MethodPost, "/api/project-folders/", fmt.Sprintf(`{"name":"Pooled %d"}`, i))
+			answers <- racing{"filing", i, call(http.MethodPost, "/api/project-folders/file", fmt.Sprintf(`{"project_id":%q,"folder_id":%q}`, projects[i], folders[i]))}
+		}()
+		go func() {
+			answers <- racing{"deleting", i, call(http.MethodDelete, "/api/project-folders/"+folders[i], "")}
 		}()
 	}
-	select {
-	case answer := <-done:
-		t.Fatalf("a folder write completed while the fence was held: %v", answer)
-	case <-time.After(300 * time.Millisecond):
-	}
-	release()
-	for range writers {
+	for range 2 * pairs {
 		select {
-		case answer := <-done:
-			if answer.status != http.StatusCreated {
-				t.Fatalf("queued folder write: %v", answer)
+		case r := <-answers:
+			if r.answer.status >= 500 {
+				t.Fatalf("pair %d %s answered %v", r.pair, r.kind, r.answer)
+			}
+			switch r.kind {
+			case "filing":
+				checkFilingAnswer(t, r.pair, r.answer, projects[r.pair], folders[r.pair])
+			case "deleting":
+				if r.answer.status != http.StatusNoContent {
+					t.Fatalf("pair %d deleting the fresh folder: %v", r.pair, r.answer)
+				}
 			}
 		case <-time.After(30 * time.Second):
-			t.Fatal("a queued folder write did not finish after the fence lifted")
+			t.Fatal("a racing write did not finish on the minimal pool")
 		}
+	}
+	var dangling int
+	fx.QueryRow(t, `SELECT count(*) FROM project p
+		WHERE p.workspace_id = $1 AND p.folder_id IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM project_folder f WHERE f.id = p.folder_id)`, fx.WorkspaceID).Scan(&dangling)
+	if dangling != 0 {
+		t.Fatalf("%d committed folder_id values resolve to no folder", dangling)
 	}
 }
 
 // The fence turns the file/delete race into an ordering. Every round files a
 // project into a fresh folder while another request deletes that folder, both
 // through their own transactions; once both finish, the filing must have
-// reported one of the two ordered outcomes, the project must not remain
-// filed, and every committed folder_id in the workspace must resolve.
+// reported one of the two ordered outcomes with its contract body, the
+// project must not remain filed, and every committed folder_id in the
+// workspace must resolve.
 func TestProjectFolderFileAndDeleteRaceKeepsReferencesResolvable(t *testing.T) {
 	fx := dbfx.New(testPool, testWorkspaceID, testUserID)
 	fx.WorkspaceID = fx.Workspace(t, "Folder write races", "folder-races-"+uuid.NewString())
@@ -196,14 +257,7 @@ func TestProjectFolderFileAndDeleteRaceKeepsReferencesResolvable(t *testing.T) {
 		if deleteAnswer.status != http.StatusNoContent {
 			t.Fatalf("round %d: deleting the fresh folder: %v", round, deleteAnswer)
 		}
-		// The fence orders the two writes, so the filing reports exactly one
-		// of them: 200 when it landed (the delete's clear then emptied it) or
-		// the handler's 400 when the folder was already gone. Anything else —
-		// a 500, say — is a filing failure the reference checks below would
-		// silently forgive.
-		if fileAnswer.status != http.StatusOK && fileAnswer.status != http.StatusBadRequest {
-			t.Fatalf("round %d: filing answer %v, want 200 (filed, then cleared) or 400 (folder deleted first)", round, fileAnswer)
-		}
+		checkFilingAnswer(t, round, fileAnswer, projectID, folder.ID)
 		var filed *string
 		fx.QueryRow(t, `SELECT folder_id::text FROM project WHERE id = $1`, projectID).Scan(&filed)
 		if filed != nil {
