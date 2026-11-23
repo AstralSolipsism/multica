@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -23,10 +24,13 @@ import (
 // privateProjectAudience narrows realtime fanout for events about a private
 // project (MUL-8472): the project itself, its resources, its issues, their
 // comments and their runs reach only project members; a workspace role
-// adds nobody (MUL-9284). Every other event keeps workspace fanout, and so does an
-// event whose project cannot be resolved (a deleted issue's id, a
+// adds nobody (MUL-9284). Every other event keeps workspace fanout, and so
+// does an event whose project cannot be resolved (a deleted issue's id, a
 // workspace-level object): narrowing anything wider is how #9133 silenced
-// realtime for whole workspaces.
+// realtime for whole workspaces. A project event a package declared through
+// RegisterProjectEvent is the one exception: its payload names the project
+// outright, so an id that spells no UUID drops the event instead — the whole
+// workspace is the wrong audience for it.
 type privateProjectAudience interface {
 	// Audience reports whether e belongs to a private project and, if so, the
 	// user ids that may receive it. err means the decision could not be made;
@@ -135,7 +139,20 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 	// several; only members of every private one may see it.
 	var members []string
 	private := false
-	for _, projectID := range projectIDs {
+	for _, id := range projectIDs {
+		if id == "" {
+			// The payload states the object has no project; there is nothing
+			// to narrow by.
+			continue
+		}
+		// The payload spells the id however its producer did: a filing event
+		// echoes the requester's own text, which pgx accepts in more shapes
+		// than the database returns. The audience map is keyed by the
+		// canonical spelling, so normalize before the lookup.
+		projectID, parsed := canonicalProjectID(id)
+		if !parsed && extension.IsProjectEvent(e.Type) {
+			return nil, false, fmt.Errorf("project event %s carries an unparseable project_id %q", e.Type, id)
+		}
 		projectMembers, ok := ws.projects[projectID]
 		if !ok {
 			continue
@@ -423,4 +440,15 @@ func extractEventRefs(eventType string, payload any) eventRefs {
 func logAudienceFailure(e events.Event, err error) {
 	slog.Warn("realtime: dropping event, private project audience unresolved",
 		"event_type", e.Type, "workspace_id", e.WorkspaceID, "task_id", e.TaskID, "error", err)
+}
+
+// canonicalProjectID normalizes the text an event payload spells a project id
+// with into the database's canonical form, the one the private-audience map is
+// keyed by. ok is false when the text names no UUID at all.
+func canonicalProjectID(id string) (string, bool) {
+	uid, err := util.ParseUUID(id)
+	if err != nil {
+		return id, false
+	}
+	return util.UUIDToString(uid), true
 }

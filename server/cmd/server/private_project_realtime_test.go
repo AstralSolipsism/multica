@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,6 +236,19 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 	}
 	if fb := publish("test_extension:unregistered", ppPrivate); len(fb.workspaceCalls) != 1 {
 		t.Fatalf("unregistered event: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
+	// The payload spells the project id however its producer did — a filing
+	// event echoes the requester's own text — and the audience lookup must
+	// see past the spelling to the members.
+	fb = publish(filed, strings.ToUpper(ppPrivate))
+	if got := privateAudienceScopes(fb); len(fb.workspaceCalls) != 0 || len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("uppercase private project id: workspace=%d delivered=%v, want only %v", len(fb.workspaceCalls), got, want)
+	}
+	if fb := publish(filed, strings.ToUpper(ppPublic)); len(fb.workspaceCalls) != 1 {
+		t.Fatalf("uppercase public project id: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
+	if fb := publish(filed, "not-a-uuid"); len(fb.workspaceCalls) != 0 || len(privateAudienceScopes(fb)) != 0 {
+		t.Fatalf("unparseable project id on a declared project event: workspace=%d scoped=%v, want the event dropped", len(fb.workspaceCalls), privateAudienceScopes(fb))
 	}
 }
 

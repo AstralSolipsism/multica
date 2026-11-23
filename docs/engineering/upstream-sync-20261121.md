@@ -524,4 +524,24 @@ Run on the Stage 7 branch over `main` `97ac2129bfc6` with Go 1.27.4, Node
   The Docker image build was not run locally (no Docker); CI `images` is
   authoritative.
 
+Stage 7 first-review rework (Codex, on `2ce7f3a8`): the private-project
+audience now normalizes the payload's project_id text to the database's
+canonical UUID spelling before the member lookup, and an extension-declared
+project event whose project_id spells no UUID is dropped instead of falling
+back to workspace fanout (`private_project_realtime.go`,
+`TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience` asserts
+members-only delivery for a non-canonical spelling, the public-project
+control, and the drop). Project-folder writes serialize per workspace behind
+an advisory lock held for the request (`project_folder_write_fence.go`
+wrapped around `extension.MountWorkspaceRoutes`), because `server/ee` keeps
+no foreign key on `project.folder_id` and stays byte-identical to upstream:
+`TestProjectFolderWritesSerializePerWorkspace` proves the wait,
+`TestProjectFolderFileAndDeleteRaceKeepsReferencesResolvable` races filing
+against deletion through independent requests and asserts every committed
+folder_id resolves. The `project-folders/{id}` classification and the folder
+isolation probe moved behind `//go:build !oss`
+(`private_project_routes_ee_test.go`), so both builds exhaust their own
+router: default and `-tags oss` `go test -race -count=1 ./cmd/server/...`
+pass against PG17.
+
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.
