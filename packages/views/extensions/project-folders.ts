@@ -3,11 +3,10 @@ import type { SidebarFolder } from "@multica/core/projects/folder-tree";
 import type { Project } from "@multica/core/types";
 
 /**
- * Project folders are a commercial feature provided by an app-level
- * extension. This distribution ships no such extension, so the open-source
- * views only draw what one provides: the sidebar tree, the Projects page
- * grouping, and the slots below. Without an extension there are no folders
- * and every surface renders as before.
+ * Project folders are a commercial feature (packages/ee). The open-source
+ * views only draw what an extension provides: the sidebar tree, the Projects
+ * page grouping, and the slots below. Without an extension there are no
+ * folders and every surface renders as before.
  */
 export interface ProjectFolders {
   /** In display order. */

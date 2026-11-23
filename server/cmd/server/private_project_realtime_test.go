@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +42,8 @@ const (
 )
 
 type fakeAudienceQuerier struct {
-	fail bool
+	fail      bool
+	noPrivate bool
 }
 
 func ppUUID(s string) pgtype.UUID {
@@ -53,6 +55,9 @@ func ppUUID(s string) pgtype.UUID {
 }
 
 func (f fakeAudienceQuerier) ListPrivateProjectAudience(context.Context, pgtype.UUID) ([]db.ListPrivateProjectAudienceRow, error) {
+	if f.noPrivate {
+		return nil, nil
+	}
 	if f.fail {
 		return nil, errors.New("db down")
 	}
@@ -235,6 +240,48 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 	}
 	if fb := publish("test_extension:unregistered", ppPrivate); len(fb.workspaceCalls) != 1 {
 		t.Fatalf("unregistered event: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
+	// The payload spells the project id however its producer did — a filing
+	// event echoes the requester's own text — and the audience lookup must
+	// see past the spelling to the members.
+	fb = publish(filed, strings.ToUpper(ppPrivate))
+	if got := privateAudienceScopes(fb); len(fb.workspaceCalls) != 0 || len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("uppercase private project id: workspace=%d delivered=%v, want only %v", len(fb.workspaceCalls), got, want)
+	}
+	if fb := publish(filed, strings.ToUpper(ppPublic)); len(fb.workspaceCalls) != 1 {
+		t.Fatalf("uppercase public project id: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
+	// A declared project event that does not name its project by a UUID
+	// string — the id missing, null, another JSON type, empty, or unparseable
+	// — is dropped outright: no member delivery, no workspace broadcast.
+	publishPayload := func(querier fakeAudienceQuerier, payload any) *fakeBroadcaster {
+		bus := events.New()
+		fb := &fakeBroadcaster{}
+		registerListeners(bus, fb, newPrivateProjectAudience(querier))
+		bus.Publish(events.Event{Type: filed, WorkspaceID: ppWorkspace, Payload: payload})
+		return fb
+	}
+	for scenario, querier := range map[string]fakeAudienceQuerier{
+		"workspace with private projects":    {},
+		"workspace without private projects": {noPrivate: true},
+	} {
+		for name, payload := range map[string]any{
+			"missing":      map[string]any{"folder_id": "f"},
+			"null":         map[string]any{"project_id": nil, "folder_id": "f"},
+			"non-string":   map[string]any{"project_id": 42, "folder_id": "f"},
+			"empty string": map[string]any{"project_id": "", "folder_id": "f"},
+			"unparseable":  map[string]any{"project_id": "not-a-uuid", "folder_id": "f"},
+		} {
+			fb := publishPayload(querier, payload)
+			if got := privateAudienceScopes(fb); len(fb.workspaceCalls) != 0 || len(got) != 0 {
+				t.Errorf("%s, %s project_id: workspace broadcasts=%d delivered=%v, want the event dropped", scenario, name, len(fb.workspaceCalls), got)
+			}
+		}
+	}
+	// A valid id on a workspace with no private projects keeps the workspace
+	// fanout: the shortcut answers before the private map is consulted.
+	if fb := publishPayload(fakeAudienceQuerier{noPrivate: true}, map[string]any{"project_id": ppPrivate, "folder_id": "f"}); len(fb.workspaceCalls) != 1 {
+		t.Errorf("valid id on a workspace without private projects: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
 	}
 }
 

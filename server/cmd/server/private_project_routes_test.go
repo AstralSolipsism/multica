@@ -71,7 +71,8 @@ type outsideProjectParam struct {
 
 // routeParamsOutsideProjects lists every other route parameter with the reason
 // it cannot name a private project's object. A route declaring only these is
-// not probed.
+// not probed. Entries for routes a build-tagged module mounts register from
+// that build's test files (private_project_routes_ee_test.go).
 var routeParamsOutsideProjects = map[string]outsideProjectParam{
 	"workspaces/{id}":                     {why: "the workspace itself"},
 	"members/{memberId}":                  {why: "a workspace membership"},
@@ -472,6 +473,41 @@ func (a routeAnswer) String() string {
 	return fmt.Sprintf("%d %s", a.status, strings.TrimSpace(a.body))
 }
 
+// privateRouteAdmin joins a fresh user to the workspace as an admin and
+// returns its id and session token.
+func privateRouteAdmin(fx *dbfx.Fixture, t *testing.T, workspaceID, name string) (string, string) {
+	t.Helper()
+	email := "private-routes-" + uuid.NewString() + "@example.test"
+	id := fx.User(t, name, email)
+	fx.Member(t, workspaceID, id, "admin")
+	token, err := generateTestJWT(id, email, name)
+	if err != nil {
+		t.Fatalf("sign %s token: %v", name, err)
+	}
+	return id, token
+}
+
+// privateRouteCall sends a request as a member session of workspaceID: a JSON
+// body for the methods that take one.
+func privateRouteCall(router http.Handler, workspaceID, token, method, path, body string) routeAnswer {
+	var req *http.Request
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		if body == "" {
+			body = "{}"
+		}
+		req = httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+	default:
+		req = httptest.NewRequest(method, path, nil)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return routeAnswer{rec.Code, rec.Body.String()}
+}
+
 // Every handler that loads an object by its own id must refuse one in a
 // private project the caller cannot see, answering exactly as for an id that
 // does not exist. Each handler has to remember that check, and it has been
@@ -491,18 +527,8 @@ func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
 
 	// Both callers are admins, so role checks pass and only project
 	// membership tells them apart: a workspace role grants no visibility.
-	newAdmin := func(name string) (string, string) {
-		email := "private-routes-" + uuid.NewString() + "@example.test"
-		id := fx.User(t, name, email)
-		fx.Member(t, fx.WorkspaceID, id, "admin")
-		token, err := generateTestJWT(id, email, name)
-		if err != nil {
-			t.Fatalf("sign %s token: %v", name, err)
-		}
-		return id, token
-	}
-	insiderID, insiderToken := newAdmin("Private routes insider")
-	outsiderID, outsiderToken := newAdmin("Private routes outsider")
+	insiderID, insiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private routes insider")
+	outsiderID, outsiderToken := privateRouteAdmin(fx, t, fx.WorkspaceID, "Private routes outsider")
 
 	shared := privateRouteShared{insiderID: insiderID}
 	shared.runtimeID = fx.Runtime(t, "Private routes runtime", dbfx.Cols{"owner_id": insiderID})
@@ -527,22 +553,7 @@ func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
 	t.Setenv("LOCAL_UPLOAD_DIR", shared.uploadDir)
 	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
 	call := func(token, method, path, body string) routeAnswer {
-		var req *http.Request
-		switch method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch:
-			if body == "" {
-				body = "{}"
-			}
-			req = httptest.NewRequest(method, path, strings.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-		default:
-			req = httptest.NewRequest(method, path, nil)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-		return routeAnswer{rec.Code, rec.Body.String()}
+		return privateRouteCall(router, fx.WorkspaceID, token, method, path, body)
 	}
 
 	probe := func(t *testing.T, method, pattern string, params []routeParamRef, shape privateRouteRequest) {

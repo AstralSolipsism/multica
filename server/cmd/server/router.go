@@ -2404,8 +2404,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Commercial (server/ee) workspace routes; none in an open-source build.
-			extension.MountWorkspaceRoutes(r, h)
+			// Commercial (server/ee) workspace routes; none in an open-source
+			// build. Their folder writes serialize per workspace
+			// (project_folder_write_fence.go): server/ee keeps no foreign key
+			// on project.folder_id, so the fence is what stops a filing from
+			// racing a folder deletion into a dangling reference.
+			r.Group(func(r chi.Router) {
+				r.Use(projectFolderWriteFence(h, seatcapacity.NewWorkspaceLockerWithOptions(pool, seatcapacity.WorkspaceLockerOptions{Namespace: projectFolderLockNamespace})))
+				extension.MountWorkspaceRoutes(r, h)
+			})
 
 			// Docs, behind the docs_v1 flag until launch.
 			r.Route("/api/docs", func(r chi.Router) {

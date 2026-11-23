@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -23,10 +24,13 @@ import (
 // privateProjectAudience narrows realtime fanout for events about a private
 // project (MUL-8472): the project itself, its resources, its issues, their
 // comments and their runs reach only project members; a workspace role
-// adds nobody (MUL-9284). Every other event keeps workspace fanout, and so does an
-// event whose project cannot be resolved (a deleted issue's id, a
+// adds nobody (MUL-9284). Every other event keeps workspace fanout, and so
+// does an event whose project cannot be resolved (a deleted issue's id, a
 // workspace-level object): narrowing anything wider is how #9133 silenced
-// realtime for whole workspaces.
+// realtime for whole workspaces. A project event a package declared through
+// RegisterProjectEvent is the one exception: its payload names the project
+// outright, so an id that spells no UUID drops the event instead — the whole
+// workspace is the wrong audience for it.
 type privateProjectAudience interface {
 	// Audience reports whether e belongs to a private project and, if so, the
 	// user ids that may receive it. err means the decision could not be made;
@@ -119,12 +123,35 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 		delete(a.workspaces, e.WorkspaceID)
 		a.mu.Unlock()
 	}
+	// A package-declared project event must name its project outright, as a
+	// UUID string in its payload — a missing, null, non-string or unparseable
+	// project_id cannot be scoped, and the whole workspace is the wrong
+	// audience to fall back to. Checked before any audience is consulted,
+	// including the no-private-projects shortcut below.
+	var declaredID string
+	if extension.IsProjectEvent(e.Type) {
+		var ok bool
+		declaredID, ok = declaredProjectID(e.Payload)
+		if !ok {
+			return nil, false, fmt.Errorf("project event %s does not name a project by a UUID string", e.Type)
+		}
+	}
 	ws, err := a.workspace(ctx, e.WorkspaceID)
 	if err != nil {
 		return nil, false, err
 	}
 	if len(ws.projects) == 0 {
 		return nil, false, nil
+	}
+	if declaredID != "" {
+		// The validated id is the whole audience decision for a declared
+		// project event: it is already canonical, so the member map answers
+		// directly and no reference extraction runs.
+		projectMembers, ok := ws.projects[declaredID]
+		if !ok {
+			return nil, false, nil
+		}
+		return projectMembers, true, nil
 	}
 	projectIDs, err := a.eventProjectIDs(ctx, e)
 	if err != nil {
@@ -135,7 +162,15 @@ func (a *dbPrivateProjectAudience) Audience(ctx context.Context, e events.Event)
 	// several; only members of every private one may see it.
 	var members []string
 	private := false
-	for _, projectID := range projectIDs {
+	for _, id := range projectIDs {
+		if id == "" {
+			// The payload states the object has no project; there is nothing
+			// to narrow by.
+			continue
+		}
+		// The payload spells the id however its producer did; the audience map
+		// is keyed by the canonical spelling, so normalize before the lookup.
+		projectID, _ := canonicalProjectID(id)
 		projectMembers, ok := ws.projects[projectID]
 		if !ok {
 			continue
@@ -423,4 +458,40 @@ func extractEventRefs(eventType string, payload any) eventRefs {
 func logAudienceFailure(e events.Event, err error) {
 	slog.Warn("realtime: dropping event, private project audience unresolved",
 		"event_type", e.Type, "workspace_id", e.WorkspaceID, "task_id", e.TaskID, "error", err)
+}
+
+// canonicalProjectID normalizes the text an event payload spells a project id
+// with into the database's canonical form, the one the private-audience map is
+// keyed by: payloads echo their producer's spelling, which pgx accepts in more
+// shapes than the database returns. ok is false when the text names no UUID at
+// all.
+func canonicalProjectID(id string) (string, bool) {
+	uid, err := util.ParseUUID(id)
+	if err != nil {
+		return id, false
+	}
+	return util.UUIDToString(uid), true
+}
+
+// declaredProjectID reports whether the payload names its project the way a
+// RegisterProjectEvent declaration promises — a top-level project_id string
+// holding a UUID — and returns that id in canonical form.
+func declaredProjectID(payload any) (string, bool) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return "", false
+	}
+	v, ok := top["project_id"]
+	if !ok {
+		return "", false
+	}
+	var s *string
+	if json.Unmarshal(v, &s) != nil || s == nil || *s == "" {
+		return "", false
+	}
+	return canonicalProjectID(*s)
 }

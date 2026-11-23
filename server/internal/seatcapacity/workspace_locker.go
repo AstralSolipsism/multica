@@ -19,22 +19,44 @@ const workspaceLockPollInterval = 25 * time.Millisecond
 const maxWorkspaceLockConnections = 4
 const workspaceLockPoolFraction = 4
 
+// defaultWorkspaceLockNamespace is the key space seat-capacity locking has
+// always run under; running deployments must keep coordinating on it.
+const defaultWorkspaceLockNamespace = "multica-seat-capacity:"
+
 type WorkspaceLocker interface {
 	Lock(context.Context, uuid.UUID) (db.DBTX, func(), error)
 }
 
-// postgresWorkspaceLocker serializes Cloud capacity calls for one workspace
-// across API replicas. It pins a PostgreSQL session because advisory locks are
+// WorkspaceLockerOptions names the advisory-lock key space and the cooldown a
+// locker runs with. An empty namespace falls back to the seat-capacity key
+// space; the cooldown is taken as given, so callers that need one set it
+// explicitly — seat capacity's default constructor passes the 75ms its Cloud
+// peer expects, folder writes pass none.
+type WorkspaceLockerOptions struct {
+	// Namespace prefixes the lock key: two lockers with different namespaces
+	// never block each other, however they share one pool.
+	Namespace string
+	// Cooldown waits before the locked session is released, spacing calls
+	// that a rate-limited peer must not see back to back. Zero releases
+	// immediately.
+	Cooldown time.Duration
+}
+
+// postgresWorkspaceLocker serializes calls for one workspace across API
+// replicas. It pins a PostgreSQL session because advisory locks are
 // session-scoped; returning the connection before unlock would leak the lock
 // into an unrelated pool borrower.
 type postgresWorkspaceLocker struct {
 	pool *pgxpool.Pool
+	opts WorkspaceLockerOptions
 
 	mu         sync.Mutex
 	localLocks map[uuid.UUID]*localWorkspaceLock
-	// slots bounds connections pinned across Cloud calls so capacity traffic
-	// cannot consume the primary pool. New callers wait here without a DB
-	// connection, using at most one quarter of the pool and never more than 4.
+	// slots bounds connections pinned across locked calls so lock holders
+	// cannot consume the primary pool: new callers wait here without a DB
+	// connection, using at most one quarter of the pool and never more than
+	// 4 — one connection on the smallest supported pool, so a holder running
+	// business queries can always borrow a second one.
 	slots chan struct{}
 }
 
@@ -44,8 +66,20 @@ type localWorkspaceLock struct {
 }
 
 func NewWorkspaceLocker(pool *pgxpool.Pool) WorkspaceLocker {
+	return NewWorkspaceLockerWithOptions(pool, WorkspaceLockerOptions{
+		Namespace: defaultWorkspaceLockNamespace,
+		Cooldown:  defaultWorkspaceCooldown,
+	})
+}
+
+// NewWorkspaceLockerWithOptions returns a locker under its own key space and
+// cooldown; a nil pool yields a nil locker, for a router built without one.
+func NewWorkspaceLockerWithOptions(pool *pgxpool.Pool, opts WorkspaceLockerOptions) WorkspaceLocker {
 	if pool == nil {
 		return nil
+	}
+	if opts.Namespace == "" {
+		opts.Namespace = defaultWorkspaceLockNamespace
 	}
 	slotCount := int(pool.Config().MaxConns / workspaceLockPoolFraction)
 	if slotCount < 1 {
@@ -56,6 +90,7 @@ func NewWorkspaceLocker(pool *pgxpool.Pool) WorkspaceLocker {
 	}
 	return &postgresWorkspaceLocker{
 		pool:       pool,
+		opts:       opts,
 		localLocks: make(map[uuid.UUID]*localWorkspaceLock),
 		slots:      make(chan struct{}, slotCount),
 	}
@@ -64,13 +99,13 @@ func NewWorkspaceLocker(pool *pgxpool.Pool) WorkspaceLocker {
 func (l *postgresWorkspaceLocker) Lock(ctx context.Context, workspaceID uuid.UUID) (db.DBTX, func(), error) {
 	releaseLocal, err := l.acquireLocal(ctx, workspaceID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("queue workspace capacity lock: %w", err)
+		return nil, nil, fmt.Errorf("queue workspace lock: %w", err)
 	}
 	select {
 	case l.slots <- struct{}{}:
 	case <-ctx.Done():
 		releaseLocal()
-		return nil, nil, fmt.Errorf("queue workspace capacity lock connection: %w", ctx.Err())
+		return nil, nil, fmt.Errorf("queue workspace lock connection: %w", ctx.Err())
 	}
 	acquired := false
 	defer func() {
@@ -80,17 +115,17 @@ func (l *postgresWorkspaceLocker) Lock(ctx context.Context, workspaceID uuid.UUI
 		}
 	}()
 
-	key := workspaceAdvisoryLockKey(workspaceID)
+	key := workspaceAdvisoryLockKey(l.opts.Namespace, workspaceID)
 	var conn *pgxpool.Conn
 	for {
 		conn, err = l.pool.Acquire(ctx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("acquire workspace capacity lock connection: %w", err)
+			return nil, nil, fmt.Errorf("acquire workspace lock connection: %w", err)
 		}
 		var locked bool
 		if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&locked); err != nil {
 			conn.Release()
-			return nil, nil, fmt.Errorf("try workspace capacity lock: %w", err)
+			return nil, nil, fmt.Errorf("try workspace lock: %w", err)
 		}
 		if locked {
 			break
@@ -103,7 +138,7 @@ func (l *postgresWorkspaceLocker) Lock(ctx context.Context, workspaceID uuid.UUI
 			if !timer.Stop() {
 				<-timer.C
 			}
-			return nil, nil, fmt.Errorf("wait for workspace capacity lock: %w", ctx.Err())
+			return nil, nil, fmt.Errorf("wait for workspace lock: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -113,8 +148,10 @@ func (l *postgresWorkspaceLocker) Lock(ctx context.Context, workspaceID uuid.UUI
 		once.Do(func() {
 			defer releaseLocal()
 			defer func() { <-l.slots }()
-			timer := time.NewTimer(defaultWorkspaceCooldown)
-			<-timer.C
+			if cooldown := l.opts.Cooldown; cooldown > 0 {
+				timer := time.NewTimer(cooldown)
+				<-timer.C
+			}
 			unlockCtx, cancel := context.WithTimeout(context.Background(), workspaceLockReleaseTimeout)
 			defer cancel()
 			var unlocked bool
@@ -175,7 +212,10 @@ func (l *postgresWorkspaceLocker) dropLocalRef(workspaceID uuid.UUID, local *loc
 	}
 }
 
-func workspaceAdvisoryLockKey(workspaceID uuid.UUID) int64 {
-	sum := sha256.Sum256(append([]byte("multica-seat-capacity:"), workspaceID[:]...))
+// workspaceAdvisoryLockKey derives the lock key from the parsed workspace
+// UUID, so every spelling of one workspace id shares one key under the
+// namespace.
+func workspaceAdvisoryLockKey(namespace string, workspaceID uuid.UUID) int64 {
+	sum := sha256.Sum256(append([]byte(namespace), workspaceID[:]...))
 	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
