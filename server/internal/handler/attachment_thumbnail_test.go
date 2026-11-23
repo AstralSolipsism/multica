@@ -116,7 +116,11 @@ func TestUploadFile_PrewarmsThumbnail(t *testing.T) {
 	}
 
 	thumbKey := "workspaces/" + testWorkspaceID + "/" + resp.ID + ".jpg.thumb"
-	deadline := time.Now().Add(10 * time.Second)
+	// The prewarm is a background goroutine decoding and resizing a 2400x1800
+	// JPEG, and on a loaded CI runner (this suite shares vCPUs with the
+	// packages go test runs in parallel) it can take well over 10s under
+	// -race; a genuine "no thumbnail" failure still fails, just later.
+	deadline := time.Now().Add(60 * time.Second)
 	for {
 		store.mu.Lock()
 		_, ok := store.files[thumbKey]
