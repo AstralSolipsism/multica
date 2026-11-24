@@ -19,6 +19,10 @@ vi.mock("@multica/core/issues/dag/use-dag-data", () => ({
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({ getActorName: (type: string, id: string) => (type === "agent" ? `Agent ${id}` : "Owner") }),
 }));
+vi.mock("./engineering-baseline-diff", () => ({
+  WikiDiffSummary: () => null,
+  WikiDiffView: ({ before, after }: { before: string; after: string }) => <div data-wiki-diff-view><del data-wiki-diff-del>{before}</del><ins data-wiki-diff-add>{after}</ins></div>,
+}));
 vi.mock("../../rich-content", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../rich-content")>();
   return { ...actual, RichContent: ({ content }: { content: string }) => <div data-testid="decision-rich-content">{content}</div> };
@@ -92,6 +96,10 @@ beforeEach(() => {
     getProjectWikiTree,
     getProjectWikiActivity,
     getProjectWikiPage: vi.fn(async () => { throw new Error("not needed"); }),
+    getProjectWikiPageRevision: vi.fn(async (_ws: string, _project: string, _page: string, number: number) => ({
+      page: null,
+      revision: { id: `rev-${number}`, revisionNumber: number, contentMarkdown: number === 4 ? "after change" : "before change" },
+    })),
   } as unknown as ApiClient);
 });
 
@@ -124,12 +132,15 @@ describe("EngineeringOverview", () => {
     expect(screen.queryByTestId("wiki-summary-card")).not.toBeInTheDocument();
   });
 
-  it("filters activity and deep-links the selected revision into full history", async () => {
+  it("previews the selected revision as a Rich Diff and deep-links into full history", async () => {
     renderOverview("tab=activity");
     await waitFor(() => expect(document.querySelector("[data-engineering-activity]")).not.toBeNull(), { timeout: 3000 });
     await waitFor(() => expect(document.body.textContent).toContain("新建页面"), { timeout: 3000 });
     expect(document.body.textContent).toContain("回滚");
     fireEvent.click(document.querySelector('[data-activity-row="55555555-5555-4555-8555-555555555555:4"]')!);
+    await waitFor(() => expect(document.querySelector("[data-engineering-activity] [data-wiki-diff-add]")).not.toBeNull());
+    expect(document.querySelector("[data-activity-preview]")?.textContent).toContain("before change");
+    expect(document.querySelector("[data-activity-preview]")?.textContent).toContain("after change");
     fireEvent.click(screen.getByRole("button", { name: "完整历史对比 →" }));
     await waitFor(() => expect(push).toHaveBeenCalledWith(expect.stringContaining("tab=wiki&page=architecture&history=1&rev=4")));
   });

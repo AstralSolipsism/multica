@@ -50,8 +50,8 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
     ...projectWikiRevisionOptions(workspaceId, projectId, selected?.slug ?? "", Math.max(1, (selected?.number ?? 1) - 1)),
     enabled: !!selected && selected.number > 1,
   });
-  const before = selected && selected.number > 1 ? previousRevision.data?.contentMarkdown ?? "" : "";
-  const after = selectedRevision.data?.contentMarkdown ?? "";
+  const before = selected && selected.number > 1 ? previousRevision.data?.revision.contentMarkdown ?? "" : "";
+  const after = selectedRevision.data?.revision.contentMarkdown ?? "";
   const diffLoading = selectedRevision.isLoading || (selected !== null && selected.number > 1 && previousRevision.isLoading);
   const diffError = selectedRevision.isError || previousRevision.isError;
   const pageOptions = [
@@ -93,7 +93,7 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
                   <span className="mt-1 block truncate text-caption text-muted-foreground">{item.changeSummary || t(($) => $.wiki.activityNoSummary)}</span>
                   {item.sourceIssueId ? <span className="mt-1 inline-flex" onClick={(event) => event.stopPropagation()}><IssueMentionCard issueId={item.sourceIssueId} /></span> : null}
                 </span>
-                <span className="text-caption text-muted-foreground">v{item.number}</span>
+                <span className="text-caption text-muted-foreground">{t(($) => $.wiki.versionPill, { number: item.number })}</span>
               </button>
             );
           }) : <p className="p-8 text-center text-body text-muted-foreground">{t(($) => $.activity.empty)}</p>}
@@ -103,7 +103,7 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
             <>
               <header className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
                 <Button type="button" variant="ghost" size="icon-sm" className="@[1024px]:hidden" aria-label={t(($) => $.actions.close)} onClick={() => setPreviewOpen(false)}><X aria-hidden="true" /></Button>
-                <div className="min-w-0 flex-1"><div className="truncate text-label font-medium">{selected.title || selected.slug} <span className="text-muted-foreground">v{selected.number}</span></div>{!diffLoading && !diffError ? <WikiDiffSummary before={before} after={after} /> : null}</div>
+                <div className="min-w-0 flex-1"><div className="truncate text-label font-medium">{selected.title || selected.slug} <span className="text-muted-foreground">{t(($) => $.wiki.versionPill, { number: selected.number })}</span></div>{!diffLoading && !diffError ? <WikiDiffSummary before={before} after={after} /> : null}</div>
                 <Button type="button" variant="ghost" size="sm" onClick={() => openWiki(selected, false)}>{t(($) => $.activity.openPage)}</Button>
                 <Button type="button" variant="link" size="sm" onClick={() => openWiki(selected, true)}>{t(($) => $.activity.fullHistory)}</Button>
               </header>

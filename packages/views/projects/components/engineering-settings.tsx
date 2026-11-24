@@ -42,7 +42,7 @@ export function EngineeringSettings({ config, members, pending, open, onOpenChan
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[396px] max-w-[92%] gap-0 p-0 sm:max-w-[396px]" data-engineering-region="settings">
+      <SheetContent side="right" overlayClassName="bg-black/24 supports-backdrop-filter:backdrop-blur-none" className="w-[396px] max-w-[92%] gap-0 p-0 sm:max-w-[396px]" data-engineering-region="settings">
         <SheetHeader className="border-b pr-12">
           <SheetTitle className="flex items-center gap-2">{pending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}{t(($) => $.settings.title)}</SheetTitle>
           <SheetDescription>{t(($) => $.messages.serverAuthoritative)}</SheetDescription>

@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertCircle, LoaderCircle, Settings2 } from "@multica/ui/icons";
+import { AlertCircle, LoaderCircle, Settings, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Button } from "@multica/ui/components/ui/button";
@@ -199,7 +199,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
           ))}
         </div>
         <Tooltip>
-          <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="relative shrink-0" aria-label={settingsTooltip} onClick={() => setSettingsOpen(true)}><Settings2 aria-hidden="true" />{skillsMissing ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning" data-skill-warning /> : null}</Button>} />
+          <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="relative shrink-0" aria-label={settingsTooltip} onClick={() => setSettingsOpen(true)}><Settings aria-hidden="true" />{skillsMissing ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning" data-skill-warning /> : null}</Button>} />
           <TooltipContent side="bottom">{settingsTooltip}</TooltipContent>
         </Tooltip>
       </nav> : null}

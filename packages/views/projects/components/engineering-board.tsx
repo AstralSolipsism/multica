@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ArrowRight, ChevronDown, ChevronUp, FileText } from "@multica/ui/icons";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { cn } from "@multica/ui/lib/utils";
 import type { WikiActivityItem } from "@multica/core/api";
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -63,7 +64,7 @@ export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadma
               <div className="h-full bg-foreground" style={{ width: `${percent}%` }} />
             </div>
             <span className="shrink-0 text-muted-foreground tabular-nums">{t(($) => $.stage.completedCount, { closed, total })}</span>
-            <Badge variant={hasWaiting ? "destructive" : "secondary"} className="hidden @[560px]:inline-flex">{t(($) => hasWaiting ? $.stage.status[current?.status ?? "current"] : $.board.healthy)}</Badge>
+            <Badge variant="secondary" className={cn("hidden @[560px]:inline-flex", !hasWaiting && "text-success")}>{t(($) => hasWaiting ? $.stage.status[current?.status ?? "current"] : $.board.healthy)}</Badge>
           </div>
           <Button type="button" variant="ghost" size="sm" className="shrink-0" aria-expanded={strategyOpen} onClick={() => setStrategyOpen((value) => !value)}>
             {t(($) => $.stage.summaryLabel)}{strategyOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
