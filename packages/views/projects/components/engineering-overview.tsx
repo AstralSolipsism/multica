@@ -31,13 +31,14 @@ import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { IssueMentionCard } from "../../issues/components/issue-mention-card";
+import { IssuePeekHost } from "../../issues/components/issue-peek";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { useFormatRelativeDate } from "./labels";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
-import { buildEngineeringRoadmap, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey } from "./engineering-utils";
+import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
@@ -149,21 +150,15 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     if (currentStage) setSelectedStage(currentStage);
   }, [currentStage]);
 
-  const decisionQueries = useQueries({
-    queries: (permissions?.deciderIds ?? []).map((deciderId) => ({
-      ...projectEngineeringDecisionIssuesOptions(wsId, projectId, deciderId),
-      enabled,
-    })),
+  const decisionIssuesQuery = useQuery({
+    ...projectEngineeringDecisionIssuesOptions(wsId, projectId),
+    enabled,
   });
-  const decisionIssues = useMemo(() => {
-    const byId = new Map<string, Issue>();
-    for (const query of decisionQueries) for (const issue of query.data ?? []) byId.set(issue.id, issue);
-    return [...byId.values()].sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
-  }, [decisionQueries]);
+  const blockedIssues = useMemo(() => decisionIssuesQuery.data ?? [], [decisionIssuesQuery.data]);
   const timelineQueries = useQueries({
-    queries: decisionIssues.map((issue) => ({ ...issueTimelineOptions(issue.id), enabled })),
+    queries: blockedIssues.map((issue) => ({ ...issueTimelineOptions(issue.id), enabled })),
   });
-  const timelines = useMemo(() => Object.fromEntries(decisionIssues.map((issue, index) => {
+  const timelines = useMemo(() => Object.fromEntries(blockedIssues.map((issue, index) => {
     const query = timelineQueries[index];
     const timeline: EngineeringDecisionTimeline = {
       comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds) : null,
@@ -171,7 +166,20 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       error: !!query?.isError,
     };
     return [issue.id, timeline];
-  })), [decisionIssues, timelineQueries, permissions?.deciderIds]);
+  })), [blockedIssues, timelineQueries, permissions?.deciderIds]);
+  const decisionIssues = useMemo(() => {
+    const deciderIds = new Set(permissions?.deciderIds);
+    const priority = (issue: Issue) => {
+      const kind = engineeringDecisionKind(timelines[issue.id]?.comment ?? null, permissions?.deciderIds);
+      if (kind === "card") return 0;
+      if (kind === "mention") return 1;
+      return 2;
+    };
+    return blockedIssues.filter((issue) =>
+      engineeringDecisionKind(timelines[issue.id]?.comment ?? null, permissions?.deciderIds) !== null
+      || (issue.assignee_type === "member" && issue.assignee_id !== null && deciderIds.has(issue.assignee_id)),
+    ).sort((a, b) => priority(a) - priority(b) || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
+  }, [blockedIssues, permissions?.deciderIds, timelines]);
 
   const graphSpec = useMemo<IssueTableQuerySpec>(() => ({
     scope: { kind: "project", project_id: projectId },
@@ -258,10 +266,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const waiting = (
     <EngineeringDecisions
       workspaceSlug={workspaceSlug}
+      projectId={projectId}
       issues={decisionIssues}
       timelines={timelines}
       reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
-      onOpenWiki={() => setActiveView("wiki")}
       onReview={() => {
         setSelectedStage(config.currentStage);
         setReviewOpen(true);
@@ -270,6 +278,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   );
 
   return (
+    <IssuePeekHost>
     <div className={shellClass} data-engineering-shell>
       {topChrome}
       {activeView === "wiki" ? (
@@ -285,7 +294,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-5xl p-4 mt-1 md:p-6 space-y-8">
             {configError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
-            {decisionQueries.some((query) => query.isError) ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
+            {decisionIssuesQuery.isError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
             {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
               <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
             ) : (
@@ -333,5 +342,6 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
         </main>
       )}
     </div>
+    </IssuePeekHost>
   );
 }

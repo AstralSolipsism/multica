@@ -28,22 +28,16 @@ export function projectEngineeringConfigOptions(wsId: string, projectId: string)
   });
 }
 
-export function projectEngineeringDecisionIssuesOptions(
-  wsId: string,
-  projectId: string,
-  deciderMemberId: string,
-) {
+export function projectEngineeringDecisionIssuesOptions(wsId: string, projectId: string) {
   return queryOptions({
-    queryKey: engineeringProjectKeys.engineeringDecisionIssues(wsId, projectId, deciderMemberId),
+    queryKey: engineeringProjectKeys.engineeringDecisionIssues(wsId, projectId),
     queryFn: () => api.listIssues({
       workspace_id: wsId,
       project_id: projectId,
       statuses: ["blocked"],
-      assignee_types: ["member"],
-      assignee_ids: [deciderMemberId],
     }),
     select: (data) => data.issues,
-    enabled: Boolean(wsId && projectId && deciderMemberId),
+    enabled: Boolean(wsId && projectId),
   });
 }
 

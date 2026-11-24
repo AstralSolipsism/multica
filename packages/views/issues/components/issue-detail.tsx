@@ -1292,6 +1292,9 @@ interface IssueDetailProps {
   readsInbox?: boolean;
   /** The route already completed the authoritative detail read this mount. */
   skipInitialRefetch?: boolean;
+  /** One-shot host request to replace and focus the top-level comment draft. */
+  commentDraftRequest?: { content: string; token: number } | null;
+  onCommentDraftRequestHandled?: () => void;
   /**
    * Route only: the file name of a `/deliverables/<name>` link. Opens the
    * newest upload of that deliverable once the timeline has loaded.
@@ -1503,7 +1506,7 @@ export function IssueDetailSkeleton({
 
 // IssueDetail
 
-export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, defaultSidebarOpen = true, layoutId = ISSUE_DETAIL_LAYOUT_ID, highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightRequestPending = false, onHighlightLanded, highlightAppRequestId, leadingAction, variant = "page", trailingActions, notice, readsInbox = true, skipInitialRefetch = false, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
+export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, defaultSidebarOpen = true, layoutId = ISSUE_DETAIL_LAYOUT_ID, highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightRequestPending = false, onHighlightLanded, highlightAppRequestId, leadingAction, variant = "page", trailingActions, notice, readsInbox = true, skipInitialRefetch = false, commentDraftRequest, onCommentDraftRequestHandled, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
   const { t: tForkUi } = useT("fork-ui");
@@ -1928,13 +1931,20 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
     commentInputRef.current?.adoptContent(content);
     useCommentDraftStore.getState().setDraft(`new:${id}`, content);
     composerRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    // A cold composer activates and focuses through its draft subscription.
-    composerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+    commentInputRef.current?.focus();
   }, [id]);
   const htmlBlockHostActions = useMemo(() => ({
     submitComment: submitHtmlComment,
     fillComment: fillHtmlCommentDraft,
   }), [submitHtmlComment, fillHtmlCommentDraft]);
+  const handledCommentDraftToken = useRef(0);
+  useEffect(() => {
+    if (!commentDraftRequest || landingChromeHeld || !commentInputRef.current
+      || handledCommentDraftToken.current === commentDraftRequest.token) return;
+    handledCommentDraftToken.current = commentDraftRequest.token;
+    fillHtmlCommentDraft(commentDraftRequest.content);
+    onCommentDraftRequestHandled?.();
+  }, [commentDraftRequest, landingChromeHeld, fillHtmlCommentDraft, onCommentDraftRequestHandled]);
   const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
   // Only a landing on data already in hand is worth holding the chrome for;
   // while the timeline is still on its way, the chrome renders in the wait.

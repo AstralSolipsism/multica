@@ -9,21 +9,39 @@ export const STRIXNOVA_ENGINEERING_SKILLS = [
 ] as const;
 
 function decisionCard(content: string, language: "html" | "markdown"): boolean {
-  return new RegExp(`^ {0,3}\`\`\`${language} title="决策卡[^"]*"`, "m").test(content);
+  const legacy = language === "html"
+    ? /^ {0,3}```html[^\n]*title="决策卡[^"]*"/m
+    : /^ {0,3}```markdown[^\n]*title="决策卡[^"]*"/m;
+  if (legacy.test(content)) return true;
+  return language === "html"
+    && /^ {0,3}```html(?=[^\n]*\bsrc="[^"]+\.html")(?=[^\n]*\btitle="决策：[^"]*")[^\n]*/m.test(content);
+}
+
+export function engineeringDecisionKind(
+  entry: TimelineEntry | null,
+  deciderIds: readonly string[] = [],
+): "card" | "mention" | null {
+  if (!entry?.content || entry.resolved_at || entry.deleted_at) return null;
+  if (decisionCard(entry.content, "html") || decisionCard(entry.content, "markdown")) return "card";
+  return deciderIds.some((id) => entry.content?.includes(`mention://member/${id}`)) ? "mention" : null;
 }
 
 export function selectEngineeringComment(
   entries: readonly TimelineEntry[],
   deciderIds: readonly string[] = [],
 ): TimelineEntry | null {
-  const roots = entries
-    .filter((entry) => entry.type === "comment" && !entry.parent_id && !entry.deleted_at && entry.content?.trim())
+  const comments = entries
+    .filter((entry) => entry.type === "comment" && !entry.deleted_at && entry.content?.trim())
     .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
-  const unresolved = roots.filter((entry) => !entry.resolved_at);
-  const mentionsDecider = (entry: TimelineEntry) => deciderIds.some((id) => entry.content?.includes(`mention://member/${id}`));
-  return unresolved.find((entry) => decisionCard(entry.content!, "html") || mentionsDecider(entry))
+  const byId = new Map(comments.map((entry) => [entry.id, entry]));
+  const unresolved = comments.filter((entry) => !entry.resolved_at
+    && (!entry.parent_id || !byId.get(entry.parent_id)?.resolved_at));
+  const roots = comments.filter((entry) => !entry.parent_id);
+  const unresolvedRoots = roots.filter((entry) => !entry.resolved_at);
+  return unresolved.find((entry) => decisionCard(entry.content!, "html"))
     ?? unresolved.find((entry) => decisionCard(entry.content!, "markdown"))
-    ?? unresolved[0]
+    ?? unresolved.find((entry) => engineeringDecisionKind(entry, deciderIds) === "mention")
+    ?? unresolvedRoots[0]
     ?? roots[0]
     ?? null;
 }

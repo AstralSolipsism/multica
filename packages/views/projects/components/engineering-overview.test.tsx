@@ -144,7 +144,7 @@ describe("EngineeringOverview", () => {
     // No candidate queue: the decisions card only carries decision issues and
     // the stage-review entry (Stage 1 has no tasks, so review is pending).
     expect(document.querySelector("[data-review-todo]")).toBeNull();
-    expect(document.querySelector("[data-no-pending-candidates]")).not.toBeNull();
-    expect(screen.getByText("眼下没有要你处理的事，团队正在继续推进。")).toBeInTheDocument();
+    expect(document.querySelector("[data-engineering-region='decisions']")).toBeNull();
+    expect(screen.queryByText("眼下没有要你处理的事，团队正在继续推进。")).not.toBeInTheDocument();
   });
 });

@@ -37,6 +37,6 @@ export const engineeringProjectKeys = {
     [...engineeringProjectKeys.engineeringAll(wsId, projectId), "config"] as const,
   engineeringDecisionIssuesAll: (wsId: string, projectId: string) =>
     [...issueKeys.all(wsId), "engineering-decisions", projectId] as const,
-  engineeringDecisionIssues: (wsId: string, projectId: string, deciderMemberId: string) =>
-    [...engineeringProjectKeys.engineeringDecisionIssuesAll(wsId, projectId), deciderMemberId] as const,
+  engineeringDecisionIssues: (wsId: string, projectId: string) =>
+    engineeringProjectKeys.engineeringDecisionIssuesAll(wsId, projectId),
 };

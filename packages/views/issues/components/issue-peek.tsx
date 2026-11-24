@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AnimatePresence, motion, useIsPresent } from "motion/react";
 import { useReducedMotion } from "@multica/core/appearance";
 import { ChevronDown, ChevronUp, Maximize2, X } from "@multica/ui/icons";
@@ -69,12 +69,28 @@ const ARROW_STEPS: Record<string, Step> = {
 export function IssuePeekHost({ children }: { children: ReactNode }) {
   const [peekId, setPeekId] = useState<string | null>(null);
   const [columns, setColumns] = useState<IssuePeekColumns | null>(null);
+  const [commentDraftRequest, setCommentDraftRequest] = useState<{ issueId: string; content: string; token: number } | null>(null);
+  const commentDraftToken = useRef(0);
+  const clearCommentDraftRequest = useCallback(() => setCommentDraftRequest(null), []);
 
   const actions = useMemo<IssuePeekActions>(
     () => ({
-      open: (issueId) => setPeekId(issueId),
-      toggle: (issueId) => setPeekId((current) => (current === issueId ? null : issueId)),
-      close: () => setPeekId(null),
+      open: (issueId, options) => {
+        setPeekId(issueId);
+        setCommentDraftRequest(options?.commentDraft === undefined ? null : {
+          issueId,
+          content: options.commentDraft,
+          token: ++commentDraftToken.current,
+        });
+      },
+      toggle: (issueId) => {
+        setCommentDraftRequest(null);
+        setPeekId((current) => (current === issueId ? null : issueId));
+      },
+      close: () => {
+        setCommentDraftRequest(null);
+        setPeekId(null);
+      },
       publishColumns: setColumns,
     }),
     [],
@@ -123,7 +139,14 @@ export function IssuePeekHost({ children }: { children: ReactNode }) {
                 (J / K is keyboard navigation — it must not animate); only
                 opening and closing the panel does. */}
             <AnimatePresence initial={false}>
-              {openId && <IssuePeekPanel key="issue-peek" issueId={openId} />}
+              {openId && (
+                <IssuePeekPanel
+                  key="issue-peek"
+                  issueId={openId}
+                  commentDraftRequest={commentDraftRequest?.issueId === openId ? commentDraftRequest : null}
+                  onCommentDraftRequestHandled={clearCommentDraftRequest}
+                />
+              )}
             </AnimatePresence>
           </div>
         </IssuePeekPositionContext.Provider>
@@ -135,7 +158,11 @@ export function IssuePeekHost({ children }: { children: ReactNode }) {
 // Memoized, and blind to the column order: the host re-renders on every board
 // reorder (a drag publishes columns on each hover), and none of that may reach
 // IssueDetail. What does follow the order lives in IssuePeekFollow.
-const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: string }) {
+const IssuePeekPanel = memo(function IssuePeekPanel({ issueId, commentDraftRequest, onCommentDraftRequestHandled }: {
+  issueId: string;
+  commentDraftRequest: { content: string; token: number } | null;
+  onCommentDraftRequestHandled: () => void;
+}) {
   const { t } = useT("issues");
   const actions = useIssuePeekActions()!;
   const panelRef = useRef<HTMLElement>(null);
@@ -197,6 +224,8 @@ const IssuePeekPanel = memo(function IssuePeekPanel({ issueId }: { issueId: stri
             issueId={issueId}
             variant="peek"
             defaultSidebarOpen={false}
+            commentDraftRequest={commentDraftRequest}
+            onCommentDraftRequestHandled={onCommentDraftRequestHandled}
             leadingAction={<IssuePeekNav />}
             trailingActions={<IssuePeekTrailingActions issueId={issueId} />}
             onDelete={actions.close}

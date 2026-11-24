@@ -108,11 +108,11 @@ describe("project engineering queries", () => {
     ]);
   });
 
-  it("lists only blocked member-assigned issues for the selected project decider", async () => {
+  it("lists every blocked issue in the project without filtering by decider", async () => {
     const issues = [{ id: "issue-1" }];
     const listIssues = vi.fn().mockResolvedValue({ issues, total: 1 });
     setApiInstance({ listIssues } as unknown as ApiClient);
-    const options = projectEngineeringDecisionIssuesOptions("ws-1", "project-1", "member-1");
+    const options = projectEngineeringDecisionIssuesOptions("ws-1", "project-1");
 
     const observer = new QueryObserver(qc, options);
     const unsubscribe = observer.subscribe(() => {});
@@ -125,11 +125,9 @@ describe("project engineering queries", () => {
       workspace_id: "ws-1",
       project_id: "project-1",
       statuses: ["blocked"],
-      assignee_types: ["member"],
-      assignee_ids: ["member-1"],
     });
     expect(options.queryKey).toEqual([
-      "issues", "ws-1", "engineering-decisions", "project-1", "member-1",
+      "issues", "ws-1", "engineering-decisions", "project-1",
     ]);
   });
 });

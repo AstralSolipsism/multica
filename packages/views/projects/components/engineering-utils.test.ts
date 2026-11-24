@@ -54,7 +54,17 @@ describe("selectEngineeringComment", () => {
       comment("plain", "Anything can be the first line", "2026-01-04T00:00:00Z"),
       comment("reply", "```html title=\"决策卡：回复\"\ncontent", "2026-01-05T00:00:00Z", { parentId: "html" }),
     ];
-    expect(selectEngineeringComment(entries)?.id).toBe("html");
+    expect(selectEngineeringComment(entries)?.id).toBe("reply");
+  });
+
+  it("selects v3 attachment cards inside unresolved replies and ignores resolved threads", () => {
+    const entries = [
+      comment("root", "delegate", "2026-01-01T00:00:00Z"),
+      comment("reply", "```html src=\"decision.html\" title=\"决策：OL-1474\"\ncontent", "2026-01-02T00:00:00Z", { parentId: "root" }),
+      comment("resolved-root", "done", "2026-01-03T00:00:00Z", { resolvedAt: "2026-01-04T00:00:00Z" }),
+      comment("resolved-reply", "```html src=\"decision.html\" title=\"决策：old\"\ncontent", "2026-01-05T00:00:00Z", { parentId: "resolved-root" }),
+    ];
+    expect(selectEngineeringComment(entries)?.id).toBe("reply");
   });
 
   it("uses Markdown decision cards as the next structured fallback", () => {
