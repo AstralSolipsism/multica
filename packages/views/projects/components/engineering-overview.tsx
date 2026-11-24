@@ -143,9 +143,18 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   );
 
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
-  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50), enabled });
-  const activityItems = useMemo(() => (wikiActivityQuery.data?.pages ?? []).flatMap((page) => page?.items ?? []), [wikiActivityQuery.data]);
-  const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
+  const allWikiPages = useMemo(() => wikiTreeQuery.data?.pages ?? [], [wikiTreeQuery.data]);
+  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50, allWikiPages), enabled });
+  const activityItems = useMemo(() => {
+    const seen = new Set<string>();
+    return (wikiActivityQuery.data?.pages ?? []).flatMap((page) => (page?.items ?? []).filter((item) => {
+      const key = `${item.pageId}:${item.number}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }));
+  }, [wikiActivityQuery.data]);
+  const livePages = useMemo(() => allWikiPages.filter((page) => page.archivedAt === null), [allWikiPages]);
   const hasStages = !!config && (config.stages.length > 0 || projectNodes.some((node) => node.stage !== null));
   useEffect(() => {
     if (coldSession !== null || !enabled || !config || hasStages || graphQuery.isError || wikiTreeQuery.isError) return;
@@ -250,7 +259,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             <EngineeringBaselineWiki workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} />
           </main>
         ) : activeView === "activity" ? (
-          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={livePages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
+          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={allWikiPages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
         ) : activeView === "board" && coldResolving ? (
           <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
         ) : activeView === "board" && coldActive ? (

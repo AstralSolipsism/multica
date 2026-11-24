@@ -38,16 +38,14 @@ SELECT r.page_id, p.slug, p.title, r.id AS revision_id, r.revision_number, r.rev
 FROM project_baseline_revision r
 JOIN project_baseline_page p ON p.id = r.page_id
 WHERE r.workspace_id = $1 AND r.project_id = $2
-    AND ($3::timestamptz IS NULL OR r.created_at < $3
-        OR ($4::uuid IS NOT NULL AND r.created_at = $3 AND r.id < $4))
-ORDER BY r.created_at DESC, r.id DESC LIMIT $5
+    AND ($3::timestamptz IS NULL OR r.created_at < $3)
+ORDER BY r.created_at DESC, r.id DESC LIMIT $4
 `
 
 type LabrastroBaselineActivityParams struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	ProjectID   pgtype.UUID        `json:"project_id"`
 	BeforeTime  pgtype.Timestamptz `json:"before_time"`
-	BeforeID    pgtype.UUID        `json:"before_id"`
 	PageLimit   int32              `json:"page_limit"`
 }
 
@@ -70,7 +68,6 @@ func (q *Queries) LabrastroBaselineActivity(ctx context.Context, arg LabrastroBa
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.BeforeTime,
-		arg.BeforeID,
 		arg.PageLimit,
 	)
 	if err != nil {

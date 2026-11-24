@@ -8,7 +8,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/engineering"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -33,22 +32,13 @@ func (h *Handler) LabrastroWikiActivity(w http.ResponseWriter, r *http.Request) 
 		}
 		before = pgtype.Timestamptz{Time: at, Valid: true}
 	}
-	beforeID := pgtype.UUID{}
-	if value := r.URL.Query().Get("before_id"); value != "" {
-		parsed, err := uuid.Parse(value)
-		if err != nil {
-			writeEngineeringError(w, baselineError(400, "invalid_request"))
-			return
-		}
-		beforeID = pgtype.UUID{Bytes: parsed, Valid: true}
-	}
 	s, ok := h.engineeringState(w, r, false)
 	if !ok {
 		return
 	}
 	defer s.tx.Rollback(r.Context())
 	rows, err := s.q.LabrastroBaselineActivity(r.Context(), db.LabrastroBaselineActivityParams{
-		WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, BeforeTime: before, BeforeID: beforeID, PageLimit: limit,
+		WorkspaceID: s.project.WorkspaceID, ProjectID: s.project.ID, BeforeTime: before, PageLimit: limit,
 	})
 	if err != nil {
 		writeEngineeringError(w, err)
@@ -57,7 +47,6 @@ func (h *Handler) LabrastroWikiActivity(w http.ResponseWriter, r *http.Request) 
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		item := map[string]any{
-			"id":      uuidToString(row.RevisionID),
 			"page_id": uuidToString(row.PageID), "slug": row.Slug, "title": row.Title,
 			"kind": row.RevisionKind, "number": row.RevisionNumber,
 			"created_at":      row.CreatedAt.Time.UTC().Format(time.RFC3339Nano),

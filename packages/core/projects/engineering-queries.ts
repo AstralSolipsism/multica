@@ -101,19 +101,61 @@ export function projectWikiActivityOptions(wsId: string, projectId: string, opti
   });
 }
 
-export function projectWikiActivityInfiniteOptions(wsId: string, projectId: string, limit = 50) {
+type ActivityCursor = { before?: string; overlapOf?: string; backfillAt?: string };
+
+const activityItemKey = (item: { pageId: string; number: number }) => `${item.pageId}:${item.number}`;
+const afterActivityTimestamp = (timestamp: string) => new Date(Date.parse(timestamp) + 1).toISOString();
+
+export function projectWikiActivityInfiniteOptions(
+  wsId: string,
+  projectId: string,
+  limit = 50,
+  pages: readonly { id: string; slug: string; title: string }[] = [],
+) {
   return infiniteQueryOptions({
     queryKey: [...engineeringProjectKeys.wikiActivity(wsId, projectId, { limit }), "infinite"],
-    queryFn: ({ pageParam }) => api.getProjectWikiActivity(wsId, projectId, {
-      limit,
-      before: pageParam?.before,
-      ...(pageParam?.beforeId ? { beforeId: pageParam.beforeId } : {}),
-    }),
-    initialPageParam: undefined as { before: string; beforeId?: string } | undefined,
-    getNextPageParam: (lastPage) => {
+    queryFn: async ({ pageParam }: { pageParam: ActivityCursor | undefined }) => {
+      if (!pageParam?.backfillAt) {
+        return api.getProjectWikiActivity(wsId, projectId, { limit, before: pageParam?.before });
+      }
+      const timestamp = pageParam.backfillAt;
+      const histories = await Promise.all(pages.map(async (page) => {
+        const matches = [];
+        let before: number | undefined;
+        for (;;) {
+          const history = await api.getProjectWikiPageHistory(wsId, projectId, page.slug, { limit: 200, before });
+          const revisions = history?.revisions ?? [];
+          for (const revision of revisions) if (revision.createdAt === timestamp) matches.push(revision);
+          const oldest = revisions.at(-1)?.createdAt;
+          if (!history?.hasMore || !oldest || oldest <= timestamp) break;
+          before = history.nextBefore ?? undefined;
+          if (!before) break;
+        }
+        return matches.map((revision) => ({
+          pageId: page.id, slug: page.slug, title: page.title, kind: revision.revisionKind, number: revision.revisionNumber,
+          createdAt: revision.createdAt, createdByType: revision.createdByType, createdById: revision.createdById,
+          changeSummary: revision.changeSummary, sourceIssueId: revision.sourceIssueId,
+        }));
+      }));
+      return { items: histories.flat() };
+    },
+    initialPageParam: undefined as ActivityCursor | undefined,
+    getNextPageParam: (lastPage, allPages, lastPageParam) => {
+      if (lastPageParam?.backfillAt) return { before: lastPageParam.backfillAt };
       const items = lastPage?.items ?? [];
+      if (items.length < limit) return undefined;
       const last = items.at(-1);
-      return items.length === limit && last ? { before: last.createdAt, beforeId: last.id } : undefined;
+      if (!last) return undefined;
+      if (lastPageParam?.overlapOf === last.createdAt) {
+        const previous = new Set(allPages.slice(0, -1).flatMap((page) => (page?.items ?? []).map(activityItemKey)));
+        if (!items.some((item) => !previous.has(activityItemKey(item)))) {
+          // A full overlap with no new key means at least 50 rows share this
+          // timestamp. Reconcile just that transaction through page histories,
+          // then continue strictly before it instead of looping forever.
+          return { backfillAt: last.createdAt };
+        }
+      }
+      return { before: afterActivityTimestamp(last.createdAt), overlapOf: last.createdAt };
     },
   });
 }

@@ -208,13 +208,11 @@ export const WikiDiffSchema = z.object({
 export type WikiDiff = z.infer<typeof WikiDiffSchema>;
 
 export const WikiActivityItemSchema = z.object({
-  id: id.optional(),
   page_id: id, slug: z.string(), title: z.string().default(""),
   kind: revisionKind, number: z.number().int(),
   created_at: z.string(), created_by_type: actor, created_by_id: id,
   change_summary: z.string().default(""), source_issue_id: id.nullable().default(null),
 }).transform((v) => ({
-  ...(v.id !== undefined ? { id: v.id } : {}),
   pageId: v.page_id, slug: v.slug, title: v.title, kind: v.kind, number: v.number,
   createdAt: v.created_at, createdByType: v.created_by_type, createdById: v.created_by_id,
   changeSummary: v.change_summary, sourceIssueId: v.source_issue_id,

@@ -142,11 +142,10 @@ const labrastroEngineeringApi = {
     }) });
     return parseWithFallback<z.infer<typeof WikiWriteResultSchema> | null>(raw, WikiWriteResultSchema, null, { endpoint });
   },
-  async getProjectWikiActivity(this: ApiClient, workspaceId: string, projectId: string, options: { limit?: number; before?: string; beforeId?: string } = {}) {
+  async getProjectWikiActivity(this: ApiClient, workspaceId: string, projectId: string, options: { limit?: number; before?: string } = {}) {
     const query = new URLSearchParams();
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.before !== undefined) query.set("before", options.before);
-    if (options.beforeId !== undefined) query.set("before_id", options.beforeId);
     const endpoint = `${baselinePath(projectId)}/activity?${query}`;
     const raw = await clientFetch<unknown>(this, endpoint, { headers: headers(workspaceId) });
     return parseWithFallback<{ items: z.infer<typeof WikiActivityItemSchema>[] } | null>(raw, z.object({ items: z.array(WikiActivityItemSchema) }), null, { endpoint });

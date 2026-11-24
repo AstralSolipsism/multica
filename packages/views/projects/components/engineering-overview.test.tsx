@@ -326,7 +326,7 @@ describe("EngineeringOverview", () => {
 
     await userEvent.click(document.querySelector('[data-slot="select-trigger"]')!);
     await userEvent.click(await screen.findByRole("option", { name: "架构" }));
-    await waitFor(() => expect(getProjectWikiActivity).toHaveBeenCalledWith(WS, PROJECT, { limit: 50, before: firstPage[49]!.createdAt }), { timeout: 3000 });
+    await waitFor(() => expect(getProjectWikiActivity).toHaveBeenCalledWith(WS, PROJECT, { limit: 50, before: new Date(Date.parse(firstPage[49]!.createdAt) + 1).toISOString() }), { timeout: 3000 });
     await waitFor(() => expect(document.body.textContent).toContain("Older match"), { timeout: 3000 });
   });
 });
@@ -389,7 +389,6 @@ it("review boundary: two revisions in one transaction straddling a page both rem
     const seconds = 50 - Math.min(index, 49);
     return {
       ...page,
-      id: `revision-${String(51 - index).padStart(3, "0")}`,
       number: 51 - index,
       createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, seconds)).toISOString(),
       changeSummary: "row " + index,
@@ -398,8 +397,8 @@ it("review boundary: two revisions in one transaction straddling a page both rem
   getProjectWikiActivity.mockImplementation(async (
     _workspace: string,
     _project: string,
-    { limit, before, beforeId }: { limit: number; before?: string; beforeId?: string },
-  ) => ({ items: rows.filter((row) => !before || row.createdAt < before || (beforeId && row.createdAt === before && row.id < beforeId)).slice(0, limit) }));
+    { limit, before }: { limit: number; before?: string },
+  ) => ({ items: rows.filter((row) => !before || row.createdAt < before).slice(0, limit) }));
   renderOverview("tab=activity");
   const activityRows = () => document.querySelectorAll("[data-activity-row]");
   await waitFor(() => expect(activityRows()).toHaveLength(50));
