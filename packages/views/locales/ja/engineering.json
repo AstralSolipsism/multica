@@ -2,8 +2,10 @@
   "title": "工程概要",
   "views": {
     "label": "工程ビュー",
-    "overview": "概要",
-    "wiki": "ベースライン Wiki"
+    "board": "ダッシュボード",
+    "stages": "ステージ",
+    "wiki": "ベースライン Wiki",
+    "activity": "アクティビティ"
   },
   "hero": {
     "allComplete": "すべての交付ステージが完了しました。",
@@ -62,6 +64,8 @@
     "reviewGroup": "レビュー中",
     "progressGroup": "進行中",
     "todoGroup": "未着手",
+    "completedGroup": "完了",
+    "unstaged": "ステージ未設定",
     "emptyStage": "このステージにはまだタスクがありません。",
     "showCompleted": "完了した {{count}} 件を表示",
     "hideCompleted": "完了した {{count}} 件を隠す",
@@ -73,14 +77,20 @@
     "title": "Strixnova 工程 skill のバインド状態",
     "loading": "アクティブなエージェントの skill を確認中",
     "unavailable": "skill のバインド状態を読み込めませんでした。工程管理機能は引き続き利用できます。",
-    "empty": "アクティブなエージェントに Strixnova 工程 skill はバインドされていません。エージェント側の自動工程機能はバインド後に有効になりますが、このページの機能には影響しません。"
+    "empty": "アクティブなエージェントに Strixnova 工程 skill はバインドされていません。エージェント側の自動工程機能はバインド後に有効になりますが、このページの機能には影響しません。",
+    "missingShort": "アクティブなエージェントに Strixnova skill はバインドされていません"
   },
   "settings": {
     "title": "工程設定",
     "enabledLabel": "工程概要を有効化",
     "enabledHint": "無効にしてもプロジェクトデータは変わらず、概要だけが非表示になります。",
     "decidersLabel": "決定者",
-    "decidersHint": "ワークスペースの owner と admin は常に含まれます。未選択の場合は人間のプロジェクトリードが決定します。"
+    "decidersHint": "ワークスペースの owner と admin は常に含まれます。未選択の場合は人間のプロジェクトリードが決定します。",
+    "searchMembers": "メンバーを検索",
+    "noMembers": "検索条件に一致するメンバーはいません。",
+    "disableTitle": "工程管理を無効化",
+    "disableHint": "このビューを非表示にするだけです。プロジェクトの Issue とベースライン Wiki は削除されません。",
+    "disableAction": "工程管理を無効化"
   },
   "disabled": {
     "title": "工程概要は有効ではありません",
@@ -108,8 +118,47 @@
     "expand": "全文を表示",
     "collapse": "折りたたむ",
     "enable": "概要を有効化",
-    "open_baseline": "エンジニアリング基線を開く",
     "retry": "再試行"
+  },
+  "board": {
+    "healthy": "順調 · ブロックなし",
+    "activeTasks": "アクティブなタスク",
+    "viewStages": "ステージのすべてのタスクを表示 →",
+    "noActiveTasks": "このステージに未完了のタスクはありません。",
+    "latestChange": "最新の変更",
+    "allActivity": "すべてのアクティビティ →"
+  },
+  "cold": {
+    "title": "はじめに",
+    "progress": "{{count}} / 3 完了",
+    "strategyStep": "推進方針と Stage 1 を定義",
+    "strategyHint": "推進原則を記述し、最初のステージとその成果に名前を付けます。",
+    "strategyPlaceholder": "推進方針",
+    "stageNamePlaceholder": "Stage 1 名",
+    "stageGoalPlaceholder": "ステージの成果",
+    "wikiStep": "ベースライン Wiki を初期化",
+    "wikiHint": "標準の4ページを作成するか、空白ページから始めます。",
+    "createGuide": "ガイド4ページを作成",
+    "createBlank": "空白ページを作成",
+    "readyStep": "決定者とエージェントの準備を確認",
+    "readyHint": "設定で決定権限と Strixnova skill のバインドを確認します。",
+    "openSettings": "工程設定",
+    "footerHint": "これらは後から設定ボタンで変更できます。",
+    "skip": "スキップしてダッシュボードを開く",
+    "enter": "ダッシュボードを開く"
+  },
+  "activity": {
+    "all": "すべて",
+    "humans": "人間のみ",
+    "agents": "エージェントのみ",
+    "allPages": "すべてのページ",
+    "future": "現在は Wiki のリビジョンを表示しています。ステージの解放や方針の変更も今後このフィードに追加されます。",
+    "empty": "条件に一致するリビジョンはありません。",
+    "select": "リビジョンを選択すると変更をプレビューできます。",
+    "openPage": "ページを開く",
+    "fullHistory": "すべての履歴 →",
+    "loading": "差分を読み込み中…",
+    "diffError": "差分を読み込めませんでした。"
   },
   "chapters": {
     "overview": "プロジェクト概要",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n（未記入）\n",
     "breadcrumbLabel": "ページパス",
     "openTreeDrawer": "ページツリーを開く",
+    "treeCollapse": "ページツリーを折りたたむ",
     "openOutlineDrawer": "アウトラインを開く",
     "searchShortcut": "⌘K",
     "editPage": "編集",
@@ -181,11 +231,15 @@
     "pageEmpty": "このページはまだ空です。",
     "pageStartWriting": "書き始める",
     "pageLoadError": "ページの読み込みに失敗しました。再試行してください。",
+    "pageUnavailable": "このページは利用できないか、既に存在しません。",
     "backlinksTitle": "被参照 · Referenced by",
     "backlinksEmpty": "このページを参照しているページはまだありません。",
     "relatedIssuesTitle": "関連 Issue",
     "relatedIssuesEmpty": "本文に関連 Issue はありません。",
     "outlineTitle": "On this page",
+    "outlineTab": "アウトライン",
+    "commentsTab": "コメント（{{count}}）",
+    "footerEmpty": "参照なし · 関連 Issue なし",
     "outlineEmpty": "このページにはセクションがありません。",
     "bodyLabel": "ページ本文",
     "canvasInstructionCopied": "会話用の指示としてコピーしました",

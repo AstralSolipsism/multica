@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setApiInstance, ApiError } from "@multica/core/api";
+import { toast } from "sonner";
 import type { ApiClient } from "@multica/core/api/client";
 import type { WikiPageRead, WikiTree } from "@multica/core/api";
 import { renderWithI18n } from "../../test/i18n";
@@ -170,6 +171,43 @@ describe("EngineeringBaselineWiki", () => {
     expect(screen.getByText("引用概览")).toBeInTheDocument(); // backlink card
     expect(screen.getByText("OL-1304")).toBeInTheDocument(); // related issue chip
     expect(screen.getByLabelText("On this page")).toBeInTheDocument();
+  });
+
+  it("keeps an archived page's history and rollback bound to the requested slug", async () => {
+    const archivedTree = tree();
+    archivedTree.pages[1]!.archivedAt = "2026-11-24T00:00:00Z";
+    archivedTree.pages[1]!.currentRevisionNumber = 4;
+    archivedTree.pages[1]!.revisionCount = 4;
+    getProjectWikiTree.mockResolvedValue(archivedTree);
+    searchParams = new URLSearchParams("tab=wiki&page=architecture&history=1&rev=2");
+    const getProjectWikiPageRevision = vi.fn(async (_ws: string, _project: string, _slug: string, number: number) => ({
+      page: archivedTree.pages[1], revision: { ...pageRead().revision, id: `revision-${number}`, revisionNumber: number, contentMarkdown: `Architecture ${number}` },
+    }));
+    const rollbackProjectWikiPage = vi.fn(async () => null);
+    setApiInstance({
+      getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage,
+      getProjectWikiPageRevision,
+      getProjectWikiPageHistory: vi.fn(async () => ({ revisions: [{ ...pageRead().revision, revisionNumber: 2 }], hasMore: false, nextBefore: null })),
+      rollbackProjectWikiPage,
+    } as unknown as ApiClient);
+    renderWiki();
+
+    await waitFor(() => expect(document.querySelector('[data-wiki-history-item="2"]')).not.toBeNull());
+    expect(getProjectWikiPageRevision).toHaveBeenCalledWith(WS, PROJECT, "architecture", 2);
+    fireEvent.click(document.querySelector("[data-wiki-rollback]")!);
+    fireEvent.click(screen.getByRole("button", { name: /^回滚$/ }));
+    await waitFor(() => expect(rollbackProjectWikiPage).toHaveBeenCalledWith(WS, PROJECT, "architecture", expect.objectContaining({ revisionNumber: 2 })));
+  });
+
+  it("uses the real conflict revision when shared blank-page creation fails", async () => {
+    (toast.error as Mock).mockClear();
+    createProjectWikiPage.mockRejectedValueOnce(new ApiError("conflict", 409, "Conflict", {
+      code: "baseline_conflict",
+      current: { revision_number: 9, kind: "content", created_at: "2026-11-02T00:00:00Z", created_by_type: "agent", created_by_id: RULES_ID, change_summary: "Agent edit", source_issue_id: null },
+    }));
+    renderWiki();
+    fireEvent.click(await screen.findByRole("button", { name: "新建页面" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("页面已被他人更新到 v9，已刷新，请重试。"));
   });
 
   it("opens a deep-linked revision, hides the outline rail and docks rollback in the Diff toolbar", async () => {

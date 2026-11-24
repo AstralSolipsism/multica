@@ -23,7 +23,7 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
-import { ApiError, api, errorCode, WikiConflictSchema, type WikiTreePage } from "@multica/core/api";
+import { api, errorCode, type WikiTreePage } from "@multica/core/api";
 import { issueIdentifierOptions } from "@multica/core/issues/queries";
 import { projectWikiPageOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
 import { buildWikiLinkIndex } from "@multica/core/projects/wikilink-resolution";
@@ -34,7 +34,7 @@ import {
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { useFormatRelativeDate } from "./labels";
-import type { WikiEditorConflictInfo, WikiSaveOutcome } from "./engineering-baseline-editor";
+import type { WikiSaveOutcome } from "./engineering-baseline-editor";
 import { WikiEditor } from "./engineering-baseline-editor";
 import { WikiHistoryView } from "./engineering-baseline-history";
 import { WikiMarkdown, type WikiLinkTarget } from "./engineering-baseline-markdown";
@@ -51,7 +51,7 @@ import type { WikiEditorSourceIssue } from "./engineering-baseline-editor";
 import { WikiReadingHighlights } from "./engineering-baseline-reading-highlights";
 import { EntityAttachmentsProvider } from "../../rich-content";
 import { HtmlBlockHostActionsProvider } from "../../editor/html-block-host-actions";
-import { useEngineeringWikiPages } from "./use-engineering-wiki-pages";
+import { useEngineeringWikiPages, wikiConflictFromError } from "./use-engineering-wiki-pages";
 
 const EMPTY_THREADS: WikiThread[] = [];
 
@@ -82,21 +82,6 @@ function firstParagraph(markdown: string): string {
   }
   return plainWikiExcerpt(lines.join(" "), 160);
 }
-
-function conflictFromError(cause: unknown): WikiEditorConflictInfo | null {
-  if (!(cause instanceof ApiError) || errorCode(cause) !== "baseline_conflict") return null;
-  const parsed = WikiConflictSchema.safeParse(cause.body);
-  if (!parsed.success) return null;
-  return {
-    revisionNumber: parsed.data.current.revisionNumber,
-    kind: parsed.data.current.kind,
-    createdAt: parsed.data.current.createdAt,
-    createdByType: parsed.data.current.createdByType,
-    createdById: parsed.data.current.createdById,
-    changeSummary: parsed.data.current.changeSummary,
-  };
-}
-
 
 function OutlineRail({ sections, contentKey, className }: { sections: readonly { anchor: string; title: string; level: number }[]; contentKey: string; className?: string }) {
   const { t } = useT("engineering");
@@ -217,7 +202,10 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const urlPage = navigation.searchParams.get("page");
   const urlSection = navigation.searchParams.get("section");
   const urlThread = navigation.searchParams.get("thread");
-  const selected = useMemo(() => pages.find((page) => page.slug === urlPage) ?? pages[0] ?? null, [pages, urlPage]);
+  const selected = useMemo(() => {
+    if (urlPage) return [...pages, ...archived].find((page) => page.slug === urlPage) ?? null;
+    return pages[0] ?? null;
+  }, [pages, archived, urlPage]);
   const selectedTreePage = selected;
   const threadQuery = useQuery(wikiThreadsOptions(wsId, props.projectId, selected?.id ?? ""));
   const threads = threadQuery.data?.threads ?? EMPTY_THREADS;
@@ -345,12 +333,12 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const archivePage = useArchiveWikiPage();
   const restorePage = useRestoreWikiPage();
   const rollbackPage = useRollbackWikiPage();
-  const { createGuide: handleCreateGuide, pending: guidePending } = useEngineeringWikiPages(props.projectId);
+  const { createGuide: handleCreateGuide, createBlank, pending: guidePending } = useEngineeringWikiPages(props.projectId);
   const writingPending = writePage.isPending;
 
   const handleTreeError = useCallback((cause: unknown, fallbackKey: "treeWriteError" | "archiveError" | "restoreError" | "moveError" | "renameError") => {
     if (errorCode(cause) === "baseline_conflict") {
-      toast.error(t(($) => $.wiki.conflictTreeToast, { number: conflictFromError(cause)?.revisionNumber ?? 0 }));
+      toast.error(t(($) => $.wiki.conflictTreeToast, { number: wikiConflictFromError(cause)?.revisionNumber ?? 0 }));
     } else {
       toast.error(t(($) => $.wiki[fallbackKey]));
     }
@@ -358,33 +346,17 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   }, [t, treeQuery]);
 
   const handleCreateChild = async (parent: WikiTreePage) => {
-    try {
-      const result = await createPage.mutateAsync({
-        projectId: props.projectId,
-        title: t(($) => $.wiki.untitled),
-        parent: parent.slug,
-      });
-      if (!result) throw new Error("Unconfirmed create response");
-      setRenameTargetId(result.page.id);
-      navigateToPage(result.page.slug);
-    } catch (cause) {
-      handleTreeError(cause, "treeWriteError");
-    }
+    const result = await createBlank(parent.slug, () => void treeQuery.refetch());
+    if (!result) return;
+    setRenameTargetId(result.page.id);
+    navigateToPage(result.page.slug);
   };
 
   const handleCreateRootPage = async () => {
-    try {
-      const result = await createPage.mutateAsync({
-        projectId: props.projectId,
-        title: t(($) => $.wiki.untitled),
-        parent: "root",
-      });
-      if (!result) throw new Error("Unconfirmed create response");
-      setRenameTargetId(result.page.id);
-      navigateToPage(result.page.slug);
-    } catch (cause) {
-      handleTreeError(cause, "treeWriteError");
-    }
+    const result = await createBlank("root", () => void treeQuery.refetch());
+    if (!result) return;
+    setRenameTargetId(result.page.id);
+    navigateToPage(result.page.slug);
   };
 
   const handleCreateMissing = useCallback(async (title: string) => {
@@ -499,7 +471,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
       setEditor(null);
       return { status: "saved" };
     } catch (cause) {
-      const conflict = conflictFromError(cause);
+      const conflict = wikiConflictFromError(cause);
       if (conflict) return { status: "conflict", conflict };
       toast.error(t(($) => $.wiki.saveError));
       void treeQuery.refetch();
@@ -709,7 +681,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                   <p className="flex items-center gap-1.5"><AlertCircle className="size-4" aria-hidden="true" />{t(($) => $.wiki.treeLoadError)}</p>
                   <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void treeQuery.refetch()}>{t(($) => $.actions.retry)}</Button>
                 </div>
-              ) : null
+              ) : urlPage ? <div className="p-6 text-body text-muted-foreground" data-wiki-unavailable>{t(($) => $.wiki.pageUnavailable)}</div> : null
           ) : (
             <article className="mx-auto w-full max-w-[812px] px-[28px] py-6 @[700px]:px-[40px] @[1024px]:px-[56px]">
               <h1 className="mb-1 text-h2 font-semibold" data-wiki-page-title>{selected.title || t(($) => $.wiki.untitled)}</h1>

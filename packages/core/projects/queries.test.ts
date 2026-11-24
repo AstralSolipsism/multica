@@ -125,9 +125,26 @@ describe("project engineering queries", () => {
       workspace_id: "ws-1",
       project_id: "project-1",
       statuses: ["blocked"],
+      limit: 100,
+      offset: 0,
     });
     expect(options.queryKey).toEqual([
       "issues", "ws-1", "engineering-decisions", "project-1",
     ]);
+  });
+
+  it("follows the server total past the 100-issue page boundary", async () => {
+    const issues = Array.from({ length: 101 }, (_, index) => ({ id: `issue-${index + 1}` }));
+    const listIssues = vi.fn(async ({ offset = 0 }) => ({ issues: issues.slice(offset, offset + 100), total: issues.length }));
+    setApiInstance({ listIssues } as unknown as ApiClient);
+    const observer = new QueryObserver(qc, projectEngineeringDecisionIssuesOptions("ws-1", "project-1"));
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await vi.waitFor(() => expect(observer.getCurrentResult().data).toHaveLength(101));
+      expect(observer.getCurrentResult().data?.at(-1)?.id).toBe("issue-101");
+    } finally {
+      unsubscribe();
+    }
+    expect(listIssues.mock.calls.map(([input]) => input.offset)).toEqual([0, 100]);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
@@ -25,6 +25,7 @@ export interface EngineeringDecisionTimeline {
   comment: TimelineEntry | null;
   loading: boolean;
   error: boolean;
+  retry?: () => void;
 }
 
 interface EngineeringDecisionsProps {
@@ -33,15 +34,18 @@ interface EngineeringDecisionsProps {
   issues: readonly Issue[];
   timelines: Readonly<Record<string, EngineeringDecisionTimeline>>;
   reviewStage: number | null;
+  canDecide: boolean;
+  onSubmitted: (commentId: string) => void;
   onReview: () => void;
 }
 
-function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, onSubmitted }: {
+function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, canDecide, onSubmitted }: {
   workspaceSlug: string;
   projectId: string;
   issue: Issue;
   timeline: EngineeringDecisionTimeline;
-  onSubmitted: (issueId: string) => void;
+  canDecide: boolean;
+  onSubmitted: (commentId: string) => void;
 }) {
   const { t } = useT("engineering");
   const wsId = useWorkspaceId();
@@ -52,7 +56,7 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
   const parentId = timeline.comment?.id;
   const actions = useMemo<HtmlBlockHostActions>(() => ({
     submitComment: async (content) => {
-      if (!parentId) return false;
+      if (!canDecide || !parentId) return false;
       try {
         await createComment({ content, parentId });
       } catch {
@@ -63,7 +67,7 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
       void qc.invalidateQueries({ queryKey: engineeringProjectKeys.engineeringDecisionIssuesAll(wsId, projectId) });
       // Let the shared HTML bridge post its successful action-result before the
       // selected card leaves the board.
-      window.setTimeout(() => onSubmitted(issue.id), 0);
+      window.setTimeout(() => onSubmitted(parentId), 0);
       return true;
     },
     fillComment: (content) => {
@@ -72,7 +76,7 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
       peek.open(issue.id, { commentDraft: content });
       return true;
     },
-  }), [createComment, issue.id, onSubmitted, parentId, peek, projectId, qc, wsId]);
+  }), [canDecide, createComment, issue.id, onSubmitted, parentId, peek, projectId, qc, wsId]);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" data-decision-content={issue.identifier}>
@@ -85,7 +89,7 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {timeline.loading ? <p className="text-caption text-muted-foreground">{t(($) => $.decisions.loading)}</p> : null}
-        {timeline.error ? <p className="text-caption text-destructive">{t(($) => $.errors.timeline)}</p> : null}
+        {timeline.error ? <div className="text-caption text-destructive"><p>{t(($) => $.errors.timeline)}</p>{timeline.retry ? <Button type="button" variant="outline" size="sm" className="mt-2" onClick={timeline.retry}>{t(($) => $.actions.retry)}</Button> : null}</div> : null}
         {!timeline.loading && !timeline.error ? (
           timeline.comment ? (
             <HtmlBlockHostActionsProvider value={actions}>
@@ -103,16 +107,12 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
   );
 }
 
-export function EngineeringDecisions({ workspaceSlug, projectId, issues, timelines, reviewStage, onReview }: EngineeringDecisionsProps) {
+export function EngineeringDecisions({ workspaceSlug, projectId, issues, timelines, reviewStage, canDecide, onSubmitted, onReview }: EngineeringDecisionsProps) {
   const { t } = useT("engineering");
   const wsId = useWorkspaceId();
   const { colorOf: statusColorOf, iconOf: statusIconOf } = useIssueStatuses(wsId);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
-  const [submittedIssueIds, setSubmittedIssueIds] = useState<ReadonlySet<string>>(() => new Set());
-  const onSubmitted = useCallback((issueId: string) => {
-    setSubmittedIssueIds((current) => new Set(current).add(issueId));
-  }, []);
-  const visibleIssues = issues.filter((issue) => !submittedIssueIds.has(issue.id));
+  const visibleIssues = issues;
   const reviewSelected = selectedIssueId === "review" && reviewStage !== null;
   const selectedIssue = reviewSelected ? undefined : visibleIssues.find((issue) => issue.id === selectedIssueId) ?? visibleIssues[0];
   const showReview = reviewStage !== null && (reviewSelected || !selectedIssue);
@@ -164,6 +164,7 @@ export function EngineeringDecisions({ workspaceSlug, projectId, issues, timelin
           projectId={projectId}
           issue={selectedIssue}
           timeline={timelines[selectedIssue.id] ?? { comment: null, loading: true, error: false }}
+          canDecide={canDecide}
           onSubmitted={onSubmitted}
         />
       ) : showReview ? (

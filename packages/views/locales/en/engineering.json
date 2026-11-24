@@ -231,6 +231,7 @@
     "pageEmpty": "This page is still empty.",
     "pageStartWriting": "Start writing",
     "pageLoadError": "Failed to load the page. Try again.",
+    "pageUnavailable": "This page is unavailable or no longer exists.",
     "backlinksTitle": "Referenced by",
     "backlinksEmpty": "No pages reference this one yet.",
     "relatedIssuesTitle": "Related Issues",

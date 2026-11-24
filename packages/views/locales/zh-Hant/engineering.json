@@ -2,8 +2,10 @@
   "title": "工程總覽",
   "views": {
     "label": "工程視圖",
-    "overview": "總覽",
-    "wiki": "基線 Wiki"
+    "board": "推進看板",
+    "stages": "交付階段",
+    "wiki": "基線 Wiki",
+    "activity": "變更動態"
   },
   "hero": {
     "allComplete": "所有交付階段都完成了。",
@@ -62,6 +64,8 @@
     "reviewGroup": "審閱中",
     "progressGroup": "進行中",
     "todoGroup": "待開始",
+    "completedGroup": "已完成",
+    "unstaged": "未分階段",
     "emptyStage": "這個階段還沒有任務。",
     "showCompleted": "展開已完成的 {{count}} 項",
     "hideCompleted": "收起已完成的 {{count}} 項",
@@ -73,14 +77,20 @@
     "title": "Strixnova 工程技能綁定狀態",
     "loading": "正在檢查活躍智能體的 skill 綁定",
     "unavailable": "暫時無法讀取 skill 綁定狀態，工程管理功能仍可正常使用。",
-    "empty": "目前尚無活躍智能體綁定 Strixnova 工程管理系列 skill。智能體側自動工程管理能力需綁定 skill 後生效；本頁面的啟用與所有功能不受影響。"
+    "empty": "目前尚無活躍智能體綁定 Strixnova 工程管理系列 skill。智能體側自動工程管理能力需綁定 skill 後生效；本頁面的啟用與所有功能不受影響。",
+    "missingShort": "尚無活躍智能體綁定 Strixnova 技能"
   },
   "settings": {
     "title": "工程設定",
     "enabledLabel": "啟用工程總覽",
     "enabledHint": "關閉後隱藏總覽，不改變專案資料。",
     "decidersLabel": "決定人",
-    "decidersHint": "工作區 owner 和 admin 始終是決定人。未選擇任何人時，由人類專案負責人拍板。"
+    "decidersHint": "工作區 owner 和 admin 始終是決定人。未選擇任何人時，由人類專案負責人拍板。",
+    "searchMembers": "搜尋成員",
+    "noMembers": "沒有符合搜尋條件的成員。",
+    "disableTitle": "停用工程管理",
+    "disableHint": "僅隱藏此視圖，不會刪除專案原有任務或基線 Wiki 資料。",
+    "disableAction": "停用工程管理"
   },
   "disabled": {
     "title": "尚未啟用工程總覽",
@@ -108,8 +118,47 @@
     "expand": "展開全文",
     "collapse": "收起",
     "enable": "啟用總覽",
-    "open_baseline": "開啟工程基線",
     "retry": "重試"
+  },
+  "board": {
+    "healthy": "推進正常 · 無阻塞",
+    "activeTasks": "活躍任務",
+    "viewStages": "查看階段全部任務 →",
+    "noActiveTasks": "當前階段沒有未關閉任務。",
+    "latestChange": "最新變更",
+    "allActivity": "全部變更 →"
+  },
+  "cold": {
+    "title": "起步設定",
+    "progress": "{{count}} / 3 已完成",
+    "strategyStep": "定義推進方針 & Stage 1",
+    "strategyHint": "寫清推進原則，並命名第一個交付階段與目標。",
+    "strategyPlaceholder": "推進方針",
+    "stageNamePlaceholder": "Stage 1 名稱",
+    "stageGoalPlaceholder": "階段目標",
+    "wikiStep": "初始化基線 Wiki",
+    "wikiHint": "建立 4 頁標準基線骨架，或新建空白頁。",
+    "createGuide": "建立 4 頁指南",
+    "createBlank": "新建空白頁",
+    "readyStep": "確認拍板人與智能體就緒",
+    "readyHint": "在設定中檢查決定人權限與 Strixnova 技能綁定。",
+    "openSettings": "工程設定",
+    "footerHint": "後續可隨時在設定按鈕中調整。",
+    "skip": "跳過並開啟看板",
+    "enter": "開啟看板"
+  },
+  "activity": {
+    "all": "全部",
+    "humans": "僅人工",
+    "agents": "僅智能體",
+    "allPages": "全部頁面",
+    "future": "目前展示 Wiki 修訂；後續可在此納入階段解鎖、方針變更等工程動態。",
+    "empty": "沒有符合篩選條件的修訂。",
+    "select": "選擇一條修訂記錄以預覽變更。",
+    "openPage": "開啟頁面",
+    "fullHistory": "完整歷史對比 →",
+    "loading": "正在載入 Diff…",
+    "diffError": "無法載入 Diff。"
   },
   "chapters": {
     "overview": "專案概覽",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n（待編寫）\n",
     "breadcrumbLabel": "頁面路徑",
     "openTreeDrawer": "開啟頁面樹",
+    "treeCollapse": "收起頁面樹",
     "openOutlineDrawer": "開啟大綱",
     "searchShortcut": "⌘K",
     "editPage": "編輯",
@@ -181,11 +231,15 @@
     "pageEmpty": "這一頁還是空的。",
     "pageStartWriting": "開始編寫",
     "pageLoadError": "頁面載入失敗，請重試。",
+    "pageUnavailable": "此頁面不可用或已不存在。",
     "backlinksTitle": "被引用 · Referenced by",
     "backlinksEmpty": "還沒有頁面引用本頁。",
     "relatedIssuesTitle": "關聯 Issue",
     "relatedIssuesEmpty": "正文中沒有出現關聯 Issue。",
     "outlineTitle": "On this page",
+    "outlineTab": "大綱",
+    "commentsTab": "評論（{{count}}）",
+    "footerEmpty": "暫無其他頁面引用 · 正文未關聯 Issue",
     "outlineEmpty": "本頁沒有小節。",
     "bodyLabel": "頁面正文",
     "canvasInstructionCopied": "已複製為對話指令",

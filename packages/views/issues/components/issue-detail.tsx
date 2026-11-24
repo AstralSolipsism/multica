@@ -1938,13 +1938,6 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
     fillComment: fillHtmlCommentDraft,
   }), [submitHtmlComment, fillHtmlCommentDraft]);
   const handledCommentDraftToken = useRef(0);
-  useEffect(() => {
-    if (!commentDraftRequest || landingChromeHeld || !commentInputRef.current
-      || handledCommentDraftToken.current === commentDraftRequest.token) return;
-    handledCommentDraftToken.current = commentDraftRequest.token;
-    fillHtmlCommentDraft(commentDraftRequest.content);
-    onCommentDraftRequestHandled?.();
-  }, [commentDraftRequest, landingChromeHeld, fillHtmlCommentDraft, onCommentDraftRequestHandled]);
   const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
   // Only a landing on data already in hand is worth holding the chrome for;
   // while the timeline is still on its way, the chrome renders in the wait.
@@ -3193,6 +3186,14 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
         : null,
     [resolvedIssueId, resolvedIssueIdentifier],
   );
+
+  useEffect(() => {
+    if (!commentDraftRequest || loading || landingChromeHeld || !commentInputRef.current
+      || handledCommentDraftToken.current === commentDraftRequest.token) return;
+    handledCommentDraftToken.current = commentDraftRequest.token;
+    fillHtmlCommentDraft(commentDraftRequest.content);
+    onCommentDraftRequestHandled?.();
+  }, [commentDraftRequest, loading, landingChromeHeld, fillHtmlCommentDraft, onCommentDraftRequestHandled]);
 
   if (issueReadState.loadFailed) {
     return (

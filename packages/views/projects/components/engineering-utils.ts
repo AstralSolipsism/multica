@@ -155,7 +155,7 @@ export function buildEngineeringRoadmap(
       closed,
       blocked: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "blocked").length,
       inReview: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "in_review").length,
-      inProgress: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "in_progress").length,
+      inProgress: tasks.filter((node) => !isClosedEngineeringNode(node) && node.statusCategory === "started" && node.status !== "blocked" && node.status !== "in_review").length,
       todo: tasks.filter((node) => !isClosedEngineeringNode(node) && node.statusCategory === "unstarted").length,
       tasks,
     };

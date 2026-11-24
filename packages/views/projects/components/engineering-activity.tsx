@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X } from "@multica/ui/icons";
+import { LoaderCircle, X } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -19,7 +19,7 @@ import { WikiDiffSummary, WikiDiffView } from "./engineering-baseline-diff";
 import { wikiActivityKindKey } from "./engineering-utils";
 import { useFormatRelativeDate } from "./labels";
 
-export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, items, pages, loading, error, onRetry }: {
+export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, items, pages, loading, error, onRetry, hasMore, loadingMore, onLoadMore }: {
   workspaceSlug: string;
   workspaceId: string;
   projectId: string;
@@ -28,6 +28,9 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
   loading: boolean;
   error: boolean;
   onRetry: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 }) {
   const { t } = useT("engineering");
   const navigation = useNavigation();
@@ -41,6 +44,9 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
     (actorFilter === "all" || item.createdByType === actorFilter)
     && (pageFilter === "all" || item.pageId === pageFilter),
   ), [actorFilter, items, pageFilter]);
+  useEffect(() => {
+    if (!loading && !error && !filtered.length && hasMore && !loadingMore) onLoadMore();
+  }, [error, filtered.length, hasMore, loading, loadingMore, onLoadMore]);
   const selected = filtered.find((item) => `${item.pageId}:${item.number}` === selectedKey) ?? filtered[0] ?? null;
   const selectedRevision = useQuery({
     ...projectWikiRevisionOptions(workspaceId, projectId, selected?.slug ?? "", selected?.number ?? 1),
@@ -97,6 +103,7 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
               </button>
             );
           }) : <p className="p-8 text-center text-body text-muted-foreground">{t(($) => $.activity.empty)}</p>}
+          {!loading && !error && hasMore ? <div className="p-3 text-center"><Button type="button" variant="ghost" size="sm" disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : null}{t(($) => $.wiki.historyMore)}</Button></div> : null}
         </section>
         <aside className={cn("absolute inset-0 min-h-0 flex-col bg-page-canvas @[1024px]:static @[1024px]:flex", previewOpen ? "flex" : "hidden")} data-activity-preview>
           {selected ? (

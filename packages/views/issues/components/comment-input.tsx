@@ -120,7 +120,11 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
   });
   useImperativeHandle(ref, () => ({
     getMarkdown: () => editorRef.current?.getMarkdown(),
-    adoptContent: (content) => editorRef.current?.adoptContent(content),
+    adoptContent: (content) => {
+      setContent(content);
+      setIsEmpty(!content.trim());
+      editorRef.current?.adoptContent(content);
+    },
     focus: () => lazy.activate(),
   }), [lazy]);
   // Inactive shells must not mount query observers or duplicate cold reads.

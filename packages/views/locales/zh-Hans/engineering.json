@@ -231,6 +231,7 @@
     "pageEmpty": "这一页还是空的。",
     "pageStartWriting": "开始编写",
     "pageLoadError": "页面加载失败，请重试。",
+    "pageUnavailable": "此页面不可用或已不存在。",
     "backlinksTitle": "被引用 · Referenced by",
     "backlinksEmpty": "还没有页面引用本页。",
     "relatedIssuesTitle": "关联 Issue",

@@ -26,8 +26,10 @@ interface EngineeringBoardProps {
   issues: readonly Issue[];
   timelines: Readonly<Record<string, EngineeringDecisionTimeline>>;
   reviewStage: number | null;
+  decisionLoading: boolean;
   decisionError: boolean;
   onRetryDecisions: () => void;
+  onDecisionSubmitted: (commentId: string) => void;
   wikiPageCount: number;
   latestActivity: WikiActivityItem | null;
   activityLoading: boolean;
@@ -37,7 +39,7 @@ interface EngineeringBoardProps {
   onOpenActivity: () => void;
 }
 
-export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadmap, currentStage, modeSummary, canDecide, saving, onSummarySave, issues, timelines, reviewStage, decisionError, onRetryDecisions, wikiPageCount, latestActivity, activityLoading, onReview, onOpenStages, onOpenWiki, onOpenActivity }: EngineeringBoardProps) {
+export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadmap, currentStage, modeSummary, canDecide, saving, onSummarySave, issues, timelines, reviewStage, decisionLoading, decisionError, onRetryDecisions, onDecisionSubmitted, wikiPageCount, latestActivity, activityLoading, onReview, onOpenStages, onOpenWiki, onOpenActivity }: EngineeringBoardProps) {
   const { t } = useT("engineering");
   const [strategyOpen, setStrategyOpen] = useState(false);
   const [strategyEditing, setStrategyEditing] = useState(false);
@@ -71,7 +73,7 @@ export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadma
               <div className="h-full bg-foreground" style={{ width: `${percent}%` }} />
             </div>
             <span className="shrink-0 text-muted-foreground tabular-nums">{t(($) => $.stage.completedCount, { closed, total })}</span>
-            <Badge variant="secondary" className={cn("hidden @[560px]:inline-flex", !hasWaiting && "text-success")}>{t(($) => hasWaiting ? $.stage.status[current?.status ?? "current"] : $.board.healthy)}</Badge>
+            <Badge variant="secondary" className={cn("hidden @[560px]:inline-flex", !hasWaiting && !decisionLoading && "text-success")}>{t(($) => hasWaiting ? $.stage.status[current?.status ?? "current"] : decisionLoading ? $.decisions.loading : $.board.healthy)}</Badge>
           </div>
           <Button type="button" variant="ghost" size="sm" className="shrink-0" aria-expanded={strategyOpen} onClick={() => setStrategyOpen((value) => !value)}>
             {t(($) => $.stage.summaryLabel)}{strategyOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
@@ -103,12 +105,14 @@ export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadma
         ) : null}
       </div>
 
-      {decisionError ? (
+      {decisionLoading ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-body text-muted-foreground">{t(($) => $.decisions.loading)}</div>
+      ) : decisionError ? (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-3 text-body text-destructive">
           <span>{t(($) => $.errors.decisionIssues)}</span><Button type="button" variant="outline" size="sm" onClick={onRetryDecisions}>{t(($) => $.actions.retry)}</Button>
         </div>
       ) : hasWaiting ? (
-        <EngineeringDecisions workspaceSlug={workspaceSlug} projectId={projectId} issues={issues} timelines={timelines} reviewStage={reviewStage} onReview={onReview} />
+        <EngineeringDecisions workspaceSlug={workspaceSlug} projectId={projectId} issues={issues} timelines={timelines} reviewStage={reviewStage} canDecide={canDecide} onSubmitted={onDecisionSubmitted} onReview={onReview} />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:px-5">
           <div className="grid shrink-0 grid-cols-2 overflow-hidden rounded-md border @[720px]:grid-cols-4" data-board-buckets>

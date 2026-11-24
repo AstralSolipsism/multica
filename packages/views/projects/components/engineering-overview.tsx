@@ -4,8 +4,8 @@
 // URL search parameters are the shareable navigation contract; each view owns
 // its own scrolling so the Dashboard can remain a one-screen cockpit.
 
-import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { AlertCircle, LoaderCircle, Settings, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
@@ -19,7 +19,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { paths } from "@multica/core/paths";
-import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectWikiActivityOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
+import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectWikiActivityInfiniteOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
 import { useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import type { Issue, IssueTableQuerySpec } from "@multica/core/types";
@@ -67,6 +67,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [reviewOpen, setReviewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [coldActive, setColdActive] = useState<boolean | null>(null);
+  const [consumedCommentIds, setConsumedCommentIds] = useState<ReadonlySet<string>>(() => new Set());
   const [configError, setConfigError] = useState(false);
   useEffect(() => setActiveView(requestedView), [requestedView]);
 
@@ -103,6 +104,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds) : null,
       loading: !!query?.isLoading,
       error: !!query?.isError,
+      retry: query ? () => void query.refetch() : undefined,
     };
     return [issue.id, timeline];
   })), [blockedIssues, timelineQueries, permissions?.deciderIds]);
@@ -114,11 +116,19 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       if (kind === "mention") return 1;
       return 2;
     };
-    return blockedIssues.filter((issue) =>
-      engineeringDecisionKind(timelines[issue.id]?.comment ?? null, permissions?.deciderIds) !== null
-      || (issue.assignee_type === "member" && issue.assignee_id !== null && deciderIds.has(issue.assignee_id)),
-    ).sort((a, b) => priority(a) - priority(b) || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
-  }, [blockedIssues, permissions?.deciderIds, timelines]);
+    return blockedIssues.filter((issue) => {
+      const timeline = timelines[issue.id];
+      const commentId = timeline?.comment?.id;
+      if (commentId && consumedCommentIds.has(commentId)) return false;
+      const kind = engineeringDecisionKind(timeline?.comment ?? null, permissions?.deciderIds);
+      const directlyAssigned = issue.assignee_type === "member" && issue.assignee_id !== null && deciderIds.has(issue.assignee_id);
+      return timeline?.loading || timeline?.error || kind !== null || directlyAssigned;
+    }).sort((a, b) => priority(a) - priority(b) || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
+  }, [blockedIssues, consumedCommentIds, permissions?.deciderIds, timelines]);
+  const decisionLoading = decisionIssuesQuery.isLoading || blockedIssues.some((issue) => timelines[issue.id]?.loading);
+  const consumeDecision = useCallback((commentId: string) => {
+    setConsumedCommentIds((current) => new Set(current).add(commentId));
+  }, []);
 
   const graphSpec = useMemo<IssueTableQuerySpec>(() => ({
     scope: { kind: "project", project_id: projectId },
@@ -133,12 +143,18 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   );
 
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
-  const wikiActivityQuery = useQuery({ ...projectWikiActivityOptions(wsId, projectId, { limit: 50 }), enabled });
+  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50), enabled });
+  const activityItems = useMemo(() => (wikiActivityQuery.data?.pages ?? []).flatMap((page) => page?.items ?? []), [wikiActivityQuery.data]);
   const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
   useEffect(() => {
-    if (coldActive !== null || !enabled || !config || !wikiTreeQuery.data) return;
-    setColdActive(config.stages.length === 0 && livePages.length === 0);
-  }, [coldActive, config, enabled, livePages.length, wikiTreeQuery.data]);
+    if (coldActive !== null || !enabled || !config || graphQuery.isLoading) return;
+    const hasStages = config.stages.length > 0 || projectNodes.some((node) => node.stage !== null);
+    if (hasStages || graphQuery.isError || wikiTreeQuery.isError) {
+      setColdActive(false);
+      return;
+    }
+    if (wikiTreeQuery.data) setColdActive(livePages.length === 0);
+  }, [coldActive, config, enabled, graphQuery.isError, graphQuery.isLoading, livePages.length, projectNodes, wikiTreeQuery.data, wikiTreeQuery.isError]);
 
   const updateEngineering = useUpdateProjectEngineering();
   const saveConfig = async (data: ConfigUpdate): Promise<boolean> => {
@@ -230,12 +246,13 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       <div className={shellClass} data-engineering-shell>
         {topChrome}
         {configError ? <Alert variant="destructive" className="m-3 shrink-0"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
+        {activeView === "board" && wikiTreeQuery.isError ? <Alert variant="destructive" className="m-3 flex items-center justify-between gap-3"><AlertCircle /><AlertDescription className="flex-1">{t(($) => $.wiki.treeLoadError)}</AlertDescription><Button type="button" variant="outline" size="sm" onClick={() => void wikiTreeQuery.refetch()}>{t(($) => $.actions.retry)}</Button></Alert> : null}
         {activeView === "wiki" ? (
           <main className="min-h-0 flex-1">
             <EngineeringBaselineWiki workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} />
           </main>
         ) : activeView === "activity" ? (
-          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={wikiActivityQuery.data?.items ?? []} pages={livePages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} />
+          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={livePages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
         ) : activeView === "board" && coldActive === null ? (
           <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
         ) : activeView === "board" && coldActive ? (
@@ -258,10 +275,12 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             issues={decisionIssues}
             timelines={timelines}
             reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
+            decisionLoading={decisionLoading}
             decisionError={decisionIssuesQuery.isError}
             onRetryDecisions={() => void decisionIssuesQuery.refetch()}
+            onDecisionSubmitted={consumeDecision}
             wikiPageCount={livePages.length}
-            latestActivity={wikiActivityQuery.data?.items[0] ?? null}
+            latestActivity={activityItems[0] ?? null}
             activityLoading={wikiActivityQuery.isLoading}
             onReview={() => { openStages(config.currentStage); setReviewOpen(true); }}
             onOpenStages={openStages}

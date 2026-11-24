@@ -51,7 +51,8 @@ const peek = {
   open: openPeek, toggle: vi.fn(), close: vi.fn(), publishColumns: vi.fn(),
 } satisfies IssuePeekActions;
 
-function renderDecisions(reviewStage: number | null = null, includeSecond = false) {
+function renderDecisions(reviewStage: number | null = null, includeSecond = false, canDecide = true) {
+  const onSubmitted = vi.fn();
   const otherIssue = { ...issue, id: "issue-2", identifier: "OL-2", title: "Review the history fallback" };
   const otherComment = { ...comment, id: "comment-2", content: "Second decision context" };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -65,12 +66,15 @@ function renderDecisions(reviewStage: number | null = null, includeSecond = fals
             issues={includeSecond ? [issue, otherIssue] : [issue]}
             timelines={{ [issue.id]: { comment, loading: false, error: false }, ...(includeSecond ? { [otherIssue.id]: { comment: otherComment, loading: false, error: false } } : {}) }}
             reviewStage={reviewStage}
+            canDecide={canDecide}
+            onSubmitted={onSubmitted}
             onReview={vi.fn()}
           />
         </IssuePeekActionsContext.Provider>
       </NavigationProvider>
     </QueryClientProvider>,
   );
+  return { onSubmitted };
 }
 
 describe("EngineeringDecisions host bridge", () => {
@@ -82,7 +86,7 @@ describe("EngineeringDecisions host bridge", () => {
 
   it("replies to the selected card thread and advances the queue after success", async () => {
     createComment.mockResolvedValue({ id: "reply-1" });
-    renderDecisions();
+    const { onSubmitted } = renderDecisions();
     await screen.findByTestId("decision-rich-content");
 
     let result = false;
@@ -91,7 +95,21 @@ describe("EngineeringDecisions host bridge", () => {
     });
     expect(result).toBe(true);
     expect(createComment).toHaveBeenCalledWith({ content: "采用方案 A", parentId: "comment-1" });
-    await waitFor(() => expect(screen.queryByTestId("decision-rich-content")).not.toBeInTheDocument());
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledWith("comment-1"));
+  });
+
+  it("keeps non-deciders read-only without mutating or consuming the card", async () => {
+    const { onSubmitted } = renderDecisions(null, false, false);
+    await screen.findByTestId("decision-rich-content");
+
+    let result = true;
+    await act(async () => {
+      result = await hostActions?.submitComment?.("未经授权的拍板", "card-key") ?? false;
+    });
+    expect(result).toBe(false);
+    expect(createComment).not.toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(screen.getByTestId("decision-rich-content")).toBeInTheDocument();
   });
 
   it("fills the shared draft and opens the existing peek with a focus request", async () => {

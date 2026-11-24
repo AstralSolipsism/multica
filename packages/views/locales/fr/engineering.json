@@ -2,8 +2,10 @@
   "title": "Vue d’ensemble de l’ingénierie",
   "views": {
     "label": "Vues de l’ingénierie",
-    "overview": "Vue d’ensemble",
-    "wiki": "Wiki de référence"
+    "board": "Tableau de bord",
+    "stages": "Étapes",
+    "wiki": "Wiki de référence",
+    "activity": "Activité"
   },
   "hero": {
     "allComplete": "Toutes les étapes de livraison sont terminées.",
@@ -62,6 +64,8 @@
     "reviewGroup": "En revue",
     "progressGroup": "En cours",
     "todoGroup": "À commencer",
+    "completedGroup": "Terminées",
+    "unstaged": "Sans étape",
     "emptyStage": "Aucune tâche n’est encore attribuée à cette étape.",
     "showCompleted": "Afficher les {{count}} tâches terminées",
     "hideCompleted": "Masquer les {{count}} tâches terminées",
@@ -73,14 +77,20 @@
     "title": "Liaisons des skills d’ingénierie Strixnova",
     "loading": "Vérification des skills des agents actifs",
     "unavailable": "Impossible de charger les liaisons de skills. La gestion de l’ingénierie reste disponible.",
-    "empty": "Aucun agent actif n’est lié aux skills d’ingénierie Strixnova. Les fonctions automatiques côté agent seront actives après la liaison ; cette page reste entièrement disponible."
+    "empty": "Aucun agent actif n’est lié aux skills d’ingénierie Strixnova. Les fonctions automatiques côté agent seront actives après la liaison ; cette page reste entièrement disponible.",
+    "missingShort": "Aucun agent actif n’est lié aux skills Strixnova"
   },
   "settings": {
     "title": "Paramètres d’ingénierie",
     "enabledLabel": "Activer la vue d’ensemble de l’ingénierie",
     "enabledHint": "La désactivation masque la vue sans modifier les données du projet.",
     "decidersLabel": "Décideurs",
-    "decidersHint": "Les owner et admin de l’espace de travail sont toujours inclus. Sans sélection, le responsable humain du projet décide."
+    "decidersHint": "Les owner et admin de l’espace de travail sont toujours inclus. Sans sélection, le responsable humain du projet décide.",
+    "searchMembers": "Rechercher des membres",
+    "noMembers": "Aucun membre ne correspond à cette recherche.",
+    "disableTitle": "Désactiver l’ingénierie",
+    "disableHint": "Masque uniquement cette vue. Les tâches du projet et le Wiki de référence ne sont pas supprimés.",
+    "disableAction": "Désactiver l’ingénierie"
   },
   "disabled": {
     "title": "La vue d’ensemble de l’ingénierie n’est pas activée",
@@ -108,8 +118,47 @@
     "expand": "Tout afficher",
     "collapse": "Réduire",
     "enable": "Activer la vue",
-    "open_baseline": "Ouvrir la baseline d’ingénierie",
     "retry": "Réessayer"
+  },
+  "board": {
+    "healthy": "Sur la bonne voie · Aucun blocage",
+    "activeTasks": "Tâches actives",
+    "viewStages": "Voir toutes les tâches de l’étape →",
+    "noActiveTasks": "Aucune tâche ouverte à cette étape.",
+    "latestChange": "Dernière modification",
+    "allActivity": "Toute l’activité →"
+  },
+  "cold": {
+    "title": "Premiers pas",
+    "progress": "{{count}} / 3 terminés",
+    "strategyStep": "Définissez la stratégie de livraison et l’étape 1",
+    "strategyHint": "Rédigez les principes de livraison, puis nommez la première étape et son résultat.",
+    "strategyPlaceholder": "Stratégie de livraison",
+    "stageNamePlaceholder": "Nom de l’étape 1",
+    "stageGoalPlaceholder": "Résultat de l’étape",
+    "wikiStep": "Initialisez le Wiki de référence",
+    "wikiHint": "Créez les quatre pages standard ou commencez par une page vierge.",
+    "createGuide": "Créer les 4 pages du guide",
+    "createBlank": "Nouvelle page vierge",
+    "readyStep": "Vérifiez les décideurs et la préparation des agents",
+    "readyHint": "Vérifiez les droits de décision et les liaisons de skills Strixnova dans les paramètres.",
+    "openSettings": "Paramètres d’ingénierie",
+    "footerHint": "Vous pourrez les modifier plus tard depuis le bouton des paramètres.",
+    "skip": "Passer et ouvrir le tableau de bord",
+    "enter": "Ouvrir le tableau de bord"
+  },
+  "activity": {
+    "all": "Tout",
+    "humans": "Humains uniquement",
+    "agents": "Agents uniquement",
+    "allPages": "Toutes les pages",
+    "future": "Les révisions du Wiki sont affichées pour le moment ; les déblocages d’étapes et les changements de stratégie rejoindront ce fil plus tard.",
+    "empty": "Aucune révision ne correspond à ces filtres.",
+    "select": "Sélectionnez une révision pour prévisualiser ses modifications.",
+    "openPage": "Ouvrir la page",
+    "fullHistory": "Historique complet →",
+    "loading": "Chargement du diff…",
+    "diffError": "Impossible de charger le diff."
   },
   "chapters": {
     "overview": "Présentation du projet",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n(À rédiger)\n",
     "breadcrumbLabel": "Chemin de la page",
     "openTreeDrawer": "Ouvrir l'arborescence",
+    "treeCollapse": "Réduire l’arborescence",
     "openOutlineDrawer": "Ouvrir le sommaire",
     "searchShortcut": "⌘K",
     "editPage": "Modifier",
@@ -181,11 +231,15 @@
     "pageEmpty": "Cette page est encore vide.",
     "pageStartWriting": "Commencer à écrire",
     "pageLoadError": "Échec du chargement de la page. Réessayez.",
+    "pageUnavailable": "Cette page est indisponible ou n’existe plus.",
     "backlinksTitle": "Référencée par · Referenced by",
     "backlinksEmpty": "Aucune page ne référence encore celle-ci.",
     "relatedIssuesTitle": "Issues liées",
     "relatedIssuesEmpty": "Aucune Issue liée n'apparaît dans le corps.",
     "outlineTitle": "On this page",
+    "outlineTab": "Sommaire",
+    "commentsTab": "Commentaires ({{count}})",
+    "footerEmpty": "Aucune référence · Aucune Issue liée",
     "outlineEmpty": "Cette page n'a pas de sections.",
     "bodyLabel": "Corps de la page",
     "canvasInstructionCopied": "Instruction copiée pour le chat",

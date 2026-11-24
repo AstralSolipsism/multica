@@ -169,6 +169,15 @@ describe("buildEngineeringRoadmap", () => {
     expect(emptyCurrent.stages[0]?.status).toBe("current");
   });
 
+  it("counts custom started statuses in progress just like the task grouping", () => {
+    const roadmap = buildEngineeringRoadmap([
+      node("qa", 1, "qa", "started"),
+      node("blocked", 1, "blocked", "started"),
+      node("review", 1, "in_review", "started"),
+    ], [], 1);
+    expect(roadmap.stages[0]).toMatchObject({ inProgress: 1, blocked: 1, inReview: 1 });
+  });
+
   it("drops historical children of closed parents without mixing them into outside work", () => {
     const roadmap = buildEngineeringRoadmap([
       node("closed-parent", null, "done", "done"),

@@ -7,7 +7,7 @@
 // engineeringProjectKeys into projectKeys, and a back-import would make module
 // initialization order-dependent.
 
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import { engineeringProjectKeys } from "./engineering-query-keys";
 
@@ -31,11 +31,24 @@ export function projectEngineeringConfigOptions(wsId: string, projectId: string)
 export function projectEngineeringDecisionIssuesOptions(wsId: string, projectId: string) {
   return queryOptions({
     queryKey: engineeringProjectKeys.engineeringDecisionIssues(wsId, projectId),
-    queryFn: () => api.listIssues({
-      workspace_id: wsId,
-      project_id: projectId,
-      statuses: ["blocked"],
-    }),
+    queryFn: async () => {
+      const issues = [];
+      let total = 0;
+      for (;;) {
+        const response = await api.listIssues({
+          workspace_id: wsId,
+          project_id: projectId,
+          statuses: ["blocked"],
+          limit: 100,
+          offset: issues.length,
+        });
+        total = response.total;
+        if (!response.issues.length) break;
+        issues.push(...response.issues);
+        if (issues.length >= total) break;
+      }
+      return { issues, total };
+    },
     select: (data) => data.issues,
     enabled: Boolean(wsId && projectId),
   });
@@ -85,6 +98,18 @@ export function projectWikiActivityOptions(wsId: string, projectId: string, opti
   return queryOptions({
     queryKey: engineeringProjectKeys.wikiActivity(wsId, projectId, options as Record<string, unknown>),
     queryFn: () => api.getProjectWikiActivity(wsId, projectId, options),
+  });
+}
+
+export function projectWikiActivityInfiniteOptions(wsId: string, projectId: string, limit = 50) {
+  return infiniteQueryOptions({
+    queryKey: [...engineeringProjectKeys.wikiActivity(wsId, projectId, { limit }), "infinite"],
+    queryFn: ({ pageParam }) => api.getProjectWikiActivity(wsId, projectId, { limit, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => {
+      const items = lastPage?.items ?? [];
+      return items.length === limit ? items.at(-1)?.createdAt : undefined;
+    },
   });
 }
 
