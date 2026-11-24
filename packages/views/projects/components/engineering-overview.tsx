@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { errorCode, type EngineeringStage as EngineeringStageConfig, type WikiActivityItem } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
@@ -33,19 +34,19 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { IssueMentionCard } from "../../issues/components/issue-mention-card";
 import { IssuePeekHost } from "../../issues/components/issue-peek";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
+import { EngineeringColdStart } from "./engineering-cold-start";
 import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
 import { useFormatRelativeDate } from "./labels";
 import { EngineeringSettings } from "./engineering-settings";
 import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
-import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey } from "./engineering-utils";
+import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, engineeringViewFromSearch, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey, type EngineeringView } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
   projectId: string;
 }
 
-type EngineeringView = "overview" | "wiki";
 type ConfigUpdate = {
   enabled?: boolean;
   currentStage?: number;
@@ -127,10 +128,14 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const wsId = useWorkspaceId();
   const navigation = useNavigation();
   const userId = useAuthStore((state) => state.user?.id);
-  const [activeView, setActiveView] = useState<EngineeringView>(navigation.searchParams.get("page") ? "wiki" : "overview");
+  const requestedView = engineeringViewFromSearch(navigation.searchParams);
+  const [activeView, setActiveView] = useState<EngineeringView>(requestedView);
   const [selectedStage, setSelectedStage] = useState(1);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [coldActive, setColdActive] = useState<boolean | null>(null);
   const [configError, setConfigError] = useState(false);
+  useEffect(() => setActiveView(requestedView), [requestedView]);
 
   const projectQuery = useQuery(projectDetailOptions(wsId, projectId));
   const overviewQuery = useQuery(projectEngineeringOptions(wsId, projectId));
@@ -196,6 +201,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
   const wikiActivityQuery = useQuery({ ...projectWikiActivityOptions(wsId, projectId, { limit: 12 }), enabled });
   const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
+  useEffect(() => {
+    if (coldActive !== null || !enabled || !config || !wikiTreeQuery.data) return;
+    setColdActive(config.stages.length === 0 && livePages.length === 0);
+  }, [coldActive, config, enabled, livePages.length, wikiTreeQuery.data]);
 
   const updateEngineering = useUpdateProjectEngineering();
   const saveConfig = async (data: ConfigUpdate): Promise<boolean> => {
@@ -212,6 +221,11 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     }
   };
 
+  const openView = (view: EngineeringView) => {
+    setActiveView(view);
+    navigation.push(paths.workspace(workspaceSlug).projectEngineering(projectId, { tab: view }));
+  };
+
   const header = (
     <BreadcrumbHeader
       segments={[
@@ -221,27 +235,35 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       leaf={<span className="truncate font-medium">{t(($) => $.title)}</span>}
     />
   );
+  const skillsMissing = agentsQuery.isSuccess && skillBindings.length === 0;
+  const settingsTooltip = skillsMissing ? `${t(($) => $.settings.title)} · ${t(($) => $.skills.missingShort)}` : t(($) => $.settings.title);
   const topChrome = (
     <div className="shrink-0 bg-canvas" data-engineering-top-chrome>
       {header}
-      <nav className="flex h-11 shrink-0 items-center gap-5 border-b px-4 md:px-6">
+      {enabled ? <nav className="flex h-10 shrink-0 items-center justify-between gap-5 border-b px-4 md:px-6">
         <div className="flex h-full gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
-          {(["overview", "wiki"] as const).map((view) => (
+          {(["board", "stages", "wiki", "activity"] as const).map((view) => (
             <button
               key={view}
               type="button"
               role="tab"
               aria-label={t(($) => $.views[view])}
               aria-selected={activeView === view}
-              disabled={view === "wiki" && !enabled}
-              className={cn("relative -mb-px border-b-2 px-1 text-body disabled:opacity-50", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => setActiveView(view)}
+              className={cn("relative -mb-px flex items-center gap-1.5 border-b px-1 text-label", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              onClick={() => openView(view)}
             >
               {t(($) => $.views[view])}
+              {view === "board" && decisionIssues.length ? <span className="size-1.5 rounded-full bg-destructive" aria-hidden="true" /> : null}
+              {view === "stages" ? <span className="text-micro text-muted-foreground tabular-nums">{config?.stages.length ?? 0}</span> : null}
+              {view === "wiki" ? <span className="text-micro text-muted-foreground tabular-nums" data-wiki-tab-count>{livePages.length}</span> : null}
             </button>
           ))}
         </div>
-      </nav>
+        <Tooltip>
+          <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="relative shrink-0" aria-label={settingsTooltip} onClick={() => setSettingsOpen(true)}><Settings2 aria-hidden="true" />{skillsMissing ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning" data-skill-warning /> : null}</Button>} />
+          <TooltipContent side="bottom">{settingsTooltip}</TooltipContent>
+        </Tooltip>
+      </nav> : null}
     </div>
   );
   const shellClass = "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden @container";
@@ -279,69 +301,92 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   return (
     <IssuePeekHost>
-    <div className={shellClass} data-engineering-shell>
-      {topChrome}
-      {activeView === "wiki" ? (
-        <main className="min-h-0 flex-1">
-          <EngineeringBaselineWiki
-            workspaceSlug={workspaceSlug}
-            workspaceId={wsId}
-            projectId={projectId}
-            projectTitle={projectQuery.data?.title ?? ""}
-          />
-        </main>
-      ) : (
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-5xl p-4 mt-1 md:p-6 space-y-8">
-            {configError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
-            {decisionIssuesQuery.isError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
-            {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
-              <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
-            ) : (
-              <EngineeringStage
-                workspaceSlug={workspaceSlug}
-                workspaceId={wsId}
-                roadmap={roadmap}
-                configuredStages={config.stages}
-                currentStage={config.currentStage}
-                selectedStage={selectedStage}
-                modeSummary={config.modeSummary}
-                canDecide={permissions.isDecider}
-                pending={updateEngineering.isPending}
-                reviewOpen={reviewOpen}
-                onReviewOpenChange={setReviewOpen}
-                onSelectStage={setSelectedStage}
-                onStageChange={async (changedStage) => saveConfig({ currentStage: changedStage })}
-                onStagesChange={async (stages) => saveConfig({ stages })}
-                onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
-                waiting={waiting}
-              />
-            )}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-md border p-4" data-testid="wiki-summary-card">
-                <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.summaryTitle)}</h2>
-                <p className="mt-2 text-h3 font-semibold" data-wiki-page-count>{t(($) => $.wiki.summaryPageCount, { count: livePages.length })}</p>
-                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.summaryHint)}</p>
-                <Button type="button" size="sm" className="mt-3" onClick={() => setActiveView("wiki")} data-testid="wiki-enter">
-                  <FileText aria-hidden="true" />{t(($) => $.wiki.enter)}
-                </Button>
-              </section>
-              <section className="rounded-md border p-4" data-testid="wiki-activity-card">
-                <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.activityTitle)}</h2>
-                {wikiActivityQuery.isLoading ? <Skeleton className="mt-2 h-24 w-full" /> : wikiActivityQuery.isError ? (
-                  <p className="mt-2 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p>
-                ) : (
-                  <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => setActiveView("wiki")} />
-                )}
-              </section>
+      <div className={shellClass} data-engineering-shell>
+        {topChrome}
+        {configError ? <Alert variant="destructive" className="m-3 shrink-0"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
+        {activeView === "wiki" ? (
+          <main className="min-h-0 flex-1">
+            <EngineeringBaselineWiki
+              workspaceSlug={workspaceSlug}
+              workspaceId={wsId}
+              projectId={projectId}
+              projectTitle={projectQuery.data?.title ?? ""}
+            />
+          </main>
+        ) : activeView === "activity" ? (
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-5xl p-6">
+              <h1 className="text-title font-semibold">{t(($) => $.views.activity)}</h1>
+              {wikiActivityQuery.isLoading ? <Skeleton className="mt-4 h-40 w-full" /> : wikiActivityQuery.isError ? <p className="mt-4 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p> : <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => openView("wiki")} />}
             </div>
-            <EngineeringSkills bindings={skillBindings} loading={agentsQuery.isLoading} error={agentsQuery.isError} />
-            {permissions.isAdmin ? <EngineeringSettings config={config} members={membersQuery.data ?? []} pending={updateEngineering.isPending} onChange={(data) => void saveConfig(data)} /> : null}
-            <div className="text-caption text-muted-foreground">{t(($) => $.messages.serverAuthoritative)}</div>
-          </div>
-        </main>
-      )}
-    </div>
+          </main>
+        ) : activeView === "board" && coldActive === null ? (
+          <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
+        ) : activeView === "board" && coldActive ? (
+          <EngineeringColdStart projectId={projectId} saving={updateEngineering.isPending} onSaveStrategy={(data) => saveConfig(data)} onOpenSettings={() => setSettingsOpen(true)} onSkip={() => setColdActive(false)} />
+        ) : (
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto mt-1 w-full max-w-5xl space-y-8 p-4 md:p-6">
+              {decisionIssuesQuery.isError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
+              {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
+                <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
+              ) : (
+                <EngineeringStage
+                  workspaceSlug={workspaceSlug}
+                  workspaceId={wsId}
+                  roadmap={roadmap}
+                  configuredStages={config.stages}
+                  currentStage={config.currentStage}
+                  selectedStage={selectedStage}
+                  modeSummary={config.modeSummary}
+                  canDecide={permissions.isDecider}
+                  pending={updateEngineering.isPending}
+                  reviewOpen={reviewOpen}
+                  onReviewOpenChange={setReviewOpen}
+                  onSelectStage={setSelectedStage}
+                  onStageChange={async (changedStage) => saveConfig({ currentStage: changedStage })}
+                  onStagesChange={async (stages) => saveConfig({ stages })}
+                  onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
+                  waiting={waiting}
+                />
+              )}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <section className="rounded-md border p-4" data-testid="wiki-summary-card">
+                  <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.summaryTitle)}</h2>
+                  <p className="mt-2 text-h3 font-semibold" data-wiki-page-count>{t(($) => $.wiki.summaryPageCount, { count: livePages.length })}</p>
+                  <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.summaryHint)}</p>
+                  <Button type="button" size="sm" className="mt-3" onClick={() => openView("wiki")} data-testid="wiki-enter">
+                    <FileText aria-hidden="true" />{t(($) => $.wiki.enter)}
+                  </Button>
+                </section>
+                <section className="rounded-md border p-4" data-testid="wiki-activity-card">
+                  <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.activityTitle)}</h2>
+                  {wikiActivityQuery.isLoading ? <Skeleton className="mt-2 h-24 w-full" /> : wikiActivityQuery.isError ? (
+                    <p className="mt-2 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p>
+                  ) : (
+                    <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => openView("wiki")} />
+                  )}
+                </section>
+              </div>
+              <EngineeringSkills bindings={skillBindings} loading={agentsQuery.isLoading} error={agentsQuery.isError} />
+              <div className="text-caption text-muted-foreground">{t(($) => $.messages.serverAuthoritative)}</div>
+            </div>
+          </main>
+        )}
+        <EngineeringSettings
+          config={config}
+          members={membersQuery.data ?? []}
+          pending={updateEngineering.isPending}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          skillBindings={skillBindings}
+          skillsLoading={agentsQuery.isLoading}
+          skillsError={agentsQuery.isError}
+          onSkillsRetry={() => void agentsQuery.refetch()}
+          canEdit={permissions.isAdmin}
+          onChange={(data) => void saveConfig(data)}
+        />
+      </div>
     </IssuePeekHost>
   );
 }

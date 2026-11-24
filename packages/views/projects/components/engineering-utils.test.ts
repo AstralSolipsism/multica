@@ -5,6 +5,7 @@ import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types"
 import {
   buildEngineeringRoadmap,
   engineeringPermissions,
+  engineeringViewFromSearch,
   selectEngineeringComment,
   strixnovaSkillBindings,
 } from "./engineering-utils";
@@ -45,6 +46,18 @@ const node = (
   statusCategory,
   parentIssueId,
 }) as IssueGraphNode;
+
+describe("engineeringViewFromSearch", () => {
+  it("maps all four tabs and legacy page-only links", () => {
+    expect(engineeringViewFromSearch(new URLSearchParams())).toBe("board");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=board"))).toBe("board");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=stages&stage=2"))).toBe("stages");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=wiki"))).toBe("wiki");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=activity"))).toBe("activity");
+    expect(engineeringViewFromSearch(new URLSearchParams("page=architecture"))).toBe("wiki");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=unknown"))).toBe("board");
+  });
+});
 
 describe("selectEngineeringComment", () => {
   it("prefers an unresolved HTML decision card over every other format", () => {

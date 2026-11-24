@@ -51,13 +51,12 @@ import type { WikiEditorSourceIssue } from "./engineering-baseline-editor";
 import { WikiReadingHighlights } from "./engineering-baseline-reading-highlights";
 import { EntityAttachmentsProvider } from "../../rich-content";
 import { HtmlBlockHostActionsProvider } from "../../editor/html-block-host-actions";
+import { useEngineeringWikiPages } from "./use-engineering-wiki-pages";
 
 const EMPTY_THREADS: WikiThread[] = [];
 
 
 const FLASH_MS = 1600;
-
-const GUIDE_SLUGS = ["overview", "domain_rules", "architecture", "exclusions_and_risks"] as const;
 
 export interface EngineeringBaselineWikiProps {
   workspaceSlug: string;
@@ -175,7 +174,6 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
-  const [guidePending, setGuidePending] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ scope: "page" | "section"; anchor?: string; title?: string } | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [pendingLeave, setPendingLeave] = useState<{ slug: string; anchor?: string } | null>(null);
@@ -327,6 +325,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const archivePage = useArchiveWikiPage();
   const restorePage = useRestoreWikiPage();
   const rollbackPage = useRollbackWikiPage();
+  const { createGuide: handleCreateGuide, pending: guidePending } = useEngineeringWikiPages(props.projectId);
   const writingPending = writePage.isPending;
 
   const handleTreeError = useCallback((cause: unknown, fallbackKey: "treeWriteError" | "archiveError" | "restoreError" | "moveError" | "renameError") => {
@@ -378,33 +377,6 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
       handleTreeError(cause, "treeWriteError");
     }
   }, [createPage, navigateToPage, t, handleTreeError, props.projectId]);
-
-  const handleCreateGuide = async () => {
-    // One button creates all four guide pages sequentially; 409 slug-taken
-    // just means the page already exists, so the flow is re-runnable.
-    setGuidePending("guide");
-    try {
-      for (const slug of GUIDE_SLUGS) {
-        const title = t(($) => $.chapters[slug]);
-        try {
-          await createPage.mutateAsync({
-            projectId: props.projectId,
-            title,
-            slug,
-            parent: "root",
-            contentMarkdown: t(($) => $.wiki.guideTemplate, { title }),
-          });
-        } catch (cause) {
-          if (errorCode(cause) !== "baseline_slug_taken") throw cause;
-        }
-      }
-      toast.success(t(($) => $.wiki.guideBootstrapDone));
-    } catch (cause) {
-      toast.error(t(($) => $.wiki.guideError, { title: t(($) => $.wiki.guideBootstrap) }));
-    } finally {
-      setGuidePending(null);
-    }
-  };
 
   const handleRename = async (page: WikiTreePage, title: string) => {
     try {

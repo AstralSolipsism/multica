@@ -49,14 +49,28 @@ function workspaceScoped(slug: string) {
       `${ws}/issues/${encode(id)}/deliverables/${encode(filename)}`,
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
-    projectEngineering: (id: string, target?: { page?: string; section?: string; thread?: string }) => {
+    projectEngineering: (id: string, target?: {
+      tab?: "board" | "stages" | "wiki" | "activity";
+      stage?: number | "unstaged";
+      group?: "blocked" | "in_review" | "in_progress" | "todo" | "completed";
+      page?: string;
+      section?: string;
+      thread?: string;
+      history?: boolean;
+      rev?: number;
+    }) => {
       const path = `${ws}/projects/${encode(id)}/engineering`;
-      if (!target || target.page === undefined && target.section === undefined && target.thread === undefined) return path;
       const query = new URLSearchParams();
-      if (target.page !== undefined) query.set("page", target.page);
-      if (target.section !== undefined) query.set("section", target.section);
-      if (target.thread !== undefined) query.set("thread", target.thread);
-      return `${path}?${query}`;
+      if (target?.tab !== undefined) query.set("tab", target.tab);
+      if (target?.stage !== undefined) query.set("stage", String(target.stage));
+      if (target?.group !== undefined) query.set("group", target.group);
+      if (target?.page !== undefined) query.set("page", target.page);
+      if (target?.section !== undefined) query.set("section", target.section);
+      if (target?.thread !== undefined) query.set("thread", target.thread);
+      if (target?.history) query.set("history", "1");
+      if (target?.rev !== undefined) query.set("rev", String(target.rev));
+      const search = query.toString();
+      return search ? `${path}?${search}` : path;
     },
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,

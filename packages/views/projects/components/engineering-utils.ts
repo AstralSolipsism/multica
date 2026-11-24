@@ -1,6 +1,14 @@
 import type { EngineeringConfig, EngineeringStage, IssueGraphNode } from "@multica/core/api";
 import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types";
 
+export type EngineeringView = "board" | "stages" | "wiki" | "activity";
+
+export function engineeringViewFromSearch(searchParams: URLSearchParams): EngineeringView {
+  const tab = searchParams.get("tab");
+  if (tab === "stages" || tab === "wiki" || tab === "activity" || tab === "board") return tab;
+  return searchParams.has("page") ? "wiki" : "board";
+}
+
 export const STRIXNOVA_ENGINEERING_SKILLS = [
   "strixnova-discovery",
   "strixnova-architecture-and-slicing",
