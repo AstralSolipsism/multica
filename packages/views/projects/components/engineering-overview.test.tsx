@@ -158,6 +158,12 @@ beforeEach(() => {
     createComment,
     getProjectWikiTree,
     getProjectWikiActivity,
+    getProjectWikiPageHistory: vi.fn(async (_ws: string, _project: string, slug: string) => ({
+      revisions: activityItems.filter((row) => row.slug === slug).map((row) => ({
+        ...row, revisionNumber: row.number, revisionKind: row.kind,
+      })),
+      hasMore: false, nextBefore: null,
+    })),
     getProjectWikiPage: vi.fn(async () => { throw new Error("not needed"); }),
     getProjectWikiPageRevision: vi.fn(async (_ws: string, _project: string, _page: string, number: number) => ({
       page: null,
@@ -326,7 +332,7 @@ describe("EngineeringOverview", () => {
 
     await userEvent.click(document.querySelector('[data-slot="select-trigger"]')!);
     await userEvent.click(await screen.findByRole("option", { name: "架构" }));
-    await waitFor(() => expect(getProjectWikiActivity).toHaveBeenCalledWith(WS, PROJECT, { limit: 50, before: new Date(Date.parse(firstPage[49]!.createdAt) + 1).toISOString() }), { timeout: 3000 });
+    await waitFor(() => expect(getProjectWikiActivity).toHaveBeenCalledWith(WS, PROJECT, { limit: 50, before: "2026-11-20T00:00:01.000001Z" }), { timeout: 3000 });
     await waitFor(() => expect(document.body.textContent).toContain("Older match"), { timeout: 3000 });
   });
 });
@@ -390,7 +396,7 @@ it("review boundary: two revisions in one transaction straddling a page both rem
     return {
       ...page,
       number: 51 - index,
-      createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, seconds)).toISOString(),
+      createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, seconds)).toISOString().replace(".000Z", ".000000Z"),
       changeSummary: "row " + index,
     };
   });
@@ -405,4 +411,79 @@ it("review boundary: two revisions in one transaction straddling a page both rem
   fireEvent.click(screen.getByRole("button", { name: "加载更早版本" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早版本" })).toBeNull());
   expect(activityRows()).toHaveLength(51);
+});
+
+it("r3: a consumed parent still excludes every card in its resolved thread", async () => {
+  const issue = decisionIssue();
+  const root = cardEntry("root", "root-card");
+  timelinesByIssue[issue.id] = [root];
+  blockedIssues = [issue];
+  const view = renderOverview();
+  await screen.findByText(/root-card/);
+  await act(async () => {
+    expect(await latestHostActions?.submitComment?.("answer", "key")).toBe(true);
+  });
+  await waitFor(() => expect(screen.queryByText(/root-card/)).toBeNull());
+
+  // The next timeline includes a reply and the resolution of its parent.
+  timelinesByIssue[issue.id] = [
+    { ...root, resolved_at: "2026-11-24T09:00:00Z" },
+    { ...cardEntry("child", "resolved-thread-card"), parent_id: root.id },
+    { ...cardEntry("other"), content: "still waiting on [owner](mention://member/" + OWNER + ")" },
+  ];
+  await act(async () => {
+    await view.queryClient.invalidateQueries({ queryKey: issueKeys.timeline(issue.id) });
+  });
+  expect(await screen.findByTestId("decision-rich-content")).toHaveTextContent(/still waiting on/);
+  expect(screen.queryByText(/resolved-thread-card/)).toBeNull();
+});
+
+it.each(["pending", "failed"])("r3: a %s page tree makes all 51 simultaneous archives reachable after recovery", async (treeState) => {
+  const pending = Promise.withResolvers<WikiTree>();
+  const timestamp = "2026-11-24T08:00:00.123000Z";
+  const inventory: WikiTree = {
+    ...tree(),
+    pages: Array.from({ length: 51 }, (_, i) => ({
+      ...tree().pages[0]!, id: "page-" + i, slug: "page-" + i, archivedAt: timestamp,
+    })),
+  };
+  const sample = activityItems[0]!;
+  activityItems = inventory.pages.map((page) => ({
+    ...sample, pageId: page.id, slug: page.slug, kind: "archive", createdAt: timestamp,
+  }));
+  getProjectWikiTree.mockReturnValueOnce(pending.promise).mockResolvedValue(inventory);
+  getProjectWikiActivity.mockImplementation(async (
+    _ws: string, _project: string, { limit, before }: { limit: number; before?: string },
+  ) => ({ items: activityItems.filter((row) => !before || row.createdAt < before).slice(0, limit) }));
+
+  const view = renderOverview("tab=activity");
+  const rows = () => Array.from(document.querySelectorAll("[data-activity-row]"), (row) => row.getAttribute("data-activity-row"));
+  const more = () => screen.getByRole("button", { name: "加载更早版本" });
+  await waitFor(() => expect(rows()).toHaveLength(50));
+  fireEvent.click(more());
+  await waitFor(() => {
+    expect(getProjectWikiActivity).toHaveBeenCalledTimes(2);
+    expect(more()).toBeEnabled();
+  });
+
+  fireEvent.click(more());
+  await waitFor(() => expect(more()).toBeDisabled());
+  expect(getProjectWikiTree).toHaveBeenCalledTimes(1);
+  expect(rows()).toHaveLength(50);
+
+  if (treeState === "failed") {
+    await act(async () => pending.reject(new Error("tree unavailable")));
+    await waitFor(() => expect(more()).toBeEnabled());
+    expect(rows()).toHaveLength(50);
+    fireEvent.click(more());
+  } else {
+    await act(async () => pending.resolve(inventory));
+  }
+
+  await waitFor(() => expect(rows()).toHaveLength(51));
+  expect(new Set(rows()).size).toBe(51);
+  fireEvent.click(more());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早版本" })).toBeNull());
+  expect(rows()).toHaveLength(51);
+  expect(view.queryClient.isFetching()).toBe(0);
 });

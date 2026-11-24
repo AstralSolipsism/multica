@@ -1,4 +1,5 @@
 import type { EngineeringConfig, EngineeringStage, IssueGraphNode } from "@multica/core/api";
+import { compareRfc3339Nano } from "@multica/core/projects/queries";
 import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types";
 
 export type EngineeringView = "board" | "stages" | "wiki" | "activity";
@@ -39,9 +40,7 @@ export function selectEngineeringComment(
   deciderIds: readonly string[] = [],
   excludedIds?: ReadonlySet<string>,
 ): TimelineEntry | null {
-  const comments = entries
-    .filter((entry) => entry.type === "comment" && !entry.deleted_at && !excludedIds?.has(entry.id) && entry.content?.trim())
-    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  const comments = entries.filter((entry) => entry.type === "comment");
   const byId = new Map(comments.map((entry) => [entry.id, entry]));
   const hasResolvedAncestor = (entry: TimelineEntry) => {
     const visited = new Set<string>();
@@ -55,13 +54,14 @@ export function selectEngineeringComment(
     }
     return false;
   };
-  const unresolved = comments.filter((entry) => !entry.resolved_at && !hasResolvedAncestor(entry));
-  const roots = comments.filter((entry) => !entry.parent_id);
-  const unresolvedRoots = roots.filter((entry) => !entry.resolved_at);
+  const unresolved = comments
+    .filter((entry) => !entry.resolved_at && !hasResolvedAncestor(entry))
+    .filter((entry) => !entry.deleted_at && entry.content?.trim() && !excludedIds?.has(entry.id))
+    .sort((a, b) => compareRfc3339Nano(b.created_at, a.created_at) || b.id.localeCompare(a.id));
   return unresolved.find((entry) => decisionCard(entry.content!, "html"))
     ?? unresolved.find((entry) => decisionCard(entry.content!, "markdown"))
     ?? unresolved.find((entry) => engineeringDecisionKind(entry, deciderIds) === "mention")
-    ?? unresolvedRoots[0]
+    ?? unresolved.find((entry) => !entry.parent_id)
     ?? null;
 }
 

@@ -19,7 +19,7 @@ import { WikiDiffSummary, WikiDiffView } from "./engineering-baseline-diff";
 import { wikiActivityKindKey } from "./engineering-utils";
 import { useFormatRelativeDate } from "./labels";
 
-export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, items, pages, loading, error, onRetry, hasMore, loadingMore, onLoadMore }: {
+export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, items, pages, loading, error, onRetry, hasMore, loadingMore, loadMoreError, onLoadMore }: {
   workspaceSlug: string;
   workspaceId: string;
   projectId: string;
@@ -30,6 +30,7 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
   onRetry: () => void;
   hasMore: boolean;
   loadingMore: boolean;
+  loadMoreError: boolean;
   onLoadMore: () => void;
 }) {
   const { t } = useT("engineering");
@@ -45,8 +46,8 @@ export function EngineeringActivity({ workspaceSlug, workspaceId, projectId, ite
     && (pageFilter === "all" || item.pageId === pageFilter),
   ), [actorFilter, items, pageFilter]);
   useEffect(() => {
-    if (!loading && !error && !filtered.length && hasMore && !loadingMore) onLoadMore();
-  }, [error, filtered.length, hasMore, loading, loadingMore, onLoadMore]);
+    if (!loading && !error && !filtered.length && hasMore && !loadingMore && !loadMoreError) onLoadMore();
+  }, [error, filtered.length, hasMore, loading, loadingMore, loadMoreError, onLoadMore]);
   const selected = filtered.find((item) => `${item.pageId}:${item.number}` === selectedKey) ?? filtered[0] ?? null;
   const selectedRevision = useQuery({
     ...projectWikiRevisionOptions(workspaceId, projectId, selected?.slug ?? "", selected?.number ?? 1),

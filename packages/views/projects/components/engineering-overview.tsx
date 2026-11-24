@@ -144,7 +144,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
   const allWikiPages = useMemo(() => wikiTreeQuery.data?.pages ?? [], [wikiTreeQuery.data]);
-  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50, allWikiPages), enabled });
+  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50), enabled });
   const activityItems = useMemo(() => {
     const seen = new Set<string>();
     return (wikiActivityQuery.data?.pages ?? []).flatMap((page) => (page?.items ?? []).filter((item) => {
@@ -259,7 +259,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             <EngineeringBaselineWiki workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} />
           </main>
         ) : activeView === "activity" ? (
-          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={allWikiPages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
+          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={allWikiPages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError && activityItems.length === 0} loadMoreError={wikiActivityQuery.isFetchNextPageError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
         ) : activeView === "board" && coldResolving ? (
           <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
         ) : activeView === "board" && coldActive ? (

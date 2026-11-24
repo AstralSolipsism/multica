@@ -113,6 +113,15 @@ describe("selectEngineeringComment", () => {
     expect(selectEngineeringComment([])).toBeNull();
   });
 
+  it("selects the newest card at nanosecond precision", () => {
+    const card = "```html title=\"决策卡\"\ncontent";
+    const entries = [
+      comment("newer", card, "2026-01-01T00:00:00.123000001Z"),
+      comment("older", card, "2026-01-01T00:00:00.123Z"),
+    ];
+    expect(selectEngineeringComment(entries)?.id).toBe("newer");
+  });
+
   it("walks the full ancestor chain before treating a nested card as unresolved", () => {
     const resolvedThread = [
       comment("resolved-root", "done", "2026-01-01T00:00:00Z", { resolvedAt: "2026-01-02T00:00:00Z" }),
