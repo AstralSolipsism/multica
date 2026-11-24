@@ -37,9 +37,10 @@ export function engineeringDecisionKind(
 export function selectEngineeringComment(
   entries: readonly TimelineEntry[],
   deciderIds: readonly string[] = [],
+  excludedIds?: ReadonlySet<string>,
 ): TimelineEntry | null {
   const comments = entries
-    .filter((entry) => entry.type === "comment" && !entry.deleted_at && entry.content?.trim())
+    .filter((entry) => entry.type === "comment" && !entry.deleted_at && !excludedIds?.has(entry.id) && entry.content?.trim())
     .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
   const byId = new Map(comments.map((entry) => [entry.id, entry]));
   const hasResolvedAncestor = (entry: TimelineEntry) => {

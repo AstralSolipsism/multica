@@ -104,11 +104,16 @@ export function projectWikiActivityOptions(wsId: string, projectId: string, opti
 export function projectWikiActivityInfiniteOptions(wsId: string, projectId: string, limit = 50) {
   return infiniteQueryOptions({
     queryKey: [...engineeringProjectKeys.wikiActivity(wsId, projectId, { limit }), "infinite"],
-    queryFn: ({ pageParam }) => api.getProjectWikiActivity(wsId, projectId, { limit, before: pageParam }),
-    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => api.getProjectWikiActivity(wsId, projectId, {
+      limit,
+      before: pageParam?.before,
+      ...(pageParam?.beforeId ? { beforeId: pageParam.beforeId } : {}),
+    }),
+    initialPageParam: undefined as { before: string; beforeId?: string } | undefined,
     getNextPageParam: (lastPage) => {
       const items = lastPage?.items ?? [];
-      return items.length === limit ? items.at(-1)?.createdAt : undefined;
+      const last = items.at(-1);
+      return items.length === limit && last ? { before: last.createdAt, beforeId: last.id } : undefined;
     },
   });
 }

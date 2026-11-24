@@ -17,6 +17,7 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "11111111-1111-411
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: OWNER } }),
 }));
+let listFailed = false;
 let graphNodes: IssueGraphNode[] = [];
 
 vi.mock("@multica/core/issues/dag/use-dag-data", () => ({
@@ -106,6 +107,7 @@ function stagedNode(stage: number): IssueGraphNode {
 beforeEach(() => {
   replace = vi.fn();
   push = vi.fn();
+  listFailed = false;
   graphNodes = [];
   latestHostActions = null;
   engineeringStages = [{ stage: 1, title: "Stage 1", goal: "" }];
@@ -148,7 +150,10 @@ beforeEach(() => {
     updateProjectEngineering,
     listMembers: vi.fn(async () => [{ user_id: OWNER, name: "Owner", role: "owner" }]),
     listAgents: vi.fn(async () => []),
-    listIssues: vi.fn(async () => ({ issues: blockedIssues, total: blockedIssues.length })),
+    listIssues: vi.fn(async () => {
+      if (listFailed) throw new Error("blocked issue list unavailable");
+      return { issues: blockedIssues, total: blockedIssues.length };
+    }),
     listTimeline,
     createComment,
     getProjectWikiTree,
@@ -251,7 +256,7 @@ describe("EngineeringOverview", () => {
     blockedIssues = [decisionIssue()];
     listTimeline.mockReturnValue(pending.promise);
     renderOverview();
-    await screen.findByText("正在加载最新上下文");
+    await screen.findAllByText("正在加载最新上下文");
     expect(document.querySelector("[data-board-buckets]")).toBeNull();
     await act(async () => pending.resolve([]));
     await waitFor(() => expect(document.querySelector("[data-board-buckets]")).not.toBeNull());
@@ -324,4 +329,81 @@ describe("EngineeringOverview", () => {
     await waitFor(() => expect(getProjectWikiActivity).toHaveBeenCalledWith(WS, PROJECT, { limit: 50, before: firstPage[49]!.createdAt }), { timeout: 3000 });
     await waitFor(() => expect(document.body.textContent).toContain("Older match"), { timeout: 3000 });
   });
+});
+
+it("review boundary: healthy status requires successful blocked-issue discovery", async () => {
+  listFailed = true;
+  renderOverview();
+  await screen.findByText("待拍板任务加载失败。");
+  expect(screen.queryByText("推进正常 · 无阻塞")).toBeNull();
+});
+
+it("review boundary: a slow timeline leaves the other loaded card usable", async () => {
+  const pending = Promise.withResolvers<TimelineEntry[]>();
+  blockedIssues = [decisionIssue("issue-1"), { ...decisionIssue("issue-2"), identifier: "OL-2" }];
+  listTimeline.mockImplementation(async (id: string) =>
+    id === "issue-2" ? pending.promise : [cardEntry("a", "ready-card")],
+  );
+  renderOverview();
+  try {
+    await waitFor(() => expect(listTimeline).toHaveBeenCalledTimes(2));
+    await screen.findByText(/ready-card/);
+  } finally {
+    await act(async () => pending.resolve([]));
+  }
+});
+
+it("review boundary: submitting one of two unresolved threads keeps the other available", async () => {
+  const issue = decisionIssue();
+  blockedIssues = [issue];
+  timelinesByIssue[issue.id] = [
+    { ...cardEntry("older", "pending-A"), created_at: "2026-11-01T00:00:00Z" },
+    { ...cardEntry("newer", "pending-B"), created_at: "2026-11-02T00:00:00Z" },
+  ];
+  renderOverview();
+  await screen.findByText(/pending-B/);
+  await act(async () => {
+    expect(await latestHostActions?.submitComment?.("answer", "key")).toBe(true);
+  });
+  expect(createComment).toHaveBeenCalledOnce();
+  await waitFor(() => expect(screen.queryByText(/pending-B/)).not.toBeInTheDocument());
+  await screen.findByText(/pending-A/);
+});
+
+it("review boundary: empty project recovers cold start after tree retry", async () => {
+  engineeringStages = [];
+  getProjectWikiTree.mockRejectedValueOnce(new Error("temporary")).mockResolvedValue({
+    pages: [],
+    limits: { maxDepth: 6, maxPages: 500 },
+  });
+  renderOverview();
+  await screen.findByText("无法加载页面树，请重试。");
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  await waitFor(() => expect(screen.queryByText("无法加载页面树，请重试。")).toBeNull());
+  await waitFor(() => expect(document.querySelector("[data-engineering-cold-start]")).not.toBeNull());
+});
+
+it("review boundary: two revisions in one transaction straddling a page both remain reachable", async () => {
+  const rows = Array.from({ length: 51 }, (_, index) => {
+    const page = index === 50 ? activityItems[1]! : activityItems[0]!;
+    const seconds = 50 - Math.min(index, 49);
+    return {
+      ...page,
+      id: `revision-${String(51 - index).padStart(3, "0")}`,
+      number: 51 - index,
+      createdAt: new Date(Date.UTC(2026, 10, 20, 0, 0, seconds)).toISOString(),
+      changeSummary: "row " + index,
+    };
+  });
+  getProjectWikiActivity.mockImplementation(async (
+    _workspace: string,
+    _project: string,
+    { limit, before, beforeId }: { limit: number; before?: string; beforeId?: string },
+  ) => ({ items: rows.filter((row) => !before || row.createdAt < before || (beforeId && row.createdAt === before && row.id < beforeId)).slice(0, limit) }));
+  renderOverview("tab=activity");
+  const activityRows = () => document.querySelectorAll("[data-activity-row]");
+  await waitFor(() => expect(activityRows()).toHaveLength(50));
+  fireEvent.click(screen.getByRole("button", { name: "加载更早版本" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "加载更早版本" })).toBeNull());
+  expect(activityRows()).toHaveLength(51);
 });

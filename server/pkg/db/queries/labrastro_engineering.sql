@@ -116,7 +116,8 @@ SELECT r.page_id, p.slug, p.title, r.id AS revision_id, r.revision_number, r.rev
 FROM project_baseline_revision r
 JOIN project_baseline_page p ON p.id = r.page_id
 WHERE r.workspace_id = $1 AND r.project_id = $2
-    AND (sqlc.narg('before_time')::timestamptz IS NULL OR r.created_at < sqlc.narg('before_time'))
+    AND (sqlc.narg('before_time')::timestamptz IS NULL OR r.created_at < sqlc.narg('before_time')
+        OR (sqlc.narg('before_id')::uuid IS NOT NULL AND r.created_at = sqlc.narg('before_time') AND r.id < sqlc.narg('before_id')))
 ORDER BY r.created_at DESC, r.id DESC LIMIT sqlc.arg('page_limit');
 
 -- name: LabrastroSearchBaselinePages :many

@@ -66,7 +66,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const [selectedStage, setSelectedStage] = useState<number | "unstaged">(requestedStage ?? 1);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [coldActive, setColdActive] = useState<boolean | null>(null);
+  const [coldSession, setColdSession] = useState<"active" | "skipped" | null>(null);
   const [consumedCommentIds, setConsumedCommentIds] = useState<ReadonlySet<string>>(() => new Set());
   const [configError, setConfigError] = useState(false);
   useEffect(() => setActiveView(requestedView), [requestedView]);
@@ -101,13 +101,13 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const timelines = useMemo(() => Object.fromEntries(blockedIssues.map((issue, index) => {
     const query = timelineQueries[index];
     const timeline: EngineeringDecisionTimeline = {
-      comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds) : null,
+      comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds, consumedCommentIds) : null,
       loading: !!query?.isLoading,
       error: !!query?.isError,
       retry: query ? () => void query.refetch() : undefined,
     };
     return [issue.id, timeline];
-  })), [blockedIssues, timelineQueries, permissions?.deciderIds]);
+  })), [blockedIssues, consumedCommentIds, timelineQueries, permissions?.deciderIds]);
   const decisionIssues = useMemo(() => {
     const deciderIds = new Set(permissions?.deciderIds);
     const priority = (issue: Issue) => {
@@ -125,7 +125,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       return timeline?.loading || timeline?.error || kind !== null || directlyAssigned;
     }).sort((a, b) => priority(a) - priority(b) || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
   }, [blockedIssues, consumedCommentIds, permissions?.deciderIds, timelines]);
-  const decisionLoading = decisionIssuesQuery.isLoading || blockedIssues.some((issue) => timelines[issue.id]?.loading);
+  const decisionLoading = decisionIssuesQuery.isLoading;
   const consumeDecision = useCallback((commentId: string) => {
     setConsumedCommentIds((current) => new Set(current).add(commentId));
   }, []);
@@ -146,15 +146,13 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50), enabled });
   const activityItems = useMemo(() => (wikiActivityQuery.data?.pages ?? []).flatMap((page) => page?.items ?? []), [wikiActivityQuery.data]);
   const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
+  const hasStages = !!config && (config.stages.length > 0 || projectNodes.some((node) => node.stage !== null));
   useEffect(() => {
-    if (coldActive !== null || !enabled || !config || graphQuery.isLoading) return;
-    const hasStages = config.stages.length > 0 || projectNodes.some((node) => node.stage !== null);
-    if (hasStages || graphQuery.isError || wikiTreeQuery.isError) {
-      setColdActive(false);
-      return;
-    }
-    if (wikiTreeQuery.data) setColdActive(livePages.length === 0);
-  }, [coldActive, config, enabled, graphQuery.isError, graphQuery.isLoading, livePages.length, projectNodes, wikiTreeQuery.data, wikiTreeQuery.isError]);
+    if (coldSession !== null || !enabled || !config || hasStages || graphQuery.isError || wikiTreeQuery.isError) return;
+    if (!graphQuery.isLoading && wikiTreeQuery.data && livePages.length === 0) setColdSession("active");
+  }, [coldSession, config, enabled, graphQuery.isError, graphQuery.isLoading, hasStages, livePages.length, wikiTreeQuery.data, wikiTreeQuery.isError]);
+  const coldActive = coldSession === "active";
+  const coldResolving = coldSession === null && enabled && !!config && !hasStages && !graphQuery.isLoading && !graphQuery.isError && !wikiTreeQuery.data && !wikiTreeQuery.isError;
 
   const updateEngineering = useUpdateProjectEngineering();
   const saveConfig = async (data: ConfigUpdate): Promise<boolean> => {
@@ -253,10 +251,10 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
           </main>
         ) : activeView === "activity" ? (
           <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={livePages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
-        ) : activeView === "board" && coldActive === null ? (
+        ) : activeView === "board" && coldResolving ? (
           <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
         ) : activeView === "board" && coldActive ? (
-          <EngineeringColdStart projectId={projectId} saving={updateEngineering.isPending} onSaveStrategy={(data) => saveConfig(data)} onOpenSettings={() => setSettingsOpen(true)} onSkip={() => setColdActive(false)} />
+          <EngineeringColdStart projectId={projectId} saving={updateEngineering.isPending} onSaveStrategy={(data) => saveConfig(data)} onOpenSettings={() => setSettingsOpen(true)} onSkip={() => setColdSession("skipped")} />
         ) : graphQuery.isLoading ? (
           <main className="min-h-0 flex-1 space-y-4 p-6"><Skeleton className="h-12 w-full" /><Skeleton className="h-full w-full" /></main>
         ) : graphQuery.isError ? (

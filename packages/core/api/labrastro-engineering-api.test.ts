@@ -83,4 +83,17 @@ describe("wiki api methods", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(init.headers).get("X-Workspace-ID")).toBe(workspaceHeaders["X-Workspace-ID"]);
   });
+
+  it("encodes the composite activity cursor for tied revision times", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => stub({ items: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new ApiClient("https://example.test");
+    await api.getProjectWikiActivity("ws-1", "p-1", {
+      before: "2026-11-20T00:00:01Z",
+      beforeId: "00000000-0000-4000-8000-000000000002",
+    });
+    const url = fetchMock.mock.calls[0]?.[0] as string;
+    expect(url).toContain("before=2026-11-20T00%3A00%3A01Z");
+    expect(url).toContain("before_id=00000000-0000-4000-8000-000000000002");
+  });
 });
