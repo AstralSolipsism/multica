@@ -97,7 +97,7 @@ describe("selectEngineeringComment", () => {
     expect(selectEngineeringComment(entries, ["decider-1"])?.id).toBe("mention");
   });
 
-  it("falls back to the newest unresolved root, then the newest root", () => {
+  it("falls back to the newest unresolved root and returns null when every root is resolved", () => {
     const unresolved = [
       comment("old", "plain", "2026-01-01T00:00:00Z"),
       comment("new", "latest root", "2026-01-03T00:00:00Z"),
@@ -109,8 +109,21 @@ describe("selectEngineeringComment", () => {
       comment("resolved-card", "```html title=\"决策卡\"\ncontent", "2026-01-02T00:00:00Z", { resolvedAt: "2026-01-03T00:00:00Z" }),
       comment("resolved-new", "resolved root", "2026-01-04T00:00:00Z", { resolvedAt: "2026-01-05T00:00:00Z" }),
     ];
-    expect(selectEngineeringComment(resolved)?.id).toBe("resolved-new");
+    expect(selectEngineeringComment(resolved)).toBeNull();
     expect(selectEngineeringComment([])).toBeNull();
+  });
+
+  it("walks the full ancestor chain before treating a nested card as unresolved", () => {
+    const resolvedThread = [
+      comment("resolved-root", "done", "2026-01-01T00:00:00Z", { resolvedAt: "2026-01-02T00:00:00Z" }),
+      comment("middle", "reply", "2026-01-02T00:00:00Z", { parentId: "resolved-root" }),
+      comment("nested-card", "```html src=\"decision.html\" title=\"决策：old\"\ncontent", "2026-01-03T00:00:00Z", { parentId: "middle" }),
+    ];
+    expect(selectEngineeringComment(resolvedThread)).toBeNull();
+    expect(selectEngineeringComment([
+      ...resolvedThread,
+      comment("active", "current discussion", "2026-01-04T00:00:00Z"),
+    ])?.id).toBe("active");
   });
 });
 

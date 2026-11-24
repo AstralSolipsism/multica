@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, CheckCircle2, LoaderCircle, RotateCcw } from "@multica/ui/icons";
+import { CheckCircle2, LoaderCircle, RotateCcw } from "@multica/ui/icons";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -168,7 +168,7 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
       </aside>
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-canvas px-4 py-2">
-          <Button type="button" variant="ghost" size="sm" onClick={props.onBack}><ArrowLeft aria-hidden="true" />{t(($) => $.wiki.historyBack)}</Button>
+          <Button type="button" variant="ghost" size="sm" onClick={props.onBack}>{t(($) => $.wiki.historyBack)}</Button>
           <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label={t(($) => $.wiki.historyTabsLabel)}>
             {(["rendered", "preview"] as const).map((item) => (
               <button key={item} type="button" role="tab" aria-selected={tab === item}

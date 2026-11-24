@@ -252,6 +252,9 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
             roadmap={roadmap}
             currentStage={config.currentStage}
             modeSummary={config.modeSummary}
+            canDecide={permissions.isDecider}
+            saving={updateEngineering.isPending}
+            onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
             issues={decisionIssues}
             timelines={timelines}
             reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}

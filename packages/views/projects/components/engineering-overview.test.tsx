@@ -46,6 +46,7 @@ let replace = vi.fn();
 let push = vi.fn();
 let getProjectWikiTree: Mock;
 let getProjectWikiActivity: Mock;
+let updateProjectEngineering: Mock;
 let activityItems: WikiActivityItem[];
 
 function tree(): WikiTree {
@@ -80,6 +81,7 @@ beforeEach(() => {
   ];
   getProjectWikiTree = vi.fn(async () => tree());
   getProjectWikiActivity = vi.fn(async () => ({ items: activity(), }));
+  updateProjectEngineering = vi.fn(async () => ({ engineering: {} }));
   setApiInstance({
     getProject: vi.fn(async () => ({ id: PROJECT, title: "Apollo", identifier: "OL-1" })),
     getProjectEngineering: vi.fn(async () => ({
@@ -89,6 +91,7 @@ beforeEach(() => {
       },
       chapters: [],
     })),
+    updateProjectEngineering,
     listMembers: vi.fn(async () => [{ user_id: OWNER, name: "Owner", role: "owner" }]),
     listAgents: vi.fn(async () => []),
     listIssues: vi.fn(async () => ({ issues: [], total: 0 })),
@@ -156,6 +159,25 @@ describe("EngineeringOverview", () => {
     expect(document.querySelector('[data-stage-node="unstaged"]')).toHaveAttribute("aria-current", "step");
     expect(document.querySelector('[data-engineering-region="outside"]')).not.toBeNull();
     expect(document.querySelectorAll("[data-engineering-region='outside']")).toHaveLength(1);
+  });
+
+  it("lets deciders cancel or save the delivery strategy from the board", async () => {
+    renderOverview();
+    await waitFor(() => expect(document.querySelector("[data-engineering-board]")).not.toBeNull(), { timeout: 3000 });
+    fireEvent.click(screen.getByRole("button", { name: "推进方针" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑方针" }));
+    let editor = screen.getByRole("textbox", { name: "推进方针" });
+    fireEvent.change(editor, { target: { value: "不保存的草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("textbox", { name: "推进方针" })).not.toBeInTheDocument();
+    expect(updateProjectEngineering).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑方针" }));
+    editor = screen.getByRole("textbox", { name: "推进方针" });
+    fireEvent.change(editor, { target: { value: "按阶段交付并集中拍板" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateProjectEngineering).toHaveBeenCalledWith(WS, PROJECT, { modeSummary: "按阶段交付并集中拍板" }));
+    expect(screen.queryByRole("textbox", { name: "推进方针" })).not.toBeInTheDocument();
   });
 
   it("uses healthy progress buckets instead of an empty decision queue", async () => {

@@ -42,15 +42,25 @@ export function selectEngineeringComment(
     .filter((entry) => entry.type === "comment" && !entry.deleted_at && entry.content?.trim())
     .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
   const byId = new Map(comments.map((entry) => [entry.id, entry]));
-  const unresolved = comments.filter((entry) => !entry.resolved_at
-    && (!entry.parent_id || !byId.get(entry.parent_id)?.resolved_at));
+  const hasResolvedAncestor = (entry: TimelineEntry) => {
+    const visited = new Set<string>();
+    let ancestorId = entry.parent_id;
+    while (ancestorId && !visited.has(ancestorId)) {
+      visited.add(ancestorId);
+      const ancestor = byId.get(ancestorId);
+      if (!ancestor) break;
+      if (ancestor.resolved_at) return true;
+      ancestorId = ancestor.parent_id;
+    }
+    return false;
+  };
+  const unresolved = comments.filter((entry) => !entry.resolved_at && !hasResolvedAncestor(entry));
   const roots = comments.filter((entry) => !entry.parent_id);
   const unresolvedRoots = roots.filter((entry) => !entry.resolved_at);
   return unresolved.find((entry) => decisionCard(entry.content!, "html"))
     ?? unresolved.find((entry) => decisionCard(entry.content!, "markdown"))
     ?? unresolved.find((entry) => engineeringDecisionKind(entry, deciderIds) === "mention")
     ?? unresolvedRoots[0]
-    ?? roots[0]
     ?? null;
 }
 

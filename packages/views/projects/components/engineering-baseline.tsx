@@ -672,9 +672,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
             {historyOpen ? <><ChevronRight className="size-3 shrink-0" aria-hidden="true" /><span className="truncate font-medium text-foreground">{t(($) => $.wiki.historyTabTitle)}</span></> : null}
           </nav>
           <button type="button" className="hidden size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[520px]:grid" aria-label={t(($) => $.wiki.searchPlaceholder)} onClick={() => setSearchOpen(true)}><span className="text-caption">{t(($) => $.wiki.searchShortcut)}</span></button>
-          {selected && !editor ? <>
+          {selected && !editor && !historyOpen ? <>
             <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.wiki.historyOpen)} onClick={() => changeHistory(true)} data-wiki-open-history><History className="size-4" aria-hidden="true" /></Button>
-            {!historyOpen ? <Button type="button" size="sm" onClick={() => void openPageEditor()} data-testid="wiki-edit-page"><Pencil className="size-3.5" aria-hidden="true" /><span className="hidden @[520px]:inline">{t(($) => $.wiki.editPage)}</span></Button> : null}
+            <Button type="button" size="sm" onClick={() => void openPageEditor()} data-testid="wiki-edit-page"><Pencil className="size-3.5" aria-hidden="true" /><span className="hidden @[520px]:inline">{t(($) => $.wiki.editPage)}</span></Button>
           </> : null}
           {!historyOpen ? <button type="button" className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[1024px]:hidden" aria-label={t(($) => $.wiki.openOutlineDrawer)} onClick={() => setRightOpen(true)}><PanelRightClose className="size-4" aria-hidden="true" /></button> : null}
         </div>

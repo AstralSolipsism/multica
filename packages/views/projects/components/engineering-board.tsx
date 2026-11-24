@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronUp, FileText } from "@multica/ui/icons";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import type { WikiActivityItem } from "@multica/core/api";
 import type { Issue } from "@multica/core/types";
@@ -19,6 +20,9 @@ interface EngineeringBoardProps {
   roadmap: EngineeringRoadmap;
   currentStage: number;
   modeSummary: string;
+  canDecide: boolean;
+  saving: boolean;
+  onSummarySave: (summary: string) => Promise<boolean>;
   issues: readonly Issue[];
   timelines: Readonly<Record<string, EngineeringDecisionTimeline>>;
   reviewStage: number | null;
@@ -33,9 +37,12 @@ interface EngineeringBoardProps {
   onOpenActivity: () => void;
 }
 
-export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadmap, currentStage, modeSummary, issues, timelines, reviewStage, decisionError, onRetryDecisions, wikiPageCount, latestActivity, activityLoading, onReview, onOpenStages, onOpenWiki, onOpenActivity }: EngineeringBoardProps) {
+export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadmap, currentStage, modeSummary, canDecide, saving, onSummarySave, issues, timelines, reviewStage, decisionError, onRetryDecisions, wikiPageCount, latestActivity, activityLoading, onReview, onOpenStages, onOpenWiki, onOpenActivity }: EngineeringBoardProps) {
   const { t } = useT("engineering");
   const [strategyOpen, setStrategyOpen] = useState(false);
+  const [strategyEditing, setStrategyEditing] = useState(false);
+  const [strategyDraft, setStrategyDraft] = useState(modeSummary);
+  useEffect(() => setStrategyDraft(modeSummary), [modeSummary]);
   const current = roadmap.stages.find((stage) => stage.stage === currentStage) ?? roadmap.stages[0];
   const stageNumber = current?.stage ?? currentStage;
   const closed = current?.closed ?? 0;
@@ -70,7 +77,30 @@ export function EngineeringBoard({ workspaceSlug, workspaceId, projectId, roadma
             {t(($) => $.stage.summaryLabel)}{strategyOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
           </Button>
         </div>
-        {strategyOpen ? <div className="absolute right-4 top-full z-30 max-w-[560px] whitespace-pre-wrap rounded-b-md border border-t-0 bg-surface-raised px-4 py-3 text-body text-muted-foreground shadow-[var(--menu-shadow)]">{modeSummary || t(($) => $.stage.summaryEmpty)}</div> : null}
+        {strategyOpen ? (
+          <div className="absolute right-4 top-full z-30 w-[560px] max-w-[calc(100vw-2rem)] rounded-b-md border border-t-0 bg-surface-raised px-4 py-3 text-body text-muted-foreground shadow-[var(--menu-shadow)]" data-strategy-popover>
+            {strategyEditing ? (
+              <>
+                <Textarea aria-label={t(($) => $.stage.summaryLabel)} value={strategyDraft} onChange={(event) => setStrategyDraft(event.target.value)} maxLength={280} rows={3} disabled={saving} autoFocus />
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => { setStrategyDraft(modeSummary); setStrategyEditing(false); }}>{t(($) => $.actions.cancel)}</Button>
+                  <Button type="button" size="sm" disabled={saving} onClick={async () => { if (await onSummarySave(strategyDraft.trim() || modeSummary)) setStrategyEditing(false); }}>{t(($) => $.actions.save)}</Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-2 flex items-center justify-between text-caption">
+                  <span>{t(($) => $.stage.summaryLabel)}</span>
+                  <div className="flex items-center gap-1">
+                    {canDecide ? <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setStrategyEditing(true)}>{t(($) => $.stage.editSummary)}</Button> : null}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => setStrategyOpen(false)}>{t(($) => $.actions.collapse)}</Button>
+                  </div>
+                </div>
+                <p className="whitespace-pre-wrap leading-6">{modeSummary || t(($) => $.stage.summaryEmpty)}</p>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {decisionError ? (

@@ -150,7 +150,7 @@ export function EngineeringDecisions({ workspaceSlug, projectId, issues, timelin
             );
           })}
           {reviewStage !== null ? (
-            <button type="button" className={cn("block w-full border-b px-3 py-3 text-left hover:bg-muted/50", showReview && "bg-muted/60")} onClick={() => setSelectedIssueId(null)} data-review-todo>
+            <button type="button" className={cn("block w-full border-b px-3 py-3 text-left hover:bg-muted/50", showReview && "bg-muted/60")} onClick={() => setSelectedIssueId("review")} data-review-todo>
               <span className="flex items-center gap-2 text-caption text-muted-foreground"><CheckCircle2 className="size-3.5 text-success" aria-hidden="true" />{t(($) => $.stage.label, { number: reviewStage })}</span>
               <span className="mt-1 block text-label font-medium">{t(($) => $.decisions.reviewPending, { stage: reviewStage })}</span>
               <span className="mt-1 block text-caption text-muted-foreground">{t(($) => $.decisions.reviewHint)}</span>

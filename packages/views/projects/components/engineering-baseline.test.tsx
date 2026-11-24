@@ -191,6 +191,8 @@ describe("EngineeringBaselineWiki", () => {
     expect(document.querySelector("[data-wiki-outline-column]")?.className).toContain("hidden");
     expect(document.querySelector("[data-wiki-rollback]")?.closest(".sticky")).not.toBeNull();
     expect(document.querySelector("[data-wiki-rollback]")?.parentElement?.className).toContain("ml-auto");
+    expect(document.querySelector("[data-wiki-open-history]")).toBeNull();
+    expect(screen.getByRole("button", { name: "← 返回页面" }).querySelector("svg")).toBeNull();
   });
 
   it.each([
