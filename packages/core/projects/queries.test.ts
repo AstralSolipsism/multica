@@ -108,11 +108,11 @@ describe("project engineering queries", () => {
     ]);
   });
 
-  it("lists only blocked member-assigned issues for the selected project decider", async () => {
+  it("lists every blocked issue in the project without filtering by decider", async () => {
     const issues = [{ id: "issue-1" }];
     const listIssues = vi.fn().mockResolvedValue({ issues, total: 1 });
     setApiInstance({ listIssues } as unknown as ApiClient);
-    const options = projectEngineeringDecisionIssuesOptions("ws-1", "project-1", "member-1");
+    const options = projectEngineeringDecisionIssuesOptions("ws-1", "project-1");
 
     const observer = new QueryObserver(qc, options);
     const unsubscribe = observer.subscribe(() => {});
@@ -125,11 +125,26 @@ describe("project engineering queries", () => {
       workspace_id: "ws-1",
       project_id: "project-1",
       statuses: ["blocked"],
-      assignee_types: ["member"],
-      assignee_ids: ["member-1"],
+      limit: 100,
+      offset: 0,
     });
     expect(options.queryKey).toEqual([
-      "issues", "ws-1", "engineering-decisions", "project-1", "member-1",
+      "issues", "ws-1", "engineering-decisions", "project-1",
     ]);
+  });
+
+  it("follows the server total past the 100-issue page boundary", async () => {
+    const issues = Array.from({ length: 101 }, (_, index) => ({ id: `issue-${index + 1}` }));
+    const listIssues = vi.fn(async ({ offset = 0 }) => ({ issues: issues.slice(offset, offset + 100), total: issues.length }));
+    setApiInstance({ listIssues } as unknown as ApiClient);
+    const observer = new QueryObserver(qc, projectEngineeringDecisionIssuesOptions("ws-1", "project-1"));
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await vi.waitFor(() => expect(observer.getCurrentResult().data).toHaveLength(101));
+      expect(observer.getCurrentResult().data?.at(-1)?.id).toBe("issue-101");
+    } finally {
+      unsubscribe();
+    }
+    expect(listIssues.mock.calls.map(([input]) => input.offset)).toEqual([0, 100]);
   });
 });

@@ -51,7 +51,7 @@ export function ProjectEngineeringMenuItems({
       <DropdownMenuItem onClick={() => push(p.projectEngineering(projectId))}>
         <Folder className="size-3.5" />
         {engineeringEnabled
-          ? tEngineering(($) => $.actions.open_baseline)
+          ? tEngineering(($) => $.title)
           : tEngineering(($) => $.actions.enable)}
       </DropdownMenuItem>
     );

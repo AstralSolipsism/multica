@@ -1,9 +1,11 @@
 {
-  "title": "工程总览",
+  "title": "工程管理",
   "views": {
-    "label": "工程视图",
-    "overview": "总览",
-    "wiki": "基线 Wiki"
+    "label": "工程管理视图",
+    "board": "推进看板",
+    "stages": "交付阶段",
+    "wiki": "基线 Wiki",
+    "activity": "变更动态"
   },
   "hero": {
     "allComplete": "所有交付阶段都完成了。",
@@ -62,6 +64,8 @@
     "reviewGroup": "审阅中",
     "progressGroup": "进行中",
     "todoGroup": "待开始",
+    "completedGroup": "已完成",
+    "unstaged": "未分阶段",
     "emptyStage": "这个阶段还没有任务。",
     "showCompleted": "展开已完成的 {{count}} 项",
     "hideCompleted": "收起已完成的 {{count}} 项",
@@ -70,22 +74,28 @@
     "outsideEmpty": "主线之外没有未关闭任务。"
   },
   "skills": {
-    "title": "Strixnova 工程技能绑定状态",
+    "title": "智能体技能就绪",
     "loading": "正在检查活跃智能体的 skill 绑定",
     "unavailable": "暂时无法读取 skill 绑定状态，工程管理功能仍可正常使用。",
-    "empty": "当前尚无活跃智能体绑定 Strixnova 工程管理系列 skill。智能体侧自动工程管理能力需绑定 skill 后生效；本页面的启用与所有功能不受影响。"
+    "empty": "当前尚无活跃智能体绑定 Strixnova 工程管理系列 skill。智能体侧自动工程管理能力需绑定 skill 后生效；本页面的启用与所有功能不受影响。",
+    "missingShort": "尚无活跃智能体绑定 Strixnova 技能"
   },
   "settings": {
-    "title": "工程设置",
-    "enabledLabel": "启用工程总览",
-    "enabledHint": "关闭后隐藏总览，不改变项目数据。",
-    "decidersLabel": "决定人",
-    "decidersHint": "工作区 owner 和 admin 始终是决定人。未选择任何人时，由人类项目负责人拍板。"
+    "title": "工程管理设置",
+    "enabledLabel": "启用工程管理",
+    "enabledHint": "关闭后仅隐藏此视图，不改变项目数据。",
+    "decidersLabel": "拍板权限（决定人）",
+    "decidersHint": "工作区 owner 和 admin 始终是决定人。未选择任何人时，由人类项目负责人拍板。",
+    "searchMembers": "搜索成员",
+    "noMembers": "没有匹配的成员。",
+    "disableTitle": "停用工程管理",
+    "disableHint": "仅隐藏此视图，不删除项目原有任务或基线 Wiki 数据。",
+    "disableAction": "停用工程管理"
   },
   "disabled": {
-    "title": "尚未启用工程总览",
-    "description": "项目仍保持原有界面。请联系工作区 owner 或 admin 启用。",
-    "adminDescription": "启用 Strixnova 后，可在这里查看交付阶段、待拍板事项、进展和受管基线。"
+    "title": "尚未启用工程管理",
+    "description": "项目仍保持原有界面。请联系工作区 owner 或 admin 启用工程管理。",
+    "adminDescription": "开启后，可按阶段追踪交付、集中处理待拍板事项，并与智能体协同维护项目基线 Wiki。关闭后仅隐藏此视图，不改动项目原有任务。"
   },
   "errors": {
     "title": "暂时无法读取工程数据",
@@ -107,9 +117,48 @@
     "close": "关闭",
     "expand": "展开全文",
     "collapse": "收起",
-    "enable": "启用总览",
-    "open_baseline": "打开工程基线",
+    "enable": "启用工程管理",
     "retry": "重试"
+  },
+  "board": {
+    "healthy": "推进正常 · 无阻塞",
+    "activeTasks": "活跃任务",
+    "viewStages": "查看阶段全部任务 →",
+    "noActiveTasks": "当前阶段没有未关闭任务。",
+    "latestChange": "最新变更",
+    "allActivity": "全部变更 →"
+  },
+  "cold": {
+    "title": "起步设置",
+    "progress": "{{count}} / 3 已完成",
+    "strategyStep": "定义推进方针 & Stage 1",
+    "strategyHint": "写清推进原则，并命名第一个交付阶段与目标。",
+    "strategyPlaceholder": "推进方针",
+    "stageNamePlaceholder": "Stage 1 名称",
+    "stageGoalPlaceholder": "阶段目标",
+    "wikiStep": "初始化基线 Wiki",
+    "wikiHint": "创建 4 页标准基线骨架（项目概览 / 领域规则 / 架构决定 / 边界风险），或新建空白页。",
+    "createGuide": "创建 4 页骨架",
+    "createBlank": "新建空白页",
+    "readyStep": "确认拍板人与智能体就绪",
+    "readyHint": "在设置中检查决定人权限与 Strixnova 技能绑定。",
+    "openSettings": "工程管理设置",
+    "footerHint": "后续可随时在右上角设置中调整。",
+    "skip": "跳过直接进入看板",
+    "enter": "进入推进看板"
+  },
+  "activity": {
+    "all": "全部",
+    "humans": "仅人工",
+    "agents": "仅智能体",
+    "allPages": "全部页面",
+    "future": "当前展示 Wiki 修订；后续可在此纳入阶段解锁、方针变更等工程动态。",
+    "empty": "没有符合筛选条件的修订。",
+    "select": "选择一条修订记录以预览变更。",
+    "openPage": "打开页面",
+    "fullHistory": "完整历史对比 →",
+    "loading": "正在加载 Diff…",
+    "diffError": "无法加载 Diff。"
   },
   "chapters": {
     "overview": "项目概览",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n（待编写）\n",
     "breadcrumbLabel": "页面路径",
     "openTreeDrawer": "打开页面树",
+    "treeCollapse": "收起页面树",
     "openOutlineDrawer": "打开大纲",
     "searchShortcut": "⌘K",
     "editPage": "编辑",
@@ -181,11 +231,15 @@
     "pageEmpty": "这一页还是空的。",
     "pageStartWriting": "开始编写",
     "pageLoadError": "页面加载失败，请重试。",
+    "pageUnavailable": "此页面不可用或已不存在。",
     "backlinksTitle": "被引用 · Referenced by",
     "backlinksEmpty": "还没有页面引用本页。",
     "relatedIssuesTitle": "关联 Issue",
     "relatedIssuesEmpty": "正文中没有出现关联 Issue。",
     "outlineTitle": "On this page",
+    "outlineTab": "大纲",
+    "commentsTab": "评论 ({{count}})",
+    "footerEmpty": "暂无其他页面引用 · 正文未关联 Issue",
     "outlineEmpty": "本页没有小节。",
     "bodyLabel": "页面正文",
     "canvasInstructionCopied": "已复制为对话指令",

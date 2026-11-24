@@ -248,6 +248,7 @@ vi.mock("../../editor", async () => ({
     const valueRef = useRef(initialValue);
     const baseRef = useRef(initialValue);
     const [editorValue, setEditorValue] = useState(initialValue);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     // Mirrors the real editor's dirty guard: once the user has typed, an
     // external `value` change is refused so it cannot clobber unsaved bytes.
     // Only the imperative adoptContent channel lands after that point.
@@ -278,7 +279,7 @@ vi.mock("../../editor", async () => ({
         dirtyRef.current = false;
         setEditorValue(markdown);
       },
-      focus: () => {},
+      focus: () => textareaRef.current?.focus(),
       focusAtCoords: () => {},
       // The top-level composer blurs after a posted comment (afterAccepted).
       blur: () => {},
@@ -293,6 +294,7 @@ vi.mock("../../editor", async () => ({
     }));
     return (
       <textarea
+        ref={textareaRef}
         value={editorValue}
         onChange={(e) => {
           valueRef.current = e.target.value;
@@ -764,12 +766,15 @@ function createTestQueryClient() {
   });
 }
 
-function renderIssueDetail(issueId = "issue-1") {
+function renderIssueDetail(issueId = "issue-1", options: {
+  commentDraftRequest?: { content: string; token: number } | null;
+  onCommentDraftRequestHandled?: () => void;
+} = {}) {
   const queryClient = createTestQueryClient();
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} />
+        <IssueDetail issueId={issueId} {...options} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -978,6 +983,23 @@ describe("IssueDetail (shared)", () => {
     expect(setDraft).toHaveBeenCalledWith(`new:${mockIssue.id}`, "answer");
     expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "end" });
     getState.mockRestore();
+  });
+
+  it("consumes a cold Peek draft request after the detail and composer mount", async () => {
+    const coldRead = Promise.withResolvers<typeof mockIssue>();
+    mockApiObj.getIssue.mockReturnValueOnce(coldRead.promise);
+    const onHandled = vi.fn();
+    renderIssueDetail("issue-1", {
+      commentDraftRequest: { content: "cold answer", token: 1 },
+      onCommentDraftRequestHandled: onHandled,
+    });
+    expect(onHandled).not.toHaveBeenCalled();
+
+    act(() => coldRead.resolve(mockIssue));
+    const editor = await screen.findByPlaceholderText("Leave a comment...");
+    await waitFor(() => expect(onHandled).toHaveBeenCalled());
+    expect(editor).toHaveValue("cold answer");
+    await waitFor(() => expect(editor).toHaveFocus());
   });
 
   it("explicitly adopts a filled decision-card answer in an already edited composer", async () => {

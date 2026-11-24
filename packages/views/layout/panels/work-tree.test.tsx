@@ -330,7 +330,7 @@ describe("ProjectsSection", () => {
     renderSection();
     fireEvent.contextMenu(screen.getByText("Mobile"), { clientX: 20, clientY: 40 });
 
-    await screen.findByRole("menuitem", { name: "Open engineering baseline" });
+    await screen.findByRole("menuitem", { name: "Engineering" });
     const menu = screen.getByRole("menu");
     const items = Array.from(menu.querySelectorAll('[role="menuitem"]'), (el) => el.textContent?.trim());
     expect(items).toEqual([
@@ -341,7 +341,7 @@ describe("ProjectsSection", () => {
       "Copy link",
       "Copy link with title",
       "Archive",
-      "Open engineering baseline",
+      "Engineering",
     ]);
 
     fireEvent.click(screen.getByRole("menuitem", { name: "New issue in this project" }));
@@ -353,7 +353,7 @@ describe("ProjectsSection", () => {
     expect(apiMock.getProjectEngineeringConfig).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
-    const item = await screen.findByRole("menuitem", { name: "Open engineering baseline" });
+    const item = await screen.findByRole("menuitem", { name: "Engineering" });
     expect(apiMock.getProjectEngineeringConfig).toHaveBeenCalledWith("ws-1", "p2");
 
     fireEvent.click(item);
@@ -375,10 +375,10 @@ describe("ProjectsSection", () => {
     renderSection();
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
 
-    const item = await screen.findByRole("menuitem", { name: "Engineering overview is not enabled" });
+    const item = await screen.findByRole("menuitem", { name: "Engineering is not enabled" });
     expect(item).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByRole("menuitem", { name: "Enable overview" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Open engineering baseline" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Enable Engineering" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Engineering" })).not.toBeInTheDocument();
   });
 
   it("offers the enable entry to an administrator when engineering is disabled", async () => {
@@ -387,7 +387,7 @@ describe("ProjectsSection", () => {
     renderSection();
     fireEvent.contextMenu(screen.getByRole("link", { name: "Mobile" }), { clientX: 20, clientY: 40 });
 
-    const item = await screen.findByRole("menuitem", { name: "Enable overview" });
+    const item = await screen.findByRole("menuitem", { name: "Enable Engineering" });
     fireEvent.click(item);
     expect(navigationMock.push).toHaveBeenCalledWith("/acme/projects/p2/engineering");
   });

@@ -5,6 +5,7 @@ import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types"
 import {
   buildEngineeringRoadmap,
   engineeringPermissions,
+  engineeringViewFromSearch,
   selectEngineeringComment,
   strixnovaSkillBindings,
 } from "./engineering-utils";
@@ -46,6 +47,18 @@ const node = (
   parentIssueId,
 }) as IssueGraphNode;
 
+describe("engineeringViewFromSearch", () => {
+  it("maps all four tabs and legacy page-only links", () => {
+    expect(engineeringViewFromSearch(new URLSearchParams())).toBe("board");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=board"))).toBe("board");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=stages&stage=2"))).toBe("stages");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=wiki"))).toBe("wiki");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=activity"))).toBe("activity");
+    expect(engineeringViewFromSearch(new URLSearchParams("page=architecture"))).toBe("wiki");
+    expect(engineeringViewFromSearch(new URLSearchParams("tab=unknown"))).toBe("board");
+  });
+});
+
 describe("selectEngineeringComment", () => {
   it("prefers an unresolved HTML decision card over every other format", () => {
     const entries = [
@@ -54,7 +67,17 @@ describe("selectEngineeringComment", () => {
       comment("plain", "Anything can be the first line", "2026-01-04T00:00:00Z"),
       comment("reply", "```html title=\"决策卡：回复\"\ncontent", "2026-01-05T00:00:00Z", { parentId: "html" }),
     ];
-    expect(selectEngineeringComment(entries)?.id).toBe("html");
+    expect(selectEngineeringComment(entries)?.id).toBe("reply");
+  });
+
+  it("selects v3 attachment cards inside unresolved replies and ignores resolved threads", () => {
+    const entries = [
+      comment("root", "delegate", "2026-01-01T00:00:00Z"),
+      comment("reply", "```html src=\"decision.html\" title=\"决策：OL-1474\"\ncontent", "2026-01-02T00:00:00Z", { parentId: "root" }),
+      comment("resolved-root", "done", "2026-01-03T00:00:00Z", { resolvedAt: "2026-01-04T00:00:00Z" }),
+      comment("resolved-reply", "```html src=\"decision.html\" title=\"决策：old\"\ncontent", "2026-01-05T00:00:00Z", { parentId: "resolved-root" }),
+    ];
+    expect(selectEngineeringComment(entries)?.id).toBe("reply");
   });
 
   it("uses Markdown decision cards as the next structured fallback", () => {
@@ -74,7 +97,7 @@ describe("selectEngineeringComment", () => {
     expect(selectEngineeringComment(entries, ["decider-1"])?.id).toBe("mention");
   });
 
-  it("falls back to the newest unresolved root, then the newest root", () => {
+  it("falls back to the newest unresolved root and returns null when every root is resolved", () => {
     const unresolved = [
       comment("old", "plain", "2026-01-01T00:00:00Z"),
       comment("new", "latest root", "2026-01-03T00:00:00Z"),
@@ -86,8 +109,30 @@ describe("selectEngineeringComment", () => {
       comment("resolved-card", "```html title=\"决策卡\"\ncontent", "2026-01-02T00:00:00Z", { resolvedAt: "2026-01-03T00:00:00Z" }),
       comment("resolved-new", "resolved root", "2026-01-04T00:00:00Z", { resolvedAt: "2026-01-05T00:00:00Z" }),
     ];
-    expect(selectEngineeringComment(resolved)?.id).toBe("resolved-new");
+    expect(selectEngineeringComment(resolved)).toBeNull();
     expect(selectEngineeringComment([])).toBeNull();
+  });
+
+  it("selects the newest card at nanosecond precision", () => {
+    const card = "```html title=\"决策卡\"\ncontent";
+    const entries = [
+      comment("newer", card, "2026-01-01T00:00:00.123000001Z"),
+      comment("older", card, "2026-01-01T00:00:00.123Z"),
+    ];
+    expect(selectEngineeringComment(entries)?.id).toBe("newer");
+  });
+
+  it("walks the full ancestor chain before treating a nested card as unresolved", () => {
+    const resolvedThread = [
+      comment("resolved-root", "done", "2026-01-01T00:00:00Z", { resolvedAt: "2026-01-02T00:00:00Z" }),
+      comment("middle", "reply", "2026-01-02T00:00:00Z", { parentId: "resolved-root" }),
+      comment("nested-card", "```html src=\"decision.html\" title=\"决策：old\"\ncontent", "2026-01-03T00:00:00Z", { parentId: "middle" }),
+    ];
+    expect(selectEngineeringComment(resolvedThread)).toBeNull();
+    expect(selectEngineeringComment([
+      ...resolvedThread,
+      comment("active", "current discussion", "2026-01-04T00:00:00Z"),
+    ])?.id).toBe("active");
   });
 });
 
@@ -131,6 +176,15 @@ describe("buildEngineeringRoadmap", () => {
     expect(review.stages[0]?.status).toBe("review");
     const emptyCurrent = buildEngineeringRoadmap([], [{ stage: 6, title: "Empty", goal: "" }], 6);
     expect(emptyCurrent.stages[0]?.status).toBe("current");
+  });
+
+  it("counts custom started statuses in progress just like the task grouping", () => {
+    const roadmap = buildEngineeringRoadmap([
+      node("qa", 1, "qa", "started"),
+      node("blocked", 1, "blocked", "started"),
+      node("review", 1, "in_review", "started"),
+    ], [], 1);
+    expect(roadmap.stages[0]).toMatchObject({ inProgress: 1, blocked: 1, inReview: 1 });
   });
 
   it("drops historical children of closed parents without mixing them into outside work", () => {

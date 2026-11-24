@@ -83,4 +83,5 @@ describe("wiki api methods", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(init.headers).get("X-Workspace-ID")).toBe(workspaceHeaders["X-Workspace-ID"]);
   });
+
 });

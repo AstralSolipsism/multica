@@ -2,8 +2,10 @@
   "title": "엔지니어링 개요",
   "views": {
     "label": "엔지니어링 보기",
-    "overview": "개요",
-    "wiki": "베이스라인 Wiki"
+    "board": "대시보드",
+    "stages": "단계",
+    "wiki": "베이스라인 Wiki",
+    "activity": "활동"
   },
   "hero": {
     "allComplete": "모든 제공 단계가 완료되었습니다.",
@@ -62,6 +64,8 @@
     "reviewGroup": "검토 중",
     "progressGroup": "진행 중",
     "todoGroup": "시작 전",
+    "completedGroup": "완료",
+    "unstaged": "단계 없음",
     "emptyStage": "이 단계에는 아직 작업이 없습니다.",
     "showCompleted": "완료한 작업 {{count}}개 펼치기",
     "hideCompleted": "완료한 작업 {{count}}개 접기",
@@ -73,14 +77,20 @@
     "title": "Strixnova 엔지니어링 skill 연결 상태",
     "loading": "활성 에이전트의 skill 연결을 확인하는 중",
     "unavailable": "skill 연결 상태를 불러오지 못했습니다. 엔지니어링 관리 기능은 계속 사용할 수 있습니다.",
-    "empty": "활성 에이전트에 Strixnova 엔지니어링 skill이 연결되어 있지 않습니다. 에이전트의 자동 엔지니어링 기능은 skill 연결 후 활성화되지만, 이 페이지의 모든 기능은 그대로 사용할 수 있습니다."
+    "empty": "활성 에이전트에 Strixnova 엔지니어링 skill이 연결되어 있지 않습니다. 에이전트의 자동 엔지니어링 기능은 skill 연결 후 활성화되지만, 이 페이지의 모든 기능은 그대로 사용할 수 있습니다.",
+    "missingShort": "활성 에이전트에 Strixnova skill이 연결되어 있지 않습니다"
   },
   "settings": {
     "title": "엔지니어링 설정",
     "enabledLabel": "엔지니어링 개요 사용",
     "enabledHint": "사용 중지하면 프로젝트 데이터는 유지하고 개요만 숨깁니다.",
     "decidersLabel": "결정자",
-    "decidersHint": "워크스페이스 owner와 admin은 항상 포함됩니다. 선택된 사람이 없으면 사람 프로젝트 리드가 결정합니다."
+    "decidersHint": "워크스페이스 owner와 admin은 항상 포함됩니다. 선택된 사람이 없으면 사람 프로젝트 리드가 결정합니다.",
+    "searchMembers": "멤버 검색",
+    "noMembers": "검색 조건에 맞는 멤버가 없습니다.",
+    "disableTitle": "엔지니어링 사용 중지",
+    "disableHint": "이 보기만 숨깁니다. 프로젝트 Issue와 베이스라인 Wiki는 삭제되지 않습니다.",
+    "disableAction": "엔지니어링 사용 중지"
   },
   "disabled": {
     "title": "엔지니어링 개요가 활성화되지 않았습니다",
@@ -108,8 +118,47 @@
     "expand": "전체 보기",
     "collapse": "접기",
     "enable": "개요 사용",
-    "open_baseline": "엔지니어링 기준선 열기",
     "retry": "다시 시도"
+  },
+  "board": {
+    "healthy": "순조로움 · 막힘 없음",
+    "activeTasks": "활성 작업",
+    "viewStages": "단계의 모든 작업 보기 →",
+    "noActiveTasks": "이 단계에 미완료 작업이 없습니다.",
+    "latestChange": "최신 변경",
+    "allActivity": "모든 활동 →"
+  },
+  "cold": {
+    "title": "시작하기",
+    "progress": "{{count}} / 3 완료",
+    "strategyStep": "추진 방침과 Stage 1 정의",
+    "strategyHint": "추진 원칙을 작성하고 첫 단계와 그 결과의 이름을 정하세요.",
+    "strategyPlaceholder": "추진 방침",
+    "stageNamePlaceholder": "Stage 1 이름",
+    "stageGoalPlaceholder": "단계 결과",
+    "wikiStep": "베이스라인 Wiki 초기화",
+    "wikiHint": "표준 페이지 4개를 만들거나 빈 페이지에서 시작하세요.",
+    "createGuide": "가이드 페이지 4개 만들기",
+    "createBlank": "새 빈 페이지",
+    "readyStep": "결정자와 에이전트 준비 상태 확인",
+    "readyHint": "설정에서 결정 권한과 Strixnova skill 연결을 확인하세요.",
+    "openSettings": "엔지니어링 설정",
+    "footerHint": "나중에 설정 버튼에서 변경할 수 있습니다.",
+    "skip": "대시보드로 바로 이동",
+    "enter": "대시보드 열기"
+  },
+  "activity": {
+    "all": "전체",
+    "humans": "사람만",
+    "agents": "에이전트만",
+    "allPages": "모든 페이지",
+    "future": "현재는 Wiki 수정 내역을 표시합니다. 단계 잠금 해제와 방침 변경도 추후 이 피드에 추가됩니다.",
+    "empty": "필터에 맞는 수정 내역이 없습니다.",
+    "select": "수정 내역을 선택해 변경 사항을 미리 보세요.",
+    "openPage": "페이지 열기",
+    "fullHistory": "전체 히스토리 →",
+    "loading": "차이를 불러오는 중…",
+    "diffError": "차이를 불러오지 못했습니다."
   },
   "chapters": {
     "overview": "프로젝트 개요",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n(작성 예정)\n",
     "breadcrumbLabel": "페이지 경로",
     "openTreeDrawer": "페이지 트리 열기",
+    "treeCollapse": "페이지 트리 접기",
     "openOutlineDrawer": "목차 열기",
     "searchShortcut": "⌘K",
     "editPage": "편집",
@@ -181,11 +231,15 @@
     "pageEmpty": "이 페이지는 아직 비어 있습니다.",
     "pageStartWriting": "작성 시작",
     "pageLoadError": "페이지를 불러오지 못했습니다. 다시 시도하세요.",
+    "pageUnavailable": "이 페이지를 사용할 수 없거나 더 이상 존재하지 않습니다.",
     "backlinksTitle": "참조됨 · Referenced by",
     "backlinksEmpty": "아직 이 페이지를 참조하는 페이지가 없습니다.",
     "relatedIssuesTitle": "관련 Issue",
     "relatedIssuesEmpty": "본문에 관련 Issue가 없습니다.",
     "outlineTitle": "On this page",
+    "outlineTab": "목차",
+    "commentsTab": "댓글({{count}})",
+    "footerEmpty": "참조 없음 · 관련 Issue 없음",
     "outlineEmpty": "이 페이지에는 섹션이 없습니다.",
     "bodyLabel": "페이지 본문",
     "canvasInstructionCopied": "대화 지시로 복사했습니다",

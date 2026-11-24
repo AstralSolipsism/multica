@@ -1,5 +1,14 @@
 import type { EngineeringConfig, EngineeringStage, IssueGraphNode } from "@multica/core/api";
+import { compareRfc3339Nano } from "@multica/core/projects/queries";
 import type { Agent, Member, Project, TimelineEntry } from "@multica/core/types";
+
+export type EngineeringView = "board" | "stages" | "wiki" | "activity";
+
+export function engineeringViewFromSearch(searchParams: URLSearchParams): EngineeringView {
+  const tab = searchParams.get("tab");
+  if (tab === "stages" || tab === "wiki" || tab === "activity" || tab === "board") return tab;
+  return searchParams.has("page") ? "wiki" : "board";
+}
 
 export const STRIXNOVA_ENGINEERING_SKILLS = [
   "strixnova-discovery",
@@ -9,22 +18,50 @@ export const STRIXNOVA_ENGINEERING_SKILLS = [
 ] as const;
 
 function decisionCard(content: string, language: "html" | "markdown"): boolean {
-  return new RegExp(`^ {0,3}\`\`\`${language} title="决策卡[^"]*"`, "m").test(content);
+  const legacy = language === "html"
+    ? /^ {0,3}```html[^\n]*title="决策卡[^"]*"/m
+    : /^ {0,3}```markdown[^\n]*title="决策卡[^"]*"/m;
+  if (legacy.test(content)) return true;
+  return language === "html"
+    && /^ {0,3}```html(?=[^\n]*\bsrc="[^"]+\.html")(?=[^\n]*\btitle="决策：[^"]*")[^\n]*/m.test(content);
+}
+
+export function engineeringDecisionKind(
+  entry: TimelineEntry | null,
+  deciderIds: readonly string[] = [],
+): "card" | "mention" | null {
+  if (!entry?.content || entry.resolved_at || entry.deleted_at) return null;
+  if (decisionCard(entry.content, "html") || decisionCard(entry.content, "markdown")) return "card";
+  return deciderIds.some((id) => entry.content?.includes(`mention://member/${id}`)) ? "mention" : null;
 }
 
 export function selectEngineeringComment(
   entries: readonly TimelineEntry[],
   deciderIds: readonly string[] = [],
+  excludedIds?: ReadonlySet<string>,
 ): TimelineEntry | null {
-  const roots = entries
-    .filter((entry) => entry.type === "comment" && !entry.parent_id && !entry.deleted_at && entry.content?.trim())
-    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
-  const unresolved = roots.filter((entry) => !entry.resolved_at);
-  const mentionsDecider = (entry: TimelineEntry) => deciderIds.some((id) => entry.content?.includes(`mention://member/${id}`));
-  return unresolved.find((entry) => decisionCard(entry.content!, "html") || mentionsDecider(entry))
+  const comments = entries.filter((entry) => entry.type === "comment");
+  const byId = new Map(comments.map((entry) => [entry.id, entry]));
+  const hasResolvedAncestor = (entry: TimelineEntry) => {
+    const visited = new Set<string>();
+    let ancestorId = entry.parent_id;
+    while (ancestorId && !visited.has(ancestorId)) {
+      visited.add(ancestorId);
+      const ancestor = byId.get(ancestorId);
+      if (!ancestor) break;
+      if (ancestor.resolved_at) return true;
+      ancestorId = ancestor.parent_id;
+    }
+    return false;
+  };
+  const unresolved = comments
+    .filter((entry) => !entry.resolved_at && !hasResolvedAncestor(entry))
+    .filter((entry) => !entry.deleted_at && entry.content?.trim() && !excludedIds?.has(entry.id))
+    .sort((a, b) => compareRfc3339Nano(b.created_at, a.created_at) || b.id.localeCompare(a.id));
+  return unresolved.find((entry) => decisionCard(entry.content!, "html"))
     ?? unresolved.find((entry) => decisionCard(entry.content!, "markdown"))
-    ?? unresolved[0]
-    ?? roots[0]
+    ?? unresolved.find((entry) => engineeringDecisionKind(entry, deciderIds) === "mention")
+    ?? unresolved.find((entry) => !entry.parent_id)
     ?? null;
 }
 
@@ -119,7 +156,7 @@ export function buildEngineeringRoadmap(
       closed,
       blocked: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "blocked").length,
       inReview: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "in_review").length,
-      inProgress: tasks.filter((node) => !isClosedEngineeringNode(node) && node.status === "in_progress").length,
+      inProgress: tasks.filter((node) => !isClosedEngineeringNode(node) && node.statusCategory === "started" && node.status !== "blocked" && node.status !== "in_review").length,
       todo: tasks.filter((node) => !isClosedEngineeringNode(node) && node.statusCategory === "unstarted").length,
       tasks,
     };

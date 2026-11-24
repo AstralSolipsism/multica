@@ -46,7 +46,7 @@ describe("project engineering mutations", () => {
     const updateProjectEngineering = vi.fn().mockResolvedValue(null);
     setApiInstance({ updateProjectEngineering } as unknown as ApiClient);
     const overviewKey = projectKeys.engineering("ws-1", "project-1");
-    const decisionsKey = projectKeys.engineeringDecisionIssues("ws-1", "project-1", "member-1");
+    const decisionsKey = projectKeys.engineeringDecisionIssues("ws-1", "project-1");
     qc.setQueryData(overviewKey, null);
     qc.setQueryData(decisionsKey, []);
 

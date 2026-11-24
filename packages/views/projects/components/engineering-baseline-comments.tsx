@@ -104,8 +104,7 @@ export function WikiCommentsPanel({ workspaceId, projectId, pageId, pageSlug, th
   const woke = dispatch?.threadId === active?.id ? dispatch?.targets ?? [] : [];
   const siblings = discussion.mode === "thread" ? (discussion.siblings ?? []).filter((id) => threads.some((thread) => thread.id === id)) : [];
   return <div className="flex h-full min-h-0 flex-col" data-wiki-comments>
-    <div className="shrink-0 p-3"><Button type="button" size="sm" variant="ghost" onClick={() => onDiscussion({ mode: "outline" })}><ArrowLeft className="size-3.5" />{t(($) => $.wikiComments.outline)}</Button>
-      {discussion.mode !== "list" ? <Button type="button" size="xs" variant="ghost" onClick={() => onDiscussion({ mode: "list" })}>{t(($) => $.wikiComments.all)}</Button> : null}</div>
+    {discussion.mode !== "list" ? <div className="shrink-0 p-3"><Button type="button" size="sm" variant="ghost" onClick={() => onDiscussion({ mode: "list" })}><ArrowLeft className="size-3.5" />{t(($) => $.wikiComments.all)}</Button></div> : null}
     <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
       {loading ? <LoaderCircle className="size-4 animate-spin" /> : null}
       {loadError || error ? <p role="alert" className="mb-2 text-caption text-destructive">{t(($) => $.wikiComments.failed)}</p> : null}

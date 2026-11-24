@@ -38,9 +38,14 @@ export const PEEKED_ROW_CLASS =
  */
 export type IssuePeekColumns = readonly (readonly string[])[];
 
+export interface IssuePeekOpenOptions {
+  /** Adopt this draft in the peek composer and focus it, including on a cold mount. */
+  commentDraft?: string;
+}
+
 export interface IssuePeekActions {
   /** Open the peek on `issueId`, replacing whatever is peeked. */
-  open: (issueId: string) => void;
+  open: (issueId: string, options?: IssuePeekOpenOptions) => void;
   /** Open on `issueId`, or close when it is already the peeked issue. */
   toggle: (issueId: string) => void;
   close: () => void;

@@ -48,6 +48,12 @@ describe("paths.workspace(slug)", () => {
     expect(ws.projectEngineering("project/id", { thread: "t/1" })).toBe(
       "/acme/projects/project%2Fid/engineering?thread=t%2F1",
     );
+    expect(ws.projectEngineering("project/id", { tab: "stages", stage: 2, group: "in_review" })).toBe(
+      "/acme/projects/project%2Fid/engineering?tab=stages&stage=2&group=in_review",
+    );
+    expect(ws.projectEngineering("project/id", { tab: "wiki", page: "arch", history: true, rev: 6 })).toBe(
+      "/acme/projects/project%2Fid/engineering?tab=wiki&page=arch&history=1&rev=6",
+    );
     expect(ws.projectEngineering("project/id", {})).toBe("/acme/projects/project%2Fid/engineering");
   });
 

@@ -1,9 +1,11 @@
 {
-  "title": "Engineering overview",
+  "title": "Engineering",
   "views": {
     "label": "Engineering views",
-    "overview": "Overview",
-    "wiki": "Baseline Wiki"
+    "board": "Dashboard",
+    "stages": "Stages",
+    "wiki": "Baseline Wiki",
+    "activity": "Activity"
   },
   "hero": {
     "allComplete": "All delivery stages are complete.",
@@ -62,6 +64,8 @@
     "reviewGroup": "In review",
     "progressGroup": "In progress",
     "todoGroup": "To start",
+    "completedGroup": "Completed",
+    "unstaged": "Unstaged",
     "emptyStage": "No tasks are assigned to this stage yet.",
     "showCompleted": "Show {{count}} completed tasks",
     "hideCompleted": "Hide {{count}} completed tasks",
@@ -70,22 +74,28 @@
     "outsideEmpty": "No open tasks outside the delivery stages."
   },
   "skills": {
-    "title": "Strixnova engineering skill bindings",
+    "title": "Agent skill readiness",
     "loading": "Checking active agent skill bindings",
     "unavailable": "Skill bindings could not be loaded. Engineering management remains available.",
-    "empty": "No active agent is bound to Strixnova engineering skills. Automatic agent-side engineering capabilities take effect after the skills are bound; this page remains fully available."
+    "empty": "No active agent is bound to Strixnova engineering skills. Automatic agent-side engineering capabilities take effect after the skills are bound; this page remains fully available.",
+    "missingShort": "No active agent is bound to Strixnova skills"
   },
   "settings": {
     "title": "Engineering settings",
-    "enabledLabel": "Enable engineering overview",
-    "enabledHint": "Disabling this hides the overview without changing project data.",
+    "enabledLabel": "Enable Engineering",
+    "enabledHint": "Disabling only hides this view without changing project data.",
     "decidersLabel": "Decision makers",
-    "decidersHint": "Workspace owners and admins are always included. With nobody selected, the human project lead is used."
+    "decidersHint": "Workspace owners and admins are always included. With nobody selected, the human project lead is used.",
+    "searchMembers": "Search members",
+    "noMembers": "No members match this search.",
+    "disableTitle": "Disable Engineering",
+    "disableHint": "Only hides this view. Project issues and the Baseline Wiki are not deleted.",
+    "disableAction": "Disable Engineering"
   },
   "disabled": {
-    "title": "Engineering overview is not enabled",
-    "description": "This project keeps its regular interface. Ask a workspace owner or admin to enable the overview.",
-    "adminDescription": "Enable Strixnova to see delivery stages, decisions, progress, and the managed baseline here."
+    "title": "Engineering is not enabled",
+    "description": "This project keeps its regular interface. Ask a workspace owner or admin to enable Engineering.",
+    "adminDescription": "Enable Engineering to track staged delivery, resolve pending decisions, and maintain the project Baseline Wiki with agents. Disabling only hides this view without altering project issues."
   },
   "errors": {
     "title": "Engineering data is unavailable",
@@ -107,9 +117,48 @@
     "close": "Close",
     "expand": "Show more",
     "collapse": "Show less",
-    "enable": "Enable overview",
-    "open_baseline": "Open engineering baseline",
+    "enable": "Enable Engineering",
     "retry": "Retry"
+  },
+  "board": {
+    "healthy": "On track · No blockers",
+    "activeTasks": "Active tasks",
+    "viewStages": "View all stage tasks →",
+    "noActiveTasks": "No open tasks in this stage.",
+    "latestChange": "Latest change",
+    "allActivity": "All activity →"
+  },
+  "cold": {
+    "title": "Getting started",
+    "progress": "{{count}} / 3 complete",
+    "strategyStep": "Define the delivery strategy & Stage 1",
+    "strategyHint": "Write the delivery principles, then name the first stage and its outcome.",
+    "strategyPlaceholder": "Delivery strategy",
+    "stageNamePlaceholder": "Stage 1 name",
+    "stageGoalPlaceholder": "Stage outcome",
+    "wikiStep": "Initialize the Baseline Wiki",
+    "wikiHint": "Create the four standard pages or start with a blank page.",
+    "createGuide": "Create 4 guide pages",
+    "createBlank": "New blank page",
+    "readyStep": "Confirm decision makers and agent readiness",
+    "readyHint": "Review decision permissions and Strixnova skill bindings in settings.",
+    "openSettings": "Engineering settings",
+    "footerHint": "You can adjust these later from the settings button.",
+    "skip": "Skip and open the Dashboard",
+    "enter": "Open Dashboard"
+  },
+  "activity": {
+    "all": "All",
+    "humans": "Humans only",
+    "agents": "Agents only",
+    "allPages": "All pages",
+    "future": "Wiki revisions are shown now; stage unlocks and strategy changes will join this feed later.",
+    "empty": "No revisions match these filters.",
+    "select": "Select a revision to preview its changes.",
+    "openPage": "Open page",
+    "fullHistory": "Full history →",
+    "loading": "Loading diff…",
+    "diffError": "The diff could not be loaded."
   },
   "chapters": {
     "overview": "Project overview",
@@ -169,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n(To be written)\n",
     "breadcrumbLabel": "Page path",
     "openTreeDrawer": "Open page tree",
+    "treeCollapse": "Collapse page tree",
     "openOutlineDrawer": "Open outline",
     "searchShortcut": "⌘K",
     "editPage": "Edit",
@@ -181,11 +231,15 @@
     "pageEmpty": "This page is still empty.",
     "pageStartWriting": "Start writing",
     "pageLoadError": "Failed to load the page. Try again.",
+    "pageUnavailable": "This page is unavailable or no longer exists.",
     "backlinksTitle": "Referenced by",
     "backlinksEmpty": "No pages reference this one yet.",
     "relatedIssuesTitle": "Related Issues",
     "relatedIssuesEmpty": "No related Issues appear in the body.",
     "outlineTitle": "On this page",
+    "outlineTab": "Outline",
+    "commentsTab": "Comments ({{count}})",
+    "footerEmpty": "No references · No related issues",
     "outlineEmpty": "This page has no sections.",
     "bodyLabel": "Page body",
     "canvasInstructionCopied": "Copied as a chat instruction",

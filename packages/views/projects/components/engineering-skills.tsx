@@ -5,20 +5,21 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { useT } from "../../i18n";
 import type { StrixnovaSkillBinding } from "./engineering-utils";
 
-export function EngineeringSkills({ bindings, loading, error }: {
+export function EngineeringSkills({ bindings, loading, error, onRetry }: {
   bindings: readonly StrixnovaSkillBinding[];
   loading: boolean;
   error: boolean;
+  onRetry?: () => void;
 }) {
   const { t } = useT("engineering");
   return (
-    <section className="rounded-lg border bg-muted/20 p-3" aria-label={t(($) => $.skills.title)} data-engineering-skills>
+    <section aria-label={t(($) => $.skills.title)} data-engineering-skills>
       <div className="flex items-start gap-2">
         {loading ? <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
         <div className="min-w-0 flex-1">
           <h2 className="text-caption font-medium">{t(($) => $.skills.title)}</h2>
           {loading ? <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.skills.loading)}</p> : null}
-          {!loading && error ? <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.skills.unavailable)}</p> : null}
+          {!loading && error ? <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.skills.unavailable)}{onRetry ? <button type="button" className="ml-2 underline underline-offset-2" onClick={onRetry}>{t(($) => $.actions.retry)}</button> : null}</p> : null}
           {!loading && !error && bindings.length === 0 ? <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.skills.empty)}</p> : null}
           {!loading && !error && bindings.length ? (
             <ul className="mt-2 space-y-2">

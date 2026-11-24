@@ -341,7 +341,7 @@ describe("ProjectDetail engineering entry", () => {
 
     renderProjectDetail();
 
-    expect(screen.getByRole("link", { name: "Engineering overview" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Engineering" })).toHaveAttribute(
       "href",
       "/test-workspace/projects/project-1/engineering",
     );
@@ -352,8 +352,8 @@ describe("ProjectDetail engineering entry", () => {
 
     renderProjectDetail();
 
-    expect(screen.queryByRole("link", { name: "Engineering overview" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Enable overview" })).toHaveAttribute(
+    expect(screen.queryByRole("link", { name: "Engineering" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Enable Engineering" })).toHaveAttribute(
       "href",
       "/test-workspace/projects/project-1/engineering",
     );
@@ -366,7 +366,7 @@ describe("ProjectDetail engineering entry", () => {
 
     renderProjectDetail();
 
-    expect(screen.queryByRole("link", { name: "Enable overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Enable Engineering" })).not.toBeInTheDocument();
     expect(screen.getByText("Launch Plan")).toBeInTheDocument();
   });
 
@@ -377,7 +377,7 @@ describe("ProjectDetail engineering entry", () => {
 
       renderProjectDetail();
 
-      expect(screen.queryByRole("link", { name: "Engineering overview" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Engineering" })).not.toBeInTheDocument();
       expect(screen.getByText("Launch Plan")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
     },

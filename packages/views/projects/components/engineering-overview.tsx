@@ -1,50 +1,48 @@
 "use client";
 
-// Engineering overview (OL-1329 §8). Two tabs: 总览 | 基线 Wiki. The overview
-// keeps stage progress, the 待拍板决策卡, skills and settings, and replaces
-// the retired approval queue with a baseline-wiki summary card plus a recent
-// wiki activity feed (rows deep-link into the wiki page). The wiki tab mounts
-// the three-column EngineeringBaselineWiki.
+// Four-view engineering shell: Dashboard, Stages, Baseline Wiki and Activity.
+// URL search parameters are the shareable navigation contract; each view owns
+// its own scrolling so the Dashboard can remain a one-screen cockpit.
 
-import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertCircle, FileText, LoaderCircle, Settings2 } from "@multica/ui/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
+import { AlertCircle, LoaderCircle, Settings, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
-import { errorCode, type EngineeringStage as EngineeringStageConfig, type WikiActivityItem } from "@multica/core/api";
+import { errorCode, type EngineeringStage as EngineeringStageConfig } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
 import { issueTimelineOptions } from "@multica/core/issues/queries";
 import { paths } from "@multica/core/paths";
-import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectWikiActivityOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
+import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectWikiActivityInfiniteOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
 import { useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
-import { useActorName } from "@multica/core/workspace/hooks";
 import type { Issue, IssueTableQuerySpec } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { ActorAvatar } from "../../common/actor-avatar";
-import { IssueMentionCard } from "../../issues/components/issue-mention-card";
+import { IssuePeekHost } from "../../issues/components/issue-peek";
+import { EngineeringActivity } from "./engineering-activity";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
-import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
-import { useFormatRelativeDate } from "./labels";
+import { EngineeringBoard } from "./engineering-board";
+import { EngineeringColdStart } from "./engineering-cold-start";
+import type { EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringSettings } from "./engineering-settings";
-import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
-import { buildEngineeringRoadmap, engineeringPermissions, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey } from "./engineering-utils";
+import type { EngineeringTaskGroup } from "./engineering-progress";
+import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, engineeringViewFromSearch, selectEngineeringComment, strixnovaSkillBindings, type EngineeringView } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
   projectId: string;
 }
 
-type EngineeringView = "overview" | "wiki";
 type ConfigUpdate = {
   enabled?: boolean;
   currentStage?: number;
@@ -52,84 +50,26 @@ type ConfigUpdate = {
   deciderMemberIds?: string[];
   stages?: EngineeringStageConfig[];
 };
-function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
-  items: readonly WikiActivityItem[];
-  workspaceSlug: string;
-  projectId: string;
-  /** Switches the tab to the wiki AND navigates (?page=). */
-  onOpenWiki: () => void;
-}) {
-  const { t } = useT("engineering");
-  const { getActorName } = useActorName();
-  const formatRelativeDate = useFormatRelativeDate();
-  const navigation = useNavigation();
-  if (!items.length) {
-    return <p className="py-4 text-caption text-muted-foreground" data-testid="wiki-activity-empty">{t(($) => $.wiki.activityEmpty)}</p>;
-  }
-  return (
-    <div data-testid="wiki-activity">
-      {items.map((item) => (
-        <div
-          key={`${item.pageId}-${item.number}`}
-          role="button"
-          tabIndex={0}
-          className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 text-left last:border-b-0 hover:bg-muted/40"
-          onClick={() => {
-            // State AND URL: switch to the wiki tab and deep-link the page.
-            onOpenWiki();
-            navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
-          }}
-          onKeyDown={(event) => {
-            // A focused inner chip (issue link) owns its own Enter key.
-            if (event.target !== event.currentTarget) return;
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onOpenWiki();
-              navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
-            }
-          }}
-          data-testid={item.slug}
-        >
-          <ActorAvatar actorType={item.createdByType} actorId={item.createdById} size="sm" profileLink={false} className="shrink-0" />
-          <span className="min-w-0">
-            <span className="block truncate text-body">
-              {getActorName(item.createdByType, item.createdById)}
-              {item.createdByType === "agent" ? t(($) => $.wiki.actorAgentBadge) : ""}
-              {" · "}
-              {t(($) => $.wiki.activityKind[wikiActivityKindKey(item.kind)])}
-              {" · "}
-              <span className="font-medium">{item.title || item.slug}</span>
-            </span>
-            <span className="block truncate text-caption text-muted-foreground">
-              {item.changeSummary || t(($) => $.wiki.activityNoSummary)}
-              {item.sourceIssueId ? (
-                <>
-                  {" · "}
-                  <span onClick={(event) => event.stopPropagation()}>
-                    <IssueMentionCard issueId={item.sourceIssueId} />
-                  </span>
-                </>
-              ) : null}
-              {" · v"}{item.number} · <time dateTime={item.createdAt}>{formatRelativeDate(item.createdAt)}</time>
-            </span>
-          </span>
-          <span className="text-caption text-muted-foreground">{t(($) => $.wiki.versionPill, { number: item.number })}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOverviewProps) {
   const { t } = useT("engineering");
   const { t: tProjects } = useT("projects");
   const wsId = useWorkspaceId();
   const navigation = useNavigation();
   const userId = useAuthStore((state) => state.user?.id);
-  const [activeView, setActiveView] = useState<EngineeringView>(navigation.searchParams.get("page") ? "wiki" : "overview");
-  const [selectedStage, setSelectedStage] = useState(1);
+  const requestedView = engineeringViewFromSearch(navigation.searchParams);
+  const stageParam = navigation.searchParams.get("stage");
+  const stageNumberParam = stageParam && /^[1-9]\d*$/.test(stageParam) ? Number(stageParam) : null;
+  const requestedStage = stageParam === "unstaged" ? "unstaged" : stageNumberParam;
+  const groupParam = navigation.searchParams.get("group");
+  const highlightGroup = groupParam === "blocked" || groupParam === "in_review" || groupParam === "in_progress" || groupParam === "todo" || groupParam === "completed" ? groupParam : undefined;
+  const [activeView, setActiveView] = useState<EngineeringView>(requestedView);
+  const [selectedStage, setSelectedStage] = useState<number | "unstaged">(requestedStage ?? 1);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [coldSession, setColdSession] = useState<"active" | "skipped" | null>(null);
+  const [consumedCommentIds, setConsumedCommentIds] = useState<ReadonlySet<string>>(() => new Set());
   const [configError, setConfigError] = useState(false);
+  useEffect(() => setActiveView(requestedView), [requestedView]);
 
   const projectQuery = useQuery(projectDetailOptions(wsId, projectId));
   const overviewQuery = useQuery(projectEngineeringOptions(wsId, projectId));
@@ -146,32 +86,49 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const currentStage = config?.currentStage;
   useEffect(() => {
-    if (currentStage) setSelectedStage(currentStage);
-  }, [currentStage]);
+    if (requestedStage) setSelectedStage(requestedStage);
+    else if (currentStage) setSelectedStage(currentStage);
+  }, [currentStage, requestedStage]);
 
-  const decisionQueries = useQueries({
-    queries: (permissions?.deciderIds ?? []).map((deciderId) => ({
-      ...projectEngineeringDecisionIssuesOptions(wsId, projectId, deciderId),
-      enabled,
-    })),
+  const decisionIssuesQuery = useQuery({
+    ...projectEngineeringDecisionIssuesOptions(wsId, projectId),
+    enabled,
   });
-  const decisionIssues = useMemo(() => {
-    const byId = new Map<string, Issue>();
-    for (const query of decisionQueries) for (const issue of query.data ?? []) byId.set(issue.id, issue);
-    return [...byId.values()].sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
-  }, [decisionQueries]);
+  const blockedIssues = useMemo(() => decisionIssuesQuery.data ?? [], [decisionIssuesQuery.data]);
   const timelineQueries = useQueries({
-    queries: decisionIssues.map((issue) => ({ ...issueTimelineOptions(issue.id), enabled })),
+    queries: blockedIssues.map((issue) => ({ ...issueTimelineOptions(issue.id), enabled })),
   });
-  const timelines = useMemo(() => Object.fromEntries(decisionIssues.map((issue, index) => {
+  const timelines = useMemo(() => Object.fromEntries(blockedIssues.map((issue, index) => {
     const query = timelineQueries[index];
     const timeline: EngineeringDecisionTimeline = {
-      comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds) : null,
+      comment: query?.data ? selectEngineeringComment(query.data, permissions?.deciderIds, consumedCommentIds) : null,
       loading: !!query?.isLoading,
       error: !!query?.isError,
+      retry: query ? () => void query.refetch() : undefined,
     };
     return [issue.id, timeline];
-  })), [decisionIssues, timelineQueries, permissions?.deciderIds]);
+  })), [blockedIssues, consumedCommentIds, timelineQueries, permissions?.deciderIds]);
+  const decisionIssues = useMemo(() => {
+    const deciderIds = new Set(permissions?.deciderIds);
+    const priority = (issue: Issue) => {
+      const kind = engineeringDecisionKind(timelines[issue.id]?.comment ?? null, permissions?.deciderIds);
+      if (kind === "card") return 0;
+      if (kind === "mention") return 1;
+      return 2;
+    };
+    return blockedIssues.filter((issue) => {
+      const timeline = timelines[issue.id];
+      const commentId = timeline?.comment?.id;
+      if (commentId && consumedCommentIds.has(commentId)) return false;
+      const kind = engineeringDecisionKind(timeline?.comment ?? null, permissions?.deciderIds);
+      const directlyAssigned = issue.assignee_type === "member" && issue.assignee_id !== null && deciderIds.has(issue.assignee_id);
+      return timeline?.loading || timeline?.error || kind !== null || directlyAssigned;
+    }).sort((a, b) => priority(a) - priority(b) || a.identifier.localeCompare(b.identifier, undefined, { numeric: true }));
+  }, [blockedIssues, consumedCommentIds, permissions?.deciderIds, timelines]);
+  const decisionLoading = decisionIssuesQuery.isLoading;
+  const consumeDecision = useCallback((commentId: string) => {
+    setConsumedCommentIds((current) => new Set(current).add(commentId));
+  }, []);
 
   const graphSpec = useMemo<IssueTableQuerySpec>(() => ({
     scope: { kind: "project", project_id: projectId },
@@ -186,8 +143,25 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   );
 
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
-  const wikiActivityQuery = useQuery({ ...projectWikiActivityOptions(wsId, projectId, { limit: 12 }), enabled });
-  const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
+  const allWikiPages = useMemo(() => wikiTreeQuery.data?.pages ?? [], [wikiTreeQuery.data]);
+  const wikiActivityQuery = useInfiniteQuery({ ...projectWikiActivityInfiniteOptions(wsId, projectId, 50), enabled });
+  const activityItems = useMemo(() => {
+    const seen = new Set<string>();
+    return (wikiActivityQuery.data?.pages ?? []).flatMap((page) => (page?.items ?? []).filter((item) => {
+      const key = `${item.pageId}:${item.number}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }));
+  }, [wikiActivityQuery.data]);
+  const livePages = useMemo(() => allWikiPages.filter((page) => page.archivedAt === null), [allWikiPages]);
+  const hasStages = !!config && (config.stages.length > 0 || projectNodes.some((node) => node.stage !== null));
+  useEffect(() => {
+    if (coldSession !== null || !enabled || !config || hasStages || graphQuery.isError || wikiTreeQuery.isError) return;
+    if (!graphQuery.isLoading && wikiTreeQuery.data && livePages.length === 0) setColdSession("active");
+  }, [coldSession, config, enabled, graphQuery.isError, graphQuery.isLoading, hasStages, livePages.length, wikiTreeQuery.data, wikiTreeQuery.isError]);
+  const coldActive = coldSession === "active";
+  const coldResolving = coldSession === null && enabled && !!config && !hasStages && !graphQuery.isLoading && !graphQuery.isError && !wikiTreeQuery.data && !wikiTreeQuery.isError;
 
   const updateEngineering = useUpdateProjectEngineering();
   const saveConfig = async (data: ConfigUpdate): Promise<boolean> => {
@@ -204,6 +178,16 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
     }
   };
 
+  const openView = (view: EngineeringView) => {
+    setActiveView(view);
+    navigation.push(paths.workspace(workspaceSlug).projectEngineering(projectId, { tab: view }));
+  };
+  const openStages = (stage: number | "unstaged", group?: EngineeringTaskGroup) => {
+    setActiveView("stages");
+    setSelectedStage(stage);
+    navigation.push(paths.workspace(workspaceSlug).projectEngineering(projectId, { tab: "stages", stage, group }));
+  };
+
   const header = (
     <BreadcrumbHeader
       segments={[
@@ -213,27 +197,35 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
       leaf={<span className="truncate font-medium">{t(($) => $.title)}</span>}
     />
   );
+  const skillsMissing = agentsQuery.isSuccess && skillBindings.length === 0;
+  const settingsTooltip = skillsMissing ? `${t(($) => $.settings.title)} · ${t(($) => $.skills.missingShort)}` : t(($) => $.settings.title);
   const topChrome = (
     <div className="shrink-0 bg-canvas" data-engineering-top-chrome>
       {header}
-      <nav className="flex h-11 shrink-0 items-center gap-5 border-b px-4 md:px-6">
+      {enabled ? <nav className="flex h-10 shrink-0 items-center justify-between gap-5 border-b px-4 md:px-6">
         <div className="flex h-full gap-5" role="tablist" aria-label={t(($) => $.views.label)}>
-          {(["overview", "wiki"] as const).map((view) => (
+          {(["board", "stages", "wiki", "activity"] as const).map((view) => (
             <button
               key={view}
               type="button"
               role="tab"
               aria-label={t(($) => $.views[view])}
               aria-selected={activeView === view}
-              disabled={view === "wiki" && !enabled}
-              className={cn("relative -mb-px border-b-2 px-1 text-body disabled:opacity-50", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => setActiveView(view)}
+              className={cn("relative -mb-px flex items-center gap-1.5 border-b px-1 text-label", activeView === view ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+              onClick={() => openView(view)}
             >
               {t(($) => $.views[view])}
+              {view === "board" && decisionIssues.length ? <span className="size-1.5 rounded-full bg-destructive" aria-hidden="true" /> : null}
+              {view === "stages" ? <span className="text-micro text-muted-foreground tabular-nums">{config?.stages.length ?? 0}</span> : null}
+              {view === "wiki" ? <span className="text-micro text-muted-foreground tabular-nums" data-wiki-tab-count>{livePages.length}</span> : null}
             </button>
           ))}
         </div>
-      </nav>
+        <Tooltip>
+          <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="relative shrink-0" aria-label={settingsTooltip} onClick={() => setSettingsOpen(true)}><Settings aria-hidden="true" />{skillsMissing ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning" data-skill-warning /> : null}</Button>} />
+          <TooltipContent side="bottom">{settingsTooltip}</TooltipContent>
+        </Tooltip>
+      </nav> : null}
     </div>
   );
   const shellClass = "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden @container";
@@ -255,83 +247,89 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   }
 
   const currentSummary = roadmap.stages.find((stage) => stage.stage === config.currentStage);
-  const waiting = (
-    <EngineeringDecisions
-      workspaceSlug={workspaceSlug}
-      issues={decisionIssues}
-      timelines={timelines}
-      reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
-      onOpenWiki={() => setActiveView("wiki")}
-      onReview={() => {
-        setSelectedStage(config.currentStage);
-        setReviewOpen(true);
-      }}
-    />
-  );
 
   return (
-    <div className={shellClass} data-engineering-shell>
-      {topChrome}
-      {activeView === "wiki" ? (
-        <main className="min-h-0 flex-1">
-          <EngineeringBaselineWiki
+    <IssuePeekHost>
+      <div className={shellClass} data-engineering-shell>
+        {topChrome}
+        {configError ? <Alert variant="destructive" className="m-3 shrink-0"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
+        {activeView === "board" && wikiTreeQuery.isError ? <Alert variant="destructive" className="m-3 flex items-center justify-between gap-3"><AlertCircle /><AlertDescription className="flex-1">{t(($) => $.wiki.treeLoadError)}</AlertDescription><Button type="button" variant="outline" size="sm" onClick={() => void wikiTreeQuery.refetch()}>{t(($) => $.actions.retry)}</Button></Alert> : null}
+        {activeView === "wiki" ? (
+          <main className="min-h-0 flex-1">
+            <EngineeringBaselineWiki workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} />
+          </main>
+        ) : activeView === "activity" ? (
+          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={activityItems} pages={allWikiPages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError && activityItems.length === 0} loadMoreError={wikiActivityQuery.isFetchNextPageError} onRetry={() => void wikiActivityQuery.refetch()} hasMore={!!wikiActivityQuery.hasNextPage} loadingMore={wikiActivityQuery.isFetchingNextPage} onLoadMore={() => void wikiActivityQuery.fetchNextPage()} />
+        ) : activeView === "board" && coldResolving ? (
+          <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
+        ) : activeView === "board" && coldActive ? (
+          <EngineeringColdStart projectId={projectId} saving={updateEngineering.isPending} onSaveStrategy={(data) => saveConfig(data)} onOpenSettings={() => setSettingsOpen(true)} onSkip={() => setColdSession("skipped")} />
+        ) : graphQuery.isLoading ? (
+          <main className="min-h-0 flex-1 space-y-4 p-6"><Skeleton className="h-12 w-full" /><Skeleton className="h-full w-full" /></main>
+        ) : graphQuery.isError ? (
+          <main className="flex min-h-0 flex-1 items-center justify-center"><Alert variant="destructive" className="max-w-lg"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void graphQuery.refetch()}>{t(($) => $.actions.retry)}</Button></Alert></main>
+        ) : activeView === "board" ? (
+          <EngineeringBoard
             workspaceSlug={workspaceSlug}
             workspaceId={wsId}
             projectId={projectId}
-            projectTitle={projectQuery.data?.title ?? ""}
+            roadmap={roadmap}
+            currentStage={config.currentStage}
+            modeSummary={config.modeSummary}
+            canDecide={permissions.isDecider}
+            saving={updateEngineering.isPending}
+            onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
+            issues={decisionIssues}
+            timelines={timelines}
+            reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
+            decisionLoading={decisionLoading}
+            decisionError={decisionIssuesQuery.isError}
+            onRetryDecisions={() => void decisionIssuesQuery.refetch()}
+            onDecisionSubmitted={consumeDecision}
+            wikiPageCount={livePages.length}
+            latestActivity={activityItems[0] ?? null}
+            activityLoading={wikiActivityQuery.isLoading}
+            onReview={() => { openStages(config.currentStage); setReviewOpen(true); }}
+            onOpenStages={openStages}
+            onOpenWiki={() => openView("wiki")}
+            onOpenActivity={() => openView("activity")}
           />
-        </main>
-      ) : (
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-5xl p-4 mt-1 md:p-6 space-y-8">
-            {configError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
-            {decisionQueries.some((query) => query.isError) ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
-            {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
-              <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
-            ) : (
-              <EngineeringStage
-                workspaceSlug={workspaceSlug}
-                workspaceId={wsId}
-                roadmap={roadmap}
-                configuredStages={config.stages}
-                currentStage={config.currentStage}
-                selectedStage={selectedStage}
-                modeSummary={config.modeSummary}
-                canDecide={permissions.isDecider}
-                pending={updateEngineering.isPending}
-                reviewOpen={reviewOpen}
-                onReviewOpenChange={setReviewOpen}
-                onSelectStage={setSelectedStage}
-                onStageChange={async (changedStage) => saveConfig({ currentStage: changedStage })}
-                onStagesChange={async (stages) => saveConfig({ stages })}
-                onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
-                waiting={waiting}
-              />
-            )}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="rounded-md border p-4" data-testid="wiki-summary-card">
-                <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.summaryTitle)}</h2>
-                <p className="mt-2 text-h3 font-semibold" data-wiki-page-count>{t(($) => $.wiki.summaryPageCount, { count: livePages.length })}</p>
-                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.summaryHint)}</p>
-                <Button type="button" size="sm" className="mt-3" onClick={() => setActiveView("wiki")} data-testid="wiki-enter">
-                  <FileText aria-hidden="true" />{t(($) => $.wiki.enter)}
-                </Button>
-              </section>
-              <section className="rounded-md border p-4" data-testid="wiki-activity-card">
-                <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.activityTitle)}</h2>
-                {wikiActivityQuery.isLoading ? <Skeleton className="mt-2 h-24 w-full" /> : wikiActivityQuery.isError ? (
-                  <p className="mt-2 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p>
-                ) : (
-                  <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => setActiveView("wiki")} />
-                )}
-              </section>
-            </div>
-            <EngineeringSkills bindings={skillBindings} loading={agentsQuery.isLoading} error={agentsQuery.isError} />
-            {permissions.isAdmin ? <EngineeringSettings config={config} members={membersQuery.data ?? []} pending={updateEngineering.isPending} onChange={(data) => void saveConfig(data)} /> : null}
-            <div className="text-caption text-muted-foreground">{t(($) => $.messages.serverAuthoritative)}</div>
-          </div>
-        </main>
-      )}
-    </div>
+        ) : (
+          <EngineeringStage
+            workspaceSlug={workspaceSlug}
+            workspaceId={wsId}
+            roadmap={roadmap}
+            configuredStages={config.stages}
+            currentStage={config.currentStage}
+            selectedStage={selectedStage}
+            highlightGroup={highlightGroup}
+            canDecide={permissions.isDecider}
+            pending={updateEngineering.isPending}
+            reviewOpen={reviewOpen}
+            onReviewOpenChange={setReviewOpen}
+            onSelectStage={openStages}
+            onStageChange={async (changedStage) => {
+              const saved = await saveConfig({ currentStage: changedStage });
+              if (saved) openStages(changedStage);
+              return saved;
+            }}
+            onStagesChange={async (stages) => saveConfig({ stages })}
+          />
+        )}
+        <EngineeringSettings
+          config={config}
+          members={membersQuery.data ?? []}
+          pending={updateEngineering.isPending}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          skillBindings={skillBindings}
+          skillsLoading={agentsQuery.isLoading}
+          skillsError={agentsQuery.isError}
+          onSkillsRetry={() => void agentsQuery.refetch()}
+          canEdit={permissions.isAdmin}
+          onChange={(data) => void saveConfig(data)}
+        />
+      </div>
+    </IssuePeekHost>
   );
 }

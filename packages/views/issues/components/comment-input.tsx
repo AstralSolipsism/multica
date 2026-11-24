@@ -51,6 +51,8 @@ export interface CommentInputRef {
   getMarkdown: () => string | undefined;
   /** Explicit replacement only; ordinary draft writes keep editor sync guards. */
   adoptContent: (content: string) => void;
+  /** Activate a cold editor and focus it once its asynchronous mount is ready. */
+  focus: () => void;
 }
 
 // A top-level comment belongs to no thread, so it takes a running turn by
@@ -64,10 +66,6 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
   const { t: tEditor } = useT("editor");
   const sendShortcut = useShortcut("send");
   const editorRef = useRef<ContentEditorRef>(null);
-  useImperativeHandle(ref, () => ({
-    getMarkdown: () => editorRef.current?.getMarkdown(),
-    adoptContent: (content) => editorRef.current?.adoptContent(content),
-  }), []);
   // Sending mid-upload would strip the pending image's blob URL out of the
   // markdown and bind no attachment id — the comment posts without the file.
   const uploadGate = useUploadGate(editorRef);
@@ -120,6 +118,15 @@ const CommentInput = forwardRef<CommentInputRef, CommentInputProps>(function Com
       useCommentDraftStore.getState().getUploads(draftKey).length > 0,
     editorRef,
   });
+  useImperativeHandle(ref, () => ({
+    getMarkdown: () => editorRef.current?.getMarkdown(),
+    adoptContent: (content) => {
+      setContent(content);
+      setIsEmpty(!content.trim());
+      editorRef.current?.adoptContent(content);
+    },
+    focus: () => lazy.activate(),
+  }), [lazy]);
   // Inactive shells must not mount query observers or duplicate cold reads.
   const quickActionMenu = useQuickActionMenu(issueId, { enabled: lazy.active, triggerPreview, previewContent });
   const { isDragOver, dropZoneProps } = useFileDropZone({
