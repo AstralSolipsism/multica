@@ -218,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n（待编写）\n",
     "breadcrumbLabel": "页面路径",
     "openTreeDrawer": "打开页面树",
+    "treeCollapse": "收起页面树",
     "openOutlineDrawer": "打开大纲",
     "searchShortcut": "⌘K",
     "editPage": "编辑",

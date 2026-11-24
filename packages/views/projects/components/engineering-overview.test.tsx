@@ -39,6 +39,7 @@ const WS = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
 
 let replace = vi.fn();
+let push = vi.fn();
 let getProjectWikiTree: Mock;
 let getProjectWikiActivity: Mock;
 let activityItems: WikiActivityItem[];
@@ -59,6 +60,7 @@ function activity(): WikiActivityItem[] {
 
 beforeEach(() => {
   replace = vi.fn();
+  push = vi.fn();
   // searchParams reset per test via the adapter below.
   activityItems = [
     {
@@ -95,7 +97,7 @@ beforeEach(() => {
 
 function renderOverview(search = "") {
   const adapter = {
-    push: vi.fn(), replace, back: vi.fn(),
+    push, replace, back: vi.fn(),
     pathname: `/acme/projects/${PROJECT}/engineering`,
     searchParams: new URLSearchParams(search), hash: "",
     openInNewTab: vi.fn(), getShareableUrl: (path: string) => path,
@@ -112,39 +114,46 @@ function renderOverview(search = "") {
 }
 
 describe("EngineeringOverview", () => {
-  it("shows the wiki summary card with the live page count", async () => {
+  it("shows the one-screen board with the live page count and one latest change", async () => {
     renderOverview();
+    await waitFor(() => expect(document.querySelector("[data-engineering-board]")).not.toBeNull(), { timeout: 3000 });
     await screen.findByText("2 个页面", {}, { timeout: 3000 });
-    expect(screen.getByTestId("wiki-enter")).toBeInTheDocument();
-    expect(screen.getByTestId("wiki-enter")).toHaveTextContent("进入基线 Wiki");
-  });
-  it("renders recent wiki activity with kind labels and deep-links rows into the wiki page", async () => {
-    renderOverview();
-    await screen.findByTestId("wiki-activity", {}, { timeout: 3000 });
-    const bodyText = document.body.textContent ?? "";
-    expect(bodyText).toContain("新建页面");
-    expect(bodyText).toContain("回滚");
-    expect(bodyText).toContain("项目概览");
-    fireEvent.click(screen.getByTestId("architecture"));
-    await waitFor(() => expect(replace).toHaveBeenCalledWith(
-      expect.stringContaining("page=architecture"),
-    ));
-    // The click also switches the tab to the wiki (state, not just URL).
-    expect(screen.getByRole("tab", { name: /基线 Wiki/ })).toHaveAttribute("aria-selected", "true");
-    expect(document.querySelector("[data-wiki-shell]")).not.toBeNull();
+    expect(screen.getByTestId("wiki-enter")).toHaveTextContent("2 个页面");
+    expect(document.querySelector("[data-board-latest-activity]")).toHaveTextContent("Initial import");
+    expect(screen.getByText("推进正常 · 无阻塞")).toBeInTheDocument();
+    expect(screen.queryByTestId("wiki-summary-card")).not.toBeInTheDocument();
   });
 
-  it("no longer surfaces approval-candidate concepts anywhere on the overview", async () => {
+  it("filters activity and deep-links the selected revision into full history", async () => {
+    renderOverview("tab=activity");
+    await waitFor(() => expect(document.querySelector("[data-engineering-activity]")).not.toBeNull(), { timeout: 3000 });
+    await waitFor(() => expect(document.body.textContent).toContain("新建页面"), { timeout: 3000 });
+    expect(document.body.textContent).toContain("回滚");
+    fireEvent.click(document.querySelector('[data-activity-row="55555555-5555-4555-8555-555555555555:4"]')!);
+    fireEvent.click(screen.getByRole("button", { name: "完整历史对比 →" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith(expect.stringContaining("tab=wiki&page=architecture&history=1&rev=4")));
+  });
+
+  it("maps legacy page links to Wiki and supports the independent unstaged stage", async () => {
+    const legacy = renderOverview("page=architecture");
+    await waitFor(() => expect(screen.getByRole("tab", { name: /基线 Wiki/ })).toHaveAttribute("aria-selected", "true"), { timeout: 3000 });
+    await waitFor(() => expect(document.querySelector("[data-wiki-shell]")).not.toBeNull());
+    legacy.unmount();
+
+    renderOverview("tab=stages&stage=unstaged");
+    await waitFor(() => expect(document.getElementById("engineering-roadmap")).not.toBeNull());
+    expect(document.querySelector('[data-stage-node="unstaged"]')).toHaveAttribute("aria-current", "step");
+    expect(document.querySelector('[data-engineering-region="outside"]')).not.toBeNull();
+    expect(document.querySelectorAll("[data-engineering-region='outside']")).toHaveLength(1);
+  });
+
+  it("uses healthy progress buckets instead of an empty decision queue", async () => {
     renderOverview();
-    await screen.findByTestId("wiki-summary-card");
-    // The retired review surface: no pending badge on the tab, no candidate rows.
+    await waitFor(() => expect(document.querySelector("[data-engineering-board]")).not.toBeNull(), { timeout: 3000 });
     expect(screen.queryByTestId("candidate-todo")).not.toBeInTheDocument();
-    expect(screen.queryByText(/待审|候选/)).not.toBeInTheDocument();
-    expect(document.querySelector("[data-engineering-top-chrome] .bg-destructive")).toBeNull();
-    // No candidate queue: the decisions card only carries decision issues and
-    // the stage-review entry (Stage 1 has no tasks, so review is pending).
     expect(document.querySelector("[data-review-todo]")).toBeNull();
     expect(document.querySelector("[data-engineering-region='decisions']")).toBeNull();
+    expect(document.querySelector("[data-board-buckets]")).not.toBeNull();
     expect(screen.queryByText("眼下没有要你处理的事，团队正在继续推进。")).not.toBeInTheDocument();
   });
 });

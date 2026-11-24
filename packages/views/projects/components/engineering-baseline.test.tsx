@@ -105,7 +105,7 @@ function renderWiki() {
   return renderWithI18n(
     <QueryClientProvider client={queryClient}>
       <NavigationProvider value={adapter}>
-        <EngineeringBaselineWiki workspaceSlug="acme" workspaceId={WS} projectId={PROJECT} projectTitle="Apollo" />
+        <EngineeringBaselineWiki workspaceSlug="acme" workspaceId={WS} projectId={PROJECT} />
       </NavigationProvider>
     </QueryClientProvider>,
     { locale: "zh-Hans" },
@@ -170,6 +170,27 @@ describe("EngineeringBaselineWiki", () => {
     expect(screen.getByText("引用概览")).toBeInTheDocument(); // backlink card
     expect(screen.getByText("OL-1304")).toBeInTheDocument(); // related issue chip
     expect(screen.getByLabelText("On this page")).toBeInTheDocument();
+  });
+
+  it("opens a deep-linked revision, hides the outline rail and docks rollback in the Diff toolbar", async () => {
+    searchParams = new URLSearchParams("tab=wiki&page=overview&history=1&rev=4");
+    const getProjectWikiPageRevision = vi.fn(async (_ws: string, _project: string, _page: string, revision: number) => ({
+      page: pageRead().page,
+      revision: { ...pageRead().revision, id: `revision-${revision}`, revisionNumber: revision, contentMarkdown: `Revision ${revision}` },
+    }));
+    setApiInstance({
+      getProjectWikiTree, getProjectWikiPage, writeProjectWikiPage, createProjectWikiPage, moveProjectWikiPage, renameProjectWikiPage,
+      getProjectWikiPageRevision,
+      getProjectWikiPageHistory: vi.fn(async () => ({ revisions: [{ ...pageRead().revision, revisionNumber: 4 }], hasMore: false, nextBefore: null })),
+    } as unknown as ApiClient);
+    renderWiki();
+
+    await waitFor(() => expect(getProjectWikiPageRevision).toHaveBeenCalledWith(WS, PROJECT, "overview", 4));
+    await waitFor(() => expect(document.querySelector('[data-wiki-history-item="4"]')).not.toBeNull());
+    expect(document.querySelector('[data-wiki-history-item="4"]')?.className).toContain("border-border");
+    expect(document.querySelector("[data-wiki-outline-column]")?.className).toContain("hidden");
+    expect(document.querySelector("[data-wiki-rollback]")?.closest(".sticky")).not.toBeNull();
+    expect(document.querySelector("[data-wiki-rollback]")?.parentElement?.className).toContain("ml-auto");
   });
 
   it.each([

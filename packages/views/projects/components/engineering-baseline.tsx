@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose, MessageSquare,
+  AlertCircle, ChevronRight, History, LoaderCircle, Menu, Pencil, PanelRightClose,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -62,7 +62,6 @@ export interface EngineeringBaselineWikiProps {
   workspaceSlug: string;
   workspaceId: string;
   projectId: string;
-  projectTitle: string;
 }
 
 /** First prose paragraph of a page body, for link hover preview cards. */
@@ -131,7 +130,6 @@ function OutlineRail({ sections, contentKey, className }: { sections: readonly {
 
   return (
     <nav className={cn("overflow-y-auto p-3", className)} aria-label={t(($) => $.wiki.outlineTitle)} data-wiki-outline>
-      <div className="mb-2 text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.outlineTitle)}</div>
       {sections.length ? sections.map((section) => (
         <a
           key={section.anchor}
@@ -157,6 +155,10 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const { getActorName } = useActorName();
   const formatRelativeDate = useFormatRelativeDate();
   const wsId = props.workspaceId;
+  const navigation = useNavigation();
+  const urlHistory = navigation.searchParams.get("history") === "1";
+  const rawRevision = navigation.searchParams.get("rev");
+  const urlRevision = rawRevision && /^[1-9]\d*$/.test(rawRevision) ? Number(rawRevision) : undefined;
 
   const treeQuery = useQuery(projectWikiTreeOptions(wsId, props.projectId, true));
   const pages = useMemo(() => (treeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [treeQuery.data]);
@@ -171,8 +173,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [discussion, setDiscussion] = useState<WikiDiscussion>({ mode: "outline" });
+  const [commentsVisited, setCommentsVisited] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(urlHistory);
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ scope: "page" | "section"; anchor?: string; title?: string } | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
@@ -180,13 +183,18 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const readerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<HTMLElement | null>(null);
   const [narrow, setNarrow] = useState(false);
+  const [treeOverlay, setTreeOverlay] = useState(false);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
   useEffect(() => {
     const shell = rightPanelRef.current?.parentElement;
     if (!shell || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => setNarrow(shell.clientWidth < 1024));
+    const observer = new ResizeObserver(() => {
+      setNarrow(shell.clientWidth < 1024);
+      setTreeOverlay(shell.clientWidth < (historyOpen ? 1281 : 1024));
+    });
     observer.observe(shell);
     return () => observer.disconnect();
-  }, []);
+  }, [historyOpen]);
   useEffect(() => {
     const panel = rightPanelRef.current;
     if (!panel || !rightOpen || !narrow) return;
@@ -206,7 +214,6 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     return () => { siblings.forEach((node) => { node.inert = false; }); panel.removeEventListener("keydown", trap); if (previous?.isConnected) previous.focus(); };
   }, [rightOpen, narrow]);
 
-  const navigation = useNavigation();
   const urlPage = navigation.searchParams.get("page");
   const urlSection = navigation.searchParams.get("section");
   const urlThread = navigation.searchParams.get("thread");
@@ -228,11 +235,12 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
 
   useEffect(() => {
     setEditor(null);
-    setHistoryOpen(false);
     setLeftOpen(false);
     setRightOpen(!!urlThread);
+    setCommentsVisited(!!urlThread);
     setDiscussion(urlThread ? { mode: "thread", id: urlThread } : { mode: "outline" });
   }, [selected?.id, urlThread]);
+  useEffect(() => setHistoryOpen(urlHistory), [urlHistory]);
 
   useEffect(() => { if (editor || historyOpen) { setDiscussion({ mode: "outline" }); setRightOpen(false); } }, [editor, historyOpen]);
 
@@ -263,7 +271,8 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
 
   const openDiscussion = useCallback((next: WikiDiscussion) => {
     setDiscussion(next);
-    setRightOpen(next.mode !== "outline");
+    if (next.mode !== "outline") setCommentsVisited(true);
+    setRightOpen(true);
     const anchor = next.mode === "compose" ? next.anchor.sectionAnchor : next.mode === "thread" ? threads.find((thread) => thread.id === next.id)?.location.sectionAnchor : undefined;
     if (anchor) flashSection(anchor);
   }, [threads, flashSection]);
@@ -287,6 +296,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
   const doNavigate = useCallback((slug: string, anchor?: string) => {
     const params = new URLSearchParams(navigation.searchParams);
     params.set("page", slug);
+    params.set("tab", "wiki");
+    params.delete("history");
+    params.delete("rev");
     params.delete("thread");
     if (anchor) params.set("section", anchor);
     else params.delete("section");
@@ -296,6 +308,14 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     setLeftOpen(false);
     setRightOpen(false);
   }, [flashSection, navigation]);
+  const changeHistory = useCallback((open: boolean, revision?: number) => {
+    setHistoryOpen(open);
+    const params = new URLSearchParams(navigation.searchParams);
+    params.set("tab", "wiki");
+    if (open) params.set("history", "1"); else params.delete("history");
+    if (open && revision) params.set("rev", String(revision)); else params.delete("rev");
+    navigation.replace(`${navigation.pathname}?${params}`);
+  }, [navigation]);
 
   // Switching pages while a draft is dirty gets the same guard as cancel:
   // confirm, then discard (close the editor) and navigate.
@@ -585,7 +605,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     setEditor({ scope: "page" });
   }, [pageQuery]);
 
-  const maskOpen = leftOpen || rightOpen;
+  const maskOpen = (!treeCollapsed && leftOpen) || (rightOpen && !historyOpen);
 
   // The wiki has no comment composer under the article, so a canvas
   // "copy as instruction" action lands in the system clipboard here instead of
@@ -603,11 +623,14 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
     <EntityAttachmentsProvider attachments={read?.attachments} phase="settled">
     <HtmlBlockHostActionsProvider value={canvasHostActions}>
     <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden bg-page-canvas @container" data-wiki-shell>
-      {/* Left column: static ≥1024px, overlay drawer below. */}
+      {/* Left column: static while reading on desktop; history uses an overlay through 1280px. */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 w-[min(320px,88%)] shrink-0 -translate-x-full border-r bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[272px] @[1280px]:w-[272px] @[1024px]:translate-x-0 @[1024px]:transition-none",
+          historyOpen
+            ? "fixed inset-y-0 left-0 z-40 w-[min(320px,88%)] shrink-0 -translate-x-full border-r bg-page-canvas transition-transform duration-200 @[1281px]:static @[1281px]:z-auto @[1281px]:w-[248px] @[1281px]:translate-x-0 @[1281px]:transition-none"
+            : "fixed inset-y-0 left-0 z-40 w-[min(320px,88%)] shrink-0 -translate-x-full border-r bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[248px] @[1024px]:translate-x-0 @[1024px]:transition-none",
           leftOpen && "translate-x-0",
+          treeCollapsed && "hidden",
         )}
         data-wiki-tree-column
         aria-label={t(($) => $.wiki.treeLabel)}
@@ -634,35 +657,26 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
           guidePending={guidePending}
         />
       </aside>
-      {maskOpen ? <div className="absolute inset-0 z-30 bg-foreground/30 @[1024px]:hidden" onClick={() => { setLeftOpen(false); setRightOpen(false); setDiscussion({ mode: "outline" }); }} data-wiki-drawer-mask /> : null}
+      {maskOpen ? <div className={cn("absolute inset-0 z-30 bg-foreground/30", historyOpen ? "@[1281px]:hidden" : "@[1024px]:hidden")} onClick={() => { setLeftOpen(false); setRightOpen(false); setDiscussion({ mode: "outline" }); }} data-wiki-drawer-mask /> : null}
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex h-11 shrink-0 items-center gap-1.5 border-b px-3">
-          <button type="button" className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[1024px]:hidden" aria-label={t(($) => $.wiki.openTreeDrawer)} onClick={() => setLeftOpen(true)}><Menu className="size-4" aria-hidden="true" /></button>
+        <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b px-3">
+          <button type="button" className="grid size-7 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-foreground" aria-label={t(($) => treeOverlay || treeCollapsed ? $.wiki.openTreeDrawer : $.wiki.treeCollapse)} aria-expanded={!treeCollapsed} onClick={() => { if (treeOverlay) { setTreeCollapsed(false); setLeftOpen(true); } else setTreeCollapsed((value) => !value); }}><Menu className="size-4" aria-hidden="true" /></button>
           <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-caption text-muted-foreground" aria-label={t(($) => $.wiki.breadcrumbLabel)}>
-            <span className="truncate">{props.projectTitle}</span>
             {breadcrumb.map((page, index) => (
               <span key={page.id} className="flex min-w-0 items-center gap-1">
-                <ChevronRight className="size-3 shrink-0" aria-hidden="true" />
-                <button
-                  type="button"
-                  className={cn("truncate hover:text-foreground", index === breadcrumb.length - 1 && "font-medium text-foreground")}
-                  onClick={() => navigateToPage(page.slug)}
-                >{page.title || t(($) => $.wiki.untitled)}</button>
+                {index > 0 ? <ChevronRight className="size-3 shrink-0" aria-hidden="true" /> : null}
+                <button type="button" className={cn("truncate hover:text-foreground", index === breadcrumb.length - 1 && "font-medium text-foreground")} onClick={() => navigateToPage(page.slug)}>{page.title || t(($) => $.wiki.untitled)}</button>
               </span>
             ))}
-            {historyOpen ? (
-              <>
-                <ChevronRight className="size-3 shrink-0" aria-hidden="true" />
-                <span className="truncate font-medium text-foreground">{t(($) => $.wiki.historyTabTitle)}</span>
-              </>
-            ) : null}
+            {historyOpen ? <><ChevronRight className="size-3 shrink-0" aria-hidden="true" /><span className="truncate font-medium text-foreground">{t(($) => $.wiki.historyTabTitle)}</span></> : null}
           </nav>
-          <button type="button" className="hidden size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[520px]:grid" aria-label={t(($) => $.wiki.searchPlaceholder)} onClick={() => setSearchOpen(true)}>
-            <span className="text-caption">{t(($) => $.wiki.searchShortcut)}</span>
-          </button>
-          {selected && !editor && !historyOpen ? <Button type="button" size="sm" variant="ghost" data-wiki-open-comments onClick={() => openDiscussion(discussion.mode === "outline" ? { mode: "list" } : { mode: "outline" })}><MessageSquare className="size-3.5" />{t(($) => $.wikiComments.count, { count: threads.filter((thread) => !thread.resolvedAt).length })}</Button> : null}
-          <button type="button" className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[1024px]:hidden" aria-label={t(($) => $.wiki.openOutlineDrawer)} onClick={() => setRightOpen(true)}><PanelRightClose className="size-4" aria-hidden="true" /></button>
+          <button type="button" className="hidden size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[520px]:grid" aria-label={t(($) => $.wiki.searchPlaceholder)} onClick={() => setSearchOpen(true)}><span className="text-caption">{t(($) => $.wiki.searchShortcut)}</span></button>
+          {selected && !editor ? <>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.wiki.historyOpen)} onClick={() => changeHistory(true)} data-wiki-open-history><History className="size-4" aria-hidden="true" /></Button>
+            {!historyOpen ? <Button type="button" size="sm" onClick={() => void openPageEditor()} data-testid="wiki-edit-page"><Pencil className="size-3.5" aria-hidden="true" /><span className="hidden @[520px]:inline">{t(($) => $.wiki.editPage)}</span></Button> : null}
+          </> : null}
+          {!historyOpen ? <button type="button" className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground @[1024px]:hidden" aria-label={t(($) => $.wiki.openOutlineDrawer)} onClick={() => setRightOpen(true)}><PanelRightClose className="size-4" aria-hidden="true" /></button> : null}
         </div>
 
         <div className="relative min-h-0 flex-1 overflow-y-auto" ref={readerRef} data-wiki-reader>
@@ -684,7 +698,9 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                   return false;
                 }
               }}
-              onBack={() => setHistoryOpen(false)}
+              revision={urlRevision}
+              onRevisionChange={(revision) => changeHistory(true, revision)}
+              onBack={() => changeHistory(false)}
             />
           ) : !selected ? (
             treeQuery.isLoading ? <div className="space-y-3 p-6"><Skeleton className="h-8 w-2/3" /><Skeleton className="h-40 w-full" /></div>
@@ -696,20 +712,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
               ) : null
           ) : (
             <article className="mx-auto w-full max-w-[812px] px-[28px] py-6 @[700px]:px-[40px] @[1024px]:px-[56px]">
-              <div className="mb-1 flex items-start gap-2">
-                <h1 className="min-w-0 flex-1 text-h2 font-semibold" data-wiki-page-title>{selected.title || t(($) => $.wiki.untitled)}</h1>
-                {!editing ? (
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label={t(($) => $.wiki.historyOpen)} onClick={() => setHistoryOpen(true)} data-wiki-open-history>
-                      <History className="size-4" aria-hidden="true" />
-                    </Button>
-                    <Button type="button" size="sm" onClick={() => void openPageEditor()} data-testid="wiki-edit-page">
-                      <Pencil className="size-3.5" aria-hidden="true" />
-                      <span className="hidden @[520px]:inline">{t(($) => $.wiki.editPage)}</span>
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
+              <h1 className="mb-1 text-h2 font-semibold" data-wiki-page-title>{selected.title || t(($) => $.wiki.untitled)}</h1>
               <p className="mb-4 flex flex-wrap items-center gap-x-1 text-caption text-muted-foreground" data-wiki-page-meta>
                 {selected.current ? (
                   <>
@@ -725,7 +728,7 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                       </>
                     ) : null}
                     <span>·</span>
-                    <button type="button" className="underline-offset-2 hover:underline" onClick={() => setHistoryOpen(true)} data-wiki-history-button>
+                    <button type="button" className="underline-offset-2 hover:underline" onClick={() => changeHistory(true)} data-wiki-history-button>
                       {t(($) => $.wiki.historyVersions, { count: selected.revisionCount })}
                     </button>
                   </>
@@ -788,30 +791,10 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
                 )}
 
               {!editing && read ? (
-                <footer className="mt-10 border-t pt-4 text-caption" data-wiki-page-footer>
-                  <section className="mb-4">
-                    <h2 className="mb-2 text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.backlinksTitle)}</h2>
-                    {read.backlinks.length ? (
-                      <div className="grid gap-2">
-                        {read.backlinks.map((backlink) => (
-                          <button key={`${backlink.slug}-${backlink.sectionAnchor}`} type="button" className="rounded-md border p-2 text-left hover:bg-muted/50" onClick={() => navigateToPage(backlink.slug, backlink.sectionAnchor || undefined)}>
-                            <span className="block font-medium">{backlink.title || backlink.slug}</span>
-                            {backlink.snippet ? <span className="mt-0.5 block truncate text-muted-foreground">{plainWikiExcerpt(backlink.snippet)}</span> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : <p className="text-muted-foreground">{t(($) => $.wiki.backlinksEmpty)}</p>}
-                  </section>
-                  <section>
-                    <h2 className="mb-2 text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.relatedIssuesTitle)}</h2>
-                    {read.relatedIssues.length ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {read.relatedIssues.map((issue) => (
-                          <IssueMentionCard key={issue.id} issueId={issue.id} fallbackLabel={issue.identifier} />
-                        ))}
-                      </div>
-                    ) : <p className="text-muted-foreground">{t(($) => $.wiki.relatedIssuesEmpty)}</p>}
-                  </section>
+                <footer className="mt-8 border-t pt-3 text-caption" data-wiki-page-footer>
+                  {!read.backlinks.length && !read.relatedIssues.length ? <p className="text-faint-foreground">{t(($) => $.wiki.footerEmpty)}</p> : null}
+                  {read.backlinks.length ? <section className="mb-4"><h2 className="mb-2 text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.backlinksTitle)}</h2><div className="grid gap-2">{read.backlinks.map((backlink) => <button key={`${backlink.slug}-${backlink.sectionAnchor}`} type="button" className="rounded-md border p-2 text-left hover:bg-muted/50" onClick={() => navigateToPage(backlink.slug, backlink.sectionAnchor || undefined)}><span className="block font-medium">{backlink.title || backlink.slug}</span>{backlink.snippet ? <span className="mt-0.5 block truncate text-muted-foreground">{plainWikiExcerpt(backlink.snippet)}</span> : null}</button>)}</div></section> : null}
+                  {read.relatedIssues.length ? <section><h2 className="mb-2 text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.relatedIssuesTitle)}</h2><div className="flex flex-wrap gap-1.5">{read.relatedIssues.map((issue) => <IssueMentionCard key={issue.id} issueId={issue.id} fallbackLabel={issue.identifier} />)}</div></section> : null}
                 </footer>
               ) : null}
             </article>
@@ -820,20 +803,27 @@ export function EngineeringBaselineWiki(props: EngineeringBaselineWikiProps) {
         </div>
       </main>
 
-      {/* Right column: outline rail, drawer under 1024px. */}
+      {/* Right column: segmented outline/comments rail; history gives the Diff its width. */}
       <aside
         className={cn(
-          "absolute inset-y-0 right-0 z-40 w-[min(320px,88%)] shrink-0 translate-x-full border-l bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-[264px] @[1280px]:w-[296px] @[1024px]:translate-x-0 @[1024px]:transition-none",
+          "absolute inset-y-0 right-0 z-40 w-[min(320px,88%)] shrink-0 translate-x-full border-l bg-page-canvas transition-transform duration-200 @[1024px]:static @[1024px]:z-auto @[1024px]:w-60 @[1024px]:translate-x-0 @[1024px]:transition-none @[1200px]:w-[276px]",
+          !historyOpen && "flex flex-col",
           rightOpen && "translate-x-0",
+          historyOpen && "hidden",
         )}
         ref={rightPanelRef}
         tabIndex={-1}
-        role={narrow && rightOpen ? "dialog" : undefined}
-        aria-modal={narrow && rightOpen ? true : undefined}
-        aria-label={discussion.mode === "outline" ? t(($) => $.wikiComments.outline) : t(($) => $.wikiComments.all)}
+        role={narrow && rightOpen && !historyOpen ? "dialog" : undefined}
+        aria-modal={narrow && rightOpen && !historyOpen ? true : undefined}
+        aria-label={t(($) => $.views.wiki)}
         data-wiki-outline-column
       >
-        {discussion.mode !== "outline" && !editor && !historyOpen && selected ? <WikiCommentsPanel key={selected.id} workspaceId={wsId} projectId={props.projectId} pageId={selected.id} pageSlug={selected.slug} threads={threads} discussion={discussion} onDiscussion={openDiscussion} loading={threadQuery.isLoading} loadError={threadQuery.isError || threadQuery.data === null} /> : <OutlineRail sections={selected?.sections ?? []} contentKey={read?.revision.id ?? selected?.id ?? ""} />}
+        <div className="flex h-[38px] shrink-0 items-stretch gap-4 border-b px-3" role="tablist" aria-label={t(($) => $.views.wiki)}>
+          <button type="button" role="tab" aria-selected={discussion.mode === "outline"} className={cn("border-b text-caption", discussion.mode === "outline" ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground")} onClick={() => { setDiscussion({ mode: "outline" }); setRightOpen(true); }}>{t(($) => $.wiki.outlineTab)}</button>
+          <button type="button" role="tab" aria-selected={discussion.mode !== "outline"} className={cn("border-b text-caption", discussion.mode !== "outline" ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground")} onClick={() => openDiscussion({ mode: "list" })} data-wiki-open-comments>{t(($) => $.wiki.commentsTab, { count: threads.length })}</button>
+        </div>
+        <OutlineRail sections={selected?.sections ?? []} contentKey={read?.revision.id ?? selected?.id ?? ""} className={cn("min-h-0 flex-1", discussion.mode !== "outline" && "hidden")} />
+        {selected && commentsVisited ? <div className={cn("min-h-0 flex-1", discussion.mode === "outline" && "hidden")}><WikiCommentsPanel key={selected.id} workspaceId={wsId} projectId={props.projectId} pageId={selected.id} pageSlug={selected.slug} threads={threads} discussion={discussion} onDiscussion={openDiscussion} loading={threadQuery.isLoading} loadError={threadQuery.isError || threadQuery.data === null} /></div> : null}
       </aside>
 
       <WikiSearchPalette

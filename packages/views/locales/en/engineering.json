@@ -218,6 +218,7 @@
     "guideTemplate": "# {{title}}\n\n(To be written)\n",
     "breadcrumbLabel": "Page path",
     "openTreeDrawer": "Open page tree",
+    "treeCollapse": "Collapse page tree",
     "openOutlineDrawer": "Open outline",
     "searchShortcut": "⌘K",
     "editPage": "Edit",

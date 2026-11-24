@@ -1,21 +1,19 @@
 "use client";
 
-// Engineering overview (OL-1329 §8). Two tabs: 总览 | 基线 Wiki. The overview
-// keeps stage progress, the 待拍板决策卡, skills and settings, and replaces
-// the retired approval queue with a baseline-wiki summary card plus a recent
-// wiki activity feed (rows deep-link into the wiki page). The wiki tab mounts
-// the three-column EngineeringBaselineWiki.
+// Four-view engineering shell: Dashboard, Stages, Baseline Wiki and Activity.
+// URL search parameters are the shareable navigation contract; each view owns
+// its own scrolling so the Dashboard can remain a one-screen cockpit.
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertCircle, FileText, LoaderCircle, Settings2 } from "@multica/ui/icons";
+import { AlertCircle, LoaderCircle, Settings2 } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@multica/ui/components/ui/alert";
 import { Button } from "@multica/ui/components/ui/button";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
-import { errorCode, type EngineeringStage as EngineeringStageConfig, type WikiActivityItem } from "@multica/core/api";
+import { errorCode, type EngineeringStage as EngineeringStageConfig } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useDagGraph } from "@multica/core/issues/dag/use-dag-data";
@@ -24,23 +22,21 @@ import { paths } from "@multica/core/paths";
 import { projectDetailOptions, projectEngineeringDecisionIssuesOptions, projectEngineeringOptions, projectWikiActivityOptions, projectWikiTreeOptions } from "@multica/core/projects/queries";
 import { useUpdateProjectEngineering } from "@multica/core/projects/mutations";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
-import { useActorName } from "@multica/core/workspace/hooks";
 import type { Issue, IssueTableQuerySpec } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { CollectionPageState } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
-import { ActorAvatar } from "../../common/actor-avatar";
-import { IssueMentionCard } from "../../issues/components/issue-mention-card";
 import { IssuePeekHost } from "../../issues/components/issue-peek";
+import { EngineeringActivity } from "./engineering-activity";
 import { EngineeringBaselineWiki } from "./engineering-baseline";
+import { EngineeringBoard } from "./engineering-board";
 import { EngineeringColdStart } from "./engineering-cold-start";
-import { EngineeringDecisions, type EngineeringDecisionTimeline } from "./engineering-decisions";
-import { useFormatRelativeDate } from "./labels";
+import type { EngineeringDecisionTimeline } from "./engineering-decisions";
 import { EngineeringSettings } from "./engineering-settings";
-import { EngineeringSkills } from "./engineering-skills";
 import { EngineeringStage } from "./engineering-stage";
-import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, engineeringViewFromSearch, selectEngineeringComment, strixnovaSkillBindings, wikiActivityKindKey, type EngineeringView } from "./engineering-utils";
+import type { EngineeringTaskGroup } from "./engineering-progress";
+import { buildEngineeringRoadmap, engineeringDecisionKind, engineeringPermissions, engineeringViewFromSearch, selectEngineeringComment, strixnovaSkillBindings, type EngineeringView } from "./engineering-utils";
 
 interface EngineeringOverviewProps {
   workspaceSlug: string;
@@ -54,74 +50,6 @@ type ConfigUpdate = {
   deciderMemberIds?: string[];
   stages?: EngineeringStageConfig[];
 };
-function WikiActivityFeed({ items, workspaceSlug, projectId, onOpenWiki }: {
-  items: readonly WikiActivityItem[];
-  workspaceSlug: string;
-  projectId: string;
-  /** Switches the tab to the wiki AND navigates (?page=). */
-  onOpenWiki: () => void;
-}) {
-  const { t } = useT("engineering");
-  const { getActorName } = useActorName();
-  const formatRelativeDate = useFormatRelativeDate();
-  const navigation = useNavigation();
-  if (!items.length) {
-    return <p className="py-4 text-caption text-muted-foreground" data-testid="wiki-activity-empty">{t(($) => $.wiki.activityEmpty)}</p>;
-  }
-  return (
-    <div data-testid="wiki-activity">
-      {items.map((item) => (
-        <div
-          key={`${item.pageId}-${item.number}`}
-          role="button"
-          tabIndex={0}
-          className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5 text-left last:border-b-0 hover:bg-muted/40"
-          onClick={() => {
-            // State AND URL: switch to the wiki tab and deep-link the page.
-            onOpenWiki();
-            navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
-          }}
-          onKeyDown={(event) => {
-            // A focused inner chip (issue link) owns its own Enter key.
-            if (event.target !== event.currentTarget) return;
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onOpenWiki();
-              navigation.replace(paths.workspace(workspaceSlug).projectEngineering(projectId, { page: item.slug }));
-            }
-          }}
-          data-testid={item.slug}
-        >
-          <ActorAvatar actorType={item.createdByType} actorId={item.createdById} size="sm" profileLink={false} className="shrink-0" />
-          <span className="min-w-0">
-            <span className="block truncate text-body">
-              {getActorName(item.createdByType, item.createdById)}
-              {item.createdByType === "agent" ? t(($) => $.wiki.actorAgentBadge) : ""}
-              {" · "}
-              {t(($) => $.wiki.activityKind[wikiActivityKindKey(item.kind)])}
-              {" · "}
-              <span className="font-medium">{item.title || item.slug}</span>
-            </span>
-            <span className="block truncate text-caption text-muted-foreground">
-              {item.changeSummary || t(($) => $.wiki.activityNoSummary)}
-              {item.sourceIssueId ? (
-                <>
-                  {" · "}
-                  <span onClick={(event) => event.stopPropagation()}>
-                    <IssueMentionCard issueId={item.sourceIssueId} />
-                  </span>
-                </>
-              ) : null}
-              {" · v"}{item.number} · <time dateTime={item.createdAt}>{formatRelativeDate(item.createdAt)}</time>
-            </span>
-          </span>
-          <span className="text-caption text-muted-foreground">{t(($) => $.wiki.versionPill, { number: item.number })}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOverviewProps) {
   const { t } = useT("engineering");
   const { t: tProjects } = useT("projects");
@@ -129,8 +57,13 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const navigation = useNavigation();
   const userId = useAuthStore((state) => state.user?.id);
   const requestedView = engineeringViewFromSearch(navigation.searchParams);
+  const stageParam = navigation.searchParams.get("stage");
+  const stageNumberParam = stageParam && /^[1-9]\d*$/.test(stageParam) ? Number(stageParam) : null;
+  const requestedStage = stageParam === "unstaged" ? "unstaged" : stageNumberParam;
+  const groupParam = navigation.searchParams.get("group");
+  const highlightGroup = groupParam === "blocked" || groupParam === "in_review" || groupParam === "in_progress" || groupParam === "todo" || groupParam === "completed" ? groupParam : undefined;
   const [activeView, setActiveView] = useState<EngineeringView>(requestedView);
-  const [selectedStage, setSelectedStage] = useState(1);
+  const [selectedStage, setSelectedStage] = useState<number | "unstaged">(requestedStage ?? 1);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [coldActive, setColdActive] = useState<boolean | null>(null);
@@ -152,8 +85,9 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
 
   const currentStage = config?.currentStage;
   useEffect(() => {
-    if (currentStage) setSelectedStage(currentStage);
-  }, [currentStage]);
+    if (requestedStage) setSelectedStage(requestedStage);
+    else if (currentStage) setSelectedStage(currentStage);
+  }, [currentStage, requestedStage]);
 
   const decisionIssuesQuery = useQuery({
     ...projectEngineeringDecisionIssuesOptions(wsId, projectId),
@@ -199,7 +133,7 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   );
 
   const wikiTreeQuery = useQuery({ ...projectWikiTreeOptions(wsId, projectId, false), enabled });
-  const wikiActivityQuery = useQuery({ ...projectWikiActivityOptions(wsId, projectId, { limit: 12 }), enabled });
+  const wikiActivityQuery = useQuery({ ...projectWikiActivityOptions(wsId, projectId, { limit: 50 }), enabled });
   const livePages = useMemo(() => (wikiTreeQuery.data?.pages ?? []).filter((page) => page.archivedAt === null), [wikiTreeQuery.data]);
   useEffect(() => {
     if (coldActive !== null || !enabled || !config || !wikiTreeQuery.data) return;
@@ -224,6 +158,11 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   const openView = (view: EngineeringView) => {
     setActiveView(view);
     navigation.push(paths.workspace(workspaceSlug).projectEngineering(projectId, { tab: view }));
+  };
+  const openStages = (stage: number | "unstaged", group?: EngineeringTaskGroup) => {
+    setActiveView("stages");
+    setSelectedStage(stage);
+    navigation.push(paths.workspace(workspaceSlug).projectEngineering(projectId, { tab: "stages", stage, group }));
   };
 
   const header = (
@@ -285,19 +224,6 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
   }
 
   const currentSummary = roadmap.stages.find((stage) => stage.stage === config.currentStage);
-  const waiting = (
-    <EngineeringDecisions
-      workspaceSlug={workspaceSlug}
-      projectId={projectId}
-      issues={decisionIssues}
-      timelines={timelines}
-      reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
-      onReview={() => {
-        setSelectedStage(config.currentStage);
-        setReviewOpen(true);
-      }}
-    />
-  );
 
   return (
     <IssuePeekHost>
@@ -306,72 +232,60 @@ export function EngineeringOverview({ workspaceSlug, projectId }: EngineeringOve
         {configError ? <Alert variant="destructive" className="m-3 shrink-0"><AlertCircle /><AlertTitle>{t(($) => $.errors.configTitle)}</AlertTitle><AlertDescription>{t(($) => $.errors.config)}</AlertDescription></Alert> : null}
         {activeView === "wiki" ? (
           <main className="min-h-0 flex-1">
-            <EngineeringBaselineWiki
-              workspaceSlug={workspaceSlug}
-              workspaceId={wsId}
-              projectId={projectId}
-              projectTitle={projectQuery.data?.title ?? ""}
-            />
+            <EngineeringBaselineWiki workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} />
           </main>
         ) : activeView === "activity" ? (
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-5xl p-6">
-              <h1 className="text-title font-semibold">{t(($) => $.views.activity)}</h1>
-              {wikiActivityQuery.isLoading ? <Skeleton className="mt-4 h-40 w-full" /> : wikiActivityQuery.isError ? <p className="mt-4 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p> : <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => openView("wiki")} />}
-            </div>
-          </main>
+          <EngineeringActivity workspaceSlug={workspaceSlug} workspaceId={wsId} projectId={projectId} items={wikiActivityQuery.data?.items ?? []} pages={livePages} loading={wikiActivityQuery.isLoading} error={wikiActivityQuery.isError} onRetry={() => void wikiActivityQuery.refetch()} />
         ) : activeView === "board" && coldActive === null ? (
           <main className="min-h-0 flex-1 p-6"><Skeleton className="h-72 w-full" /></main>
         ) : activeView === "board" && coldActive ? (
           <EngineeringColdStart projectId={projectId} saving={updateEngineering.isPending} onSaveStrategy={(data) => saveConfig(data)} onOpenSettings={() => setSettingsOpen(true)} onSkip={() => setColdActive(false)} />
+        ) : graphQuery.isLoading ? (
+          <main className="min-h-0 flex-1 space-y-4 p-6"><Skeleton className="h-12 w-full" /><Skeleton className="h-full w-full" /></main>
+        ) : graphQuery.isError ? (
+          <main className="flex min-h-0 flex-1 items-center justify-center"><Alert variant="destructive" className="max-w-lg"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription><Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void graphQuery.refetch()}>{t(($) => $.actions.retry)}</Button></Alert></main>
+        ) : activeView === "board" ? (
+          <EngineeringBoard
+            workspaceSlug={workspaceSlug}
+            workspaceId={wsId}
+            projectId={projectId}
+            roadmap={roadmap}
+            currentStage={config.currentStage}
+            modeSummary={config.modeSummary}
+            issues={decisionIssues}
+            timelines={timelines}
+            reviewStage={permissions.isDecider && currentSummary?.status === "review" ? config.currentStage : null}
+            decisionError={decisionIssuesQuery.isError}
+            onRetryDecisions={() => void decisionIssuesQuery.refetch()}
+            wikiPageCount={livePages.length}
+            latestActivity={wikiActivityQuery.data?.items[0] ?? null}
+            activityLoading={wikiActivityQuery.isLoading}
+            onReview={() => { openStages(config.currentStage); setReviewOpen(true); }}
+            onOpenStages={openStages}
+            onOpenWiki={() => openView("wiki")}
+            onOpenActivity={() => openView("activity")}
+          />
         ) : (
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto mt-1 w-full max-w-5xl space-y-8 p-4 md:p-6">
-              {decisionIssuesQuery.isError ? <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.decisionIssues)}</AlertDescription></Alert> : null}
-              {graphQuery.isLoading ? <><Skeleton className="h-32 w-full" /><Skeleton className="h-72 w-full" /></> : graphQuery.isError ? (
-                <Alert variant="destructive"><AlertCircle /><AlertTitle>{t(($) => $.errors.title)}</AlertTitle><AlertDescription>{t(($) => $.errors.graph)}</AlertDescription></Alert>
-              ) : (
-                <EngineeringStage
-                  workspaceSlug={workspaceSlug}
-                  workspaceId={wsId}
-                  roadmap={roadmap}
-                  configuredStages={config.stages}
-                  currentStage={config.currentStage}
-                  selectedStage={selectedStage}
-                  modeSummary={config.modeSummary}
-                  canDecide={permissions.isDecider}
-                  pending={updateEngineering.isPending}
-                  reviewOpen={reviewOpen}
-                  onReviewOpenChange={setReviewOpen}
-                  onSelectStage={setSelectedStage}
-                  onStageChange={async (changedStage) => saveConfig({ currentStage: changedStage })}
-                  onStagesChange={async (stages) => saveConfig({ stages })}
-                  onSummarySave={async (modeSummary) => saveConfig({ modeSummary })}
-                  waiting={waiting}
-                />
-              )}
-              <div className="grid gap-4 lg:grid-cols-2">
-                <section className="rounded-md border p-4" data-testid="wiki-summary-card">
-                  <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.summaryTitle)}</h2>
-                  <p className="mt-2 text-h3 font-semibold" data-wiki-page-count>{t(($) => $.wiki.summaryPageCount, { count: livePages.length })}</p>
-                  <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.wiki.summaryHint)}</p>
-                  <Button type="button" size="sm" className="mt-3" onClick={() => openView("wiki")} data-testid="wiki-enter">
-                    <FileText aria-hidden="true" />{t(($) => $.wiki.enter)}
-                  </Button>
-                </section>
-                <section className="rounded-md border p-4" data-testid="wiki-activity-card">
-                  <h2 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{t(($) => $.wiki.activityTitle)}</h2>
-                  {wikiActivityQuery.isLoading ? <Skeleton className="mt-2 h-24 w-full" /> : wikiActivityQuery.isError ? (
-                    <p className="mt-2 text-caption text-destructive">{t(($) => $.wiki.activityError)}</p>
-                  ) : (
-                    <WikiActivityFeed items={wikiActivityQuery.data?.items ?? []} workspaceSlug={workspaceSlug} projectId={projectId} onOpenWiki={() => openView("wiki")} />
-                  )}
-                </section>
-              </div>
-              <EngineeringSkills bindings={skillBindings} loading={agentsQuery.isLoading} error={agentsQuery.isError} />
-              <div className="text-caption text-muted-foreground">{t(($) => $.messages.serverAuthoritative)}</div>
-            </div>
-          </main>
+          <EngineeringStage
+            workspaceSlug={workspaceSlug}
+            workspaceId={wsId}
+            roadmap={roadmap}
+            configuredStages={config.stages}
+            currentStage={config.currentStage}
+            selectedStage={selectedStage}
+            highlightGroup={highlightGroup}
+            canDecide={permissions.isDecider}
+            pending={updateEngineering.isPending}
+            reviewOpen={reviewOpen}
+            onReviewOpenChange={setReviewOpen}
+            onSelectStage={openStages}
+            onStageChange={async (changedStage) => {
+              const saved = await saveConfig({ currentStage: changedStage });
+              if (saved) openStages(changedStage);
+              return saved;
+            }}
+            onStagesChange={async (stages) => saveConfig({ stages })}
+          />
         )}
         <EngineeringSettings
           config={config}

@@ -42,6 +42,8 @@ export interface WikiHistoryViewProps {
   onNavigate: (target: WikiLinkTarget) => void;
   saving: boolean;
   onRollback: (input: { revisionNumber: number; baseRevisionNumber: number; contentOnly: boolean }) => Promise<boolean>;
+  revision?: number;
+  onRevisionChange?: (revision: number) => void;
   onBack: () => void;
 }
 
@@ -49,7 +51,7 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
   const { t } = useT("engineering");
   const { getActorName } = useActorName();
   const formatRelativeDate = useFormatRelativeDate();
-  const [selected, setSelected] = useState<number>(props.page.currentRevisionNumber);
+  const [selected, setSelected] = useState<number>(props.revision ?? props.page.currentRevisionNumber);
   const [tab, setTab] = useState<"rendered" | "preview">("rendered");
   const [compareBase, setCompareBase] = useState<CompareBase>("previous");
   const [changesOnly, setChangesOnly] = useState(true);
@@ -67,7 +69,7 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
     [historyQuery.data],
   );
 
-  useEffect(() => setSelected(props.page.currentRevisionNumber), [props.page.id, props.page.currentRevisionNumber]);
+  useEffect(() => setSelected(props.revision ?? props.page.currentRevisionNumber), [props.page.id, props.page.currentRevisionNumber, props.revision]);
 
   const numbers = useMemo(() => revisions.map((revision) => revision.revisionNumber), [revisions]);
   const baseNumber = useMemo(() => {
@@ -110,7 +112,7 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
 
   return (
     <div className="flex h-full min-h-0" data-wiki-history>
-      <aside className="w-[304px] shrink-0 overflow-y-auto border-r p-2 max-[1024px]:max-h-[176px] max-[1024px]:w-full max-[1024px]:border-b max-[1024px]:border-r-0">
+      <aside className="w-[280px] shrink-0 overflow-y-auto border-r p-2 max-[1024px]:max-h-[176px] max-[1024px]:w-full max-[1024px]:border-b max-[1024px]:border-r-0">
         {historyQuery.isLoading ? <Skeleton className="h-40 w-full" /> : revisions.length === 0 ? (
           <p className="px-2 py-6 text-center text-caption text-muted-foreground">{t(($) => $.wiki.historyEmpty)}</p>
         ) : revisions.map((revision) => {
@@ -125,13 +127,14 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
                 "mb-1 grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-md border p-2 text-left",
                 isSelected ? "border-border bg-canvas shadow-sm" : "border-transparent hover:bg-muted/50",
               )}
-              onClick={() => setSelected(revision.revisionNumber)}
+              onClick={() => { setSelected(revision.revisionNumber); props.onRevisionChange?.(revision.revisionNumber); }}
               onKeyDown={(event) => {
                 // A focused inner chip (issue link) owns its own Enter key.
                 if (event.target !== event.currentTarget) return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   setSelected(revision.revisionNumber);
+                  props.onRevisionChange?.(revision.revisionNumber);
                 }
               }}
               data-wiki-history-item={revision.revisionNumber}
@@ -202,6 +205,9 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
           <div className="ml-auto flex items-center gap-2">
             <WikiDiffLegend />
             <WikiDiffSummary before={before} after={after} />
+            <Button type="button" size="sm" disabled={selected === props.page.currentRevisionNumber || props.saving} title={selected === props.page.currentRevisionNumber ? t(($) => $.wiki.rollbackCurrentHint) : undefined} onClick={() => setRollbackOpen(true)} data-wiki-rollback>
+              <RotateCcw aria-hidden="true" />{t(($) => $.wiki.rollbackTo, { number: selected })}
+            </Button>
           </div>
         </div>
         <div className="px-4 py-3 max-w-[812px]">
@@ -215,18 +221,6 @@ export function WikiHistoryView(props: WikiHistoryViewProps) {
             <WikiMarkdown markdown={after} sections={props.page.sections} links={previewLinks} onNavigate={props.onNavigate} />
           )}
         </div>
-      </div>
-      <div className="absolute bottom-4 right-4">
-        <Button
-          type="button"
-          size="sm"
-          disabled={selected === props.page.currentRevisionNumber || props.saving}
-          title={selected === props.page.currentRevisionNumber ? t(($) => $.wiki.rollbackCurrentHint) : undefined}
-          onClick={() => setRollbackOpen(true)}
-          data-wiki-rollback
-        >
-          <RotateCcw aria-hidden="true" />{t(($) => $.wiki.rollbackTo, { number: selected })}
-        </Button>
       </div>
       {rollbackOpen ? (
         <Dialog open onOpenChange={(open) => !open && setRollbackOpen(false)}>
