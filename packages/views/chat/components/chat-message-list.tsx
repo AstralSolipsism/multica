@@ -37,6 +37,7 @@ import { PreviewSequenceProvider, collectPreviewSequence } from "../../editor";
 import type { AgentAvailability } from "@multica/core/agents";
 import { resolveFailureReasonKey } from "@multica/core/agents";
 import type {
+  Attachment,
   ChatMessage,
   ChatPendingTask,
   ChatQuickAction,
@@ -45,7 +46,11 @@ import type {
 } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { buildTimeline } from "../../common/task-transcript";
-import { readCommandInput, traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
+import {
+  readCommandInput,
+  traceEventSummary,
+  traceToolArgSummary,
+} from "../../common/task-transcript/trace-event-presenter";
 import { OnboardingStarterCards } from "./onboarding-starter-cards";
 import { TaskStatusPill } from "./task-status-pill";
 import { CHAT_COLUMN, CHAT_GUTTER } from "./chat-column";
@@ -58,6 +63,7 @@ import { formatElapsedMs } from "../lib/format";
 import {
   canonicalAnswerText,
   extractCopyText,
+  segmentStreamingTimeline,
   splitTimeline,
 } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
@@ -770,7 +776,6 @@ function AssistantMessage({
           items={timeline}
           attachments={message?.attachments}
           phase={phase}
-          isStreaming={!message}
           settledContent={canonicalAnswer}
           historyProcess={historyProcess}
           sourceId={sourceId}
@@ -1219,15 +1224,14 @@ function FailureBubble({
   );
 }
 
-// ─── Timeline: outer process fold + answer (Conductor-style) ─────────────
+// ─── Timeline: process folds + answer ────────────────────────────────────
 //
-// While streaming, splitTimeline (lib/copy-text.ts) carves the items into:
-//   preface — text before the first thinking/tool item
-//   middle  — first → last non-text item (inclusive, may sandwich text)
-//   final   — text after the last non-text item
+// Streaming groups adjacent text and process items independently, keeping
+// intermediate narration at normal prose size and each process group folded
+// with its latest summary. Text after the last process item remains the answer.
 //
 // Once settled, the persisted chat_message content is authoritative for the
-// answer. Preface + middle remain in the process fold so intermediate narration
+// answer. Preface + middle remain in one process fold so intermediate narration
 // is still inspectable; only trailing transcript text is replaced. Explicit
 // process/answer keys preserve the trailing RichContent subtree when a live row
 // becomes its persisted row (MUL-4922).
@@ -1242,7 +1246,6 @@ interface HistoryProcess {
 
 function TimelineView({
   items,
-  isStreaming,
   attachments,
   phase = "settled",
   settledContent,
@@ -1250,8 +1253,7 @@ function TimelineView({
   sourceId,
 }: {
   items: ChatTimelineItem[];
-  isStreaming?: boolean;
-  attachments?: import("@multica/core/types").Attachment[];
+  attachments?: Attachment[];
   phase?: "streaming" | "settled";
   settledContent?: string;
   historyProcess?: HistoryProcess;
@@ -1266,7 +1268,6 @@ function TimelineView({
           <OuterProcessFold
             key="process"
             items={processItems}
-            isStreaming={false}
             attachments={attachments}
             phase="settled"
             stepCount={middle.length}
@@ -1282,6 +1283,48 @@ function TimelineView({
             className="leading-relaxed"
           />
         </div>
+      </>
+    );
+  }
+
+  if (phase === "streaming") {
+    const { segments, final } = segmentStreamingTimeline(items);
+    return (
+      <>
+        {segments.map((segment) =>
+          segment.kind === "text" ? (
+            <RichContent
+              key={`stream-text:${segment.items[0]!.seq}`}
+              content={segment.items.map((item) => item.content ?? "").join("")}
+              attachments={attachments}
+              density="compact"
+              phase={phase}
+              className="leading-relaxed"
+            />
+          ) : segment.kind === "error" ? (
+            <ErrorRow key={`stream-error:${segment.items[0]!.seq}`} item={segment.items[0]!} />
+          ) : (
+            <OuterProcessFold
+              key={`stream-process:${segment.items[0]!.seq}`}
+              items={segment.items}
+              showLatestSummary
+              attachments={attachments}
+              phase={phase}
+            />
+          ),
+        )}
+        {final.length > 0 && (
+          // Same element type as the settled answer so the handoff keeps it mounted.
+          <div key="answer">
+            <RichContent
+              content={final.map((item) => item.content ?? "").join("")}
+              attachments={attachments}
+              density="compact"
+              phase={phase}
+              className="leading-relaxed"
+            />
+          </div>
+        )}
       </>
     );
   }
@@ -1304,7 +1347,6 @@ function TimelineView({
         <OuterProcessFold
           key="process"
           items={middle}
-          isStreaming={!!isStreaming}
           attachments={attachments}
           phase={phase}
         />
@@ -1327,47 +1369,62 @@ function TimelineView({
 
 function OuterProcessFold({
   items,
-  isStreaming,
   attachments,
   phase = "settled",
   stepCount,
   historyProcess,
+  showLatestSummary = false,
 }: {
   items: ChatTimelineItem[];
-  isStreaming?: boolean;
-  attachments?: import("@multica/core/types").Attachment[];
+  attachments?: Attachment[];
   phase?: "streaming" | "settled";
   stepCount?: number;
   historyProcess?: HistoryProcess;
+  showLatestSummary?: boolean;
 }) {
   const { t } = useT("chat");
-  // Open while the task streams (so the user watches progress), collapsed once
-  // it settles. This used to fall out of a remount: the live TimelineView was
-  // torn down and the persisted one mounted closed. The row is now stable
-  // across that handoff (MUL-4922) — which is the point, it keeps Mermaid and
-  // HTML blocks alive — so the collapse has to be expressed directly.
-  const [open, setOpen] = useState(!!isStreaming);
-  const wasStreaming = useRef(!!isStreaming);
-  const onHistoryOpenChange = historyProcess?.onOpenChange;
-  useEffect(() => {
-    if (wasStreaming.current && !isStreaming) {
-      setOpen(false);
-      onHistoryOpenChange?.(false);
-    }
-    wasStreaming.current = !!isStreaming;
-  }, [isStreaming, onHistoryOpenChange]);
+  const { t: tAgents } = useT("agents");
+  const [open, setOpen] = useState(false);
   const displayedStepCount = stepCount ?? items.length;
+  let latestItem: ChatTimelineItem | undefined;
+  if (showLatestSummary) {
+    for (let index = items.length - 1; index >= 0; index--) {
+      const item = items[index]!;
+      if (item.type !== "tool_result") {
+        latestItem = item;
+        break;
+      }
+    }
+  }
+  const latestLabel = latestItem?.type === "tool_use" ? latestItem.tool ?? "" : "";
+  const latestSummary = latestItem
+    ? traceEventSummary(latestItem, {
+        morePaths: (path, extraCount) =>
+          tAgents(($) => $.transcript.patch_summary_more, { path, extra: extraCount }),
+      })
+    : "";
 
   return (
     <Collapsible open={open} onOpenChange={(next) => {
       setOpen(next);
       historyProcess?.onOpenChange(next);
     }}>
-      <CollapsibleTrigger className="flex h-5 items-center gap-1 whitespace-nowrap text-caption text-muted-foreground hover:text-foreground transition-colors">
-        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <span>{historyProcess
+      <CollapsibleTrigger className="flex h-5 max-w-full min-w-0 items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors">
+        {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+        <span className="shrink-0">{historyProcess
           ? t(($) => $.message_list.process_history)
           : t(($) => $.message_list.process_steps, { count: displayedStepCount })}</span>
+        {(latestLabel || latestSummary) && (
+          <>
+            <span aria-hidden="true" className="shrink-0">·</span>
+            {latestLabel && <span className="max-w-[60%] shrink-0 truncate">{latestLabel}</span>}
+            {latestSummary && (
+              <span className="min-w-0 truncate">
+                {latestSummary}
+              </span>
+            )}
+          </>
+        )}
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="mt-1 rounded-lg border bg-muted/20 p-2 space-y-0.5">
@@ -1407,7 +1464,7 @@ function MiddleTextRow({
   phase = "settled",
 }: {
   item: ChatTimelineItem;
-  attachments?: import("@multica/core/types").Attachment[];
+  attachments?: Attachment[];
   phase?: "streaming" | "settled";
 }) {
   return (
