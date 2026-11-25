@@ -16,7 +16,7 @@ const needIcon: Record<Need, typeof History> = { resume: History, mcp: Plug, mod
 // (packages/core/agents/mcp-support.ts); model — ModelSelectionSupported
 // (server/pkg/agent/models.go). Keep in step with the table on the providers page.
 const TOOLS: { name: string; resume: boolean; mcp: boolean; model: boolean }[] = [
-  { name: "Antigravity", resume: true, mcp: false, model: true },
+  { name: "Antigravity", resume: true, mcp: true, model: true },
   { name: "Claude Code", resume: true, mcp: true, model: true },
   { name: "CodeBuddy", resume: true, mcp: true, model: true },
   { name: "CodeArts", resume: true, mcp: true, model: true },
