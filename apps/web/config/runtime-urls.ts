@@ -1,3 +1,5 @@
+import type { NextConfig } from "next";
+
 type RuntimeEnv = Record<string, string | undefined>;
 
 function cleanUrl(raw: string | undefined): string | undefined {
@@ -65,6 +67,18 @@ export function resolveRemoteApiUrl(env: RuntimeEnv): string | undefined {
 
 export function resolveDocsUrl(env: RuntimeEnv): string | undefined {
   return cleanHttpUrl(env.DOCS_URL);
+}
+
+// Optional CDN origin for /_next/static, fixed at build time by next.config.ts.
+// The browser rejects a cross-origin Worker URL even with CORS, so a configured
+// prefix always pins Worker scripts to same-origin; unset adds no fields.
+export function assetPrefixConfig(
+  env: RuntimeEnv,
+): Pick<NextConfig, "assetPrefix" | "experimental"> | undefined {
+  const assetPrefix = cleanUrl(env.NEXT_ASSET_PREFIX);
+  return assetPrefix
+    ? { assetPrefix, experimental: { turbopackWorkerAssetPrefix: "" } }
+    : undefined;
 }
 
 // Dev-only fallbacks: `next dev` runs on a developer machine, where the

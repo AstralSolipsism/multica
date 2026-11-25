@@ -370,6 +370,9 @@ function main() {
         const dockerfile = component === "backend" ? "Dockerfile" : "Dockerfile.web";
         const buildArgs = ["VERSION", "COMMIT", "DATE", ...(component === "web" ? ["NEXT_PUBLIC_APP_VERSION"] : [])]
           .flatMap(key => ["--build-arg", `${key}=${releaseEnvironment(identity)[key]}`]);
+        // Optional CDN origin for /_next/static; only the web build reads it.
+        if (component === "web" && process.env.NEXT_ASSET_PREFIX)
+          buildArgs.push("--build-arg", `NEXT_ASSET_PREFIX=${process.env.NEXT_ASSET_PREFIX}`);
         run(["build", "--platform", `linux/${values.arch}`, ...(values["no-cache"] ? ["--no-cache"] : []),
           "--file", join(scratch, dockerfile), "--tag", `labrastro-${component}:${identity.tag}`, ...buildArgs, scratch], { stdio: "inherit" });
       }

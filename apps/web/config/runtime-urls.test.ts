@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assetPrefixConfig,
   resolveBrowserApiBaseUrl,
   resolveBrowserWsUrl,
   resolveDevDocsUrl,
@@ -99,6 +100,27 @@ describe("resolveDocsUrl", () => {
   it("ignores relative or invalid docs URL values", () => {
     expect(resolveDocsUrl({ DOCS_URL: "/docs" })).toBeUndefined();
     expect(resolveDocsUrl({ DOCS_URL: "ftp://docs.example.com" })).toBeUndefined();
+  });
+});
+
+describe("assetPrefixConfig", () => {
+  it("adds no fields when NEXT_ASSET_PREFIX is unset, blank or only slashes", () => {
+    expect(assetPrefixConfig({})).toBeUndefined();
+    expect(assetPrefixConfig({ NEXT_ASSET_PREFIX: "  " })).toBeUndefined();
+    expect(assetPrefixConfig({ NEXT_ASSET_PREFIX: "///" })).toBeUndefined();
+  });
+
+  // assetPrefix alone would point Worker scripts at the CDN origin, where the
+  // browser rejects them with a SecurityError; the pair is never split.
+  it("trims a configured prefix and keeps Workers same-origin", () => {
+    expect(
+      assetPrefixConfig({
+        NEXT_ASSET_PREFIX: " https://static.example.com// ",
+      }),
+    ).toEqual({
+      assetPrefix: "https://static.example.com",
+      experimental: { turbopackWorkerAssetPrefix: "" },
+    });
   });
 });
 

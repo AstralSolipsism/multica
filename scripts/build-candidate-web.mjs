@@ -14,6 +14,8 @@
 //       STANDALONE=true NEXT_PUBLIC_APP_VERSION="$VERSION" pnpm --filter @multica/web build
 //     so the user-visible version matches the candidate tag — never a dev or
 //     0.0.0 placeholder.
+//   - An optional NEXT_ASSET_PREFIX is passed through for a CDN origin for
+//     /_next/static; unset builds stay same-origin.
 //   - The archive labrastro-web-<version>-linux-amd64-node-standalone.tar.gz
 //     contains the standalone output with .next/static and public assets
 //     merged into their runtime locations, LICENSE/NOTICE, and a build
@@ -111,6 +113,7 @@ export function buildWebStandalone(metadata, { spawnImpl = spawnSync, webRoot = 
       ...process.env,
       STANDALONE: "true",
       NEXT_PUBLIC_APP_VERSION: metadata.version,
+      NEXT_ASSET_PREFIX: process.env.NEXT_ASSET_PREFIX ?? "",
     },
   });
   if (result.error) throw result.error;

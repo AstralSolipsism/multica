@@ -112,7 +112,10 @@ test("new image labels cannot conceal a stale CLI or backfill identity; no succe
       assert(!fs.existsSync(path.join(context,'.git')));
       assert(fs.existsSync(path.join(context,'Dockerfile')));
       assert(args.includes('VERSION=${identity.version}'));
-      if(args.includes('labrastro-web:${identity.tag}')) assert(args.includes('NEXT_PUBLIC_APP_VERSION=${identity.version}'));
+      if(args.includes('labrastro-web:${identity.tag}')) {
+        assert(args.includes('NEXT_PUBLIC_APP_VERSION=${identity.version}'));
+        assert.equal(args.includes('NEXT_ASSET_PREFIX=https://static.example.com'), process.env.NEXT_ASSET_PREFIX==='https://static.example.com');
+      }
       assert(args.includes('COMMIT=${sha}'));
       assert(args.includes('--no-cache'));
       fs.appendFileSync(state,'built\\n');
@@ -138,7 +141,9 @@ test("new image labels cannot conceal a stale CLI or backfill identity; no succe
         cwd: dir, encoding: "utf8", env: { ...env, PATH: join(dir, "dist/bin") + ":" + process.env.PATH,
           LABRASTRO_RELEASE_REPOSITORY: "AstralSolipsism/multica", LABRASTRO_RELEASE_TAG: identity.tag,
           LABRASTRO_RELEASE_SHA: sha, LABRASTRO_RELEASE_MODE: "candidate", GITHUB_REPOSITORY: "AstralSolipsism/multica",
-          TEST_BUILD: build ? "1" : "0", TEST_STALE: command, TEST_FIELD: field },
+          TEST_BUILD: build ? "1" : "0", TEST_STALE: command, TEST_FIELD: field,
+          // Alternate the optional CDN prefix so the source builds run with and without it.
+          NEXT_ASSET_PREFIX: field === "commit" ? "https://static.example.com" : "" },
       });
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, command === "multica" ? /old CLI/ : new RegExp(`image ${command} identity differs`));
