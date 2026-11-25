@@ -13,6 +13,11 @@ on:
         description: Reviewed full source SHA on fork main
         required: true
         type: string
+      next_asset_prefix:
+        description: Optional CDN origin (NEXT_ASSET_PREFIX) baked into the web build; empty keeps assets same-origin
+        required: false
+        default: ""
+        type: string
   pull_request:
     paths: ['.github/workflows/release.yml', '.github/actions/setup-candidate/**', '.github/RELEASING.md', '.goreleaser.yml', 'scripts/*candidate*', 'scripts/check-release*', 'scripts/local-images*']
   push:
@@ -31,6 +36,7 @@ env:
   LABRASTRO_RELEASE_TAG: ${{ inputs.tag }}
   LABRASTRO_RELEASE_SHA: ${{ inputs.source_sha }}
   LABRASTRO_RELEASE_MODE: candidate
+  NEXT_ASSET_PREFIX: ${{ inputs.next_asset_prefix || '' }}
 
 defaults:
   run:

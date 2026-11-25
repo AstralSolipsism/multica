@@ -128,6 +128,34 @@ test("buildWebStandalone refuses a non-linux/amd64 host", t => {
   }
 });
 
+test("buildWebStandalone forwards NEXT_ASSET_PREFIX and pins an unset one to empty", t => {
+  const { webRoot } = fixture(t);
+  // The linux/x64 host guard runs before the spawn is replaced, so pin it too.
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const arch = Object.getOwnPropertyDescriptor(process, "arch");
+  const previous = Object.getOwnPropertyDescriptor(process.env, "NEXT_ASSET_PREFIX");
+  t.after(() => {
+    Object.defineProperty(process, "platform", platform);
+    Object.defineProperty(process, "arch", arch);
+    if (previous) Object.defineProperty(process.env, "NEXT_ASSET_PREFIX", previous);
+    else delete process.env.NEXT_ASSET_PREFIX;
+  });
+  Object.defineProperty(process, "platform", { value: "linux" });
+  Object.defineProperty(process, "arch", { value: "x64" });
+  const forwarded = (value) => {
+    if (value === undefined) delete process.env.NEXT_ASSET_PREFIX;
+    else process.env.NEXT_ASSET_PREFIX = value;
+    let env;
+    buildWebStandalone({ version: VERSION }, {
+      spawnImpl: (_command, _args, options) => ((env = options.env), { status: 0 }),
+      webRoot,
+    });
+    return env.NEXT_ASSET_PREFIX;
+  };
+  assert.equal(forwarded("https://static.example.com"), "https://static.example.com");
+  assert.equal(forwarded(undefined), "");
+});
+
 test("verifyStandaloneBuild rejects output predating the build run", t => {
   const { webRoot } = fixture(t);
   const buildIdPath = join(webRoot, ".next", "BUILD_ID");

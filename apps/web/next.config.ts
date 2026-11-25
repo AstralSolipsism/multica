@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { config } from "dotenv";
 import { resolve } from "path";
 import {
+  assetPrefixConfig,
   resolveDevDocsUrl,
   resolveDevRemoteApiUrl,
   resolveDocsUrl,
@@ -24,6 +25,9 @@ const docsUrl = isDev
   ? resolveDevDocsUrl(process.env)
   : resolveDocsUrl(process.env);
 
+const { assetPrefix, experimental: assetPrefixExperimental } =
+  assetPrefixConfig(process.env) ?? {};
+
 // Parse hostnames from CORS_ALLOWED_ORIGINS so that Next.js dev server
 // allows cross-origin HMR / webpack requests (e.g. from Tailscale IPs).
 const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
@@ -40,8 +44,10 @@ const allowedDevOrigins = process.env.CORS_ALLOWED_ORIGINS
 
 const nextConfig: NextConfig = {
   ...(process.env.STANDALONE === "true" ? { output: "standalone" as const } : {}),
+  ...(assetPrefix ? { assetPrefix } : {}),
   transpilePackages: ["@multica/core", "@multica/ui", "@multica/views", "@multica/ee"],
   experimental: {
+    ...assetPrefixExperimental,
     // The rewrite proxy times out upstream responses after 30s by default
     // (next/dist/server/lib/router-utils/proxy-request.js), which is shorter
     // than the backend's 45s deadline for skill package preview/apply

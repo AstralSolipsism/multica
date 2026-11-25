@@ -70,6 +70,13 @@ lineage, migration evidence and insertion measurements.
   stage order, real edges, independent expansion and detail-return viewport
   restoration. Shared Web/Desktop wiring still needs review; Chromium Web
   evidence alone does not establish Desktop packaging or installation behavior.
+- [ ] Keep the `NEXT_ASSET_PREFIX` thin plug (OL-1508): `apps/web/next.config.ts`
+  spreads `assetPrefixConfig` (`config/runtime-urls.ts`) as a pair — `assetPrefix`
+  plus `experimental.turbopackWorkerAssetPrefix: ""`, which keeps DAG and search
+  Workers same-origin — and the build chain still forwards the optional variable
+  (`Dockerfile.web`, `scripts/build-candidate-web.mjs`,
+  `scripts/local-images.mjs`, `.github/workflows/release.yml`). Unset adds no
+  fields.
 - [ ] Run `bash scripts/check-gofmt.sh` and the
   [isolated retained E2E gate](ci-gates.md), including
   `e2e/onboarding-smoke.spec.ts`, `e2e/dag-task-lines.spec.ts`,
