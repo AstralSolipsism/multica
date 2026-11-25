@@ -3,15 +3,14 @@ import type { ChatTimelineItem } from "@multica/core/chat";
 import { stripChatQuickActionsProtocol } from "./quick-actions";
 
 /**
- * Split an assistant timeline into three regions for the conductor-style fold:
+ * Split an assistant timeline into three regions for the settled process fold:
  *   preface — text items before the first thinking/tool/error item
  *   middle  — everything from the first to the last non-text item (inclusive),
  *             including any text items sandwiched between them
  *   final   — text items after the last non-text item
  *
- * While streaming, UI renders preface above the outer fold, middle inside the
- * fold, and final below it. Once settled, preface + middle become process
- * history and the canonical chat message replaces final.
+ * Settled responses fold preface + middle as process history and replace final
+ * with canonical content. Legacy rows without canonical content retain final.
  */
 export function splitTimeline(items: ChatTimelineItem[]): {
   preface: ChatTimelineItem[];
@@ -31,6 +30,33 @@ export function splitTimeline(items: ChatTimelineItem[]): {
     middle: items.slice(firstNonTextIdx, lastNonTextIdx + 1),
     final: items.slice(lastNonTextIdx + 1),
   };
+}
+
+type StreamingTimelineSegment = {
+  kind: "text" | "process" | "error";
+  items: ChatTimelineItem[];
+};
+
+/** Group streaming narration and process steps while keeping the final answer tail separate. */
+export function segmentStreamingTimeline(items: ChatTimelineItem[]): {
+  segments: StreamingTimelineSegment[];
+  final: ChatTimelineItem[];
+} {
+  let lastNonTextIdx = items.length - 1;
+  while (lastNonTextIdx >= 0 && items[lastNonTextIdx]!.type === "text") {
+    lastNonTextIdx--;
+  }
+  if (lastNonTextIdx === -1) return { segments: [], final: items };
+
+  const segments: StreamingTimelineSegment[] = [];
+  for (let index = 0; index <= lastNonTextIdx; index++) {
+    const item = items[index]!;
+    const kind = item.type === "text" ? "text" : item.type === "error" ? "error" : "process";
+    const previous = segments[segments.length - 1];
+    if (kind !== "error" && previous?.kind === kind) previous.items.push(item);
+    else segments.push({ kind, items: [item] });
+  }
+  return { segments, final: items.slice(lastNonTextIdx + 1) };
 }
 
 /**

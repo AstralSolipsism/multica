@@ -82,8 +82,7 @@ function pdfAttachment(id: string): Attachment {
   };
 }
 
-// A streaming timeline whose middle (tool steps) is non-empty, so the live
-// footer renders the "N steps" outer fold.
+// A streaming timeline with adjacent process steps in one local fold.
 const INITIAL_MESSAGES: TaskMessagePayload[] = [
   taskMsg(0, "text", { content: "Looking into it. " }),
   taskMsg(1, "tool_use", { tool: "Bash", input: { command: "go test ./..." } }),
@@ -177,29 +176,45 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     const updatedTrigger = await screen.findByText("3 steps");
     expect(updatedTrigger.closest("div")).toBe(footerBefore);
     expect(document.contains(foldTrigger)).toBe(true);
+    expect(screen.getByText("Read")).toBeInTheDocument();
+    expect(screen.getByText("/tmp/x")).toBeInTheDocument();
   });
 
-  it("keeps the process fold closed by the user across streamed messages", async () => {
+  it("keeps the tool summary after an unnamed empty result", async () => {
+    const qc = new QueryClient();
+    renderList(qc);
+    pushTaskMessage(qc, taskMsg(3, "tool_use", {
+      tool: "exec_command",
+      input: { command: "git diff --quiet" },
+    }));
+    pushTaskMessage(qc, taskMsg(4, "tool_result", { output: "" }));
+
+    const fold = (await screen.findByText("4 steps")).closest("button");
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(fold).toHaveTextContent(/exec_command.*git diff --quiet/);
+    expect(fold).not.toHaveTextContent("Result");
+  });
+
+  it("keeps a locally expanded process fold open across streamed messages", async () => {
     const qc = new QueryClient();
     renderList(qc);
 
-    // Streaming defaults the fold open; the user closes it.
     const foldTrigger = await screen.findByText("2 steps");
-    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(foldTrigger.closest("button")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Bash result: ok")).not.toBeInTheDocument();
     act(() => {
       foldTrigger.click();
     });
-    expect(screen.queryByText("Bash")).not.toBeInTheDocument();
+    expect(screen.getByText("Bash result: ok")).toBeInTheDocument();
 
     pushTaskMessage(
       qc,
       taskMsg(3, "tool_use", { tool: "Read", input: { file_path: "/tmp/x" } }),
     );
 
-    // Before the fix the footer remounted, useState re-seeded defaultOpen and
-    // the fold sprang back open on every streamed message.
-    await screen.findByText("3 steps");
-    expect(screen.queryByText("Bash")).not.toBeInTheDocument();
+    const updatedTrigger = await screen.findByText("3 steps");
+    expect(updatedTrigger.closest("button")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Bash result: ok")).toBeInTheDocument();
   });
 
   it("applies an embedded surface content transform to streamed text", async () => {
@@ -361,7 +376,8 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
       taskMsg(0, "tool_use", { tool: "Read", input: { path: "/tmp/x" } }),
       taskMsg(1, "text", { content: "Intermediate narration" }),
       taskMsg(2, "thinking", { content: "Checking the result" }),
-      taskMsg(3, "text", { content: "Stable final answer" }),
+      taskMsg(3, "error", { content: "Nonfatal sample error" }),
+      taskMsg(4, "text", { content: "Stable final answer" }),
     ]);
 
     const view = (
@@ -383,7 +399,16 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
       view([], { task_id: TASK_ID, status: "running" }),
     );
     const answerBefore = await screen.findByText("Stable final answer");
-    expect(screen.getByText("3 steps")).toBeInTheDocument();
+    expect(screen.getByText("Intermediate narration")).toBeInTheDocument();
+    expect(screen.getByText("Checking the result")).toBeInTheDocument();
+    expect(screen.getByText("Nonfatal sample error")).toBeInTheDocument();
+    const streamingFolds = screen.getAllByText("1 step");
+    expect(streamingFolds).toHaveLength(2);
+    expect(streamingFolds[0]!.closest("button")).toHaveAttribute("aria-expanded", "false");
+    expect(streamingFolds[1]!.closest("button")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(streamingFolds[0]!);
+    expect(streamingFolds[0]!.closest("button")).toHaveAttribute("aria-expanded", "true");
+    expect(streamingFolds[1]!.closest("button")).toHaveAttribute("aria-expanded", "false");
 
     rerender(view([{
       id: "persisted-answer",
@@ -395,8 +420,10 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     }], null));
 
     expect(await screen.findByText("Stable final answer")).toBe(answerBefore);
-    expect(screen.getByText("3 steps")).toBeInTheDocument();
+    expect(screen.getByText("4 steps").closest("button")).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Intermediate narration")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking the result")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nonfatal sample error")).not.toBeInTheDocument();
   });
 
   it("marks only the settled answer as an annotation source, without remounting it", async () => {
@@ -543,14 +570,15 @@ describe("ChatMessageList command tool rows", () => {
         </I18nProvider>
       </TooltipProvider>,
     );
-    const label = await screen.findByText(tool);
+    fireEvent.click(await screen.findByText("1 step"));
+    const trigger = screen.getByRole("button", { name: /^mcp__company-knowledge-base__search_documents_with_filters/ });
+    const label = trigger.querySelector<HTMLElement>("span.font-medium")!;
     label.style.overflowX = "hidden";
     Object.defineProperties(label, {
       scrollWidth: { value: 360 },
       clientWidth: { value: 120 },
     });
 
-    const trigger = screen.getByRole("button", { name: /mcp__company-knowledge-base__search_documents_with_filters/ });
     await act(async () => { trigger.focus(); });
     expect(trigger).toHaveFocus();
     expect(document.querySelector("[data-slot='tooltip-content']")).toHaveTextContent(`${tool} · release checklist`);
@@ -580,7 +608,8 @@ describe("ChatMessageList command tool rows", () => {
       </I18nProvider>,
     );
 
-    fireEvent.click(await screen.findByText("Bash"));
+    fireEvent.click(await screen.findByText("1 step"));
+    fireEvent.click(screen.getByRole("button", { name: /^Bash/ }));
 
     // Match the raw text: the default matcher collapses the newline that this
     // test is about.
