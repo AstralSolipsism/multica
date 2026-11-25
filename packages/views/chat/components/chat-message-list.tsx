@@ -37,7 +37,6 @@ import { PreviewSequenceProvider, collectPreviewSequence } from "../../editor";
 import type { AgentAvailability } from "@multica/core/agents";
 import { resolveFailureReasonKey } from "@multica/core/agents";
 import type {
-  Attachment,
   ChatMessage,
   ChatPendingTask,
   ChatQuickAction,
@@ -1253,7 +1252,7 @@ function TimelineView({
   sourceId,
 }: {
   items: ChatTimelineItem[];
-  attachments?: Attachment[];
+  attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   settledContent?: string;
   historyProcess?: HistoryProcess;
@@ -1376,7 +1375,7 @@ function OuterProcessFold({
   showLatestSummary = false,
 }: {
   items: ChatTimelineItem[];
-  attachments?: Attachment[];
+  attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   stepCount?: number;
   historyProcess?: HistoryProcess;
@@ -1464,7 +1463,7 @@ function MiddleTextRow({
   phase = "settled",
 }: {
   item: ChatTimelineItem;
-  attachments?: Attachment[];
+  attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
 }) {
   return (
