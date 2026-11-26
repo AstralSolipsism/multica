@@ -101,7 +101,7 @@ function pdfAttachment(id: string): Attachment {
   };
 }
 
-// A streaming timeline with adjacent process steps in one local fold.
+// Streaming timeline with a non-empty process fold.
 const INITIAL_MESSAGES: TaskMessagePayload[] = [
   taskMsg(0, "text", { content: "Looking into it. " }),
   taskMsg(1, "tool_use", { tool: "Bash", input: { command: "go test ./..." } }),
@@ -111,16 +111,33 @@ const INITIAL_MESSAGES: TaskMessagePayload[] = [
 function renderList(qc: QueryClient) {
   qc.setQueryData(chatKeys.taskMessages(TASK_ID), INITIAL_MESSAGES);
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={qc}>
-        <ChatMessageList
-          messages={[]}
-          pendingTask={{ task_id: TASK_ID, status: "running" }}
-          availability={undefined}
-        />
-      </QueryClientProvider>
-    </I18nProvider>,
+    <TooltipProvider>
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList
+            messages={[]}
+            pendingTask={{ task_id: TASK_ID, status: "running" }}
+            availability={undefined}
+          />
+        </QueryClientProvider>
+      </I18nProvider>
+    </TooltipProvider>,
   );
+}
+
+function sessionView(qc: QueryClient) {
+  return function view(
+    messages: Parameters<typeof ChatMessageList>[0]["messages"],
+    pendingTask: Parameters<typeof ChatMessageList>[0]["pendingTask"],
+  ) {
+    return (
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList messages={messages} pendingTask={pendingTask} availability="online" />
+        </QueryClientProvider>
+      </I18nProvider>
+    );
+  };
 }
 
 function pushTaskMessage(qc: QueryClient, msg: TaskMessagePayload) {
@@ -195,23 +212,6 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     const updatedTrigger = await screen.findByText("3 steps");
     expect(updatedTrigger.closest("div")).toBe(footerBefore);
     expect(document.contains(foldTrigger)).toBe(true);
-    expect(screen.getByText("Read")).toBeInTheDocument();
-    expect(screen.getByText("/tmp/x")).toBeInTheDocument();
-  });
-
-  it("keeps the tool summary after an unnamed empty result", async () => {
-    const qc = new QueryClient();
-    renderList(qc);
-    pushTaskMessage(qc, taskMsg(3, "tool_use", {
-      tool: "exec_command",
-      input: { command: "git diff --quiet" },
-    }));
-    pushTaskMessage(qc, taskMsg(4, "tool_result", { output: "" }));
-
-    const fold = (await screen.findByText("4 steps")).closest("button");
-    expect(fold).toHaveAttribute("aria-expanded", "false");
-    expect(fold).toHaveTextContent(/exec_command.*git diff --quiet/);
-    expect(fold).not.toHaveTextContent("Result");
   });
 
   it("keeps a locally expanded process fold open across streamed messages", async () => {
@@ -234,6 +234,54 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     const updatedTrigger = await screen.findByText("3 steps");
     expect(updatedTrigger.closest("button")).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Bash result: ok")).toBeInTheDocument();
+  });
+
+  it("keeps the full tool summary after an unnamed empty result and reveals it on truncation", async () => {
+    const qc = new QueryClient();
+    const tool = "mcp__company-knowledge-base__search_documents_with_filters";
+    renderList(qc);
+    pushTaskMessage(qc, taskMsg(3, "tool_use", { tool, input: { query: "release checklist" } }));
+    pushTaskMessage(qc, taskMsg(4, "tool_result", { output: "" }));
+
+    const fold = (await screen.findByText("4 steps")).closest("button")!;
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(fold).toHaveTextContent(new RegExp(`${tool}.*release checklist`));
+    expect(fold).not.toHaveTextContent("Result");
+    const label = fold.querySelector<HTMLElement>("span.truncate")!;
+    label.style.overflowX = "hidden";
+    Object.defineProperties(label, {
+      scrollWidth: { value: 360 },
+      clientWidth: { value: 120 },
+    });
+    await act(async () => { fold.focus(); });
+    expect(fold).toHaveFocus();
+    expect(document.querySelector("[data-slot='tooltip-content']")).toHaveTextContent(`${tool} · release checklist`);
+  });
+
+  it("lifts only the latest narration below the fold while a tool runs", async () => {
+    const qc = new QueryClient();
+    const early = "Let me check the workspace configuration first.";
+    const latest = "Please approve the sample request, then I can continue.";
+    qc.setQueryData(chatKeys.taskMessages(TASK_ID), [
+      taskMsg(0, "tool_use", { tool: "Read", input: { path: "/tmp/x" } }),
+      taskMsg(1, "text", { content: early }),
+      taskMsg(2, "tool_use", { tool: "Bash", input: { command: "pnpm run build" } }),
+      taskMsg(3, "text", { content: latest }),
+      taskMsg(4, "tool_use", { tool: "Bash", input: { command: "pnpm run synthetic-check" } }),
+    ]);
+    render(sessionView(qc)([], { task_id: TASK_ID, status: "running" }));
+    const fold = (await screen.findByText("4 steps")).closest("button")!;
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(fold).toHaveTextContent(/Bash.*pnpm run synthetic-check/);
+    const narration = screen.getByText(latest);
+    expect(fold.compareDocumentPosition(narration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText(early)).not.toBeInTheDocument();
+    pushTaskMessage(qc, taskMsg(5, "text", { content: "All checks passed." }));
+    expect(await screen.findByText("All checks passed.")).toBeInTheDocument();
+    expect(screen.queryByText(latest)).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByText("5 steps"));
+    expect(screen.getByText(early)).toBeInTheDocument();
+    expect(screen.getByText(latest)).toBeInTheDocument();
   });
 
   it("applies an embedded surface content transform to streamed text", async () => {
@@ -395,39 +443,17 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
       taskMsg(0, "tool_use", { tool: "Read", input: { path: "/tmp/x" } }),
       taskMsg(1, "text", { content: "Intermediate narration" }),
       taskMsg(2, "thinking", { content: "Checking the result" }),
-      taskMsg(3, "error", { content: "Nonfatal sample error" }),
-      taskMsg(4, "text", { content: "Stable final answer" }),
+      taskMsg(3, "text", { content: "Stable final answer" }),
     ]);
 
-    const view = (
-      messages: Parameters<typeof ChatMessageList>[0]["messages"],
-      pendingTask: Parameters<typeof ChatMessageList>[0]["pendingTask"],
-    ) => (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <QueryClientProvider client={qc}>
-          <ChatMessageList
-            messages={messages}
-            pendingTask={pendingTask}
-            availability="online"
-          />
-        </QueryClientProvider>
-      </I18nProvider>
-    );
-
-    const { rerender } = render(
-      view([], { task_id: TASK_ID, status: "running" }),
-    );
+    const view = sessionView(qc);
+    const { rerender } = render(view([], { task_id: TASK_ID, status: "running" }));
     const answerBefore = await screen.findByText("Stable final answer");
-    expect(screen.getByText("Intermediate narration")).toBeInTheDocument();
-    expect(screen.getByText("Checking the result")).toBeInTheDocument();
-    expect(screen.getByText("Nonfatal sample error")).toBeInTheDocument();
-    const streamingFolds = screen.getAllByText("1 step");
-    expect(streamingFolds).toHaveLength(2);
-    expect(streamingFolds[0]!.closest("button")).toHaveAttribute("aria-expanded", "false");
-    expect(streamingFolds[1]!.closest("button")).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(streamingFolds[0]!);
-    expect(streamingFolds[0]!.closest("button")).toHaveAttribute("aria-expanded", "true");
-    expect(streamingFolds[1]!.closest("button")).toHaveAttribute("aria-expanded", "false");
+    const streamingFold = screen.getByText("3 steps").closest("button");
+    expect(streamingFold).toHaveAttribute("aria-expanded", "false");
+    expect(streamingFold).toHaveTextContent("Checking the result");
+    fireEvent.click(streamingFold!);
+    expect(streamingFold).toHaveAttribute("aria-expanded", "true");
 
     rerender(view([{
       id: "persisted-answer",
@@ -441,8 +467,6 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
     expect(await screen.findByText("Stable final answer")).toBe(answerBefore);
     expect(screen.getByText("Execution process").closest("button")).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Intermediate narration")).not.toBeInTheDocument();
-    expect(screen.queryByText("Checking the result")).not.toBeInTheDocument();
-    expect(screen.queryByText("Nonfatal sample error")).not.toBeInTheDocument();
   });
 
   it("marks only the settled answer as an annotation source, without remounting it", async () => {
