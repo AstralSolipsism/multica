@@ -160,18 +160,22 @@ still compiles and still points at the fork symbol.
 The CLI attachment rewrite now uses upstream `applyAttachmentLinks`; its
 three fork plugs and dedicated implementation have been retired.
 
-`server/cmd/multica/cmd_issue.go` carries no fork plug since the v0.13.0
-upgrade (OL-1517): the issue-dependency CLI went with the fork's
-`issue_dependency` backend, and the file is upstream `35b54a3742bb` except
-for one brand string in its unsynced-PR error. After every sync,
-`git diff <upstream-sha> -- server/cmd/multica/cmd_issue.go` must show that
-line only. Blockers are read from upstream `effective_issue_blocker` by the
-fork-owned `issue_graph.{go,sql}`; see [the graph API](../issue-graph-api.md).
+`server/cmd/multica/cmd_issue.go` carries no `issue_dependency` plug since the
+v0.13.0 upgrade (OL-1517): the issue-dependency CLI went with the fork's
+`issue_dependency` backend, and blockers use upstream's native flags. The
+file keeps exactly three non-dependency differences from upstream
+`35b54a3742bb`; after every sync, `git diff <upstream-sha> --
+server/cmd/multica/cmd_issue.go` must show these and nothing else:
 
-`issue search` keeps its OL-458 `--scope` / `--offset` paging and JSON
-envelope in fork-owned `cmd_labrastro_issue_search.go`: a copy of upstream
-`runIssueSearch` plus those additions. When a sync changes upstream's
-`runIssueSearch`, carry the change into that copy.
+| # | Where | Difference |
+| --- | --- | --- |
+| 1 | `runIssuePullRequestsLink` | One brand string in the unsynced-PR error. |
+| 2 | `runIssueCommentList` | Local flag-combination validation runs before the client, issue resolution and request (`c30be728e`); one copy of the rules. |
+| 3 | `issueSearchCmd`, `runIssueSearch` | OL-458 scope and paging in place: `--scope`, `--offset`, the 50-row page clamp (`issueSearchMaxLimit`), the workspace precheck, the paged JSON envelope and the table's `More results available` hint, with the `boolVal` helper they read. |
+
+Each is merged in place, never copied into a fork-owned file beside the
+upstream function. Blockers are read from upstream `effective_issue_blocker`
+by the fork-owned `issue_graph.{go,sql}`; see [the graph API](../issue-graph-api.md).
 
 ### `server/internal/daemon/daemon.go`
 

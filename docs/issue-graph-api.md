@@ -17,8 +17,10 @@ descendant) is left behind and reported with `RAISE NOTICE`.
 
 Blockers are never inherited from an ancestor: parentage only adds context
 nodes. Regression coverage is `TestIssueGraph*` in the handler and service
-packages and `TestLabrastroPrivateProjectBlockersAndGraph`. No real agent CLI
-is required or permitted by the default tests.
+packages, `TestLabrastroPrivateProjectBlockersAndGraph` for hidden blockers,
+parents and revoked members, and `TestIssueGraphRouteRefusesGuestsAndHidesPrivateProjects`
+through the production router. No real agent CLI is required or permitted by
+the default tests.
 
 ## Request and authorization
 
@@ -41,10 +43,19 @@ Membership, project/focus scope, matched IDs, status catalog, blocker
 relations, compact details and active task counts use one read-only
 REPEATABLE READ transaction. Membership is rechecked inside that transaction.
 The request workspace must match its authenticated transport scope, including
-task credential binding. Existing workspace membership is the current access
-policy; there is no separate project/issue ACL in this stage. The projection
-accepts a visibility policy for future finer permissions and is tested through
-hidden parent/blocker paths. A failed transaction never emits a success.
+task credential binding. A failed transaction never emits a success.
+
+Access follows the workspace routes' default-deny order:
+
+- The membership middleware answers first. A workspace member continues. A
+  guest is refused with 403, because the graph route is not in the guest
+  allowlist (`middleware/guest.go`), whatever projects that guest may read.
+- For a member, the graph is narrowed by private-project access. An issue in a
+  private project the member is not in is hidden, and so are its project, its
+  blockers and its parent: `has_restricted_context`, `has_restricted_parent`
+  and `dependency_summary` carry only the boolean markers below.
+- A hidden project or focus issue answers 404, byte-identical to a missing
+  one.
 
 ## Response and projection
 
@@ -217,10 +228,11 @@ ordinary list/detail request cancellation keeps its existing behavior.
 
 ## Errors and verification
 
-Malformed/unsupported queries return 400. Inaccessible workspace/project/focus
-returns 404 after authentication/membership routing. A blocker endpoint outside
-the workspace's issues is refused with 422 `dependency_data_unverified` and no
-graph is returned. Database/commit failure returns 500 `graph_query_failed`; an
+Malformed/unsupported queries return 400. A guest is refused with 403 before
+the handler runs. Inaccessible workspace/project/focus returns 404 after
+authentication/membership routing. A blocker endpoint outside the workspace's
+issues is refused with 422 `dependency_data_unverified` and no graph is
+returned. Database/commit failure returns 500 `graph_query_failed`; an
 exhausted 8-second query deadline returns 504 `graph_query_timeout`. Successful
 responses are `private, no-store`. Schema parsing rejects incomplete or
 structurally malformed topology as a whole, tolerates additive fields and

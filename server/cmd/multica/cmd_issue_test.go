@@ -3590,18 +3590,9 @@ func TestRunIssueCommentResolution(t *testing.T) {
 //     modes; it may only combine with --since.
 //
 // These cases must fail before any HTTP round-trip — verified by an
-// httptest server that fatals if /api/issues/<key>/comments is hit.
+// httptest server that rejects every request, including issue resolution.
 func TestRunIssueCommentListFlagGuards(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// resolveIssueRef hits GET /api/issues/<ref>; everything else means
-		// the guard let an invalid combination through to the wire.
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
 		http.Error(w, "unexpected", http.StatusInternalServerError)
 	}))
@@ -3725,6 +3716,18 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantMsg)
 			}
 		})
+	}
+}
+
+func TestRunIssueCommentListFlagGuardsBeforeCredentials(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_ID", "test-agent")
+	t.Setenv("MULTICA_TOKEN", "invalid-task-token")
+	cmd := newIssueCommentListTestCmd()
+	if err := cmd.Flags().Set("recent", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runIssueCommentList(cmd, []string{"MUL-1"}); err == nil || err.Error() != "--recent must be a positive integer" {
+		t.Fatalf("expected local flag error before credential lookup, got %v", err)
 	}
 }
 
@@ -6716,127 +6719,259 @@ func TestRunIssueCommentDeleteKeepsReplies(t *testing.T) {
 	}
 }
 
+// --- issue search (OL-458) ---
+
 func newIssueSearchTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "search"}
 	cmd.Flags().Int("limit", 20, "")
-	cmd.Flags().Bool("include-closed", false, "")
+	cmd.Flags().Int("offset", 0, "")
 	cmd.Flags().String("project", "", "")
+	cmd.Flags().String("scope", "all", "")
+	cmd.Flags().Bool("include-closed", false, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
 
-func TestRunIssueSearchSendsProjectID(t *testing.T) {
-	const projectID = "11111111-2222-3333-4444-555555555555"
+func TestRunIssueSearchSendsExpectedParams(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	const projectUUID = "33333333-3333-4333-8333-333333333333"
 	var gotQuery url.Values
-	var requestPaths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestPaths = append(requestPaths, r.URL.Path)
+		if r.URL.Path != "/api/issues/search" {
+			t.Fatalf("path = %q, want /api/issues/search", r.URL.Path)
+		}
 		gotQuery = r.URL.Query()
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issues": []any{},
+			"issues":   []any{},
+			"has_more": true,
 		})
 	}))
 	defer srv.Close()
-
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	setCLITestServerEnv(t, srv.URL)
 	t.Setenv("MULTICA_TOKEN", "mat_test-token")
 
 	cmd := newIssueSearchTestCmd()
-	_ = cmd.Flags().Set("project", projectID)
-	_, err := captureStdout(t, func() error {
-		return runIssueSearch(cmd, []string{"auth bug"})
+	_ = cmd.Flags().Set("project", projectUUID)
+	_ = cmd.Flags().Set("scope", "title_desc")
+	_ = cmd.Flags().Set("include-closed", "true")
+	_ = cmd.Flags().Set("limit", "5")
+	_ = cmd.Flags().Set("offset", "10")
+	stderr := captureStderr(t)
+	defer stderr.restore()
+	out, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
 	})
 	if err != nil {
 		t.Fatalf("runIssueSearch: %v", err)
 	}
-	if want := []string{"/api/issues/search"}; !slices.Equal(requestPaths, want) {
-		t.Fatalf("requests = %v, want %v", requestPaths, want)
+
+	if gotQuery.Get("q") != "needle" {
+		t.Fatalf("q = %q", gotQuery.Get("q"))
 	}
-	if got := gotQuery.Get("q"); got != "auth bug" {
-		t.Errorf("q = %q, want %q", got, "auth bug")
+	if gotQuery.Get("include_closed") != "true" {
+		t.Fatalf("include_closed = %q, want true when --include-closed is set", gotQuery.Get("include_closed"))
 	}
-	if got := gotQuery.Get("project_id"); got != projectID {
-		t.Errorf("project_id = %q, want %q", got, projectID)
+	if gotQuery.Get("project_id") != projectUUID {
+		t.Fatalf("project_id = %q", gotQuery.Get("project_id"))
+	}
+	if gotQuery.Get("scope") != "title_desc" {
+		t.Fatalf("scope = %q", gotQuery.Get("scope"))
+	}
+	if gotQuery.Get("limit") != "5" || gotQuery.Get("offset") != "10" {
+		t.Fatalf("limit/offset = %q/%q", gotQuery.Get("limit"), gotQuery.Get("offset"))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode stdout JSON: %v", err)
+	}
+	if payload["has_more"] != true {
+		t.Fatalf("has_more = %#v, want true", payload["has_more"])
+	}
+	if _, ok := payload["issues"]; !ok {
+		t.Fatalf("stdout JSON missing issues: %#v", payload)
+	}
+}
+
+func TestRunIssueSearchDefaultOmitsIncludeClosedAndScope(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": false})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	// Default scope and default include-closed=false must not be sent explicitly.
+	_ = cmd.Flags().Set("output", "table")
+	if _, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	}); err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	if gotQuery.Get("include_closed") != "" {
+		t.Fatalf("include_closed = %q, want absent by default", gotQuery.Get("include_closed"))
+	}
+	if gotQuery.Get("scope") != "" {
+		t.Fatalf("scope = %q, want absent for default all", gotQuery.Get("scope"))
+	}
+}
+
+func TestRunIssueSearchRejectsInvalidScope(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("server must not be called for an invalid scope")
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("scope", "bogus")
+	if err := runIssueSearch(cmd, []string{"needle"}); err == nil {
+		t.Fatal("runIssueSearch accepted an invalid --scope")
+	}
+}
+
+// The server caps a search page at 50 even when a larger --limit is sent; the
+// JSON envelope must echo the effective limit so offset += limit paging does
+// not skip issues (OL-458 first review #4).
+func TestRunIssueSearchJSONEchoesEffectiveLimit(t *testing.T) {
+	chdirWithDaemonTaskMarker(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The clamp happens before the request, so the wire carries the
+		// effective page size, not the oversized request.
+		if got := r.URL.Query().Get("limit"); got != "50" {
+			t.Errorf("limit query = %q, want the effective 50", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": true})
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("limit", "100")
+	out, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode stdout JSON: %v", err)
+	}
+	if got, ok := payload["limit"].(float64); !ok || int(got) != 50 {
+		t.Fatalf("limit echo = %#v, want 50 (the server-side page cap)", payload["limit"])
 	}
 }
 
 func TestRunIssueSearchResolvesProjectPrefix(t *testing.T) {
-	const fullProjectID = "11111111-2222-3333-4444-555555555555"
-	var gotSearchProjectID string
+	chdirWithDaemonTaskMarker(t)
+	const projectUUID = "44444444-4444-4444-8444-444444444444"
+	var searchQueries []url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/projects":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"projects": []map[string]any{
-					{"id": fullProjectID, "title": "Core Platform", "status": "in_progress"},
-				},
+				"projects": []any{map[string]any{"id": projectUUID, "title": "Strixnova", "status": "active"}},
 			})
 		case "/api/issues/search":
-			gotSearchProjectID = r.URL.Query().Get("project_id")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"issues": []any{},
-			})
+			searchQueries = append(searchQueries, r.URL.Query())
+			_ = json.NewEncoder(w).Encode(map[string]any{"issues": []any{}, "has_more": false})
 		default:
-			t.Fatalf("unexpected request path: %s", r.URL.Path)
+			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
-
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	setCLITestServerEnv(t, srv.URL)
 	t.Setenv("MULTICA_TOKEN", "mat_test-token")
 
 	cmd := newIssueSearchTestCmd()
-	_ = cmd.Flags().Set("project", "11111111")
-	_, err := captureStdout(t, func() error {
-		return runIssueSearch(cmd, []string{"deployment"})
-	})
-	if err != nil {
+	_ = cmd.Flags().Set("project", "44444444")
+	if _, err := captureStdout(t, func() error {
+		return runIssueSearch(cmd, []string{"needle"})
+	}); err != nil {
 		t.Fatalf("runIssueSearch: %v", err)
 	}
-	if gotSearchProjectID != fullProjectID {
-		t.Fatalf("project_id = %q, want %q", gotSearchProjectID, fullProjectID)
+	if len(searchQueries) != 1 || searchQueries[0].Get("project_id") != projectUUID {
+		t.Fatalf("search queries = %#v, want resolved project_id %s", searchQueries, projectUUID)
 	}
 }
 
 func TestRunIssueSearchProjectFilterErrors(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:1")
-	t.Setenv("MULTICA_TOKEN", "mat_test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	chdirWithDaemonTaskMarker(t)
 
-	cmd := newIssueSearchTestCmd()
-	_ = cmd.Flags().Set("project", "xyz")
-	err := runIssueSearch(cmd, []string{"deployment"})
-	if err == nil {
-		t.Fatal("expected error for malformed project prefix")
-	}
-	if count := strings.Count(err.Error(), "resolve project:"); count != 1 {
-		t.Fatalf("expected single 'resolve project:' prefix, got %d in %q", count, err.Error())
-	}
+	t.Run("malformed project prefix wraps resolve project once", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("unexpected server call for malformed prefix: %s", r.URL.Path)
+		}))
+		defer srv.Close()
 
-	t.Setenv("MULTICA_WORKSPACE_ID", "")
-	cmdMissingWS := newIssueSearchTestCmd()
-	_ = cmdMissingWS.Flags().Set("project", "11111111")
-	err = runIssueSearch(cmdMissingWS, []string{"deployment"})
-	if err == nil {
-		t.Fatal("expected error when workspace_id is missing for --project")
-	}
-	if !strings.Contains(err.Error(), "workspace_id is required") || strings.Contains(err.Error(), "resolve project:") {
-		t.Fatalf("expected requireWorkspaceID error, got %q", err.Error())
-	}
+		setCLITestServerEnv(t, srv.URL)
+		t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+		cmd := newIssueSearchTestCmd()
+		_ = cmd.Flags().Set("project", "not-a-hex-prefix!")
+		err := runIssueSearch(cmd, []string{"needle"})
+		if err == nil {
+			t.Fatal("expected error for malformed project prefix, got nil")
+		}
+		if got := strings.Count(err.Error(), "resolve project:"); got != 1 {
+			t.Fatalf("error = %q, want single 'resolve project:' prefix (count=%d)", err.Error(), got)
+		}
+	})
+
+	t.Run("missing workspace ID fails before resolving project", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatalf("unexpected server call when workspace ID is missing: %s", r.URL.Path)
+		}))
+		defer srv.Close()
+
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+		t.Setenv("MULTICA_WORKSPACE_ID", "")
+		t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+		cmd := newIssueSearchTestCmd()
+		_ = cmd.Flags().Set("project", "44444444")
+		err := runIssueSearch(cmd, []string{"needle"})
+		if err == nil {
+			t.Fatal("expected error when workspace ID is missing, got nil")
+		}
+		if !strings.Contains(err.Error(), "workspace_id is required") || strings.Contains(err.Error(), "resolve project:") {
+			t.Fatalf("error = %q, want requireWorkspaceID error without 'resolve project:' prefix", err.Error())
+		}
+	})
 }
 
 func TestIssueSearchCommandRegistration(t *testing.T) {
-	for _, flagName := range []string{"limit", "include-closed", "project", "output"} {
-		if issueSearchCmd.Flags().Lookup(flagName) == nil {
-			t.Errorf("expected --%s flag on issue search command", flagName)
+	cmd, _, err := issueCmd.Find([]string{"search"})
+	if err != nil {
+		t.Fatalf("find issue search: %v", err)
+	}
+	if cmd != issueSearchCmd {
+		t.Fatalf("found command = %q, want issue search", cmd.CommandPath())
+	}
+	for _, name := range []string{"limit", "offset", "project", "scope", "include-closed", "output"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("issue search missing --%s", name)
 		}
 	}
-	if got := issueSearchCmd.Flags().Lookup("project").Usage; got != "Filter by project ID" {
-		t.Errorf("project flag usage = %q, want %q", got, "Filter by project ID")
+	if cmd.Flags().Lookup("open-only") != nil {
+		t.Errorf("issue search should not register --open-only")
+	}
+	if flag := cmd.Flags().Lookup("project"); flag != nil && !strings.Contains(flag.Usage, "ID prefix") {
+		t.Errorf("--project usage = %q, want UUID prefix support documented", flag.Usage)
+	}
+	if def, _ := cmd.Flags().GetBool("include-closed"); def {
+		t.Errorf("--include-closed default = true, want false (aligned with upstream)")
+	}
+	if !strings.Contains(cmd.Long, `"description" with --scope title_desc`) {
+		t.Errorf("issue search help Long missing scope=title_desc match_source fallback description:\n%s", cmd.Long)
 	}
 }
 

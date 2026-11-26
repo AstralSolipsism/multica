@@ -32,12 +32,16 @@ func TestLabrastroIssueDependencyMigratesToBlockers(t *testing.T) {
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	ws, foreignWS := insertMigrationWorkspace(t, ctx, pool, "dep-migrate-"+suffix), insertMigrationWorkspace(t, ctx, pool, "dep-foreign-"+suffix)
 	fx := testutil.New(pool, ws, uuid.NewString())
+	// An issue an agent created keeps that attribution on its stored edges.
+	owner := fx.User(t, "Agent owner", "dep-agent-owner-"+suffix+"@multica.test")
+	fx.UserID = owner
 	foreign := testutil.New(pool, foreignWS, uuid.NewString())
 	fx.Cleanup(t, "DELETE FROM issue_blocker WHERE workspace_id = ANY($1::uuid[])", []string{ws, foreignWS})
 
 	dependent := fx.Issue(t, "Dependent", testutil.Cols{"status": "in_progress"})
 	blocker := fx.Issue(t, "Blocker")
-	reverse := fx.Issue(t, "Stored the other way round", testutil.Cols{"status": "in_progress"})
+	agent := fx.Agent(t, "Created the reverse-spelling dependent", "")
+	reverse := fx.Issue(t, "Stored the other way round", testutil.Cols{"status": "in_progress", "creator_type": "agent", "creator_id": agent})
 	finished := fx.Issue(t, "Finished historical issue", testutil.Cols{"status": "done"})
 	closedBlocker := fx.Issue(t, "Closed blocker", testutil.Cols{"status": "done"})
 	related := fx.Issue(t, "Only related")
@@ -65,7 +69,7 @@ func TestLabrastroIssueDependencyMigratesToBlockers(t *testing.T) {
 	}
 	createdBy := fx.UserID
 	assertBlockers(t, ctx, pool, ws, [][4]string{
-		{reverse, blocker, "member", createdBy},
+		{reverse, blocker, "agent", agent},
 		{dependent, blocker, "member", createdBy},
 		{finished, closedBlocker, "member", createdBy},
 	})
@@ -95,7 +99,7 @@ func TestLabrastroIssueDependencyMigratesToBlockers(t *testing.T) {
 		t.Fatalf("apply the down migration: %v", err)
 	}
 	assertBlockers(t, ctx, pool, ws, [][4]string{
-		{reverse, blocker, "member", createdBy},
+		{reverse, blocker, "agent", agent},
 		{dependent, blocker, "member", createdBy},
 		{finished, closedBlocker, "member", createdBy},
 	})
