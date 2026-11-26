@@ -562,13 +562,14 @@ on `sync/v0.13.0-ol-1517`, no rebase):
    - `packages/core/issues/testing/issue-graph-fixture.{ts,test.ts}` (plus
      `packages/views/issues/dag/dag-scene-layout.test.ts` dense-line selector):
      aligned shared synthetic DAG fixture (`ISSUE_GRAPH_FIXTURE_VERSION =
-     2.2.0`) with native `effective_issue_blocker` rules — both `done` and
-     `cancelled` satisfy prerequisites, direct-only blocker counting (no
-     ancestor inheritance), native `manual:<target>:<source>` /
-     `stage:<target>:<source>` edge provenance IDs, zero summary drift across
-     all 6 datasets (`accept-5000`, `stress-5000`, `1000`, `2500`, `10000`,
-     `big-line`) and the Go reference snapshot, and replaced legacy
-     `cancelledStillBlocking` assertions with `cancelledSatisfiedEdges`.
+     2.3.0`) with native `effective_issue_blocker` (migration `746`) — merges
+     explicit `manual:<target>:<source>` rows with all same-parent
+     earlier-stage sibling pairs as `stage:<target>:<source>` (retaining
+     `manual:` precedence on shared endpoints), treats both `done` and
+     `cancelled` as satisfied, counts direct effective blockers only (no
+     ancestor inheritance), achieves 0 edge/summary drift against migration
+     `746`'s SQL view across all 6 datasets and the Go reference snapshot, and
+     replaced legacy `cancelledStillBlocking` with `cancelledSatisfiedEdges`.
    - `server/internal/service/autopilot.go`: restored missing
      `errors.Is(err, errRunAlreadyTerminal)` early return; inlined unused
      `failAutopilotRunWithResult` in `autopilot_quota.go`; restored `NULL` in

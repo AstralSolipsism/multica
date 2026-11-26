@@ -16,17 +16,19 @@
  * effective_issue_blocker and server/internal/service/issue_graph.go):
  *   - no edge may connect an ancestor and a descendant (in-line
  *     prerequisites therefore only link leaf tasks of the same line);
- *   - edges carry native provenance ids (`manual:<target>:<source>` or
- *     `stage:<target>:<source>` for same-parent earlier-stage siblings), the
- *     response lists nodes, edges and projects sorted by id, and a node's
- *     dependency_summary counts only unique direct unsatisfied blockers of
- *     that node (no ancestor inheritance; both `done` and `cancelled` satisfy).
+ *   - edges merge explicit `manual:<target>:<source>` rows with all
+ *     same-parent earlier-stage sibling pairs as `stage:<target>:<source>`
+ *     (manual takes precedence when both cover the same pair, matching
+ *     migration 746's `effective_issue_blocker` view); the response lists
+ *     nodes, edges and projects sorted by id, and a node's dependency_summary
+ *     counts only unique direct unsatisfied blockers of that node (no ancestor
+ *     inheritance; both `done` and `cancelled` satisfy).
  *
  * Pure TypeScript on purpose: no zod, no node: imports, so the same file can
  * run in a browser-context vitest suite and be bundled into a Playwright spec.
  */
 
-export const ISSUE_GRAPH_FIXTURE_VERSION = "2.2.0";
+export const ISSUE_GRAPH_FIXTURE_VERSION = "2.3.0";
 
 export type IssueGraphFixtureDatasetName =
   | "accept-5000"
@@ -376,26 +378,10 @@ function makeNode(
   return node;
 }
 
-function edgeProvenance(source: SyntheticGraphNode | undefined, target: SyntheticGraphNode | undefined): "stage" | "manual" {
-  if (
-    source != null &&
-    target != null &&
-    source.parent_issue_id !== null &&
-    source.parent_issue_id === target.parent_issue_id &&
-    source.stage !== null &&
-    target.stage !== null &&
-    source.stage < target.stage
-  ) {
-    return "stage";
-  }
-  return "manual";
-}
-
-function addEdge(builder: Builder, source: string, target: string): void {
+function addEdge(builder: Builder, source: string, target: string, via: "manual" | "stage" = "manual"): void {
   const pair = `${source}->${target}`;
   if (source === target || builder.edgePairs.has(pair)) return;
   builder.edgePairs.add(pair);
-  const via = edgeProvenance(builder.nodeById.get(source), builder.nodeById.get(target));
   builder.edges.push({
     source_edge_id: `${via}:${target}:${source}`,
     source,
@@ -689,6 +675,31 @@ function assignRunSummariesAndAssignees(builder: Builder): void {
 }
 
 /**
+ * Same-parent stage-order edges matching migration 746's
+ * `effective_issue_blocker` view: every sibling pair under a non-null parent
+ * with `source.stage < target.stage` gets a `stage:<target>:<source>` edge
+ * unless an explicit `manual:` row already covers the same pair.
+ */
+function addStageDerivedEdges(builder: Builder): void {
+  const byParent = new Map<string, SyntheticGraphNode[]>();
+  for (const node of builder.nodes) {
+    if (node.parent_issue_id === null || node.stage === null) continue;
+    const list = byParent.get(node.parent_issue_id) ?? [];
+    list.push(node);
+    byParent.set(node.parent_issue_id, list);
+  }
+  for (const siblings of byParent.values()) {
+    for (const target of siblings) {
+      for (const source of siblings) {
+        if (source.stage! < target.stage!) {
+          addEdge(builder, source.id, target.id, "stage");
+        }
+      }
+    }
+  }
+}
+
+/**
  * Dependency summaries matching server/internal/service/issue_graph.go:
  * count only unique direct effective blockers of the node itself (native
  * blockers never inherit across ancestors), where both `done` and `cancelled`
@@ -764,6 +775,7 @@ export function buildIssueGraphFixture(
   assignLineCompletion(builder);
   addCancelledSatisfiedAnchor(builder);
   addCrossLineDependencies(builder);
+  addStageDerivedEdges(builder);
   assignRunSummariesAndAssignees(builder);
   assignDependencySummaries(builder);
 
@@ -891,12 +903,13 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
   const fullyDoneRoots = roots.filter((root) => lineMembers(root).every(finished));
   const hiddenLineTasks = fullyDoneRoots.reduce((sum, root) => sum + lineMembers(root).length, 0);
 
-  // Dependency views: same-line vs cross-line, direction, ancestry.
-  const prereqsOf = new Map<string, SyntheticGraphNode[]>();
+  // Dependency views: explicit (non-stage) in-line vs cross-line, direction, ancestry.
+  const explicitPrereqsOf = new Map<string, SyntheticGraphNode[]>();
   for (const edge of graph.edges) {
-    const list = prereqsOf.get(edge.target) ?? [];
+    if (edge.source_edge_id.startsWith("stage:")) continue;
+    const list = explicitPrereqsOf.get(edge.target) ?? [];
     list.push(byId.get(edge.source)!);
-    prereqsOf.set(edge.target, list);
+    explicitPrereqsOf.set(edge.target, list);
   }
   // Project flow lives in PROJECT_BANKS; recover it by title.
   const flowByProject = new Map<string, number>();
@@ -912,7 +925,7 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
   let inlineMin = Number.POSITIVE_INFINITY;
   let inlineMax = 0;
   for (const leaf of leaves) {
-    const prereqs = prereqsOf.get(leaf.id) ?? [];
+    const prereqs = explicitPrereqsOf.get(leaf.id) ?? [];
     const inline = prereqs.filter((p) => lineOf.get(p) === lineOf.get(leaf));
     const cross = prereqs.filter((p) => lineOf.get(p) !== lineOf.get(leaf));
     if (cross.length > 0) crossLineTasks += 1;

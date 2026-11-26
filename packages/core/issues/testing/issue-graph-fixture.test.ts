@@ -107,40 +107,83 @@ describe("synthetic issue graph fixtures", () => {
   );
 
   it.each(DATASETS)(
-    "aligns dependency summaries and edge provenance with native effective_issue_blocker: %s",
+    "aligns effective_issue_blocker edges and dependency summaries with migration 746: %s",
     (name) => {
       const graph = buildIssueGraphFixture(name);
       const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-      // Native backend contract (server/internal/service/issue_graph.go:260):
-      // count only direct incoming edges of the node (no ancestor inheritance),
-      // and both `done` and `cancelled` satisfy a prerequisite.
-      const sourcesOf = new Map<string, string[]>();
-      let manualCount = 0;
-      let stageCount = 0;
+      // Partition emitted edges into manual vs stage and enforce unique endpoint
+      // pairs plus canonical `<via>:<target>:<source>` provenance IDs.
+      const manualPairs = new Set<string>();
+      const seenPairs = new Set<string>();
+      const actualStageIds: string[] = [];
+      let manualOverridingStage = 0;
       for (const edge of graph.edges) {
+        const pair = `${edge.source}->${edge.target}`;
+        expect(seenPairs.has(pair)).toBe(false);
+        seenPairs.add(pair);
         const source = byId.get(edge.source)!;
         const target = byId.get(edge.target)!;
-        const expectedVia =
+        const isStageEligible =
           source.parent_issue_id !== null &&
           source.parent_issue_id === target.parent_issue_id &&
           source.stage !== null &&
           target.stage !== null &&
-          source.stage < target.stage
-            ? "stage"
-            : "manual";
-        expect(edge.source_edge_id).toBe(`${expectedVia}:${edge.target}:${edge.source}`);
-        if (expectedVia === "stage") stageCount += 1;
-        else manualCount += 1;
-        const list = sourcesOf.get(edge.target) ?? [];
-        list.push(edge.source);
-        sourcesOf.set(edge.target, list);
+          source.stage < target.stage;
+        if (edge.source_edge_id.startsWith("manual:")) {
+          expect(edge.source_edge_id).toBe(`manual:${edge.target}:${edge.source}`);
+          manualPairs.add(pair);
+          if (isStageEligible) manualOverridingStage += 1;
+        } else {
+          expect(edge.source_edge_id).toBe(`stage:${edge.target}:${edge.source}`);
+          expect(isStageEligible).toBe(true);
+          actualStageIds.push(edge.source_edge_id);
+        }
       }
-      expect(manualCount).toBeGreaterThan(0);
-      expect(stageCount).toBeGreaterThan(0);
 
+      // Independently derive all expected same-parent stage edges from node
+      // (parent_issue_id, stage), excluding pairs already covered by manual rows
+      // (exact mirror of server/migrations/746_issue_blocker_rules.up.sql:6-10).
+      const byParent = new Map<string, SyntheticGraphNode[]>();
+      for (const node of graph.nodes) {
+        if (node.parent_issue_id === null || node.stage === null) continue;
+        const list = byParent.get(node.parent_issue_id) ?? [];
+        list.push(node);
+        byParent.set(node.parent_issue_id, list);
+      }
+      const expectedStageIds: string[] = [];
+      const expectedSourcesOf = new Map<string, string[]>();
+      for (const pair of manualPairs) {
+        const [source, target] = pair.split("->") as [string, string];
+        const list = expectedSourcesOf.get(target) ?? [];
+        list.push(source);
+        expectedSourcesOf.set(target, list);
+      }
+      for (const siblings of byParent.values()) {
+        for (const target of siblings) {
+          for (const source of siblings) {
+            if (source.stage! >= target.stage!) continue;
+            const pair = `${source.id}->${target.id}`;
+            if (manualPairs.has(pair)) continue;
+            expectedStageIds.push(`stage:${target.id}:${source.id}`);
+            const list = expectedSourcesOf.get(target.id) ?? [];
+            list.push(source.id);
+            expectedSourcesOf.set(target.id, list);
+          }
+        }
+      }
+      expectedStageIds.sort();
+      actualStageIds.sort();
+      expect(actualStageIds).toEqual(expectedStageIds);
+      expect(expectedStageIds.length).toBeGreaterThan(0);
+      // Verify manual-over-stage precedence is actually exercised on same-parent
+      // earlier-stage pairs (retained as `manual:`, never duplicated as `stage:`).
+      expect(manualOverridingStage).toBeGreaterThan(0);
+
+      // Recompute dependency summaries strictly from the independently derived
+      // effective edge set (server/internal/service/issue_graph.go:260).
       let mismatched = 0;
       for (const node of graph.nodes) {
-        const directSources = sourcesOf.get(node.id) ?? [];
+        const directSources = expectedSourcesOf.get(node.id) ?? [];
         const expected = directSources.filter((id) => {
           const status = byId.get(id)!.status;
           return status !== "done" && status !== "cancelled";
@@ -166,7 +209,7 @@ describe("synthetic issue graph fixtures", () => {
         expect(cancelledEdgesToUnfinished.length).toBeGreaterThan(0);
         for (const edge of cancelledEdgesToUnfinished) {
           const target = byId.get(edge.target)!;
-          const nonTerminalDirect = (sourcesOf.get(target.id) ?? []).filter((id) => {
+          const nonTerminalDirect = (expectedSourcesOf.get(target.id) ?? []).filter((id) => {
             const status = byId.get(id)!.status;
             return status !== "done" && status !== "cancelled";
           }).length;
