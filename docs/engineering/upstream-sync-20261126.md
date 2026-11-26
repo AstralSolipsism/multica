@@ -394,10 +394,12 @@ Initial remote CI on `e5b967ae89e35359fec50cce5c6f66e6792a61e4` passed
 failure groups fixed in the linear follow-up commit on
 `sync/v0.13.0-ol-1517`:
 
-1. **`CI/script-checks` (`scripts/selfhost-config.test.sh:118`)**: unset
-   `MULTICA_IMAGE_TAG` alongside `FF_DOCS_V1` in the `env -u ... docker compose`
-   command checking the default collab image tag (line 14 exports
-   `MULTICA_IMAGE_TAG=dev-config-test`).
+1. **`CI/script-checks` (`scripts/selfhost-config.test.sh:132`)**: aligned the
+   `collab image` assertion with the script's exported
+   `MULTICA_IMAGE_TAG=dev-config-test`
+   (``ghcr.io/multica-ai/multica-collab:${process.env.MULTICA_IMAGE_TAG}``),
+   keeping `MULTICA_IMAGE_TAG` set so `docker-compose.selfhost.yml`'s required
+   `${MULTICA_IMAGE_TAG:?...}` guard on `backend`/`frontend` succeeds.
 2. **`CI/docs-test` (`apps/docs/content/docs/tutorial.zh-Hant.mdx:202`)**: fixed
    broken internal heading anchor `/mentioning-agents#給正在運行的-ai-代理插話`
    → `/mentioning-agents#給正在執行的-ai-代理插話`.
