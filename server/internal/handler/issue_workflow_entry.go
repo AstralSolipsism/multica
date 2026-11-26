@@ -2,10 +2,8 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
-	"maps"
 	"net/http"
 	"strconv"
 
@@ -38,23 +36,6 @@ type workflowHandoff struct {
 	def     issueworkflow.Definition
 	step    issueworkflow.Step
 	project db.Project
-}
-
-// The workflow's validated assignee is a write even when the request only
-// contains a status. Preserve it when the fork refreshes untouched fields
-// under the issue row lock. Clone per issue so a batch cannot leak its handler
-// into the next item's explicit-assignment detection.
-func workflowWriteFields(fields map[string]json.RawMessage, handoff *workflowHandoff, params db.UpdateIssueParams) map[string]json.RawMessage {
-	if handoff == nil {
-		return fields
-	}
-	out := maps.Clone(fields)
-	if out == nil {
-		out = make(map[string]json.RawMessage)
-	}
-	out["assignee_type"], _ = json.Marshal(params.AssigneeType.String)
-	out["assignee_id"], _ = json.Marshal(uuidToString(params.AssigneeID))
-	return out
 }
 
 // applyIssueWorkflow enforces prev's (possibly new) project workflow on one
@@ -287,6 +268,15 @@ func (h *Handler) workflowBriefInput(ctx context.Context, issue db.Issue, def is
 		StatusName: func(key string) string {
 			return resolver.Name(ctx, h.Queries, key)
 		},
+		EffectiveStatus: func(key string) string {
+			return resolver.Effective(ctx, h.Queries, key)
+		},
+		StatusCategory: func(key string) string {
+			return resolver.Category(ctx, h.Queries, key)
+		},
+		StatusDescription: func(key string) string {
+			return resolver.Description(ctx, h.Queries, key)
+		},
 		HandlerName: func(step issueworkflow.Step) string {
 			if !step.HandsOff() {
 				return ""
@@ -373,8 +363,10 @@ func (h *Handler) assigneeActiveRuns(ctx context.Context, issue db.Issue) []db.L
 // gets the observer brief, so it does not move a step it does not own.
 //
 // legacyRuntimeRules is true for a daemon that does not advertise
-// protocol.DaemonCapabilityWorkflowStatusRulesV1; see BriefInput.
-func (h *Handler) claimProjectWorkflow(ctx context.Context, issue db.Issue, task *db.AgentTaskQueue, legacyRuntimeRules bool) *TaskProjectWorkflowData {
+// protocol.DaemonCapabilityWorkflowStatusRulesV1, and stepCommands for one
+// that does not advertise protocol.DaemonCapabilityWorkflowStatusMapV1; see
+// BriefInput.
+func (h *Handler) claimProjectWorkflow(ctx context.Context, issue db.Issue, task *db.AgentTaskQueue, legacyRuntimeRules, stepCommands bool) *TaskProjectWorkflowData {
 	def, project, err := issueworkflow.ForProject(ctx, h.Queries, issue.WorkspaceID, issue.ProjectID)
 	if err != nil {
 		slog.Warn("task claim: failed to load project workflow for brief injection",
@@ -386,6 +378,7 @@ func (h *Handler) claimProjectWorkflow(ctx context.Context, issue db.Issue, task
 	}
 	in := h.workflowBriefInput(ctx, issue, *def, project)
 	in.LegacyRuntimeRules = legacyRuntimeRules
+	in.StepCommands = stepCommands
 	stepMoved := workflowStepMoved(def, issue.Status, task)
 	if stepMoved {
 		in.BoundStep = task.WorkflowStep.String
@@ -396,7 +389,11 @@ func (h *Handler) claimProjectWorkflow(ctx context.Context, issue db.Issue, task
 			in.AssigneeName = h.actorDisplayName(ctx, issue.WorkspaceID, issue.AssigneeType.String, issue.AssigneeID)
 		}
 	}
-	return &TaskProjectWorkflowData{Brief: issueworkflow.Brief(in), stepMoved: stepMoved}
+	return &TaskProjectWorkflowData{
+		Brief:     issueworkflow.Brief(in),
+		StatusMap: !legacyRuntimeRules && !stepCommands,
+		stepMoved: stepMoved,
+	}
 }
 
 // taskRunsForAssignee reports whether a run works on the issue as its

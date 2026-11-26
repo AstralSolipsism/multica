@@ -129,7 +129,7 @@ func TestHandleDaemonWSHeartbeatThinkingAdapt(t *testing.T) {
 			UpdatedAt: now,
 		},
 	}
-	ack, err := h.HandleDaemonWSHeartbeat(context.Background(), identity, payload)
+	ack, err := h.HandleDaemonWSHeartbeat(context.Background(), identity, runtimeID, payload)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: %v", err)
 	}

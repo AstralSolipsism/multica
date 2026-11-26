@@ -309,7 +309,7 @@ func TestHandleDaemonWSHeartbeatPlanQuota(t *testing.T) {
 		RuntimeID: runtimeID,
 		PlanQuota: validPlanQuotaPayload(time.Now().Unix()),
 	}
-	ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(), identity, payload)
+	ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(), identity, runtimeID, payload)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: %v", err)
 	}

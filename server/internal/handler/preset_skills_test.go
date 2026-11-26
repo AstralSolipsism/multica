@@ -90,7 +90,7 @@ func TestCreateWorkspaceSeedsPresetSkills(t *testing.T) {
 
 	// The preset is an ordinary skill row: editing it through UpdateSkill
 	// works like any user skill.
-	w = testutil.Call(t, testHandler.UpdateSkill, updateSkillRequest(t, created.ID, skillID, "image-studio edited body")).Want(http.StatusOK)
+	w = testutil.Call(t, testHandler.UpdateSkill, presetSkillUpdateRequest(t, created.ID, skillID, "image-studio edited body")).Want(http.StatusOK)
 	var updated map[string]any
 	w.JSON(&updated)
 	if got, _ := updated["content"].(string); got != "image-studio edited body" {
@@ -149,9 +149,9 @@ func TestCreateWorkspaceSeedsPresetSkills(t *testing.T) {
 	}
 }
 
-// updateSkillRequest builds a PUT /api/skills/{id} request carrying an
+// presetSkillUpdateRequest builds a PUT /api/skills/{id} request carrying an
 // UpdateSkillRequest body, pointed at the given workspace.
-func updateSkillRequest(t *testing.T, workspaceID, skillID, content string) *http.Request {
+func presetSkillUpdateRequest(t *testing.T, workspaceID, skillID, content string) *http.Request {
 	t.Helper()
 	req := newRequest(http.MethodPut, "/api/skills/"+skillID, UpdateSkillRequest{
 		Content: &content,

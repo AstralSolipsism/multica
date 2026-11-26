@@ -527,7 +527,7 @@ func (q *Queries) LabrastroListSkillStates(ctx context.Context, workspaceID pgty
 }
 
 const labrastroLockSkill = `-- name: LabrastroLockSkill :one
-SELECT id, workspace_id, name, description, content, config, created_by, created_at, updated_at, plugin_installation_id FROM skill WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+SELECT id, workspace_id, name, description, content, config, created_by, created_at, updated_at, plugin_installation_id, revision FROM skill WHERE workspace_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LabrastroLockSkillParams struct {
@@ -549,6 +549,7 @@ func (q *Queries) LabrastroLockSkill(ctx context.Context, arg LabrastroLockSkill
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PluginInstallationID,
+		&i.Revision,
 	)
 	return i, err
 }

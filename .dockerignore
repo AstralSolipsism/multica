@@ -41,10 +41,12 @@ coverage
 !server/internal/service/builtin_skills/**/*.md
 !server/internal/service/builtin_skills_legacy/**/*.md
 
-# Dockerfile.web needs the web workspace and root dependency patch inputs.
-# Default-exclude other app files so they do not enter the build context.
+# Dockerfile.web and Dockerfile.collab need their workspaces and root
+# dependency patch inputs. Default-exclude other app files so they do not
+# enter the build context.
 /apps/*
 !/apps/web/
+!/apps/collab/
 !/apps/mobile
 /apps/mobile/*
 !/apps/mobile/patches

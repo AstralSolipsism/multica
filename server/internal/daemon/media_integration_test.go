@@ -86,7 +86,7 @@ func TestMediaEndToEndStreamingRPC(t *testing.T) {
 	hub.SetRPCHandler(h.DaemonRPCHandler)
 	identity := daemonws.ClientIdentity{UserID: userID, WorkspaceID: workspaceID, RuntimeIDs: []string{runtimeID}}
 	var acks, uploads, downloads atomic.Int32
-	hub.SetHeartbeatHandler(func(ctx context.Context, id daemonws.ClientIdentity, p protocol.DaemonHeartbeatRequestPayload) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(ctx context.Context, id daemonws.ClientIdentity, runtimeID string, p protocol.DaemonHeartbeatRequestPayload) (*protocol.DaemonHeartbeatAckPayload, error) {
 		return &protocol.DaemonHeartbeatAckPayload{RuntimeID: runtimeID, ServerCapabilities: []string{"rpc-v1"}}, nil
 	})
 	router := chi.NewRouter()

@@ -16,7 +16,6 @@ import { CommentInput } from "../issues/components/comment-input";
 import { ReplyInput } from "../issues/components/reply-input";
 
 const listQuickActions = vi.hoisted(() => vi.fn());
-const renderQuickAction = vi.hoisted(() => vi.fn());
 const getIssue = vi.hoisted(() => vi.fn());
 const listAgents = vi.hoisted(() => vi.fn());
 const listSquads = vi.hoisted(() => vi.fn());
@@ -24,6 +23,10 @@ const listMembers = vi.hoisted(() => vi.fn());
 const previewCommentTriggers = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
+vi.mock("@multica/core/permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/permissions")>()),
+  useIsGuest: () => false,
+}));
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: { getState: () => ({ user: { id: "user-1" } }) },
@@ -31,7 +34,7 @@ vi.mock("@multica/core/auth", () => ({
 
 vi.mock("@multica/core/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/api")>();
-  return { ...actual, api: { ...actual.api, getBaseUrl: () => "https://api.example.test", listQuickActions, renderQuickAction, getIssue, listAgents, listSquads, listMembers, previewCommentTriggers } };
+  return { ...actual, api: { ...actual.api, getBaseUrl: () => "https://api.example.test", listQuickActions, getIssue, listAgents, listSquads, listMembers, previewCommentTriggers } };
 });
 vi.mock("@multica/core/paths", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@multica/core/paths")>()),
@@ -85,7 +88,6 @@ function makeAgent(id: string, skills: Agent["skills"]): Agent {
 }
 beforeEach(() => {
   listQuickActions.mockReset().mockResolvedValue({ quick_actions: [] });
-  renderQuickAction.mockReset().mockResolvedValue("Rendered feedback");
   getIssue.mockReset().mockResolvedValue(makeIssue());
   listAgents.mockReset().mockResolvedValue([]);
   listSquads.mockReset().mockResolvedValue([]);
@@ -261,7 +263,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
         target_name: targetType ? "Review Team" : undefined,
       };
       listQuickActions.mockResolvedValue({ quick_actions: [configured] });
-      renderQuickAction.mockReturnValue(new Promise(() => {}));
       const { editor, dom } = await mount([configured]);
       await type(editor, "/delayed");
       await waitFor(() => expect(menuItem()).toBeVisible());
@@ -269,7 +270,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
       fireEvent.keyDown(dom, { key: "Enter" });
 
       expect(editor.getText()).toBe(targetType ? "@Review Team\n\nRendered feedback" : "Rendered feedback");
-      expect(renderQuickAction).not.toHaveBeenCalled();
       const mentions: { type: string; id: string }[] = [];
       editor.state.doc.descendants((node) => {
         if (node.type.name === "mention") mentions.push({ type: node.attrs.type, id: node.attrs.id });
@@ -281,7 +281,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
   it("keeps the draft and reports an unavailable target without a render request", async () => {
     const unavailable = { ...action, assignee_type: "agent", assignee_id: "target-id", target_missing: true };
     listQuickActions.mockResolvedValue({ quick_actions: [unavailable] });
-    renderQuickAction.mockReturnValue(new Promise(() => {}));
     const { editor, dom } = await mount([unavailable]);
     await type(editor, "/delayed");
     await waitFor(() => expect(menuItem()).toBeVisible());
@@ -289,8 +288,9 @@ describe("comment quick-action catalog updates in the real editor", () => {
     fireEvent.keyDown(dom, { key: "Enter" });
 
     expect(editor.getText()).toBe("/delayed");
-    expect(toastError).toHaveBeenCalledWith("This target is unavailable");
-    expect(renderQuickAction).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      "This agent or squad can't be found — refresh the page and try again.",
+    );
   });
 
   it("uses a refreshed body and target while preserving the surrounding draft and undo", async () => {
@@ -313,7 +313,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
     fireEvent.keyDown(dom, { key: "Enter" });
 
     expect(editor.getText()).toBe("Keep this \n\n@Current Team\n\nUpdated feedback");
-    expect(renderQuickAction).not.toHaveBeenCalled();
     act(() => { editor.commands.undo(); });
     expect(editor.getText()).toBe("Keep this /delayed");
   });
@@ -336,7 +335,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
 
       fireEvent.click(menuItem()!);
       await waitFor(() => expect(editor.getText()).toBe("Rendered feedback"));
-      expect(renderQuickAction).not.toHaveBeenCalled();
     },
   );
 
@@ -358,7 +356,6 @@ describe("comment quick-action catalog updates in the real editor", () => {
     await act(async () => client.setQueryData(quickActionKeys.list("ws"), { quick_actions: [] }));
     await waitFor(() => expect(menuItem()).not.toBeInTheDocument());
     expect(editor.getText()).toBe("/delayed");
-    expect(renderQuickAction).not.toHaveBeenCalled();
   });
 
   it("does not reopen an escaped menu when the pending catalog arrives", async () => {

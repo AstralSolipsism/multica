@@ -8,6 +8,14 @@ import { useSpacePanelOpen } from "./space-panel-open-context";
 
 const navigation = vi.hoisted(() => ({ pathname: "/acme/issues" }));
 
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/paths")>()),
+  useCurrentWorkspace: () => null,
+}));
+vi.mock("@multica/core/permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/permissions")>()),
+  useIsGuest: () => false,
+}));
 vi.mock("../navigation", () => ({
   useNavigation: () => ({ pathname: navigation.pathname }),
 }));

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -43,6 +45,9 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
+		return
+	}
 
 	var req CreateChatSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -161,6 +166,9 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
+		return
+	}
 
 	// Compute the accessible-agents set once and use it to drop sessions
 	// whose target agent the caller no longer has access to — without this,
@@ -257,6 +265,29 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// requireChatOwnerAccess gates every Chat route that acts as the caller's own
+// conversations. A task token's user id is its runtime owner whoever started
+// the run, so only a live task the owner started may list, read or write the
+// owner's chats; agents read their own session through /api/chat/history.
+// Returns false having already written the error response.
+func (h *Handler) requireChatOwnerAccess(w http.ResponseWriter, r *http.Request, userID, workspaceID string) bool {
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return false
+	}
+	ok, err := h.requestRepresentsUser(r, userID, workspaceUUID)
+	if err != nil {
+		slog.Warn("resolve chat access failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat access")
+		return false
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "chat access requires the session owner's verified human trigger")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
 	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "chat session id")
 	if !ok {
@@ -264,6 +295,9 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 	}
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
+		return db.ChatSession{}, false
+	}
+	if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
 		return db.ChatSession{}, false
 	}
 	session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
@@ -1597,6 +1631,9 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1667,6 +1704,9 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1957,6 +1997,9 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 	if task.ChatSessionID.Valid {
 		// Chat privacy: only the member who opened the conversation may
 		// cancel its task, even though the workspace is shared.
+		if !h.requireChatOwnerAccess(w, r, userID, workspaceID) {
+			return
+		}
 		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID:          task.ChatSessionID,
 			WorkspaceID: wsUUID,
@@ -2110,45 +2153,53 @@ type ChatLastMessage struct {
 	MessageKind string `json:"message_kind"`
 }
 
-// chatListPreviewLimit caps, in characters, the last-message preview the
-// session LIST responses carry — same budget as the inbox list preview
-// (inboxListBodyPreviewLimit). The full text stays in the database and keeps
-// flowing from the session-detail and /messages endpoints.
-const chatListPreviewLimit = inboxListBodyPreviewLimit
+// chatLastMessagePreviewMaxRunes caps ChatLastMessage.Content. The list only
+// renders a one-line snippet, but shipping each session's full last reply made
+// the list payload grow with every long agent answer (#9954).
+const chatLastMessagePreviewMaxRunes = 256
 
-// chatListPreview truncates a list row's last-message content to
-// chatListPreviewLimit characters, by rune boundary like inboxListBody.
-// Fence markers are stripped from the preview for two client-side reasons
-// (toPreview in chat-thread-list.tsx): a CLOSED block before the cut is
-// stripped whole, so a preview ending in "\n" after one collapses to just
-// the ellipsis; and strip-fences turns any cut-inside-fence remainder into
-// visible code text instead of a dangling marker. Note the trade-off: a
-// closed block's code text now shows in the preview line where the old
-// full-content preview hid it — acceptable for a one-line snippet.
-func chatListPreview(content string) string {
-	cut, seen := 0, 0
-	for offset := range content {
-		if seen == chatListPreviewLimit-1 {
-			cut = offset
-		}
-		if seen++; seen > chatListPreviewLimit {
-			return stripFences(content[:cut]) + "…"
-		}
-	}
-	return content
-}
+// chatLastMessagePreview mirrors the list client's cleanup before applying the
+// cap. Complete fences become whitespace, and Markdown markers are dropped before
+// counting runes so they cannot crowd out visible text.
+func chatLastMessagePreview(content string) string {
+	const fence = "```"
+	var preview strings.Builder
+	preview.Grow(min(len(content), chatLastMessagePreviewMaxRunes))
+	remaining := chatLastMessagePreviewMaxRunes
+	pendingSpace := false
 
-// stripFences removes markdown code-fence runs so the front-end's whole-block
-// fence stripping cannot swallow the entire preview line (embedded HTML
-// sources are left as-is: toPreview does not remove tags, so they never blank
-// the line).
-func stripFences(s string) string {
-	for _, fence := range []string{"```", "~~~"} {
-		if strings.Contains(s, fence) {
-			s = strings.ReplaceAll(s, fence, " ")
+	for len(content) > 0 && remaining > 0 {
+		if strings.HasPrefix(content, fence) {
+			if end := strings.Index(content[len(fence):], fence); end >= 0 {
+				content = content[end+2*len(fence):]
+				pendingSpace = preview.Len() > 0
+				continue
+			}
 		}
+
+		r, width := utf8.DecodeRuneInString(content)
+		content = content[width:]
+		switch r {
+		case '#', '*', '`', '>', '~':
+			continue
+		}
+		// JavaScript's whitespace includes BOM and excludes NEXT LINE.
+		if r == '\uFEFF' || (r != '\u0085' && unicode.IsSpace(r)) {
+			pendingSpace = preview.Len() > 0
+			continue
+		}
+		if pendingSpace {
+			if remaining == 1 {
+				break
+			}
+			preview.WriteByte(' ')
+			remaining--
+			pendingSpace = false
+		}
+		preview.WriteRune(r)
+		remaining--
 	}
-	return s
+	return preview.String()
 }
 
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
@@ -2163,7 +2214,7 @@ func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure p
 		content = ""
 	}
 	return &ChatLastMessage{
-		Content:       chatListPreview(content),
+		Content:       chatLastMessagePreview(content),
 		Role:          role,
 		CreatedAt:     timestampToString(at),
 		FailureReason: textToPtr(failure),
