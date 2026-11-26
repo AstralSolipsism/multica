@@ -915,7 +915,4 @@ export function onIssueDeleted(
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-  // A deleted issue may have been a registered prerequisite — projections
-  // referencing it must re-read instead of pointing at a ghost.
-  void invalidateIssueQueries(qc, wsId, "graph");
 }

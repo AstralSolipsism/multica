@@ -27,7 +27,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { issueKeys, issueTableFacetsOptions, sidebarIssuesOptions } from "@multica/core/issues/queries";
-import { filterDependencyState, statusCatalogSource } from "../../issues/surface/use-issue-surface-data";
+import { filterDependencyState, statusCatalogSource } from "@multica/core/issues/surface/filter-dependency";
 import {
   NO_PROJECT_FACET_KEY,
   NO_PROJECT_ORDER_ID,

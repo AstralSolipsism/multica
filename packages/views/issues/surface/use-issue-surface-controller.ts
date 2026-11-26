@@ -77,9 +77,9 @@ import {
   combineFilterDependencies,
   filterDependencyState,
   statusCatalogSource,
-  useIssueSurfaceData,
   type FilterDependencyState,
-} from "./use-issue-surface-data";
+} from "@multica/core/issues/surface/filter-dependency";
+import { useIssueSurfaceData } from "./use-issue-surface-data";
 import {
   useIssueStatusBranches,
   type IssueStatusPagination,

@@ -33,7 +33,7 @@ import {
 } from "@multica/core/issues/sidebar-list";
 import { todayDateOnly } from "@multica/core/issues/date";
 import { useIssueUnreadIds } from "@multica/core/issues/unread";
-import { filterDependencyState, statusCatalogSource } from "../../issues/surface/use-issue-surface-data";
+import { filterDependencyState, statusCatalogSource } from "@multica/core/issues/surface/filter-dependency";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useSidebarProjectPrefs } from "@multica/core/issues/sidebar-project-prefs";
 import { useSidebarTreeStore } from "@multica/core/issues/stores/sidebar-tree-store";
