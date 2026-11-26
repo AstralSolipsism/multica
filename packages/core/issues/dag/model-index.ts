@@ -121,7 +121,7 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
     if (!source || !target) continue;
     const dependency: DagDependency = {
       id: edge.sourceEdgeId, source: source.id, target: target.id,
-      state: dagDependencyState(source, subtreeFinished.get(target.id) === true),
+      state: dagDependencyState(source, dagIssueFinished(target)),
       sourceKind: forest.children.has(source.id) ? "frame" : "task",
       targetKind: forest.children.has(target.id) ? "frame" : "task",
     };

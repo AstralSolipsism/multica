@@ -111,7 +111,9 @@ export function computeDagFocus(index: DagModelIndex, issueId: string, showCompl
     byLine.set(groupId, group);
     members.push(member);
   }
-  const edges = index.dependencies.filter((e) => included.has(e.source) && included.has(e.target));
+  const edges = index.dependencies.filter(
+    (e) => included.has(e.source) && included.has(e.target) && closure.has(e.source) && closure.has(e.target),
+  );
   return {
     issueId,
     groups: [...byLine].map(([lineId, items]) => ({ lineId, ...frameStructure(items, closure) })),

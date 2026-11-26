@@ -272,8 +272,7 @@ describe("DagSceneCanvas overview", () => {
     expect(layer.querySelectorAll("circle").length).toBe(1);
   });
 
-  it("marks cancelled context cards with a dashed border", async () => {
-    // A cancelled standalone still blocking a visible line keeps the dashed border.
+  it("hides a cancelled prerequisite when showCompleted is off instead of rendering a cancelled-blocking card", async () => {
     const cancelledGraph = makeGraph(
       [
         makeNode("r1"),
@@ -286,26 +285,9 @@ describe("DagSceneCanvas overview", () => {
       showCompleted: false,
       showSatisfiedDependencies: true,
     })!;
-    const cancelledCard = overview.cards.find((c) => c.cancelledBlocking)!;
-    expect(cancelledCard).toBeTruthy();
-    harness({
-      model: { kind: "overview", overview },
-      plan: dagOverviewLayoutInput(overview),
-      geometry: {
-        nodes: { [cancelledCard.id]: { x: 0, y: 0, width: 280, height: 140 } },
-        frames: {},
-        ports: {},
-        routes: {},
-        segments: [],
-        junctions: [],
-        width: 280,
-        height: 140,
-        quality: "elk",
-      },
-    });
-    await waitFor(() =>
-      expect(document.querySelector("[data-dag-overview-card].border-dashed")).toBeTruthy(),
-    );
+    expect(overview.cards.some((c) => c.cancelledBlocking)).toBe(false);
+    expect(overview.cards.map((c) => c.id)).toEqual(["issue:r1"]);
+    expect(overview.hiddenCompleted.singles).toBe(1);
   });
 
   it("opens a standalone card's detail on double-click and shows its status icon", async () => {
@@ -1195,16 +1177,18 @@ describe("DagSceneCanvas lit-route flows (OL-997)", () => {
     expect(store.getState().dagSelectedNodeId).toBe("x");
     await waitFor(() => expect(litRouteGroups()).toBe(3));
     await waitFor(() => expect(litFlows()).toHaveLength(3));
-    const byState = new Map(
-      litFlows().map((el) => [el.getAttribute("data-dag-lit-flow-state"), el] as const),
+    const byEdge = new Map(
+      litFlows().map((el) => [el.getAttribute("data-dag-lit-flow"), el] as const),
     );
-    expect([...byState.keys()].sort()).toEqual(["advancing", "cancelled-blocking", "satisfied"]);
-    // Three clearly different colors: brand, soft success green, destructive.
-    const colorOf = (state: string) =>
-      byState.get(state)!.querySelector(".dag-lit-flow-dot")!.getAttribute("fill");
-    expect(colorOf("advancing")).toBe("var(--color-brand)");
-    expect(colorOf("satisfied")).toBe("var(--success)");
-    expect(colorOf("cancelled-blocking")).toBe("var(--destructive)");
+    expect(byEdge.get("a-x")?.getAttribute("data-dag-lit-flow-state")).toBe("satisfied");
+    expect(byEdge.get("b-x")?.getAttribute("data-dag-lit-flow-state")).toBe("satisfied");
+    expect(byEdge.get("c-x")?.getAttribute("data-dag-lit-flow-state")).toBe("advancing");
+    // Satisfied (done & cancelled) flows paint soft success green; advancing paints brand.
+    const colorOf = (edgeId: string) =>
+      byEdge.get(edgeId)!.querySelector(".dag-lit-flow-dot")!.getAttribute("fill");
+    expect(colorOf("c-x")).toBe("var(--color-brand)");
+    expect(colorOf("a-x")).toBe("var(--success)");
+    expect(colorOf("b-x")).toBe("var(--success)");
     // The trailing echo FOLLOWS the main dot — a small fixed positive delay,
     // never a lead (a negative delay draws the "tail" ahead of the comet).
     for (const el of litFlows()) {
@@ -1236,12 +1220,11 @@ describe("DagSceneCanvas lit-route flows (OL-997)", () => {
         }
       }
     }
-    // The satisfied route paints first (below), the cancelled blocker last
-    // (on top) where routes share the approach interval.
+    // Satisfied routes (done and cancelled) paint first (below), advancing last (on top).
     const paintedOrder = [...document.querySelectorAll("[data-dag-lit-flow]")].map((el) =>
       el.getAttribute("data-dag-lit-flow-state"),
     );
-    expect(paintedOrder).toEqual(["satisfied", "advancing", "cancelled-blocking"]);
+    expect(paintedOrder).toEqual(["satisfied", "satisfied", "advancing"]);
     // Clicking the pane folds the flows away with the overlay.
     fireEvent.click(document.querySelector(".react-flow__pane")!);
     await waitFor(() => expect(litFlows()).toHaveLength(0));
@@ -1598,36 +1581,35 @@ describe("DagSceneCanvas Stage 10 review assertions", () => {
     expect(props.onExternalJump).toHaveBeenCalled();
   });
 
-  it("paints the cancelled blocker's ghost block with a dashed border", async () => {
-    const cancelledGraph = makeGraph(
+  it("paints a context task's ghost block with a dashed border", async () => {
+    const contextGraph = makeGraph(
       [
         makeNode("r1"),
+        makeNode("ctx", { parentIssueId: "r1", role: "context" }),
         makeNode("a1", { parentIssueId: "r1" }),
-        makeNode("cancelled", { status: "cancelled", statusCategory: "closed" }),
       ],
-      [{ id: "e-x", source: "cancelled", target: "a1" }],
+      [{ id: "e-x", source: "ctx", target: "a1" }],
     );
-    const overview = computeDagOverview(createDagModelIndex(cancelledGraph), {
-      showCompleted: false,
-      showSatisfiedDependencies: true,
-    })!;
-    const cancelledCard = overview.cards.find((c) => c.cancelledBlocking)!;
+    const line = computeDagLine(createDagModelIndex(contextGraph), "r1")!;
     const { flow } = harness({
-      model: { kind: "overview", overview },
-      plan: dagOverviewLayoutInput(overview),
+      model: { kind: "line", line },
+      plan: dagLineLayoutInput(line),
       geometry: {
-        nodes: { [cancelledCard.id]: { x: 0, y: 0, width: 280, height: 140 } },
-        frames: {},
+        nodes: {
+          ctx: { x: 40, y: 40, width: 248, height: 116 },
+          a1: { x: 360, y: 40, width: 248, height: 116 },
+        },
+        frames: { r1: { x: 0, y: 0, width: 640, height: 220, bands: [], stageMode: "labels" } },
         ports: {},
         routes: {},
         segments: [],
         junctions: [],
-        width: 280,
-        height: 140,
+        width: 640,
+        height: 220,
         quality: "elk",
       },
     });
-    await waitFor(() => expect(document.querySelector("[data-dag-overview-card]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector("[data-dag-task]")).toBeTruthy());
     await flow().setViewport({ x: 0, y: 0, zoom: 0.3 });
     await waitFor(() =>
       expect(document.querySelector('[data-dag-ghost="dashed"]')).toBeTruthy(),

@@ -24,30 +24,21 @@ export function createDagTraversal(
   return { ...forest, upstream, downstream };
 }
 
-/** Parentage supplies inherited prerequisites, never a wait on the parent.
- * Descend only from newly reached downstream waiters, not from seed issues. */
+/** Walk only real snapshot dependency edges; parentage groups display frames
+ *  but never transfers blockers between ancestors and descendants. */
 export function dagDependencyClosure(
   traversal: DagTraversal,
   seeds: readonly string[],
   way: "upstream" | "downstream",
 ): Set<string> {
   const seen = new Set(seeds.filter((id) => traversal.parentOf.has(id)));
-  const affected = new Set<string>();
   const queue = [...seen];
-  const add = (id: string) => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    affected.add(id);
-    queue.push(id);
-  };
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const current = queue[cursor]!;
-    for (const next of traversal[way].get(current) ?? []) add(next);
-    if (way === "upstream") {
-      const parent = traversal.parentOf.get(current);
-      if (parent) add(parent);
-    } else if (affected.has(current)) {
-      for (const child of traversal.children.get(current) ?? []) add(child.id);
+    for (const next of traversal[way].get(current) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
     }
   }
   return seen;

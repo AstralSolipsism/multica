@@ -115,7 +115,7 @@ fi
 kill_switch_env="$tmp_dir/.env.kill-switch"
 sed 's/^# FF_LOCAL_SEARCH_INDEX=off$/FF_LOCAL_SEARCH_INDEX=off/' "$tmp_env" >"$kill_switch_env"
 require_env "$(backend_flags "$kill_switch_env")" 'FF_LOCAL_SEARCH_INDEX=off'
-collab_config="$(env -u COLLAB_SECRET -u COLLAB_INTERNAL_URL -u COMPOSE_PROFILES -u FF_DOCS_V1 \
+collab_config="$(env -u COLLAB_SECRET -u COLLAB_INTERNAL_URL -u COMPOSE_PROFILES -u FF_DOCS_V1 -u MULTICA_COLLAB_IMAGE -u MULTICA_COLLAB_IMAGE_TAG \
   docker compose --env-file "$collab_env" -f docker-compose.selfhost.yml config --format json)"
 node -e '
   const config = JSON.parse(process.argv[1]);
@@ -129,7 +129,7 @@ node -e '
   want("backend COLLAB_SECRET", backend.COLLAB_SECRET, "collab-secret-from-env");
   want("collab COLLAB_SECRET", collab.environment.COLLAB_SECRET, "collab-secret-from-env");
   want("collab MULTICA_API_URL", collab.environment.MULTICA_API_URL, "http://backend:8080");
-  want("collab image", collab.image, `ghcr.io/multica-ai/multica-collab:${process.env.MULTICA_IMAGE_TAG}`);
+  want("collab image", collab.image, "ghcr.io/multica-ai/multica-collab:v0.13.0");
   want("backend FF_DOCS_V1", backend.FF_DOCS_V1, "true");
   if (collab.ports && collab.ports.length) throw new Error("collab must not publish a port; editors reach it through the backend");
 ' "$collab_config"

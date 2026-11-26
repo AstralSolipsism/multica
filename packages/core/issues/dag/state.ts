@@ -15,11 +15,10 @@ export function dagHasActiveRun(node: RunState): boolean {
   return !!run && (run.queued > 0 || run.dispatched > 0 || run.running > 0 || run.waitingLocalDirectory > 0);
 }
 
-/** A parent waiter is finished only when its entire subtree has ended. */
-export function dagDependencyState(source: Pick<IssueGraphNode, "status" | "statusCategory"> & RunState, targetSubtreeFinished: boolean): DagDependencyState {
+/** Native blockers treat both done and cancelled (closed) as terminal. */
+export function dagDependencyState(source: Pick<IssueGraphNode, "status" | "statusCategory"> & RunState, targetFinished: boolean): DagDependencyState {
+  if (dagIssueFinished(source) || targetFinished) return "satisfied";
   const category = normalizeIssueStatusCategory(source.statusCategory);
-  if (category === "done" || targetSubtreeFinished) return "satisfied";
-  if (category === "closed") return "cancelled-blocking";
   if ((category === "started" && source.status !== "blocked") || dagHasActiveRun(source)) return "advancing";
   return "blocking";
 }

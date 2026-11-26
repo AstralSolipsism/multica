@@ -145,7 +145,7 @@ describe("dependency states and display counts", () => {
     expect(dagSegmentDisplay([satisfied], plan, states, false)).toBeNull();
   });
 
-  it("cancelled blockers outrank every other segment state", () => {
+  it("treats cancelled prerequisites as satisfied overlays just like done", () => {
     const cancelled = g(
       [
         n("r1"),
@@ -155,11 +155,12 @@ describe("dependency states and display counts", () => {
       ],
       [{ id: "e-a1", source: "a1", target: "b1" }],
     );
-    const model = overviewOf(cancelled);
+    const model = overviewOf(cancelled, true);
     const plan = dagOverviewLayoutInput(model);
     const states = dagDependencyStates({ kind: "overview", overview: model });
-    const display = dagSceneEdgeDisplay(plan, plan.input.edges[0]!.id, states, false)!;
-    expect(display.state).toBe("cancelled-blocking");
+    expect(plan.input.edges).toEqual([]);
+    const display = dagSceneEdgeDisplay(plan, plan.overlays[0]!.id, states, true)!;
+    expect(display.state).toBe("satisfied");
   });
 
   it("always paints satisfied dependencies inside a line, whatever the switch", () => {
@@ -573,8 +574,9 @@ describe("focus scene adapter", () => {
     ], [["before", "seed"], ["seed", "after"]]));
     const model = dagFocusCanvasModel(computeDagFocus(index, "seed"));
     expect(model.frames.filter((frame) => frame.issue.id === "root")).toHaveLength(2);
+    expect(model.frames.find((frame) => frame.issue.id === "root")).toMatchObject({ contextOnly: true });
     expect(model.frames.find((frame) => frame.issue.id === "other")).toMatchObject({ contextOnly: true });
-    expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 4, context: 1, edges: 2 });
+    expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 3, context: 2, edges: 2 });
   });
 
   it("resolves fragment selections to raw issues and paints satisfied/redundant dependencies", () => {
@@ -586,7 +588,7 @@ describe("focus scene adapter", () => {
     const states = dagDependencyStates(model);
     expect(dagSceneEdgeDisplay(model.plan, "a-after", states, false)).toEqual({ state: "satisfied", count: 1 });
     expect(model.plan.input.edges).toHaveLength(3);
-    expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 4, context: 0, edges: 3 });
+    expect(dagSceneStats(model, model.plan, false)).toEqual({ matched: 3, context: 1, edges: 3 });
   });
 });
 

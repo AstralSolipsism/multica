@@ -20,11 +20,16 @@ describe("redundancy", () => {
     expect(computeDagFocus(index, "source").dependencies.every((e) => !e.hiddenByDefault)).toBe(true);
   });
 
-  it("hides an inherited dependency even through a done parent with unfinished children", () => {
-    const graph = g([n("root"), n("source", { parentIssueId: "root" }), n("sub", { parentIssueId: "root", status: "done", statusCategory: "done" }), n("child", { parentIssueId: "sub" })], [["source", "sub"], ["source", "child"]]);
-    const line = computeDagLine(createDagModelIndex(graph), "root")!;
-    expect(line.dependencies.find((edge) => edge.target === "sub")).toMatchObject({ state: "blocking", targetKind: "frame", redundant: false });
-    expect(line.dependencies.find((edge) => edge.target === "child")).toMatchObject({ redundant: true, retained: false, hiddenByDefault: true });
+  it("never treats a direct child blocker as redundant via its parent's blocker", () => {
+    const openParent = g([n("root"), n("source", { parentIssueId: "root" }), n("sub", { parentIssueId: "root" }), n("child", { parentIssueId: "sub" })], [["source", "sub"], ["source", "child"]]);
+    const openLine = computeDagLine(createDagModelIndex(openParent), "root")!;
+    expect(openLine.dependencies.find((edge) => edge.target === "sub")).toMatchObject({ state: "blocking", targetKind: "frame", redundant: false, hiddenByDefault: false });
+    expect(openLine.dependencies.find((edge) => edge.target === "child")).toMatchObject({ state: "blocking", redundant: false, retained: false, hiddenByDefault: false });
+
+    const doneParent = g([n("root"), n("source", { parentIssueId: "root" }), n("sub", { parentIssueId: "root", status: "done", statusCategory: "done" }), n("child", { parentIssueId: "sub" })], [["source", "sub"], ["source", "child"]]);
+    const doneLine = computeDagLine(createDagModelIndex(doneParent), "root")!;
+    expect(doneLine.dependencies.find((edge) => edge.target === "sub")).toMatchObject({ state: "satisfied", targetKind: "frame", redundant: false, hiddenByDefault: false });
+    expect(doneLine.dependencies.find((edge) => edge.target === "child")).toMatchObject({ state: "blocking", redundant: false, retained: false, hiddenByDefault: false });
   });
 
   it("requires every alternate path to contain a finished intermediate before retaining", () => {
@@ -60,11 +65,11 @@ describe("redundancy", () => {
     expect(computeDagLine(createDagModelIndex(graph), "root")!.dependencies.every((edge) => !edge.redundant)).toBe(true);
   });
 
-  it("does not use an open descendant to make a done parent's outgoing dependency still block", () => {
+  it("does not use an open descendant to make a done parent's outgoing dependency still block or hide a direct child blocker", () => {
     const graph = g([n("root"), n("s", { parentIssueId: "root" }), n("p", { parentIssueId: "root", status: "done", statusCategory: "done" }), n("child", { parentIssueId: "p" }), n("t", { parentIssueId: "root" })], [["s", "p"], ["p", "t"], ["s", "t"], ["s", "child"]]);
     const edges = computeDagLine(createDagModelIndex(graph), "root")!.dependencies;
     expect(edges.find((edge) => edge.id === "s-t")).toMatchObject({ redundant: true, retained: true, hiddenByDefault: false });
-    expect(edges.find((edge) => edge.id === "s-child")).toMatchObject({ redundant: true, retained: false, hiddenByDefault: true });
+    expect(edges.find((edge) => edge.id === "s-child")).toMatchObject({ redundant: false, retained: false, hiddenByDefault: false });
   });
 
   it("handles cyclic dependencies without walking through the tested source again", () => {

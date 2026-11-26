@@ -394,12 +394,13 @@ Initial remote CI on `e5b967ae89e35359fec50cce5c6f66e6792a61e4` passed
 failure groups fixed in the linear follow-up commit on
 `sync/v0.13.0-ol-1517`:
 
-1. **`CI/script-checks` (`scripts/selfhost-config.test.sh:132`)**: aligned the
-   `collab image` assertion with the script's exported
-   `MULTICA_IMAGE_TAG=dev-config-test`
-   (``ghcr.io/multica-ai/multica-collab:${process.env.MULTICA_IMAGE_TAG}``),
-   keeping `MULTICA_IMAGE_TAG` set so `docker-compose.selfhost.yml`'s required
-   `${MULTICA_IMAGE_TAG:?...}` guard on `backend`/`frontend` succeeds.
+1. **`CI/script-checks` (`docker-compose.selfhost.yml:287`,
+   `scripts/selfhost-config.test.sh:118-132`)**: decoupled the optional
+   `collab` service image tag from `MULTICA_IMAGE_TAG` (which holds local
+   `dev-<sha>` or `v0.13.0-labrastro.N` application tags that do not exist on
+   upstream GHCR) via `${MULTICA_COLLAB_IMAGE_TAG:-v0.13.0}`, and aligned the
+   compose config assertion to `ghcr.io/multica-ai/multica-collab:v0.13.0`
+   (149 production continues to keep `collab` disabled).
 2. **`CI/docs-test` (`apps/docs/content/docs/tutorial.zh-Hant.mdx:202`)**: fixed
    broken internal heading anchor `/mentioning-agents#給正在運行的-ai-代理插話`
    → `/mentioning-agents#給正在執行的-ai-代理插話`.
@@ -465,6 +466,46 @@ across both shards, with the 8 CPU-contended shard-1 files re-verified 8/8 /
 and Go `-race` tests (`./internal/notify` + `TestUploadFileImageDimensions`
 against a fresh migrated disposable PG17.12 database, torn down cleanly) all
 pass.
+
+## Stage 3 first-review fixes (R1–R4, PR #340 follow-up)
+
+Following cross-family first review on `6ad12e1d52e36083d43a0b6f466d60cab89ca173`
+(where remote `CI required` passed on run `45777113564`), four blocking items
+were resolved in a single linear follow-up commit on `sync/v0.13.0-ol-1517`:
+
+1. **R1 — DAG cancelled prerequisite = satisfied (`packages/core/issues/dag/state.ts`,
+   `projection.ts`, `model-index.ts`, `packages/views/issues/dag/dag-toolbar.tsx`)**:
+   unified `dagDependencyState` so both `done` and `closed` (`cancelled`)
+   categories return `"satisfied"` matching native `issue_has_open_blockers`
+   (`docs/issue-graph-api.md:84`), stopped promoting cancelled prerequisites into
+   `cancelledBlockedIds` / `attention: "exception"`, removed the legacy
+   `keptCancelled` pull-out walk in `dagCompletedVisibility` so finished
+   (done/cancelled) lines and singles hide uniformly when `showCompleted` is
+   off, removed the retired cancelled-blocking legend entry, and updated
+   `models.test.ts` and views DAG tests accordingly.
+2. **R2 — DAG non-inheritance of parent blockers (`packages/core/issues/dag/traversal.ts`,
+   `redundancy.ts`, `detail.ts`, `model-index.ts`, `packages/views/issues/dag/dag-scene-inputs.ts`)**:
+   removed parent/child blocker inheritance from `dagDependencyClosure`,
+   `markDagRedundancy` and `dagDependencyState` (`dagIssueFinished(target)`
+   instead of `subtreeFinished`), and restricted focus edges to real closure
+   endpoints while keeping parent-child display frames intact
+   (`docs/issue-graph-api.md:18`). Updated `redundancy.test.ts`,
+   `models.test.ts`, `use-dag-data.test.tsx`, `dag-scene-inputs.test.ts` and
+   `dag-scene-flow.test.ts`.
+3. **R3 — `9079` reverse-edge (`blocks`) test kill power
+   (`server/cmd/migrate/labrastro_issue_dependency_to_blocker_test.go`)**:
+   moved dual-spelling deduplication onto `(dependent, blocker)` and made
+   `reverse` (agent-created) carry only `(blocker, reverse, "blocks")`. Verified
+   against PG17.12 using the same compiled test binary on an out-of-repo copy:
+   unmutated `9079` passes, while disabling `WHERE d.type = 'blocks'` fails red
+   on the missing agent-attributed reverse blocker row.
+4. **R4 — Self-host optional `collab` image tag
+   (`docker-compose.selfhost.yml:287`, `scripts/selfhost-config.test.sh`)**:
+   switched `collab.image` tag to `${MULTICA_COLLAB_IMAGE_TAG:-v0.13.0}` so
+   enabling `COMPOSE_PROFILES=collab` pulls the compatible published `v0.13.0`
+   upstream image instead of nonexistent `dev-<sha>` / `v0.13.0-labrastro.1`,
+   and updated `scripts/selfhost-config.test.sh:118-132` to assert
+   `ghcr.io/multica-ai/multica-collab:v0.13.0`.
 
 ## Cross-family review and Stage 4/5 handoff
 

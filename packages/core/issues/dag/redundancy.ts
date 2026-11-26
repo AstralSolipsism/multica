@@ -8,13 +8,12 @@ export interface DagDetailedDependency extends DagDependency {
   hiddenByDefault: boolean;
 }
 
-/** Inheritance is an implicit parent -> child step after a real dependency.
- * It must never imply that a child waits for its parent's own status. */
+/** Redundancy walks only actual snapshot edges; parentage groups frames
+ *  and never conveys blockers from ancestors to descendants. */
 export function markDagRedundancy(members: readonly DagTask[], edges: readonly DagDependency[], showRedundant = false): DagDetailedDependency[] {
   const positions = new Map(members.map((m, i) => [m.issue.id, i]));
   const adjacency = members.map(() => new Set<number>());
   const direct = members.map(() => new Set<number>());
-  const inherited = members.map(() => [] as number[]);
   const finished = members.map((m) => dagIssueFinished(m.issue));
   function detail(edge: DagDependency, redundant: boolean, retained: boolean): DagDetailedDependency {
     return {
@@ -24,23 +23,15 @@ export function markDagRedundancy(members: readonly DagTask[], edges: readonly D
       redundant, retained, hiddenByDefault: !showRedundant && redundant && !retained,
     };
   }
-  for (let i = 0; i < members.length; i++) {
-    const parent = positions.get(members[i]!.parentId ?? "");
-    if (parent !== undefined) {
-      adjacency[parent]!.add(i);
-      inherited[parent]!.push(i);
-    }
-  }
-  // An ended intermediate cannot convey a wait through its own outgoing
-  // dependency. Inheritance is different: a done parent's prerequisites still
-  // apply to its children, without requiring the parent itself to be open.
-  const liveNext = adjacency.map((next, i): Iterable<number> => finished[i] ? inherited[i]! : next);
   for (const edge of edges) {
     const source = positions.get(edge.source), target = positions.get(edge.target);
     if (source === undefined || target === undefined) continue;
     adjacency[source]!.add(target);
     direct[source]!.add(target);
   }
+  // An ended intermediate cannot convey a wait through its own outgoing
+  // dependency.
+  const liveNext = adjacency.map((next, i): Iterable<number> => finished[i] ? [] : next);
   const indegree = new Uint32Array(members.length);
   for (const next of adjacency) for (const target of next) indegree[target] = indegree[target]! + 1;
   const order: number[] = [];

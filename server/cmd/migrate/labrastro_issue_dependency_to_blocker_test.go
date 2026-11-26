@@ -53,8 +53,8 @@ func TestLabrastroIssueDependencyMigratesToBlockers(t *testing.T) {
 		fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": issue, "depends_on_issue_id": dependsOn, "type": kind})
 	}
 	dependency(dependent, blocker, "blocked_by")
-	dependency(blocker, reverse, "blocks")
-	dependency(reverse, blocker, "blocked_by") // the same edge in both spellings
+	dependency(blocker, dependent, "blocks") // same edge in both spellings: deduplicated once
+	dependency(blocker, reverse, "blocks")   // reverse-only spelling: only the blocks branch can migrate it
 	dependency(finished, closedBlocker, "blocked_by")
 	dependency(dependent, related, "related")
 	dependency(dependent, dependent, "blocked_by")

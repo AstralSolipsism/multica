@@ -173,7 +173,7 @@ describe("DagToolbar navigation", () => {
     expect(store.getState().dagShowCompleted).toBe(true);
   });
 
-  it("collects the four edge states and the side cards into the legend", async () => {
+  it("collects the active edge states and the side cards into the legend", async () => {
     harness();
     fireEvent.click(screen.getByRole("button", { name: "Legend" }));
     expect(await screen.findByText("Thin light-gray line: satisfied dependency")).toBeInTheDocument();
@@ -182,8 +182,8 @@ describe("DagToolbar navigation", () => {
       screen.getByText("Dark solid line with flowing dots: prerequisite is advancing"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Red dashed line, slowly pulsing: cancelled but still blocking"),
-    ).toBeInTheDocument();
+      screen.queryByText("Red dashed line, slowly pulsing: cancelled but still blocking"),
+    ).toBeNull();
     expect(
       screen.getByText("Dashed side cards: dependencies on other task lines — click to jump"),
     ).toBeInTheDocument();

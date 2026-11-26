@@ -35,12 +35,13 @@ describe("DAG data boundary", () => {
     rerender({ request: { view: "line", lineId: "root" } });
     expect(result.current.models?.line?.tasks[0]?.issue.id).toBe("child");
     rerender({ request: { view: "focus", issueId: "child" } });
-    expect(result.current.models?.focus?.upstreamIds.has("root")).toBe(true);
+    expect(result.current.models?.focus?.upstreamIds).toEqual(new Set(["child"]));
+    expect(result.current.models?.focus?.groups[0]?.frames[0]).toMatchObject({ id: "root", contextOnly: true });
     expect(getIssueGraph).toHaveBeenCalledOnce();
     await act(async () => {
       client.setQueryData(issueGraphOptions("ws", spec).queryKey, { ...graph, nodes: graph.nodes.map((node) => ({ ...node, status: "done", statusCategory: "done" })) });
     });
-    await waitFor(() => expect(result.current.models?.focus?.hiddenIssueCount).toBe(2));
+    await waitFor(() => expect(result.current.models?.focus?.hiddenIssueCount).toBe(1));
   });
 
   it("does not expose the previous workspace or filtered scope during a pending read", async () => {

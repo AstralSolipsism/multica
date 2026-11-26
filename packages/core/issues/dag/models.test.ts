@@ -15,7 +15,7 @@ const blocked = { status: "blocked", statusCategory: "started" };
 
 describe("dependency display states", () => {
   it.each([
-    [done, "satisfied"], [closed, "cancelled-blocking"], [started, "advancing"],
+    [done, "satisfied"], [closed, "satisfied"], [started, "advancing"],
     [review, "advancing"], [blocked, "blocking"], [{}, "blocking"],
     [{ status: "custom-active", statusCategory: "started" }, "advancing"],
     [{ status: "custom-finished", statusCategory: "completed" }, "satisfied"],
@@ -29,16 +29,18 @@ describe("dependency display states", () => {
     const source = n("source", blocked);
     source.runSummary![counter] = 1;
     expect(dagDependencyState(source, false)).toBe("advancing");
-    expect(dagDependencyState({ ...source, ...closed }, false)).toBe("cancelled-blocking");
+    expect(dagDependencyState({ ...source, ...closed }, false)).toBe("satisfied");
   });
 
-  it("requires a parent waiter and all nested descendants to finish", () => {
-    const graph = g([n("s", closed), n("p", done), n("sub", { parentIssueId: "p", ...done }), n("child", { parentIssueId: "sub" })], [["s", "p"]]);
-    const index = createDagModelIndex(graph);
-    expect(index.dependencies[0]).toMatchObject({ state: "cancelled-blocking", targetKind: "frame" });
-    expect(computeDagOverview(index).cards.find((c) => c.issue?.id === "p")?.attention).toBe("exception");
-    const finished = createDagModelIndex({ ...graph, nodes: graph.nodes.map((node) => ({ ...node, ...closed })) });
-    expect(finished.dependencies[0]?.state).toBe("satisfied");
+  it("treats cancelled prerequisites and finished parent waiters as satisfied without inheriting to descendants", () => {
+    const cancelledSource = createDagModelIndex(g([n("s", closed), n("t", started)], [["s", "t"]]));
+    expect(cancelledSource.dependencies[0]).toMatchObject({ state: "satisfied", targetKind: "task" });
+    expect(cancelledSource.cancelledBlockedIds.size).toBe(0);
+    expect(computeDagOverview(cancelledSource, { showCompleted: true }).cards.find((c) => c.issue?.id === "t")?.attention).toBe("advancing");
+
+    const finishedParent = createDagModelIndex(g([n("s"), n("p", done), n("sub", { parentIssueId: "p", ...done }), n("child", { parentIssueId: "sub" })], [["s", "p"]]));
+    expect(finishedParent.dependencies[0]).toMatchObject({ state: "satisfied", targetKind: "frame" });
+    expect(computeDagOverview(finishedParent).cards.find((c) => c.issue?.id === "p")?.attention).toBe("unstarted");
   });
 
   it("aggregates by attention, including the blocking/advancing tie", () => {
@@ -85,17 +87,17 @@ describe("overview", () => {
     expect(cards.map((c) => c.issue?.id)).toEqual(["blocked-new", "blocked-old", "blocked", "active", "run", "review", "todo", "ended"]);
   });
 
-  it("hides only whole finished lines and keeps cancelled blockers as context, including inherited waits", () => {
+  it("hides whole finished lines and cancelled prerequisites uniformly when showCompleted is off", () => {
     const graph = g([
       n("hidden", done), n("cancelled", { parentIssueId: "hidden", ...closed }),
       n("live", done), n("child", { parentIssueId: "live" }),
-      n("finished", done), n("solo"),
-    ], [["cancelled", "live"]]);
+      n("finished", done), n("cancelledSolo", closed), n("solo"),
+    ], [["cancelled", "live"], ["cancelledSolo", "child"]]);
     const model = computeDagOverview(createDagModelIndex(graph));
-    expect(model.cards.map((c) => c.id)).toEqual(expect.arrayContaining(["cancelled", "issue:live", "independent:root"]));
-    expect(model.cards.find((c) => c.id === "cancelled")).toMatchObject({ kind: "issue", role: "context", cancelledBlocking: true });
+    expect(model.cards.map((c) => c.id)).toEqual(["issue:live", "independent:root"]);
+    expect(model.cards.every((c) => !c.cancelledBlocking)).toBe(true);
     expect(model.cards.find((c) => c.id === "issue:live")?.memberIds).toEqual(["live", "child"]);
-    expect(model.hiddenCompleted).toEqual({ lines: 1, lineTasks: 1, singles: 1 });
+    expect(model.hiddenCompleted).toEqual({ lines: 1, lineTasks: 2, singles: 2 });
     expect(model.hiddenLineIds).toEqual(["issue:hidden"]);
     expect(model.autoEnterLineId).toBeNull();
     expect(computeDagOverview(createDagModelIndex(graph), { showCompleted: true }).hiddenCompleted).toEqual({ lines: 0, lineTasks: 0, singles: 0 });
@@ -109,9 +111,9 @@ describe("overview", () => {
     ], [["a1", "b1"], ["a2", "b1"], ["a3", "b1"], ["a1", "c1"], ["a1", "a2"]]);
     const index = createDagModelIndex(graph), model = computeDagOverview(index);
     expect(model.dependencies).toHaveLength(1);
-    expect(model.dependencies[0]).toMatchObject({ source: "issue:a", target: "issue:b", count: 3, state: "cancelled-blocking", sourceEdgeIds: ["a1-b1", "a2-b1", "a3-b1"] });
+    expect(model.dependencies[0]).toMatchObject({ source: "issue:a", target: "issue:b", count: 3, state: "advancing", sourceEdgeIds: ["a1-b1", "a2-b1", "a3-b1"] });
     expect(model.satisfiedByCard.get("issue:a")).toHaveLength(2);
-    expect(model.satisfiedByCard.get("issue:b")?.[0]?.sourceEdgeIds).toEqual(["a1-b1"]);
+    expect(model.satisfiedByCard.get("issue:b")?.[0]?.sourceEdgeIds).toEqual(["a1-b1", "a3-b1"]);
     expect(computeDagOverview(index, { showSatisfiedDependencies: true }).dependencies).toHaveLength(2);
   });
 
@@ -194,7 +196,7 @@ describe("line and focus models", () => {
     expect(line.frames).toHaveLength(2);
   });
 
-  it("excludes hidden closure members from both upstream and downstream ids", () => {
+  it("excludes hidden closure members and walks only actual edges without inheriting parent blockers", () => {
     const index = createDagModelIndex(g([
       n("up", done), n("up-child", { parentIssueId: "up", ...done }), n("target"),
       n("down", done), n("down-child", { parentIssueId: "down", ...done }),
@@ -202,51 +204,47 @@ describe("line and focus models", () => {
     const hidden = computeDagFocus(index, "target");
     expect(hidden.upstreamIds).toEqual(new Set(["target"]));
     expect(hidden.downstreamIds).toEqual(new Set(["target"]));
-    expect(hidden.hiddenIssueCount).toBe(4);
+    expect(hidden.hiddenIssueCount).toBe(2);
 
     const shown = computeDagFocus(index, "target", true);
-    expect(shown.upstreamIds).toEqual(new Set(["target", "up", "up-child"]));
-    expect(shown.downstreamIds).toEqual(new Set(["target", "down", "down-child"]));
+    expect(shown.upstreamIds).toEqual(new Set(["target", "up-child"]));
+    expect(shown.downstreamIds).toEqual(new Set(["target", "down"]));
+    expect(shown.groups.find((group) => group.lineId === "up")?.frames[0]).toMatchObject({ id: "up", contextOnly: true });
     expect(shown.hiddenIssueCount).toBe(0);
   });
 
-  it("gives a kept cancelled task its own focus group when its line is hidden", () => {
+  it("never transfers a parent's blocker into an unstaged child's focus closure", () => {
     const index = createDagModelIndex(g([
-      n("hidden", done), n("cancelled", { parentIssueId: "hidden", ...closed }), n("target"),
-    ], [["cancelled", "target"]]));
-    const focus = computeDagFocus(index, "target");
-    expect(focus.groups.map((group) => group.lineId).sort()).toEqual(["cancelled", "target"]);
-    expect(focus.groups.find((group) => group.lineId === "cancelled")).toMatchObject({
-      frames: [], tasks: [{ issue: { id: "cancelled" }, parentId: null, role: "context", cancelledBlocking: true }],
-    });
+      n("a"), n("p"), n("c", { parentIssueId: "p" }),
+    ], [["a", "p"]]));
+    const focusChild = computeDagFocus(index, "c", true);
+    expect(focusChild.upstreamIds).toEqual(new Set(["c"]));
+    expect(focusChild.downstreamIds).toEqual(new Set(["c"]));
+    expect(focusChild.dependencies).toEqual([]);
+    expect(focusChild.groups.find((group) => group.lineId === "p")?.frames[0]).toMatchObject({ id: "p", contextOnly: true });
+
+    const focusBlocker = computeDagFocus(index, "a", true);
+    expect(focusBlocker.downstreamIds).toEqual(new Set(["a", "p"]));
+    expect(focusBlocker.dependencies.map((edge) => edge.id)).toEqual(["a-p"]);
   });
 
-  it("counts hidden closure members once and never puts hidden tasks in focus frames", () => {
-    const graph = g([n("s", done), n("mid", done), n("target"), n("cancelled", closed)], [["s", "mid"], ["mid", "target"], ["cancelled", "target"]]);
-    const index = createDagModelIndex(graph), focus = computeDagFocus(index, "target");
-    expect(focus.hiddenIssueCount).toBe(2);
-    expect(focus.groups.flatMap((group) => group.tasks.map((task) => task.issue.id)).sort()).toEqual(["cancelled", "target"]);
-    expect(focus.dependencies.map((edge) => edge.id)).toEqual(["cancelled-target"]);
-    expect(computeDagFocus(index, "target", true).hiddenIssueCount).toBe(0);
-    expect(computeDagFocus(index, "missing").groups).toEqual([]);
-  });
+  it("hides cancelled prerequisites in focus when showCompleted is off and shows them as satisfied when on", () => {
+    const graph = g([
+      n("s", done), n("mid", done), n("target"),
+      n("hidden", done), n("cancelled", { parentIssueId: "hidden", ...closed }),
+      n("soloCancelled", closed),
+    ], [["s", "mid"], ["mid", "target"], ["cancelled", "target"], ["soloCancelled", "target"]]);
+    const index = createDagModelIndex(graph), hidden = computeDagFocus(index, "target");
+    expect(hidden.hiddenIssueCount).toBe(4);
+    expect(hidden.groups.flatMap((group) => group.tasks.map((task) => task.issue.id))).toEqual(["target"]);
+    expect(hidden.dependencies).toEqual([]);
 
-  it("flattens a kept cancelled frame from a hidden line, and restores its frame with completed work on", () => {
-    const index = createDagModelIndex(g([n("cancelled", closed), n("child", { parentIssueId: "cancelled", ...done }), n("target")], [["cancelled", "target"]]));
-    const hidden = computeDagFocus(index, "target");
-    expect(hidden.groups.flatMap((group) => group.frames)).toEqual([]);
-    expect(hidden.dependencies[0]?.sourceKind).toBe("task");
     const shown = computeDagFocus(index, "target", true);
-    expect(shown.groups.flatMap((group) => group.frames).map((frame) => frame.id)).toEqual(["cancelled"]);
-    expect(shown.dependencies[0]?.sourceKind).toBe("frame");
-  });
-
-  it("never parents a retained cancelled task to another flattened task", () => {
-    const index = createDagModelIndex(g([n("p", closed), n("c", { parentIssueId: "p", ...closed }), n("target")], [["p", "target"], ["c", "target"]]));
-    const focus = computeDagFocus(index, "target");
-    expect(focus.groups.flatMap((group) => group.frames)).toEqual([]);
-    const tasks = focus.groups.flatMap((group) => group.tasks);
-    expect(tasks.find((task) => task.issue.id === "c")).toMatchObject({ parentId: null, role: "context", cancelledBlocking: true });
+    expect(shown.hiddenIssueCount).toBe(0);
+    expect(shown.dependencies.find((edge) => edge.id === "cancelled-target")?.state).toBe("satisfied");
+    expect(shown.dependencies.find((edge) => edge.id === "soloCancelled-target")?.state).toBe("satisfied");
+    expect(shown.groups.flatMap((group) => group.tasks).every((task) => !task.cancelledBlocking)).toBe(true);
+    expect(computeDagFocus(index, "missing").groups).toEqual([]);
   });
 
   it("reuses untouched lines/cards across independent parses and fresh run timestamps", () => {

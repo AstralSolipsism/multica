@@ -76,9 +76,8 @@ export interface DagCompletedVisibility {
   hiddenRoots: ReadonlySet<string>;
   /** Standalone finished tasks (including independent-group members). */
   hiddenSingles: ReadonlySet<string>;
-  /** Hidden cancelled tasks kept visible because they still block visible
-   *  unfinished work. The server only treats done as satisfied, so a
-   *  cancelled prerequisite stalls its downstream forever. */
+  /** Retained for model shape compatibility; empty because native blockers
+   *  treat cancelled (closed) as satisfied just like done. */
   keptCancelled: ReadonlySet<string>;
   /** Rep ids of the hidden lines, including lines nested inside them. */
   hiddenLineIds: readonly string[];
@@ -86,10 +85,9 @@ export interface DagCompletedVisibility {
 
 /** What the "show completed" switch hides, decided at the top level: a task
  *  line hides only when its parent and every nested member are done/closed; a
- *  standalone finished task hides on its own. The walk that keeps cancelled
- *  blockers visible starts from visible UNFINISHED tasks and propagates only
- *  through hidden cancelled ones — a done or visible-cancelled intermediate
- *  already accounts for its own downstream, so the chain stops there. */
+ *  standalone finished task hides on its own. Native blockers treat both done
+ *  and cancelled (closed) as terminal, so cancelled prerequisites hide with
+ *  completed work rather than remaining pinned as blocking context. */
 export function dagCompletedVisibility(
   graph: IssueGraph,
   forest: ReturnType<typeof dagDisplayForest> = dagDisplayForest(graph),
@@ -107,43 +105,6 @@ export function dagCompletedVisibility(
     } else if (finished(root)) hiddenSingles.add(root.id);
   }
   const keptCancelled = new Set<string>();
-  if (hiddenRoots.size || hiddenSingles.size) {
-    const hiddenScope = new Set<string>();
-    for (const id of hiddenRoots)
-      for (const member of dagDescendants(children, byId.get(id)!)) hiddenScope.add(member.id);
-    for (const id of hiddenSingles) hiddenScope.add(id);
-    const backEdges = new Map<string, string[]>();
-    for (const edge of graph.edges) {
-      const list = backEdges.get(edge.target) ?? [];
-      list.push(edge.source);
-      backEdges.set(edge.target, list);
-    }
-    const unfinishedSubtrees = new Set<string>();
-    for (const node of graph.nodes) {
-      if (finished(node)) continue;
-      let current: string | null = node.id;
-      while (current && !unfinishedSubtrees.has(current)) {
-        unfinishedSubtrees.add(current);
-        current = forest.parentOf.get(current) ?? null;
-      }
-    }
-    const queue = graph.nodes
-      .filter((n) => !hiddenScope.has(n.id) && unfinishedSubtrees.has(n.id))
-      .map((n) => n.id);
-    const seen = new Set(queue);
-    for (let cursor = 0; cursor < queue.length; cursor++) {
-      const target = queue[cursor]!;
-      for (const source of backEdges.get(target) ?? []) {
-        if (seen.has(source)) continue;
-        seen.add(source);
-        const node = byId.get(source);
-        if (node && hiddenScope.has(source) && normalizeIssueStatusCategory(node.statusCategory) === "closed") {
-          keptCancelled.add(source);
-          queue.push(source);
-        }
-      }
-    }
-  }
   const hiddenLineIds: string[] = [];
   for (const rootId of hiddenRoots)
     for (const member of dagDescendants(children, byId.get(rootId)!))
