@@ -1690,6 +1690,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		return nil, err
 	}
 
+	leaseState := lease.Snapshot()
 	if req.PlanQuota != nil {
 		// The conditional plan_quota update needs only the row id plus the
 		// workspace id for the change broadcast; both are already known from
@@ -1697,7 +1698,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 		if runtimeUUID, parseErr := util.ParseUUID(runtimeID); parseErr == nil {
 			h.storeHeartbeatPlanQuota(ctx, db.AgentRuntime{
 				ID:          runtimeUUID,
-				WorkspaceID: parseUUID(lease.Snapshot().WorkspaceID),
+				WorkspaceID: parseUUID(leaseState.WorkspaceID),
 			}, req.PlanQuota)
 		}
 	}
@@ -1706,7 +1707,6 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	// the lease's workspace plus the lease's daemon id (captured from the
 	// runtime row at connection time — the authenticated identity carries no
 	// daemon id when the daemon heartbeats with a user PAT).
-	leaseState := lease.Snapshot()
 	h.storeHeartbeatMetrics(ctx, leaseState.WorkspaceID, leaseState.DaemonID, req.Metrics)
 	h.storeHeartbeatThinkingAdapt(ctx, leaseState.WorkspaceID, leaseState.DaemonID, req.ThinkingAdapt)
 
@@ -6938,7 +6938,6 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID := task.ID
 

@@ -530,6 +530,7 @@ describe("v2 sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Wakeup history · 1" }));
     expect(screen.getByRole("button", { name: /Wake Emacs/ })).toHaveTextContent("Timed out");
   });
+
 });
 
 describe("conditions, limits and history", () => {

@@ -5,6 +5,7 @@
 --
 -- One edge at a time: the issue_blocker triggers refuse an edge that closes a
 -- cycle with the same-parent stage order or that links an ancestor with a
+-- descendant. Such an edge stays behind in issue_dependency and the upgrade
 -- continues. A rerun inserts nothing: each edge is either already present or
 -- refused the same way. A blocker row is attributed to the dependent issue's
 -- own creator, member or agent, as a blocker added with the issue would be.
@@ -33,7 +34,7 @@ BEGIN
 			VALUES (edge.workspace_id, edge.issue_id, edge.blocker_issue_id, edge.creator_type, edge.creator_id)
 			ON CONFLICT (workspace_id, issue_id, blocker_issue_id) DO NOTHING;
 		EXCEPTION WHEN check_violation THEN
-			RAISE NOTICE 'issue_dependency edge % -> % kept as retired data: %', edge.issue_id, edge.blocker_issue_id, SQLERRM;
+			RAISE NOTICE 'migration report: issue_dependency edge % -> % kept as retired data: %', edge.issue_id, edge.blocker_issue_id, SQLERRM;
 		END;
 	END LOOP;
 END

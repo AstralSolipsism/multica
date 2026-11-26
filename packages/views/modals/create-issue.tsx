@@ -523,7 +523,6 @@ export function ManualCreatePanel({
     setUnavailablePropertyRemoved(false);
     setProjectId(undefined);
     setChildIssues([]);
-    setBlockedByIds([]);
     updateBlockedBy([]);
     // Keep status and assignee in this batch. Parent and stage stay in local
     // state, while other manual and shared fields reset for the next issue.
@@ -1013,8 +1012,8 @@ export function ManualCreatePanel({
       ) : (
         <>
           {t(($) => $.create_issue.submit)}
-          {/* Decorative: the accessible name must stay "Create issue", not
-              "Create issue Command Enter". Absent when `send` is unbound.
+          {/* Decorative: the accessible name must stay "Create Issue", not
+              "Create Issue Command Enter". Absent when `send` is unbound.
               Hidden on phones — no ⌘ key there, and the footer row is at its
               tightest. */}
           {sendShortcut ? (

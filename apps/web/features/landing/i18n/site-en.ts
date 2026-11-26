@@ -46,7 +46,7 @@ export const enSiteCopy: Pick<LandingDict, "site" | "home" | "demo" | "meta"> = 
     },
     privacy: {
       title: "Privacy Policy",
-      description: "How Labrastro collects, uses, and protects personal information on multica.ai and Labrastro Cloud.",
+      description: "How Labrastro collects, uses, and protects personal information.",
       ogTitle: "Privacy Policy — Labrastro",
       ogDescription: "How Labrastro collects, uses, and protects personal information.",
     },

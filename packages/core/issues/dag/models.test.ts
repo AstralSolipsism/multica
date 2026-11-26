@@ -35,7 +35,6 @@ describe("dependency display states", () => {
   it("treats cancelled prerequisites and finished parent waiters as satisfied without inheriting to descendants", () => {
     const cancelledSource = createDagModelIndex(g([n("s", closed), n("t", started)], [["s", "t"]]));
     expect(cancelledSource.dependencies[0]).toMatchObject({ state: "satisfied", targetKind: "task" });
-    expect(cancelledSource.cancelledBlockedIds.size).toBe(0);
     expect(computeDagOverview(cancelledSource, { showCompleted: true }).cards.find((c) => c.issue?.id === "t")?.attention).toBe("advancing");
 
     const finishedParent = createDagModelIndex(g([n("s"), n("p", done), n("sub", { parentIssueId: "p", ...done }), n("child", { parentIssueId: "sub" })], [["s", "p"]]));
@@ -46,7 +45,6 @@ describe("dependency display states", () => {
   it("aggregates by attention, including the blocking/advancing tie", () => {
     expect(aggregateDagDependencyState(["satisfied", "advancing"])).toBe("advancing");
     expect(aggregateDagDependencyState(["advancing", "blocking"])).toBe("blocking");
-    expect(aggregateDagDependencyState(["blocking", "cancelled-blocking", "advancing"])).toBe("cancelled-blocking");
     expect(aggregateDagDependencyState([])).toBe("satisfied");
   });
 });
@@ -95,7 +93,6 @@ describe("overview", () => {
     ], [["cancelled", "live"], ["cancelledSolo", "child"]]);
     const model = computeDagOverview(createDagModelIndex(graph));
     expect(model.cards.map((c) => c.id)).toEqual(["issue:live", "independent:root"]);
-    expect(model.cards.every((c) => !c.cancelledBlocking)).toBe(true);
     expect(model.cards.find((c) => c.id === "issue:live")?.memberIds).toEqual(["live", "child"]);
     expect(model.hiddenCompleted).toEqual({ lines: 1, lineTasks: 2, singles: 2 });
     expect(model.hiddenLineIds).toEqual(["issue:hidden"]);
@@ -243,7 +240,6 @@ describe("line and focus models", () => {
     expect(shown.hiddenIssueCount).toBe(0);
     expect(shown.dependencies.find((edge) => edge.id === "cancelled-target")?.state).toBe("satisfied");
     expect(shown.dependencies.find((edge) => edge.id === "soloCancelled-target")?.state).toBe("satisfied");
-    expect(shown.groups.flatMap((group) => group.tasks).every((task) => !task.cancelledBlocking)).toBe(true);
     expect(computeDagFocus(index, "missing").groups).toEqual([]);
   });
 

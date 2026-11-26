@@ -110,7 +110,6 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to get notification preferences")
 		return
 	}
-
 	writeNotificationPreferenceResponse(w, workspaceID, pref)
 }
 

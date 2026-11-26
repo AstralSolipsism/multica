@@ -69,7 +69,6 @@
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "wecom_bind": {
-      "page_title": "Link your WeCom account",
       "needs_auth_description": "Sign in to connect your WeCom account to your Labrastro account.",
       "error_already_bound": "This WeCom account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."

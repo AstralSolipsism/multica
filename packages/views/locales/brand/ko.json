@@ -74,7 +74,6 @@
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아닙니다."
     },
     "wecom_bind": {
-      "page_title": "WeCom 계정 연결",
       "needs_auth_description": "WeCom 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
       "error_already_bound": "이 WeCom 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아니에요."

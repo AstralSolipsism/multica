@@ -31,8 +31,8 @@ export type AutoArchiveKey =
   | "auto_archive_on_project"
   | "auto_archive_on_dates"
   | "auto_archive_on_labels";
-export type NotificationGroupValue = "all" | "muted";
 
+export type NotificationGroupValue = "all" | "muted";
 
 /**
  * How much of someone else's issue reaches you when you are only passively

@@ -197,10 +197,6 @@ GITHUB_APP_PRIVATE_KEY=<full PEM private key, keeping the BEGIN/END lines and ne
 
 Generate the private key under the GitHub App's **Private keys → Generate a private key**. Without these two variables, Connect is disabled. Existing bindings still mirror PRs and update issues from webhooks, but PR cards lack CI and mergeability status.
 
-<Callout type="warning">
-These two variables are also required to complete a **first** GitHub connection: the post-install callback verifies the reported `installation_id` against GitHub's API as the App before binding it, so a deployment without them cannot finish a new install (the callback redirects back with a retryable error). An installation already bound to a workspace can still be re-bound by its workspace admins.
-</Callout>
-
 </Step>
 <Step>
 

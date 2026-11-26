@@ -1,15 +1,14 @@
-import type { IssueGraph, IssueGraphNode } from "../../api/issue-graph-schemas";
+import type { IssueGraph } from "../../api/issue-graph-schemas";
 
 export interface DagTraversal {
   parentOf: ReadonlyMap<string, string | null>;
-  children: ReadonlyMap<string, readonly IssueGraphNode[]>;
   upstream: ReadonlyMap<string, readonly string[]>;
   downstream: ReadonlyMap<string, readonly string[]>;
 }
 
 export function createDagTraversal(
   graph: IssueGraph,
-  forest: Pick<DagTraversal, "parentOf" | "children">,
+  forest: Pick<DagTraversal, "parentOf">,
 ): DagTraversal {
   const upstream = new Map<string, string[]>(), downstream = new Map<string, string[]>();
   for (const edge of graph.edges) {
@@ -21,7 +20,7 @@ export function createDagTraversal(
     forward.push(edge.target);
     downstream.set(edge.source, forward);
   }
-  return { ...forest, upstream, downstream };
+  return { parentOf: forest.parentOf, upstream, downstream };
 }
 
 /** Walk only real snapshot dependency edges; parentage groups display frames

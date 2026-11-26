@@ -141,7 +141,6 @@
       "private_project": "Visible uniquement par les membres du projet",
       "all_projects_one": "Tous les projets ({{count}})",
       "all_projects_other": "Tous les projets ({{count}})",
-      "project_actions": "Actions pour {{name}}",
       "project_issues": "Tâches de {{name}}",
       "project_issues_empty": "Aucune tâche",
       "project_issues_error": "Impossible de charger les tâches",

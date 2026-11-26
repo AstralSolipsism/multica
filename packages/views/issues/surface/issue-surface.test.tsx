@@ -117,12 +117,6 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
-// Captures the surface render context so the table-mode tip anchor scope
-// wiring (OL-193) is pinned end to end.
-const issuesHeaderProps = vi.hoisted(() => ({
-  current: undefined as Record<string, unknown> | undefined,
-}));
-
 function makeIssue(id: string, title: string, projectId: string): Issue {
   return {
     id,
@@ -1237,66 +1231,7 @@ describe("summaryScopeIssues (OL-193)", () => {
     qc.clear();
     pruneIssueSurfaceViewStates([]);
   });
-
-  it("feeds the table's loaded rows through summaryScopeIssues", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const store = getIssueSurfaceViewStore("project:ysk-scope-default");
-    store.getState().setViewMode("table");
-
-    const row = makeIssue("t9", "Default-header table row", "ysk-scope-default");
-    setApiInstance({
-      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
-      listIssues: vi.fn(() => never()),
-      listIssueTableRows: async () => ({
-        query_fingerprint: "sha256:ysk-default",
-        group_key: null,
-        parent_id: null,
-        total: 1,
-        rows: [{ issue: row, direct_child_count: 0 }],
-        branch_total: 1,
-        next_cursor: null,
-      }),
-      listIssueTableFacets: vi.fn(() => never()),
-      listProjects: vi.fn(() => never()),
-      getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
-      getWorkspaceWorkingAgents: vi.fn(() => never<WorkspaceWorkingAgent[]>()),
-      getChildIssueProgress: vi.fn(() => never()),
-      listProperties: vi.fn(() => never()),
-      listMembers: vi.fn(() => never()),
-      listAgents: vi.fn(() => never()),
-      listSquads: vi.fn(() => never()),
-    } as unknown as ApiClient);
-
-    // Passing controller.surfaceIssues here would hand the header an EMPTY
-    // list in table mode; the render context must carry the table's rows.
-    render(
-      <QueryClientProvider client={qc}>
-        <IssueSurface
-          scope={{ type: "project", projectId: "ysk-scope-default" }}
-          modes={["table"]}
-          renderHeader={(context) => {
-            issuesHeaderProps.current = context as unknown as Record<string, unknown>;
-            return null;
-          }}
-          renderLoading={() => <div data-testid="surface-loading" />}
-          batchToolbar="never"
-        />
-      </QueryClientProvider>,
-    );
-
-    await waitFor(() =>
-      expect(
-        (issuesHeaderProps.current?.summaryScopeIssues as { id: string }[] | undefined)?.map(
-          (issue) => issue.id,
-        ),
-      ).toEqual(["t9"]),
-    );
-    cleanup();
-    qc.clear();
-    pruneIssueSurfaceViewStates([]);
-  });
 });
-
 
 it("fetches one workspace usage batch for many board cards and none for list mode", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -1403,7 +1338,7 @@ describe("IssueSurface — guest create affordances (MUL-9420)", () => {
   function useIssues(issues: Issue[]) {
     const listIssues = vi.fn((params?: ListIssuesParams) => {
       const rows = params?.status === "todo" ? issues : [];
-      return Promise.resolve({ issues, total: rows.length } satisfies ListIssuesResponse);
+      return Promise.resolve({ issues: rows, total: rows.length } satisfies ListIssuesResponse);
     });
     setApiInstance({
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),

@@ -158,8 +158,7 @@ canvas does not substitute straight or guessed dependency lines. Selection,
 title, status and run refreshes do not relayout an unchanged topology.
 
 Single-click selects a card or task; the toolbar's selection zone keeps the
-OL-182 actions (open detail, highlight prerequisites/dependents, edit
-prerequisites, assign), and line cards additionally offer **Enter task line**.
+OL-182 actions (open detail, highlight prerequisites/dependents, assign), and line cards additionally offer **Enter task line**.
 **Focus issue group** remains available on a selected member, recentering its
 innermost sub-line frame. Double-click follows the level: line cards enter,
 tasks open the detail. Returning to the overview restores its viewport and

@@ -42,7 +42,7 @@ export const zhSiteCopy: Pick<LandingDict, "site" | "home" | "demo" | "meta"> = 
     },
     privacy: {
       title: "隐私政策",
-      description: "Labrastro 如何在 multica.ai 和 Labrastro Cloud 上收集、使用和保护个人信息。",
+      description: "Labrastro 如何收集、使用和保护个人信息。",
       ogTitle: "隐私政策 — Labrastro",
       ogDescription: "Labrastro 如何收集、使用和保护个人信息。",
     },

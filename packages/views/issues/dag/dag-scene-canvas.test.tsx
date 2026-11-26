@@ -272,7 +272,7 @@ describe("DagSceneCanvas overview", () => {
     expect(layer.querySelectorAll("circle").length).toBe(1);
   });
 
-  it("hides a cancelled prerequisite when showCompleted is off instead of rendering a cancelled-blocking card", async () => {
+  it("hides a cancelled prerequisite when showCompleted is off", async () => {
     const cancelledGraph = makeGraph(
       [
         makeNode("r1"),
@@ -285,7 +285,6 @@ describe("DagSceneCanvas overview", () => {
       showCompleted: false,
       showSatisfiedDependencies: true,
     })!;
-    expect(overview.cards.some((c) => c.cancelledBlocking)).toBe(false);
     expect(overview.cards.map((c) => c.id)).toEqual(["issue:r1"]);
     expect(overview.hiddenCompleted.singles).toBe(1);
   });
@@ -1097,9 +1096,9 @@ describe("DagSceneCanvas Stage 10 interactions", () => {
 });
 
 describe("DagSceneCanvas lit-route flows (OL-997)", () => {
-  /** Three dependencies into X, one per attention tier: A done (satisfied),
-   *  C in progress (advancing), B cancelled but still blocking. A and C's
-   *  routes carry corners, and all three share X's approach interval. */
+  /** Three dependencies into X: A done (satisfied), B cancelled (also
+   *  satisfied under native blockers), and C in progress (advancing). A and
+   *  C's routes carry corners, and all three share X's approach interval. */
   function flowStatesFixture() {
     const graph = makeGraph(
       [

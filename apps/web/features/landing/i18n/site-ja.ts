@@ -44,7 +44,7 @@ export const jaSiteCopy: Pick<LandingDict, "site" | "home" | "demo" | "meta"> = 
     },
     privacy: {
       title: "プライバシーポリシー",
-      description: "Labrastro が multica.ai と Labrastro Cloud で個人情報をどのように収集、利用、保護するか。",
+      description: "Labrastro が個人情報をどのように収集、利用、保護するか。",
       ogTitle: "プライバシーポリシー — Labrastro",
       ogDescription: "Labrastro が個人情報をどのように収集、利用、保護するか。",
     },

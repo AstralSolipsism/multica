@@ -74,7 +74,6 @@
       "error_not_member": "サインイン中の Labrastro アカウントはこのワークスペースのメンバーではありません。"
     },
     "wecom_bind": {
-      "page_title": "WeCom アカウントを連携",
       "needs_auth_description": "サインインして WeCom アカウントを Labrastro アカウントにリンクしてください。",
       "error_already_bound": "この WeCom アカウントはすでに別の Labrastro アカウントにリンクされています。先に元のアカウントでリンクを解除してから、もう一度リンクしてください。",
       "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"

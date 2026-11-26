@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { isEditableShortcutTarget } from "@multica/core/shortcuts";
-import { useReducedMotion as useSharedReducedMotion } from "@multica/core/appearance";
 import type { TipAnchorRect } from "@multica/core/you-should-know/anchors";
 
 // Page-wide conditions the tip bubble reacts to (OL-194): every one of them
@@ -42,11 +41,6 @@ export function useEditableFocus(): boolean {
     () => isEditableShortcutTarget(document.activeElement),
     () => false,
   );
-}
-
-/** The OS or Appearance settings ask for reduced motion. */
-export function usePrefersReducedMotion(): boolean {
-  return useSharedReducedMotion();
 }
 
 /** Base UI marks everything outside a modal layer (dialog, modal menu). */

@@ -336,20 +336,20 @@ function WakeupRow({
               onEnable={onEnable}
             />
             {!closed && !wakeup.disabled_at && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={trigger.isPending}
-                onClick={() =>
-                  trigger.mutate(wakeup.id, {
-                    onSuccess: () => toast.success(t(($) => $.wakeups.detail.wake_now_done, { agent: wakeup.agent_name })),
-                    onError: (err) => toast.error(text.error(err, t(($) => $.wakeups.detail.wake_now_error))),
-                  })
-                }
-              >
-                <Play aria-hidden="true" />
-                {t(($) => $.wakeups.detail.wake_now)}
-              </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={trigger.isPending}
+                  onClick={() =>
+                    trigger.mutate(wakeup.id, {
+                      onSuccess: () => toast.success(t(($) => $.wakeups.detail.wake_now_done, { agent: wakeup.agent_name })),
+                      onError: (err) => toast.error(text.error(err, t(($) => $.wakeups.detail.wake_now_error))),
+                    })
+                  }
+                >
+                  <Play aria-hidden="true" />
+                  {t(($) => $.wakeups.detail.wake_now)}
+                </Button>
             )}
             {!closed && <DeleteWakeup wakeup={wakeup} onDeleted={() => setDetailOpen(false)} />}
           </div>

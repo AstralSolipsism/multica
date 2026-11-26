@@ -264,7 +264,7 @@ function HtmlBlockBody({
       { [HTML_BLOCK_MESSAGE_KEY]: 1, type: "measure" },
       "*",
     );
-  }, [active, fullscreen, iframeRef]);
+  }, [active, fullscreen]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -296,7 +296,7 @@ function HtmlBlockBody({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [iframeRef]);
+  }, []);
 
   const height = measured.height;
   useEffect(() => {
@@ -317,7 +317,7 @@ function HtmlBlockBody({
       );
     }, NAVIGATION_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [navigation, iframeRef]);
+  }, [navigation]);
 
   useEffect(() => {
     if (!loaded || height != null) return;

@@ -137,7 +137,6 @@
       "no_project": "プロジェクトなし",
       "private_project": "プロジェクトメンバーのみ閲覧できます",
       "all_projects_other": "すべてのプロジェクト（{{count}}）",
-      "project_actions": "{{name}} のプロジェクト操作",
       "project_issues": "{{name}} のタスク",
       "project_issues_empty": "タスクはありません",
       "project_issues_error": "タスクを読み込めませんでした",

@@ -16,8 +16,7 @@ import { DagRunBadge } from "./dag-task-card";
 
 /**
  * One card per task line / standalone task / independent group on the
- * overview. Cancelled blockers pulled out of hidden lines keep the dashed
- * context border and the "cancelled, still blocking" mark (OL-182).
+ * overview (OL-182).
  */
 export const DagOverviewCardView = memo(
   function DagOverviewCardView({ data }: NodeProps<DagOverviewFlowNode>) {
@@ -75,7 +74,6 @@ export const DagOverviewCardView = memo(
         className={cn(
           "nopan relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card py-2 pl-3.5 pr-2.5 text-left shadow-xs",
           "border-border hover:border-foreground/30",
-          card.cancelledBlocking && "border-dashed",
         )}
         style={{ width: DAG_OVERVIEW_SIZE.width, height: DAG_OVERVIEW_SIZE.height }}
         data-dag-overview-card={card.id}
@@ -89,7 +87,7 @@ export const DagOverviewCardView = memo(
         />
         <div className="flex h-4 items-center gap-1.5 text-micro text-muted-foreground">
           {card.project && <span className="truncate">{card.project.title}</span>}
-          {card.role === "context" && !card.cancelledBlocking && (
+          {card.role === "context" && (
             <span className="ml-auto min-w-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
               {t(($) => $.context_badge)}
             </span>
@@ -111,11 +109,6 @@ export const DagOverviewCardView = memo(
           )}
           <IssueCostBadge issueIds={card.memberIds} />
           {issue && <DagRunBadge issue={issue} />}
-          {card.cancelledBlocking && (
-            <span className="ml-auto min-w-0 truncate rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
-              {t(($) => $.cancelled_blocking)}
-            </span>
-          )}
         </div>
         <div
           className={cn(

@@ -64,6 +64,7 @@ const githubRepositoriesRef = vi.hoisted(() => ({
     default_branch: string;
   }[],
 }));
+const repositorySelectionRef = vi.hoisted(() => ({ current: "unknown" }));
 const searchParamsRef = vi.hoisted(() => ({
   current: new URLSearchParams("tab=code"),
 }));
@@ -78,6 +79,7 @@ vi.mock("@tanstack/react-query", () => ({
     data: {
       pages: [
         {
+          repository_selection: repositorySelectionRef.current,
           repositories: githubRepositoriesRef.current,
           total_count: githubRepositoriesRef.current.length,
           next_page: null,
@@ -200,6 +202,7 @@ beforeEach(() => {
   githubQueryStateRef.current = { isPending: false, isFetching: false };
   offerForReuse();
   githubRepositoriesRef.current = [];
+  repositorySelectionRef.current = "unknown";
   searchParamsRef.current = new URLSearchParams("tab=code");
   mockUpdateWorkspace.mockImplementation(async (_id: string, payload: object) => ({
     ...workspaceRef.current,
@@ -1094,7 +1097,7 @@ describe("RepositoriesSection", () => {
     ).toBe(true);
 
     await user.click(checkboxes[1]!);
-    await user.click(screen.getByRole("button", { name: /Add 1 repositor/ }));
+    await user.click(screen.getByRole("button", { name: "Add 1 repository" }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
@@ -1119,6 +1122,33 @@ describe("RepositoriesSection", () => {
       await screen.findByRole("heading", { name: "Choose GitHub repositories" }),
     ).toBeTruthy();
     expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=repositories");
+  });
+
+  it.each(["selected", "all", "unknown"])("preselects only explicitly selected authorizations (%s) for the returned installation", async (selection) => {
+    const user = userEvent.setup();
+    githubRef.current.installations = [
+      { id: "old-install", account_login: "old-org" },
+      { id: "new-install", account_login: "new-org" },
+    ];
+    repositorySelectionRef.current = selection;
+    githubRepositoriesRef.current = [
+      { id: 1, full_name: "new-org/api", clone_url: "https://github.com/new-org/api.git", html_url: "https://github.com/new-org/api", description: null, private: true, archived: false, default_branch: "main" },
+      { id: 2, full_name: "new-org/archived", clone_url: "https://github.com/new-org/archived.git", html_url: "https://github.com/new-org/archived", description: null, private: true, archived: true, default_branch: "main" },
+    ];
+    searchParamsRef.current = new URLSearchParams("tab=code&github_connected=1&github_installation=new-install");
+    render(<RepositoriesSection connection={connection} />, { wrapper: Wrapper });
+    const checkbox = await screen.findByRole("checkbox", { name: /new-org\/api/ });
+    if (selection === "selected") {
+      await waitFor(() => expect(checkbox).toBeChecked());
+      expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+      await user.click(checkbox);
+      expect(checkbox).not.toBeChecked();
+      expect(screen.getByRole("button", { name: "Add 0 repositories" })).toBeDisabled();
+    } else {
+      expect(checkbox).not.toBeChecked();
+    }
+    expect(screen.getByRole("checkbox", { name: /new-org\/archived/ })).not.toBeChecked();
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=code");
   });
 
   it("uses the generic install callback failure", async () => {

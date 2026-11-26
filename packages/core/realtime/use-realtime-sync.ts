@@ -26,7 +26,6 @@ import { defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { invalidateAgentFolderQueries } from "../agents/folder-queries";
 import { skillPackageKeys } from "../skills/package-queries";
-
 import { invalidateIssueQueries } from "../issues/invalidation";
 import { subscribeLabrastroEngineeringEvents } from "./labrastro-engineering-realtime";
 import { issueKeys } from "../issues/queries";
@@ -1400,7 +1399,7 @@ export function useRealtimeSync(
       const { issue } = payload;
       if (payload.status_changed || payload.parent_changed || payload.stage_changed || payload.blockers_changed) {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+        if (wsId) qc.invalidateQueries({queryKey: issueKeys.all(wsId)});
       }
       if (!issue?.id) return;
       const subtreeFilter = {
@@ -1446,9 +1445,7 @@ export function useRealtimeSync(
       if (wsId) {
         onIssueCreated(qc, wsId, issue);
         // A new issue created waiting on others shows up under their `blocking`.
-        if ((issue.parent_issue_id && issue.stage != null) || issue.blocked_by?.some((b) => b.via === "manual")) {
-          qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
-        }
+        if ((issue.parent_issue_id && issue.stage != null) || issue.blocked_by?.some((b) => b.via === "manual")) qc.invalidateQueries({queryKey:issueKeys.all(wsId)});
       }
     });
 
@@ -1459,7 +1456,7 @@ export function useRealtimeSync(
       const wsId = getCurrentWsId();
       if (wsId) {
         onIssueDeleted(qc, wsId, issue_id);
-        qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+        qc.invalidateQueries({queryKey:issueKeys.all(wsId)});
         void onInboxIssueDeleted(qc, wsId, issue_id);
       }
     });

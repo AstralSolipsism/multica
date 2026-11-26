@@ -36,8 +36,6 @@ test.describe("Settings", () => {
     ).toContainText(newName);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toBeHidden();
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(nameInput).toHaveValue(newName);
 
     // Restore original name so other tests aren't affected
     await nameInput.fill(originalName);

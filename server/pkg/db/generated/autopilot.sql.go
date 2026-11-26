@@ -306,9 +306,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    $1, enqueue_agent.runtime_id,
-    (SELECT issue_id FROM autopilot_run WHERE id = $2::uuid),
-    'queued', $3, $2, $4,
+    $1, enqueue_agent.runtime_id, NULL, 'queued', $2, $3, $4,
     $5,
     $6,
     $7,
@@ -322,8 +320,8 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 
 type CreateAutopilotTaskParams struct {
 	AgentID              pgtype.UUID `json:"agent_id"`
-	AutopilotRunID       pgtype.UUID `json:"autopilot_run_id"`
 	Priority             int32       `json:"priority"`
+	AutopilotRunID       pgtype.UUID `json:"autopilot_run_id"`
 	TriggerSummary       pgtype.Text `json:"trigger_summary"`
 	OriginatorUserID     pgtype.UUID `json:"originator_user_id"`
 	AccountableUserID    pgtype.UUID `json:"accountable_user_id"`
@@ -357,8 +355,8 @@ type CreateAutopilotTaskParams struct {
 func (q *Queries) CreateAutopilotTask(ctx context.Context, arg CreateAutopilotTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, createAutopilotTask,
 		arg.AgentID,
-		arg.AutopilotRunID,
 		arg.Priority,
+		arg.AutopilotRunID,
 		arg.TriggerSummary,
 		arg.OriginatorUserID,
 		arg.AccountableUserID,

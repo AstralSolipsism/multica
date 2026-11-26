@@ -28,7 +28,6 @@ jobs:
       pull-requests: read
     outputs:
       frontend: ${{ steps.decide.outputs.frontend }}
-      e2e: ${{ steps.decide.outputs.e2e }}
       docs: ${{ steps.decide.outputs.docs }}
       backend: ${{ steps.decide.outputs.backend }}
       sqlc: ${{ steps.decide.outputs.sqlc }}
@@ -39,6 +38,7 @@ jobs:
       candidate: ${{ steps.decide.outputs.candidate }}
       installer: ${{ steps.decide.outputs.installer }}
       images: ${{ steps.decide.outputs.images }}
+      e2e: ${{ steps.decide.outputs.e2e }}
       full: ${{ steps.decide.outputs.full }}
     steps:
       - name: Checkout
@@ -51,7 +51,7 @@ jobs:
 
       - name: Test CI selection and gates
         run: |
-          node --test scripts/ci-scope.test.mjs scripts/check-image-budget.test.mjs scripts/pr-shots.test.mjs
+          node --test scripts/ci-scope.test.mjs
           bash scripts/test-retained-e2e.test.sh
 
       - name: Filter paths

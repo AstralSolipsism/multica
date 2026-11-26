@@ -71,10 +71,6 @@ export function SourceContextBadge({
 
   const openCurrent = (value: IssueSourceContext) => {
     if (value.anchor_comment_state !== "available" || !value.current_source || value.can_open_current_source !== true) return;
-    // Push the IDENTIFIER spelling, not the UUID: the identifier route skips
-    // the canonical rewrite entirely — no UUID-route landing instance, no
-    // rewrite remount, and the deep-link memento lives under one pathname
-    // (OL-270: a UUID push + rewrite split the record across two pathnames).
     navigation.push(`${paths.issueDetail(issueRouteRef({ id: value.current_source.issue_id, identifier: value.current_source.identifier }))}#comment-${value.current_source.anchor_comment_id}`);
   };
   const refresh = async () => {

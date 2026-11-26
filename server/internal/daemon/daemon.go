@@ -2300,10 +2300,7 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	// Plan-quota collectors feed the heartbeat plan_quota channel for
 	// providers whose quota lives behind a programmatic API rather
 	// than inside the agent session. Kimi probes its local Server API and
-	// self-gates on the token file and a registered kimi runtime. (The
-	// daemon-side ZenMux collector was retired in OL-1205 scenario 3;
-	// ZenMux subscriptions are user-registered quota sources polled by the
-	// server.)
+	// self-gates on the token file and a registered kimi runtime.
 	go d.kimiPlanQuotaLoop(ctx)
 	// Antigravity polls Google's remote API using the CLI-managed OAuth
 	// token; it no longer needs a running task or a local language server.
@@ -2596,7 +2593,7 @@ const dshProfileInstallStartedReason = "the Labrastro runtime profile is not ins
 // automatic install has stopped without producing a profile. It says the
 // attempt happened and ended, because a reader who saw the earlier "installing"
 // reason needs to know which of the two states they are looking at.
-const dshInstallGaveUpReason = "the automatic install did not make the Labrastro runtime profile available; check the profile installation and --probe output"
+const dshInstallGaveUpReason = "the Labrastro runtime profile is not installed; the automatic install failed, so it has to be installed by hand"
 
 // dshIncompatibleProfileReason is the /health reason for a profile that answers
 // with a protocol this daemon does not drive. It names both sides because
@@ -9629,10 +9626,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		idleWatchdogTimeout = d.cfg.OpenCodeIdleWatchdog
 	}
 	execOpts := agent.ExecOptions{
-		SkillInvocation: skillInvocation,
-		OnPlanQuota: func(quota *protocol.RuntimePlanQuota) {
-			d.recordTaskPlanQuota(task.RuntimeID, quota)
-		},
+		SkillInvocation:            skillInvocation,
 		EnableTaskSupplement:       taskSupplementNegotiated,
 		SupplementHookCommand:      supplementHookCommand,
 		Cwd:                        env.WorkDir,
@@ -9674,6 +9668,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 		WarmPoolBriefHash:      agent.HashWarmBrief(runtimeBrief),
+	}
+	execOpts.OnPlanQuota = func(quota *protocol.RuntimePlanQuota) {
+		d.recordTaskPlanQuota(task.RuntimeID, quota)
 	}
 	if youShouldKnow {
 		var flushTips func()

@@ -196,7 +196,7 @@ func (h *Handler) resolveIssueStatusKey(w http.ResponseWriter, r *http.Request, 
 
 // resolveIssueStatusKeyKind is resolveIssueStatusKey plus whether the target is
 // a CUSTOM status. Callers use that to decide whether the write needs the
-// shared catalog lock — see assertIssueStatusStillActive.
+// shared catalog lock — see runWithIssueStatusGuard.
 func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, status string) (string, bool, bool) {
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
@@ -272,6 +272,7 @@ func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtyp
 		return err
 	}
 	defer tx.Rollback(ctx)
+
 	qtx := h.Queries.WithTx(tx)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return err
@@ -3435,6 +3436,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Title = sanitizeNullBytes(req.Title)
+
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
@@ -3994,7 +3996,8 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
-	// Recheck the target custom status in this transaction. The catalog lock
+	// This path opens its own transaction, so it carries the archive-race guard
+	// itself rather than going through runWithIssueStatusGuard. The catalog lock
 	// must precede both attachment and issue row locks everywhere. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, db.Issue{}, false, err
@@ -4876,9 +4879,6 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 }
 
 func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issues []db.Issue, excludedIssueIDs []pgtype.UUID) (issueDeleteResult, error) {
-	if len(issues) == 0 {
-		return issueDeleteResult{}, nil
-	}
 	sort.Slice(issues, func(i, j int) bool {
 		return uuidToString(issues[i].ID) < uuidToString(issues[j].ID)
 	})

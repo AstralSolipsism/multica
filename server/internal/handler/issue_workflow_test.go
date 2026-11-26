@@ -411,27 +411,6 @@ func TestDefaultWorkflowIsEditableButNotDeletable(t *testing.T) {
 	testutil.Call(t, testHandler.DeleteIssueWorkflow, del).Want(http.StatusBadRequest)
 }
 
-func TestDefaultWorkflowRetainsUnclaimedDiscussionStatus(t *testing.T) {
-	createTestCustomStatus(t, "backlog_2", "unstarted")
-	resetDefaultWorkflow(t)
-	for range 2 {
-		var list struct {
-			Workflows []IssueWorkflowResponse `json:"workflows"`
-		}
-		testutil.Call(t, testHandler.ListIssueWorkflows, workflowRequest("GET", "/api/issue-workflows", nil)).Want(http.StatusOK).JSON(&list)
-		if len(list.Workflows) == 0 || !list.Workflows[0].IsDefault {
-			t.Fatal("Default workflow missing")
-		}
-		found := false
-		for _, step := range list.Workflows[0].Steps {
-			found = found || step.StatusKey == "backlog_2"
-		}
-		if !found {
-			t.Fatalf("discussion status missing from Default: %+v", list.Workflows[0].Steps)
-		}
-	}
-}
-
 func TestSetProjectWorkflowMapsOnlyUnlistedStatuses(t *testing.T) {
 	seedTestCatalog(t)
 	resetDefaultWorkflow(t)

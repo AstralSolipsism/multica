@@ -1764,6 +1764,7 @@ describe("workspace subscription contract", () => {
       periodEnd: "2026-12-01T00:00:00Z",
     });
 
+    // Malformed add-on fields never take the summary down: no add-on offered.
     stubFetchJson({
       ...base,
       available_actions: {
@@ -2039,6 +2040,7 @@ describe("workspace subscription contract", () => {
       runsPerPack: 1000,
     });
 
+    // A malformed pack price hides the add-on but keeps the plan prices.
     for (const malformed of [
       { currency: "usd", unit_amount: 0, runs_per_pack: 1000 },
       { currency: "USD", unit_amount: 1000, runs_per_pack: 1000 },
@@ -2079,6 +2081,7 @@ describe("workspace subscription contract", () => {
         }),
       }),
     );
+    // A Checkout URL that is not Stripe's HTTPS page is never followed.
     stubFetchJson({ session_id: "cs_test_1", url: "javascript:alert(1)" });
     expect(
       await client.createWorkspaceAutopilotAddonCheckout({
@@ -2089,6 +2092,7 @@ describe("workspace subscription contract", () => {
       }),
     ).toBeNull();
 
+    // An unknown status keeps waiting instead of claiming an outcome.
     for (const [status, expected] of [
       ["paid", "paid"],
       ["expired", "expired"],
@@ -2348,7 +2352,6 @@ describe("workspace subscription contract", () => {
   });
 });
 
-
 describe("dashboard history limit (MUL-9490)", () => {
   const planPrices = (monthAmount: number, yearAmount: number) => ({
     month: { currency: "usd", unit_amount: monthAmount, interval: "month", interval_count: 1 },
@@ -2372,11 +2375,13 @@ describe("dashboard history limit (MUL-9490)", () => {
       business: { dashboardHistoryDays: 365 },
     });
 
+    // An older Cloud sends none; the prices themselves stay usable.
     stubFetchJson(prices);
     const older = await client.getWorkspaceSubscriptionPrices();
     expect(older?.pro.month.unitAmount).toBe(1500);
     expect(older?.planLimits).toBeNull();
 
+    // A malformed block, or a missing plan, reads as no plan limits.
     for (const planLimits of [
       "30",
       { free: { dashboard_history_days: 30 }, pro: { dashboard_history_days: 90 } },
@@ -2387,6 +2392,7 @@ describe("dashboard history limit (MUL-9490)", () => {
       expect(parsed?.planLimits).toBeNull();
     }
 
+    // A malformed day count is unknown for that plan only.
     stubFetchJson({
       ...prices,
       plan_limits: {

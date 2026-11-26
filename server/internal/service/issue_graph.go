@@ -61,8 +61,7 @@ type IssueGraphNode struct {
 
 // SourceEdgeID names the effective blocker: "manual:<issue>:<blocker>" for a
 // stored issue_blocker row, "stage:<issue>:<blocker>" for same-parent stage
-// order. Inheritance is represented by the target's parent chain, never by
-// materializing every descendant execution edge.
+// order. Native blockers do not inherit across parent-child hierarchies.
 type IssueGraphEdge struct {
 	SourceEdgeID string `json:"source_edge_id"`
 	Source       string `json:"source"`

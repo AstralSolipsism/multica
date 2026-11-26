@@ -31,6 +31,7 @@ before Master's release sign-off; Stage 5 (OL-1522) owns tagging and deploying
 | Stage 2 primary fusion commit (OL-1519) | `0873827fe8ad497723815082da619890bf055a4c` |
 | Stage 2 DAG review fix commit (OL-1519) | `05de82adad1e673478ad2e44a1f83d436e83d249` |
 | Stage 2 reviewed head / Stage 3 tested application head | `58e5b762c8ecc17d3cc37bb981e1ddbbf260eb14` |
+| Stage 3 reviewed head / Stage 4 audit baseline (`H0`) | `f6c6d9b050c56e6a6a791bbac46b8f92d30a96c6` |
 
 `v0.11.1..v0.13.0` spans **361 commits** across `v0.12.0`, `v0.12.1`, `v0.12.2`
 and `v0.13.0` (59 new migration stems `697`–`755`). Zero unreleased commits
@@ -136,11 +137,20 @@ The three release-orchestration files keep **0-diff** vs fork `main`
 single-tag `candidate` release contract (no `multica-collab` image built or
 published):
 
-| File | Resolution vs `d0fde9ffc3` | Verification in Stage 3 |
+| File | Resolution vs `d0fde9ffc3` | Verification in Stage 3 / 4 |
 | --- | --- | --- |
 | `.github/workflows/release.yml` | 0-diff (fork `ours`) | `actionlint .github/workflows/release.yml .github/workflows/ci.yml`: clean |
 | `.goreleaser.yml` | 0-diff (fork `ours`) | `goreleaser check` (v2.18.0): 1 configuration file validated |
 | `.github/RELEASING.md` | 0-diff (fork `ours`) | Offline single-tag `candidate` contract intact |
+
+CI workflow policy note (`.github/workflows/ci.yml`): Labrastro intentionally
+replaces upstream's broad Playwright `e2e` job with the isolated
+`retained-e2e-tests` job (`scripts/test-retained-e2e.sh` +
+`playwright.retained.config.ts`, covering `e2e/onboarding-smoke.spec.ts`,
+`e2e/dag-task-lines.spec.ts` and `e2e/comments.spec.ts`) as documented in
+[CI gates](ci-gates.md). Both `CI required` aggregates enforce
+`retained-e2e-tests` alongside `backend-format`, `frontend-test`,
+`frontend-build`, `backend-tests` and `script-checks`.
 
 ## Migration identities and PostgreSQL 17 evidence
 
@@ -290,17 +300,17 @@ identical counts: **22 files, 60/60 lines** (backend 7 files `17/17`, frontend
 High-churn file anchors:
 
 - **`server/cmd/multica/cmd_issue.go`**: all six historical `issue_dependency`
-  plugs are cleared (`0` dependency plugs). The full diff against `v0.13.0`
-  (`35b54a3742bb51bdf5ffa688655367ec98044862`) is strictly `+79 / -23` across
-  the three documented non-dependency in-place differences (1 brand string in
-  `runIssuePullRequestsLink`, local flag validation in `runIssueCommentList`,
-  OL-458 `--scope`/`--offset`/`issueSearchMaxLimit`/`has_more` in
-  `issueSearchCmd`/`runIssueSearch` + `boolVal`), byte-identical to fork `main`'s
-  original functions.
+  plugs are cleared (`0` dependency plugs). After Stage 4 dead-guard slimming,
+  the full diff against `v0.13.0` (`35b54a3742bb51bdf5ffa688655367ec98044862`)
+  is strictly `+77 / -28` across the three documented non-dependency in-place
+  differences (1 brand string in `runIssuePullRequestsLink`, local flag
+  validation in `runIssueCommentList`, OL-458 `--scope`/`--offset`/
+  `issueSearchMaxLimit`/`has_more` in `issueSearchCmd`/`runIssueSearch` +
+  `boolVal`).
 - **`server/internal/daemon/daemon.go`**: two `heartbeatExtrasFor` calls
-  (~lines 4817, 4974), two `recordTaskPlanQuota` calls (~lines 9634, 9991), one
-  `reportedTaskUsageEntries` call (~line 9999), three `planQuotaCache.Delete`
-  evictions (~lines 1565, 1635, 1645), `dshMissingProfileReason` (~line 2588),
+  (~lines 4814, 4971), two `recordTaskPlanQuota` calls (~lines 9673, 9988), one
+  `reportedTaskUsageEntries` call (~line 9996), three `planQuotaCache.Delete`
+  evictions (~lines 1565, 1635, 1645), `dshMissingProfileReason` (~line 2585),
   and all fork struct fields (`planQuotaCache`, `jevClient`, `jevSamples`,
   `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*`).
   `server/internal/daemon/planquota_kimi.go` has **0-diff** vs fork `main`
@@ -508,6 +518,103 @@ were resolved in a single linear follow-up commit on `sync/v0.13.0-ol-1517`:
    upstream image instead of nonexistent `dev-<sha>` / `v0.13.0-labrastro.1`,
    and updated `scripts/selfhost-config.test.sh:118-132` to assert
    `ghcr.io/multica-ai/multica-collab:v0.13.0`.
+
+## Stage 4 whole-branch restraint & necessity audit (OL-1521)
+
+Before release authorization, all **11,101** union paths across the three
+immutable anchors (`B = v0.11.1`, `M = origin/main`, `U = v0.13.0`) and Stage 3
+reviewed head (`H0 = f6c6d9b050`) were mechanically partitioned:
+
+| Mechanical bucket at `H0` | Count | Stage 4 action |
+| --- | ---: | --- |
+| Trivial upstream (`h == u && m == b`) | 8,464 | Mechanically excluded (zero fork divergence) |
+| Untouched fork-only (`h == m && u == b`) | 1,905 | Retained (18 dependent files slimmed, 2 dead files deleted, 1 restored to `v0.13.0` 0-diff in lockstep) |
+| **Non-trivial audited 100% file-by-file** | **732** | **51 restored to `v0.13.0` 0-diff, 2 deleted, 118 slimmed/fixed, 561 verified keep** |
+
+Key Stage 4 fixes and slimming outcomes (all applied as a single linear commit
+on `sync/v0.13.0-ol-1517`, no rebase):
+
+1. **52 files restored to exact `v0.13.0` 0-diff** (51 from the 732 non-trivial
+   set + `packages/views/modals/run-confirm.test.tsx`), eliminating obsolete
+   conflict carry-overs across CLI/backend (`cmd_user.go`, `daemon_test.go`,
+   `reserved_slugs.json`, `issue_trigger.go`, `issue_workflow_test.go` with its
+   sole fork test moved into `labrastro_default_workflow_test.go`),
+   Core/Views (`reserved-slugs.ts`, `types/issue.ts`, `issue-actions-menu-items.tsx`,
+   `comment-annotation-selection.ts`, `issue-environments-section.tsx`,
+   `issue-load-failure.test.tsx`, `source-context-viewer{,.test}.tsx`,
+   `status-picker{,.test}.tsx`, `batch-action-toolbar{,.confirm.test}.tsx`,
+   `run-confirm{,.test}.tsx`, `content-editor-quick-actions.test.tsx`,
+   `search/root-view.tsx`), locales (`settings.json` ×6, `layout.json` ×7,
+   `ru/{common,onboarding,autopilots,projects}.json`), apps/docs/E2E
+   (`updater.ts`, `auth/callback/page.tsx`, `github-integration.*.mdx` ×5,
+   `squads.{mdx,zh.mdx}`, `landing/i18n/{en,ja,ko,zh}.ts`, `e2e/settings.spec.ts`).
+2. **4 dead files deleted**: `packages/core/api/dispatch-schemas.ts`,
+   `packages/views/issues/dag/use-prefers-reduced-motion.ts`,
+   `scripts/stage5-shots/stage5-shots.spec.ts`,
+   `scripts/stage5-shots/playwright.stage5-shots.config.ts`.
+3. **Real defects fixed during line-by-line review**:
+   - `server/internal/handler/issue_graph.go`: fixed MVCC snapshot leak
+     (`h.loadIssueForUser` → `snapshot.loadIssueForUser`) and snapshot-init
+     HTTP status (`409` → `500`); regenerated
+     `packages/core/api/testdata/issue-graph.json` against live PG17 and
+     updated `packages/core/api/issue-graph-schemas.test.ts` (8 edges,
+     `visibleUnsatisfiedCount = 1`).
+   - `server/internal/service/autopilot.go`: restored missing
+     `errors.Is(err, errRunAlreadyTerminal)` early return; inlined unused
+     `failAutopilotRunWithResult` in `autopilot_quota.go`; restored `NULL` in
+     `CreateAutopilotTask` (`server/pkg/db/queries/autopilot.sql`) and
+     regenerated `server/pkg/db/generated/autopilot.sql.go` via `make sqlc`.
+   - `apps/desktop/src/renderer/src/platform/navigation.tsx`: added missing
+     `clearCommentHighlightMemento(path)` in `routeIssueDeepLinkPath` with
+     regression test in `navigation.test.tsx`.
+   - `packages/views/settings/components/repositories-section.test.tsx`:
+     restored upstream `MUL-9021` `repositorySelectionRef` +
+     `preselects only explicitly selected authorizations` test dropped during
+     merge resolution.
+   - `packages/views/issues/surface/issue-surface.test.tsx`: fixed corrupted
+     `issues` → `issues: rows` mock and removed duplicate `summaryScopeIssues`
+     test + dead `issuesHeaderProps`.
+   - `server/migrations/9079_labrastro_migrate_issue_dependency_to_blocker.up.sql`:
+     fixed broken header comment sentence and prefixed `RAISE NOTICE` with
+     `migration report: ` to align with `server/cmd/migrate/main.go:982`
+     (zero DDL change; normalized 896-entry PG17 schema SHA-256 unchanged at
+     `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659`).
+4. **Dead-code, over-defense & copy hygiene slimming**:
+   - Removed the entire unreachable DAG `cancelled-blocking` / `keptCancelled` /
+     `cancelledBlockedIds` / `subtreeFinished` / `dag-edge-breathe` /
+     `legend_edge_cancelled` / `cancelled_blocking` chain across
+     `packages/core/issues/dag/*`, `packages/views/issues/dag/*`,
+     `packages/views/locales/*/dag.json` (×6), `dag/README.md` and
+     `docs/issue-graph-api.md`; replaced `use-prefers-reduced-motion.ts` and
+     `you-should-know/bubble/page-signals.ts`'s pass-through wrapper with
+     direct `@multica/core/appearance` `useReducedMotion`.
+   - Removed 8 resurrected dead `ApiClient` methods (`getRuntimeProfile`,
+     `getActiveTasksForIssue`, `getWorkspace`, `listAgentSkills`,
+     `deleteAttachment`, `dryRunIssueWorkflowUpdate`, `beginComposioConnect`,
+     `getAppRules`), `DispatchOutcomeSchema`, `IssueBatchUpdateSchema`,
+     obsolete `readIssueDetail` dedup map, 3 duplicate `graph` invalidations
+     already run by `invalidateIssueDerivatives`, 9 dead OL-33 CORS headers in
+     `router.go`, dead OL-42 `/api/issues*` client error cap, dead
+     `deferEnqueueNotifications` in `task.go`, duplicate `uploadLimit` check in
+     `file.go`, retired OL-77/OL-78 section in `autopilots.md`, dead
+     `MULTICA_KEEP_ENV_AFTER_TASK` & stale OL-955 clause in
+     `environment-variables.*.mdx` (plus `ja.mdx` table fix and `fr.mdx`
+     `MULTICA_KIMI_QUOTA_POLL_INTERVAL` row), no-op keys in `locales/brand/*.json`,
+     30 redundant RU brand strings, dead `omp.panel.create_section` (×6),
+     redundant 2.7s-sleep upstream highlight block in `issue-detail.test.tsx`,
+     3 duplicated upstream `describe` blocks in
+     `use-realtime-sync-ws-instance.test.tsx`, and reset `cli.zh-Hant.mdx`,
+     `tutorial.zh-Hant.mdx` and `contributing.zh-Hant.mdx` to `v0.13.0` with
+     only the minimal fork hunks re-applied.
+5. **Non-blocking observations deliberately deferred from Stage 4**:
+   - `apps/desktop/src/renderer/src/components/desktop-layout.tsx`: retains
+     pre-existing `title-bar-actions` + `globalActions={false}` (upstream
+     `MUL-9348` moved actions to rail); left visually unchanged pending Master
+     sign-off to avoid unrequested UI layout drift right before deployment.
+   - Pre-existing helper extraction opportunities in
+     `server/internal/handler/file.go` (`createBaselinePageAttachment`) and
+     `server/internal/daemon/daemon.go` remain deferred to avoid unnecessary
+     structural churn before Stage 5.
 
 ## Cross-family review and Stage 4/5 handoff
 

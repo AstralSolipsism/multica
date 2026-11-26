@@ -148,11 +148,7 @@ Workspace-scoped queries filter by `workspace_id`; membership gates access and `
 
 - Preserve the [retained fork product constraints](docs/engineering/upstream-sync-20260926.md#retained-fork-product-constraints) during upstream syncs. An upstream-first merge must not restore removed marketing flows or replace their absence tests with upstream expectations.
 - Keep retired marketing implementations upstream-compatible behind the documented fork route, step-list and mount gates; do not delete them to enforce absence.
-
-
-- Keep changes scoped; reuse existing patterns. Code comments are English.
-- Use names, types, and tests to express behavior. Keep comments for non-obvious rationale and constraints; remove superseded plans and incident narratives when updating code. Preserve tool directives and mixed-version contracts.
-
+- Keep changes scoped; reuse existing patterns.
 - Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 - Do not add internal compatibility shims, dual writes, fallback paths, or legacy adapters unless requested. This does not relax API response compatibility above.
 - Use names, types, and tests to express behavior. Code comments are English and kept for non-obvious rationale and constraints; remove superseded plans and incident narratives when updating code. Preserve tool directives and mixed-version contracts.

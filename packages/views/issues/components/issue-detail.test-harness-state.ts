@@ -66,7 +66,6 @@ export interface MockApi {
   subscribeToIssue: Mock;
   unsubscribeFromIssue: Mock;
   unsubscribeFromIssueSubtree: Mock;
-  getActiveTasksForIssue: Mock;
   listTasksByIssue: Mock;
   rerunIssue: Mock;
   listTaskMessages: Mock;
@@ -105,7 +104,6 @@ export const mockApiObj: MockApi = {
   subscribeToIssue: vi.fn().mockResolvedValue(undefined),
   unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
   unsubscribeFromIssueSubtree: vi.fn().mockResolvedValue(undefined),
-  getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
   listTasksByIssue: vi.fn().mockResolvedValue([]),
   rerunIssue: vi.fn(),
   listTaskMessages: vi.fn().mockResolvedValue([]),

@@ -2,7 +2,7 @@ import type { Editor } from "@tiptap/core";
 import { useState, type PropsWithChildren } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, CommentTriggerPreview, Issue, ListQuickActionsResponse, MemberWithUser, QuickAction } from "@multica/core/types";
 import { quickActionKeys } from "@multica/core/quick-actions";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -50,19 +50,6 @@ vi.mock("@multica/core/hooks", async (importOriginal) => ({
   useWorkspaceId: () => "ws",
 }));
 
-beforeAll(() => {
-  // jsdom has no layout; ProseMirror measures the caret while opening a picker.
-  const rects = () => ({
-    length: 0,
-    item: () => null,
-    [Symbol.iterator]: function* () {},
-  }) as DOMRectList;
-  Range.prototype.getBoundingClientRect = () => new DOMRect();
-  Range.prototype.getClientRects = rects;
-  HTMLElement.prototype.getClientRects = rects;
-  Object.defineProperty(Text.prototype, "getClientRects", { configurable: true, value: rects });
-});
-
 function makeIssue(
   assigneeType: Issue["assignee_type"] = null,
   assigneeId: string | null = null,
@@ -86,6 +73,7 @@ function makeAgent(id: string, skills: Agent["skills"]): Agent {
     invocation_targets: [{ target_type: "workspace", target_id: null }],
   } as Agent;
 }
+
 beforeEach(() => {
   listQuickActions.mockReset().mockResolvedValue({ quick_actions: [] });
   getIssue.mockReset().mockResolvedValue(makeIssue());

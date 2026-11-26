@@ -538,7 +538,6 @@ describe("dagSceneFlowNodes", () => {
       parentId: null,
       isFrame: false,
       role: "match" as const,
-      cancelledBlocking: false,
     }));
     const geometry: DagSceneGeometry = {
       nodes: {

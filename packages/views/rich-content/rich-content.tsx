@@ -47,7 +47,10 @@ import type { Attachment } from "@multica/core/types";
 // exports the shiki-based CodeBlock, which would pull shiki into the chunk.
 import { isAllowedFileCardHref } from "@multica/ui/markdown/file-cards";
 import { isIssueIdentifier } from "@multica/ui/markdown/issue-identifiers";
-import { markdownSanitizeSchema, markdownUrlTransform } from "@multica/ui/markdown/sanitize";
+import {
+  markdownSanitizeSchema,
+  markdownUrlTransform,
+} from "@multica/ui/markdown/sanitize";
 import { remarkSingleDollarMath } from "@multica/ui/markdown/single-dollar-math";
 import {
   resolveClickIntent,

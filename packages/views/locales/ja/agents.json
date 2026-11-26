@@ -373,7 +373,6 @@
       "handoff_required": "この実行モードでは引き継ぎ先モデルを選択してください。",
       "same_main_model": "メインモデルと同じため、この追加ロールでは作業を分担できません。",
       "model_inherit_main": "メインモデルを継承",
-      "create_section": "OMP 連携（任意）",
       "memory": "メモリーと自動学習",
       "memory_backend": "メモリーバックエンド",
       "memory_off": "オフ",

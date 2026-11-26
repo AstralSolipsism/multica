@@ -32,7 +32,6 @@ export interface DagTask {
   parentId: string | null;
   isFrame: boolean;
   role: "match" | "context";
-  cancelledBlocking: boolean;
 }
 
 export interface DagExternalGroup {
@@ -60,11 +59,9 @@ export interface DagModelIndex {
   forest: ReturnType<typeof dagDisplayForest>;
   traversal: ReturnType<typeof createDagTraversal>;
   rootOf: ReadonlyMap<string, string>;
-  subtreeFinished: ReadonlyMap<string, boolean>;
   projects: ReadonlyMap<string, IssueGraph["projects"][number]>;
   lineInputs: ReadonlyMap<string, DagLineInput>;
   dependencies: readonly DagDependency[];
-  cancelledBlockedIds: ReadonlySet<string>;
   visibility: ReturnType<typeof dagCompletedVisibility>;
   independentIds: ReadonlySet<string>;
 }
@@ -76,22 +73,16 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
   const issues = new Map(graph.nodes.map((node) => [node.id, modelIssue(node)]));
   const traversal = createDagTraversal(graph, forest);
   const rootOf = new Map<string, string>();
-  const subtreeFinished = new Map<string, boolean>();
   const projects = new Map(graph.projects.map((p) => [p.id, p]));
   const lineInputs = new Map<string, DagLineInput>();
   for (const root of forest.roots) {
     const members = dagDescendants(forest.children, root);
     for (const member of members) rootOf.set(member.id, root.id);
-    for (let i = members.length - 1; i >= 0; i--) {
-      const member = members[i]!;
-      subtreeFinished.set(member.id, dagIssueFinished(member) &&
-        (forest.children.get(member.id) ?? []).every((child) => subtreeFinished.get(child.id)));
-    }
     lineInputs.set(root.id, {
       id: root.id,
       members: members.map((issue) => ({
         issue: issues.get(issue.id)!, parentId: forest.parentOf.get(issue.id) ?? null, isFrame: forest.children.has(issue.id),
-        role: issue.role, cancelledBlocking: false,
+        role: issue.role,
       })),
       project: projects.get(root.projectId ?? "") ?? null,
       dependencies: [], upstream: [], downstream: [],
@@ -99,7 +90,6 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
     });
   }
   const dependencies: DagDependency[] = [];
-  const cancelledBlockedIds = new Set<string>();
   const external = new Map<string, DagExternalGroup>();
   function addExternal(lineId: string, otherId: string, way: "upstream" | "downstream", edge: DagDependency) {
     const key = JSON.stringify([lineId, otherId, way]);
@@ -126,7 +116,6 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
       targetKind: forest.children.has(target.id) ? "frame" : "task",
     };
     dependencies.push(dependency);
-    if (dependency.state === "cancelled-blocking") cancelledBlockedIds.add(target.id);
     const sourceRoot = rootOf.get(source.id)!, targetRoot = rootOf.get(target.id)!;
     if (sourceRoot === targetRoot) lineInputs.get(sourceRoot)!.dependencies.push(dependency);
     else {
@@ -140,8 +129,8 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
     lineInputs.set(id, replaceEqualDeep(previous?.lineInputs.get(id), input));
   }
   return {
-    graph, issues, forest, traversal, rootOf, subtreeFinished, projects, lineInputs,
-    dependencies, cancelledBlockedIds, visibility: dagCompletedVisibility(graph, forest),
+    graph, issues, forest, traversal, rootOf, projects, lineInputs,
+    dependencies, visibility: dagCompletedVisibility(graph, forest),
     independentIds: dagIndependentIssueIds(graph, forest),
   };
 }

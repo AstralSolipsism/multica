@@ -163,8 +163,8 @@ three fork plugs and dedicated implementation have been retired.
 v0.13.0 upgrade (OL-1517): all six historical dependency plugs were removed
 with the fork's `issue_dependency` backend, and blockers use upstream's native
 flags (`--blocked-by`, `--remove-blocked-by`, `--blocked`). The file keeps
-exactly three non-dependency differences (`+79 / -23`, byte-identical to fork
-`main`'s original functions) from upstream
+exactly three non-dependency differences (`+77 / -28` after Stage 4 dead-guard
+slimming) from upstream
 `35b54a3742bb51bdf5ffa688655367ec98044862`; after every sync,
 `git diff <upstream-sha> -- server/cmd/multica/cmd_issue.go` must show these
 and nothing else:
@@ -183,12 +183,12 @@ by the fork-owned `issue_graph.{go,sql}`; see [the graph API](../issue-graph-api
 
 | Anchor (function / symbol) | Fork file providing the implementation |
 | --- | --- |
-| `runHeartbeatTick` (~line 4817) and `handlePendingWorkHint` (~line 4974): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
-| `runTask` OnPlanQuota callback (~line 9634) and terminal report (~line 9991): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
-| Terminal usage conversion (~line 9999): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
+| `runHeartbeatTick` (~line 4814) and `handlePendingWorkHint` (~line 4971): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
+| `runTask` OnPlanQuota callback (~line 9673) and terminal report (~line 9988): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
+| Terminal usage conversion (~line 9996): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
 | `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1565, 1635, 1645): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
 | `Daemon` struct fields `planQuotaCache`, `jevClient`, `jevSamples`, `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*` — field declarations stay in daemon.go; all methods live in fork files | `planquota_cache.go`, `jevprobe.go`, `hostmetrics.go`, `thinking_step.go`, `media.go` |
-| DSH reason consts `dshMissingProfileReason` (~line 2588) etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
+| DSH reason consts `dshMissingProfileReason` (~line 2585) etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
 
 `planquota_kimi.go`'s loopback same-UID peer-proof security boundary
 (`/proc/net/tcp` + `lsof`) is a hard red line: never move, weaken, or "clean

@@ -37,8 +37,6 @@ import (
 )
 
 type TaskService struct {
-	deferEnqueueNotifications bool
-
 	// RecordMemberActivity enables the member_delegation_day ledger, which
 	// only feeds self-host telemetry. Off unless the server enables telemetry
 	// at startup, so DO_NOT_TRACK stops collection, not just delivery.
@@ -1477,10 +1475,8 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 	// queued broadcast afterwards risks the dispatch event reaching clients
 	// before the queued one (rare but unsafe-by-construction). Publishing
 	// in the desired observe-order makes correctness independent of timing.
-	if !s.deferEnqueueNotifications {
-		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
-		s.NotifyTaskEnqueued(ctx, task)
-	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
 }
 
@@ -1634,10 +1630,8 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 		return task, nil
 	}
 	// See EnqueueTaskForIssue for ordering rationale.
-	if !s.deferEnqueueNotifications {
-		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
-		s.NotifyTaskEnqueued(ctx, task)
-	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
 }
 

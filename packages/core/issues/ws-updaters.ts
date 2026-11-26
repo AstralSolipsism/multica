@@ -525,7 +525,6 @@ export function onIssueUpdated(
       issue.status !== undefined || issue.project_id !== undefined,
     refreshSidebar: false,
   });
-  // Native blocker projections use the issue/graph invalidation above.
   invalidateSidebarListsForIssue(qc, wsId, issue.id, [oldProjectId, issue.project_id]);
   // Group counts, branch membership and hierarchy are server-owned. Never
   // guess deltas from a partial branch; refetch the active Table queries.

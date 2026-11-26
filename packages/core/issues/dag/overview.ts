@@ -9,7 +9,7 @@ export type DagAttentionTier = "exception" | "advancing" | "review" | "unstarted
 const tiers: DagAttentionTier[] = ["exception", "advancing", "review", "unstarted", "finished"];
 const identifiers = new Intl.Collator(undefined, { numeric: true });
 
-export function summarizeDagMembers(members: readonly DagIssue[], cancelledBlockedIds: ReadonlySet<string>) {
+export function summarizeDagMembers(members: readonly DagIssue[]) {
   const unfinished = { blocked: 0, review: 0, inProgress: 0, unstarted: 0 };
   let unknownStatusCount = 0;
   for (const member of members) {
@@ -22,7 +22,7 @@ export function summarizeDagMembers(members: readonly DagIssue[], cancelledBlock
   }
   const hasActiveRun = members.some(dagHasActiveRun);
   const matchCount = members.filter((m) => m.role === "match").length;
-  const attention: DagAttentionTier = unfinished.blocked || members.some((m) => cancelledBlockedIds.has(m.id))
+  const attention: DagAttentionTier = unfinished.blocked
     ? "exception" : unfinished.inProgress || hasActiveRun ? "advancing" : unfinished.review
       ? "review" : unfinished.unstarted || unknownStatusCount ? "unstarted" : "finished";
   return {
@@ -43,7 +43,6 @@ export interface DagOverviewCard extends ReturnType<typeof summarizeDagMembers> 
   project: DagModelIndex["graph"]["projects"][number] | null;
   memberIds: string[];
   progress: { completed: number; total: number };
-  cancelledBlocking: boolean;
 }
 
 export interface DagAggregateDependency {
@@ -88,7 +87,7 @@ export function computeDagOverview(
   const representatives = new Map<string, string>();
   const hiddenCompleted = { lines: 0, lineTasks: 0, singles: 0 };
   const independent: string[] = [];
-  function pushCard(id: string, kind: DagOverviewCard["kind"], memberIds: string[], issue: DagIssue | null, cancelledBlocking = false) {
+  function pushCard(id: string, kind: DagOverviewCard["kind"], memberIds: string[], issue: DagIssue | null) {
     const members = memberIds.map((memberId) => index.issues.get(memberId)!);
     const progressMembers = kind === "line" ? members.filter((m) => m.id !== issue!.id) : members;
     const card: DagOverviewCard = {
@@ -97,9 +96,8 @@ export function computeDagOverview(
         completed: progressMembers.filter((m) => normalizeIssueStatusCategory(m.statusCategory) === "done").length,
         total: progressMembers.length,
       },
-      ...summarizeDagMembers(members, index.cancelledBlockedIds), cancelledBlocking,
+      ...summarizeDagMembers(members),
     };
-    if (cancelledBlocking) card.role = "context";
     for (const memberId of memberIds) representatives.set(memberId, id);
     cards.push(replaceEqualDeep(oldCards.get(id), card));
   }
@@ -107,13 +105,9 @@ export function computeDagOverview(
     const issue = index.issues.get(id)!;
     if (!options.showCompleted && index.visibility.hiddenRoots.has(id)) {
       hiddenCompleted.lines++;
-      for (const member of input.members) {
-        if (index.visibility.keptCancelled.has(member.issue.id)) pushCard(member.issue.id, "issue", [member.issue.id], member.issue, true);
-        else hiddenCompleted.lineTasks++;
-      }
+      hiddenCompleted.lineTasks += input.members.length;
     } else if (!options.showCompleted && index.visibility.hiddenSingles.has(id)) {
-      if (index.visibility.keptCancelled.has(id)) pushCard(id, "issue", [id], issue, true);
-      else hiddenCompleted.singles++;
+      hiddenCompleted.singles++;
     } else if (index.independentIds.has(id)) independent.push(id);
     else if (index.forest.children.has(id)) pushCard(dagFeatureRepId(id), "line", input.members.map((m) => m.issue.id), issue);
     else pushCard(id, "issue", [id], issue);

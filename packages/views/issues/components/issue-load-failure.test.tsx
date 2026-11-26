@@ -95,7 +95,6 @@ describe("primary issue read failures through the production API client", () => 
     expect(screen.queryByText(enIssues.detail.not_found_title)).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("SYNTHETIC_PRIVATE_ERROR");
     const initialReads = primary.mock.calls.length;
-    // Reactions now share the primary detail cache, including its in-flight read.
     expect(initialReads).toBe(1);
     let settle!: (value: Response) => void;
     primary.mockImplementationOnce(() => new Promise<Response>((resolve) => { settle = resolve; }));

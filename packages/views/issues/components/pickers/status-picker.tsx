@@ -99,7 +99,6 @@ export function StatusPicker({
     workflow,
     project,
     defaultScope,
-    catalog,
   } = useIssueStatusOptions(wsId, projectId, status);
   const allOptions = useMemo(
     () => (allowedStatuses ? projectOptions.filter((o) => allowedStatuses.has(o.key)) : projectOptions),
@@ -109,14 +108,8 @@ export function StatusPicker({
   const options = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return allOptions;
-    // Default search stays in that workflow. An explicit allowed set may
-    // include statuses outside Default (dependency restrictions), so search
-    // the catalog only in that case and still enforce the set below.
-    const pool = defaultScope && allowedStatuses ? catalog : allOptions;
-    return pool.filter((o) =>
-      (!allowedStatuses || allowedStatuses.has(o.key)) && o.label.toLowerCase().includes(q),
-    );
-  }, [allOptions, allowedStatuses, catalog, defaultScope, query]);
+    return allOptions.filter((o) => o.label.toLowerCase().includes(q));
+  }, [allOptions, query]);
 
   const searchable = !!workflow || !!defaultScope || allOptions.length > SEARCH_THRESHOLD;
   const [pendingStatus, setPendingStatus] = useState<IssueStatus | null>(null);

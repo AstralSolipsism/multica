@@ -189,6 +189,7 @@ export function routeIssueDeepLinkPath(path: string): void {
   }
   // Ordinary opens restore a reused tab's view. A deep link must also apply
   // this address after deduplication, through the session's history flow.
+  clearCommentHighlightMemento(path);
   useTabStore.getState().navigateActiveSession(path);
 }
 

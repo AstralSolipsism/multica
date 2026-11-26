@@ -194,7 +194,6 @@ export function DagView({
             parentId: null,
             isFrame: false,
             role: node.role,
-            cancelledBlocking: false,
           });
       }
       return { kind: "independent", tasks };

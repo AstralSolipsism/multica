@@ -196,9 +196,6 @@ GITHUB_APP_PRIVATE_KEY=<full PEM private key, keeping the BEGIN/END lines and ne
 ```
 
 Générez la clé privée dans **Private keys → Generate a private key** de la GitHub App. Sans ces deux variables, la connexion est désactivée. Les connexions existantes continuent de refléter les PR et de mettre à jour les tâches via les webhooks, mais les cartes de PR n’affichent ni CI ni état de fusion.
-<Callout type="warning">
-Ces deux variables sont également requises pour compléter une **première** connexion GitHub : le rappel post-installation vérifie auprès de l'API GitHub, au nom de l'App, le `installation_id` transmis avant de créer la liaison — sans elles, une nouvelle installation ne peut pas être complétée (le rappel redirige avec une erreur réessayable). Une installation déjà liée à un espace de travail peut toujours être reliée par les administrateurs de cet espace.
-</Callout>
 
 </Step>
 <Step>

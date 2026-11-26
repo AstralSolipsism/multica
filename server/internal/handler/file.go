@@ -408,7 +408,6 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := h.resolveWorkspaceID(r)
 
-	uploadLimit := uploadFileLimit(r)
 	err := parseUploadForm(w, r)
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
@@ -445,11 +444,6 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	// Seek back so the full file is uploaded.
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read file")
-		return
-	}
-
-	if header.Size > uploadLimit {
-		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds %d MB limit", uploadLimit>>20))
 		return
 	}
 

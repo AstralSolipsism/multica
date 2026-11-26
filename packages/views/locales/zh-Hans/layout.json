@@ -137,7 +137,6 @@
       "no_project": "无项目",
       "private_project": "仅项目成员可见",
       "all_projects_other": "全部 {{count}} 个项目",
-      "project_actions": "{{name}} 的项目操作",
       "project_issues": "{{name}} 的任务",
       "project_issues_empty": "没有任务",
       "project_issues_error": "无法加载任务",

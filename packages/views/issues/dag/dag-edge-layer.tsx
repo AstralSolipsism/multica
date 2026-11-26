@@ -15,7 +15,6 @@ import {
 import { DAG_GROUP_HEADER_HEIGHT } from "./dag-constants";
 import {
   dagBusDependencyIds,
-  dagMotionAllowed,
   dagMotionPlan,
   dagPointVisible,
   dagRouteVisible,
@@ -28,22 +27,20 @@ import {
 } from "./dag-highlight";
 import "./dag-edge-motion.css";
 
-/** Static edge styles for the four dependency states (OL-183 §4). Advancing
- *  adds flowing dots and cancelled-blocking breathes via dag-edge-motion.css. */
+/** Static edge styles for the three dependency states (OL-183 §4). Advancing
+ *  adds flowing dots via dag-edge-motion.css. */
 const STATE_STYLE: Record<
   DagDependencyState,
-  { stroke: string; opacity: number; dash?: string }
+  { stroke: string; opacity: number }
 > = {
   satisfied: { stroke: "var(--muted-foreground)", opacity: 0.35 },
   blocking: { stroke: "var(--foreground)", opacity: 0.55 },
   advancing: { stroke: "var(--foreground)", opacity: 0.55 },
-  "cancelled-blocking": { stroke: "var(--destructive)", opacity: 0.85, dash: "6 4" },
 };
 
 /** The OL-997 lit-route flow colors: brand blue while a dependency still
  *  blocks (the only brand paint besides the selection ring), a softened
- *  success green once satisfied (silver-white washes out on light themes),
- *  destructive red for a cancelled blocker. */
+ *  success green once satisfied (silver-white washes out on light themes). */
 const LIT_FLOW_STYLE: Record<
   DagDependencyState,
   { stroke: string; opacity: number }
@@ -51,7 +48,6 @@ const LIT_FLOW_STYLE: Record<
   satisfied: { stroke: "var(--success)", opacity: 0.55 },
   blocking: { stroke: "var(--color-brand)", opacity: 0.95 },
   advancing: { stroke: "var(--color-brand)", opacity: 0.95 },
-  "cancelled-blocking": { stroke: "var(--destructive)", opacity: 0.95 },
 };
 
 /** Flow-dot speed along a route (flow px per second): the same for every
@@ -59,12 +55,9 @@ const LIT_FLOW_STYLE: Record<
 const DAG_LIT_FLOW_SPEED = 55;
 
 /** Paint order when lit routes share a bus interval: satisfied at the bottom,
- *  unsatisfied in the middle, cancelled blockers on top — the attention order
- *  stacked, never blended. */
+ *  unsatisfied on top — the attention order stacked, never blended. */
 function litPaintRank(state: DagDependencyState): number {
-  if (state === "satisfied") return 0;
-  if (state === "cancelled-blocking") return 2;
-  return 1;
+  return state === "satisfied" ? 0 : 1;
 }
 
 function arrowHead(
@@ -250,7 +243,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
     });
   }, [highlightedEdgeIds, composed.routes, activeOverlay, plan, states, showSatisfied, bounds]);
   // Shared bus intervals stack by attention: satisfied at the bottom,
-  // cancelled blockers on top. The sort is stable — same-state routes keep
+  // unsatisfied on top. The sort is stable — same-state routes keep
   // their scene order.
   const paintedLitRoutes = useMemo(
     () =>
@@ -260,7 +253,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
     [highlightedRoutes],
   );
 
-  // Motion: candidates are the visible advancing/cancelled segments; lit
+  // Motion: candidates are the visible advancing segments; lit
   // routes ask for their state-colored flow. The shared budget keeps only the
   // lit chain moving when the screen is too busy.
   const motionCandidates = useMemo(
@@ -300,7 +293,6 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       }),
     [visibleSegments, activeMotion, plan, states, showSatisfied, composed.routes],
   );
-  const motionAllowed = dagMotionAllowed(motionOn ? 1 : 0, reducedMotion);
 
   const dimmed = highlightedEdgeIds != null;
   const dimNodes = litBoxes != null && litBoxes.length > 0;
@@ -448,14 +440,13 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
   const segmentGroups = useMemo(() => {
     const groups = new Map<
       string,
-      { state: DagDependencyState; width: number; breathe: boolean; d: string[]; ids: string[] }
+      { state: DagDependencyState; width: number; d: string[]; ids: string[] }
     >();
     for (const { segment, display } of visibleSegments) {
-      const breathe = display.state === "cancelled-blocking" && activeMotion.has(segment.id);
-      const key = `${display.state}|${display.width}|${breathe}`;
+      const key = `${display.state}|${display.width}`;
       let group = groups.get(key);
       if (!group) {
-        group = { state: display.state, width: display.width, breathe, d: [], ids: [] };
+        group = { state: display.state, width: display.width, d: [], ids: [] };
         groups.set(key, group);
       }
       group.d.push(
@@ -464,7 +455,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       group.ids.push(segment.id);
     }
     return [...groups.entries()];
-  }, [visibleSegments, activeMotion]);
+  }, [visibleSegments]);
 
   const flowLine = (
     { segment, display, direction }: { segment: DagSceneSegment; display: { width: number }; direction: 1 | -1 },
@@ -513,11 +504,9 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
                 key={key}
                 data-dag-segments={group.ids.join(" ")}
                 d={group.d.join(" ")}
-                className={group.breathe ? "dag-edge-breathe" : undefined}
                 stroke={style.stroke}
                 strokeOpacity={style.opacity}
                 strokeWidth={group.width}
-                strokeDasharray={style.dash}
                 strokeLinecap="round"
                 fill="none"
               />
@@ -567,7 +556,7 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
         </g>
         {/* Simplified cards below the readability zoom: SVG rects whose DOM
             shells stay interactive. Painted over edge endpoints like the DOM
-            cards would; cancelled blockers keep their dashed mark. */}
+            cards would; context cards keep their dashed mark. */}
         {ghost && (
           <g data-dag-ghost-blocks>
             {ghost.body && (
@@ -716,7 +705,6 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             const style = STATE_STYLE[display.state];
             const points = route.map((p) => `${p.x},${p.y}`).join(" ");
             const width = display.count > 1 ? 3 : 2;
-            const breathe = display.state === "cancelled-blocking" && motionAllowed;
             return (
               <g key={`lit:${edgeId}`} data-dag-lit-edge={edgeId}>
                 <polyline
@@ -731,11 +719,9 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
                 <polyline
                   points={points}
                   fill="none"
-                  className={breathe ? "dag-edge-breathe" : undefined}
                   stroke={style.stroke}
                   strokeOpacity={Math.min(1, style.opacity + 0.35)}
                   strokeWidth={width}
-                  strokeDasharray={style.dash}
                   strokeLinejoin="round"
                   strokeLinecap="round"
                 />

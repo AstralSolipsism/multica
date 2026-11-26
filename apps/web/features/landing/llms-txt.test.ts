@@ -19,7 +19,7 @@ describe("buildLlmsTxt", () => {
     for (const item of dict.faq.items) expect(text).toContain(`### ${item.question}`);
     for (const feature of Object.values(dict.home.features.items)) expect(text).toContain(feature.body);
     expect(text).toMatch(/supports \d+ coding tools/);
-    expect(text).toContain("Using Labrastro inside your own organization is free");
+    expect(text).toContain("Using Multica inside your own organization is free");
     expect(text).not.toMatch(/\*\*[^*]*Cloud\*\*: Hosted by/);
   });
 

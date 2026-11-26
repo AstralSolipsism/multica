@@ -1,7 +1,7 @@
 import type { IssueGraphNode } from "../../api/issue-graph-schemas";
 import { normalizeIssueStatusCategory } from "../config/status";
 
-export type DagDependencyState = "satisfied" | "cancelled-blocking" | "advancing" | "blocking";
+export type DagDependencyState = "satisfied" | "advancing" | "blocking";
 
 export function dagIssueFinished(node: Pick<IssueGraphNode, "statusCategory">): boolean {
   const category = normalizeIssueStatusCategory(node.statusCategory);
@@ -24,7 +24,7 @@ export function dagDependencyState(source: Pick<IssueGraphNode, "status" | "stat
 }
 
 const attention: Record<DagDependencyState, number> = {
-  satisfied: 0, advancing: 1, blocking: 2, "cancelled-blocking": 3,
+  satisfied: 0, advancing: 1, blocking: 2,
 };
 
 export function aggregateDagDependencyState(states: Iterable<DagDependencyState>): DagDependencyState {

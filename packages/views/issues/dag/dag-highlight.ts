@@ -94,14 +94,12 @@ export function dagDependencyEdgeIds(
 
 // ---- Motion ---------------------------------------------------------------
 
-export type DagEdgeMotion = "flow" | "breathe" | null;
+export type DagEdgeMotion = "flow" | null;
 
 /** Motion per dependency state (OL-183 §4): advancing edges carry dots
- *  flowing downstream, cancelled blockers breathe slowly. */
+ *  flowing downstream. */
 export function dagStateMotion(state: DagDependencyState): DagEdgeMotion {
-  if (state === "advancing") return "flow";
-  if (state === "cancelled-blocking") return "breathe";
-  return null;
+  return state === "advancing" ? "flow" : null;
 }
 
 export interface DagMotionCandidate {
@@ -117,33 +115,30 @@ export interface DagLitFlowCandidate {
 }
 
 export interface DagMotionPlan {
-  /** Base segments keeping their dots/breath. */
+  /** Base segments keeping their flow dots. */
   segments: Set<string>;
   /** Lit routes carrying the state-colored flow along their full route. */
   flows: Set<string>;
 }
 
 /** Hard motion gates: system reduced motion, or zoom below 50%. */
-export function dagMotionAllowed(zoom: number, reducedMotion: boolean): boolean {
+function dagMotionAllowed(zoom: number, reducedMotion: boolean): boolean {
   return !reducedMotion && zoom >= DAG_MOTION_MIN_ZOOM;
 }
 
-/** Once lit routes alone exceed the budget, cancelled blockers keep their
- *  warning flow first, satisfied routes yield first. The sort is stable, so
+/** Once lit routes alone exceed the budget, unsatisfied routes keep their
+ *  flow first and satisfied routes yield first. The sort is stable, so
  *  same-rank routes keep their scene order. */
 function litFlowRank(state: DagDependencyState): number {
-  if (state === "cancelled-blocking") return 0;
-  if (state === "satisfied") return 2;
-  return 1;
+  return state === "satisfied" ? 1 : 0;
 }
 
 /** The shared motion budget (~60 moving elements on screen, OL-284 — OL-997's
  *  lit flows count too). Under the budget everything moves; over it only the
  *  lit chain keeps its flow — base segments stop, since the chain's route
  *  flow replaced the background dots it used to borrow — and a chain longer
- *  than the budget truncates to cancelled-blocking, then unsatisfied, then
- *  satisfied routes; the rest stay static lit lines. Hard stops: system
- *  reduced motion, or zoom below 50%. */
+ *  than the budget truncates to unsatisfied, then satisfied routes; the rest
+ *  stay static lit lines. Hard stops: system reduced motion, or zoom below 50%. */
 export function dagMotionPlan(params: {
   candidates: readonly DagMotionCandidate[];
   litRoutes: readonly DagLitFlowCandidate[];

@@ -43,7 +43,7 @@ var userProfileUpdateCmd = &cobra.Command{
 	Long: "Set the personal profile description that gets injected into agent " +
 		"briefs as `## Requesting User`. Pass an empty value to clear it.\n\n" +
 		"Pick the input mode that preserves your content:\n" +
-		"  --description \"...\"          inline (escape rules: see flag help below)\n" +
+		"  --description \"...\"          inline (preserves literal text)\n" +
 		"  --description-stdin           pipe a HEREDOC (preserves verbatim)\n" +
 		"  --description-file <path>     read a UTF-8 file (Windows-safe)\n",
 	RunE: runUserProfileUpdate,

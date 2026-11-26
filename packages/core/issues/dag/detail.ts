@@ -82,8 +82,8 @@ export function computeDagFocus(index: DagModelIndex, issueId: string, showCompl
   const upstream = dagDependencyClosure(index.traversal, [issueId], "upstream");
   const downstream = dagDependencyClosure(index.traversal, [issueId], "downstream");
   const closure = new Set([...upstream, ...downstream]);
-  const { hiddenRoots, hiddenSingles, keptCancelled } = index.visibility;
-  const visible = (id: string) => showCompleted || keptCancelled.has(id) ||
+  const { hiddenRoots, hiddenSingles } = index.visibility;
+  const visible = (id: string) => showCompleted ||
     (!hiddenRoots.has(index.rootOf.get(id)!) && !hiddenSingles.has(id));
   const included = new Set([...closure].filter(visible));
   const hiddenIssueCount = closure.size - included.size;
@@ -97,15 +97,12 @@ export function computeDagFocus(index: DagModelIndex, issueId: string, showCompl
   for (const id of included) {
     const issue = index.issues.get(id)!;
     const parent = index.forest.parentOf.get(id);
-    const cancelledBlocking = !showCompleted && keptCancelled.has(id);
     const member: DagTask = {
-      issue, parentId: parent && included.has(parent) && (showCompleted || !keptCancelled.has(parent)) ? parent : null,
-      isFrame: index.forest.children.has(id) && !cancelledBlocking,
-      cancelledBlocking, role: cancelledBlocking ? "context" : issue.role,
+      issue, parentId: parent && included.has(parent) ? parent : null,
+      isFrame: index.forest.children.has(id),
+      role: issue.role,
     };
-    // A cancelled blocker pulled out of a hidden line remains a standalone.
-    const root = index.rootOf.get(id)!;
-    const groupId = included.has(root) ? root : id;
+    const groupId = index.rootOf.get(id)!;
     const group = byLine.get(groupId) ?? [];
     group.push(member);
     byLine.set(groupId, group);

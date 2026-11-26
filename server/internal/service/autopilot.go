@@ -1452,6 +1452,9 @@ func (s *AutopilotService) completeRunFromLinkedIssueTask(ctx context.Context, r
 	updatedRun, err := s.completeAutopilotRun(ctx, autopilotRunCompletion{
 		ID: run.ID,
 	})
+	if errors.Is(err, errRunAlreadyTerminal) {
+		return
+	}
 	if err != nil {
 		slog.Warn("failed to complete autopilot run from linked issue task",
 			"run_id", util.UUIDToString(run.ID),

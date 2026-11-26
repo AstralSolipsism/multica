@@ -13,7 +13,6 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { ApiError } from "@multica/core/api";
 import enCommon from "../locales/en/common.json";
 import enModals from "../locales/en/modals.json";
 import enEditor from "../locales/en/editor.json";
@@ -325,12 +324,32 @@ vi.mock("@multica/core/properties", async (importOriginal) => {
 });
 
 
+// Hoisted ApiError class so both the vi.mock factory and the tests below
+// can construct/instanceof-check the same identity. vi.mock is hoisted, so
+// a normal `class` declaration above it would still be in the TDZ at mock
+// evaluation time.
+const { ApiError } = vi.hoisted(() => {
+  class ApiErrorImpl extends Error {
+    readonly status: number;
+    readonly statusText: string;
+    readonly body?: unknown;
+    constructor(message: string, status: number, statusText: string, body?: unknown) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.statusText = statusText;
+      this.body = body;
+    }
+  }
+  return { ApiError: ApiErrorImpl };
+});
+
 vi.mock("@multica/core/api", async () => {
-  // Keep parsing real, with one ApiError identity shared by the component
-  // and the test fixtures.
-  const { ApiError } = await vi.importActual<typeof import("@multica/core/api/client")>(
-    "@multica/core/api/client",
-  );
+  // Pull real `parseWithFallback` + `DuplicateIssueErrorBodySchema` from the
+  // schema modules so the drift-fallback branch in create-issue.tsx runs the
+  // actual validation logic (not a stub). Only `ApiError` is local — the
+  // component imports it from this module and the cross-realm `instanceof`
+  // check requires a single class identity.
   const { parseWithFallback } = await vi.importActual<typeof import("@multica/core/api/schema")>(
     "@multica/core/api/schema",
   );

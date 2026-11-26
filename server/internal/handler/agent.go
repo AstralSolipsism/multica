@@ -448,7 +448,8 @@ type AgentTaskResponse struct {
 	// the cap, so the brief can say the list is incomplete instead of
 	// presenting a truncated catalog as the whole one.
 	IssueStatusesOmitted int `json:"issue_statuses_omitted,omitempty"`
-	// ProjectWorkflow is absent for the Default project workflow.
+	// ProjectWorkflow is the issue's project workflow, when it has one other
+	// than the Default (MUL-7420). Absent keeps the brief unchanged.
 	ProjectWorkflow    *TaskProjectWorkflowData `json:"project_workflow,omitempty"`
 	ThreadName         string                   `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Status             string                   `json:"status"`

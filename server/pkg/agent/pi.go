@@ -485,6 +485,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		prompt = opts.SkillInvocation.piSkillPrompt(opts.PiSkillPaths, b.cfg.LaunchPrefix, opts.ExtraArgs, opts.CustomArgs)
 	}
 	cmd, _, _ := b.cfg.commandAt(execName).execVia(processCtx, choosePiInvocation, lookedUp, args, b.cfg.Logger)
+	// The joined cleanup below owns TERM, escalation and pipe release.
 	cmd.Cancel = func() error { return nil }
 	hideAgentWindow(cmd)
 	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))

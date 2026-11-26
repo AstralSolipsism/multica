@@ -305,6 +305,7 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 	if err != nil {
 		return IssueCreateResult{}, err
 	}
+
 	if p.SourceContext != nil {
 		if _, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
 			ID: p.SourceContext.SourceIssueID, WorkspaceID: p.WorkspaceID,

@@ -120,7 +120,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	var focus *string
 	if raw := r.URL.Query().Get("focus_issue_id"); raw != "" {
-		issue, ok := h.loadIssueForUser(w, r, raw)
+		issue, ok := snapshot.loadIssueForUser(w, r, raw)
 		if !ok {
 			return
 		}
@@ -236,7 +236,7 @@ func writeIssueGraphRefusal(w http.ResponseWriter, err error) bool {
 	if !errors.As(err, &e) {
 		return false
 	}
-	status := http.StatusConflict
+	status := http.StatusInternalServerError
 	switch e.Code {
 	case "not_found":
 		status = http.StatusNotFound

@@ -554,9 +554,13 @@ func notifyProjectSubscribers(
 		recipients = append(recipients, subID)
 	}
 	userPrefs := loadUserPrefs(ctx, queries, workspaceID, recipients)
+	var issuePriority *string
+	if len(recipients) > 0 {
+		issuePriority = inboxIssuePriority(ctx, queries, issueID)
+	}
 
 	for _, subID := range recipients {
-		createMemberInboxItem(ctx, queries, bus, subID, workspaceID, e, issueID, issueStatus,
+		createMemberInboxItem(ctx, queries, bus, subID, workspaceID, e, issueID, issueStatus, issuePriority,
 			notifType, severity, title, body, details, userPrefs)
 	}
 }
@@ -572,6 +576,7 @@ func createMemberInboxItem(
 	e events.Event,
 	issueID string,
 	issueStatus string,
+	issuePriority *string,
 	notifType string,
 	severity string,
 	title string,
@@ -580,7 +585,7 @@ func createMemberInboxItem(
 	prefs inbox.Preferences,
 ) bool {
 	_, inserted, err := inbox.Deliver(ctx, queries, bus, issueNotification(e, "member", recipientID,
-		workspaceID, issueID, issueStatus, inboxIssuePriority(ctx, queries, issueID), notifType, severity, title, body, details, prefs))
+		workspaceID, issueID, issueStatus, issuePriority, notifType, severity, title, body, details, prefs))
 	if err != nil {
 		slog.Error("member notification creation failed",
 			"recipient_id", recipientID, "type", notifType, "error", err)
@@ -652,6 +657,8 @@ func notifyIssueSubscribers(
 		issueID: subscriberIssueID, details: details,
 	}
 
+	var issuePriority *string
+	priorityLoaded := false
 	for _, sub := range subs {
 		// Only notify member-type subscribers (not agents)
 		if sub.UserType != "member" {
@@ -689,7 +696,11 @@ func notifyIssueSubscribers(
 			}
 		}
 
-		if createMemberInboxItem(ctx, queries, bus, subID, workspaceID, e, targetIssueID, issueStatus,
+		if !priorityLoaded {
+			issuePriority = inboxIssuePriority(ctx, queries, targetIssueID)
+			priorityLoaded = true
+		}
+		if createMemberInboxItem(ctx, queries, bus, subID, workspaceID, e, targetIssueID, issueStatus, issuePriority,
 			notifType, severity, title, body, details, userPrefs) {
 			notified[subID] = true
 		}

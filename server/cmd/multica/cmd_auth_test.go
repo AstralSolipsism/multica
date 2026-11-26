@@ -50,25 +50,23 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "isolate cmd/multica test home: %v\n", err)
 		os.Exit(1)
 	}
-	// Marker detection walks cwd ancestors too. A suite launched by a coding
-	// agent must not borrow the enclosing task's identity or change its marker.
-	originalDir, err := os.Getwd()
+	// The daemon-task marker lookup walks up from the working directory. Run
+	// from a checkout inside an agent task workdir, the package directory sits
+	// below that task's real marker, and every API, config and daemon path
+	// refuses. Tests that need a marker create one and t.Chdir into it.
+	testLaunchDir, err = os.Getwd()
+	if err == nil && os.Getenv("MULTICA_TEST_ATTACHMENT_ARGV") != "1" {
+		err = os.Chdir(scratchHome)
+	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(scratchHome)
+		fmt.Fprintf(os.Stderr, "move cmd/multica tests into scratch home: %v\n", err)
 		os.Exit(1)
 	}
-	// These subprocesses already get a scratch cwd containing their input files.
-	if os.Getenv("MULTICA_DEPENDENCY_CLI_TEST") != "1" && os.Getenv("MULTICA_TEST_ATTACHMENT_ARGV") != "1" {
-		if err := os.Chdir(scratchHome); err != nil {
-			fmt.Fprintf(os.Stderr, "isolate cmd/multica test cwd: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	testLaunchDir = originalDir
 
 	code := m.Run()
-	_ = os.Chdir(originalDir)
+	// Windows cannot remove the current working directory.
+	_ = os.Chdir(os.TempDir())
 	_ = os.RemoveAll(scratchHome)
 	os.Exit(code)
 }

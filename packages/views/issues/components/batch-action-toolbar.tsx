@@ -30,7 +30,6 @@ import {
   type Issue,
   type UpdateIssueRequest,
 } from "@multica/core/types";
-import { errorCode } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { commonIssueFields } from "@multica/core/issues/batch";
 import { sharedWorkflowStatusKeys, useIssueWorkflows } from "@multica/core/issue-workflows";
@@ -208,11 +207,7 @@ export function BatchActionToolbar({
       if (applied && clearSelectionOnApply && !quiet) clear();
       return applied;
     } catch (err) {
-      if (errorCode(err) === "response_unreadable") {
-        toast.error(t(($) => $.batch.update_failed));
-      } else {
-        reportError(err);
-      }
+      reportError(err);
       return false;
     }
   };

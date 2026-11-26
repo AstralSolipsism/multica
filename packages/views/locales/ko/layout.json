@@ -137,7 +137,6 @@
       "no_project": "프로젝트 없음",
       "private_project": "프로젝트 멤버만 볼 수 있습니다",
       "all_projects_other": "전체 프로젝트 {{count}}개",
-      "project_actions": "{{name}} 프로젝트 작업",
       "project_issues": "{{name}}의 태스크",
       "project_issues_empty": "태스크가 없습니다",
       "project_issues_error": "태스크를 불러오지 못했습니다",

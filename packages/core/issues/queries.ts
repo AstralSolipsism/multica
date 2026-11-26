@@ -506,29 +506,10 @@ export function sidebarIssuesOptions(
   });
 }
 
-const issueDetailReads = new WeakMap<QueryClient, Map<string, Promise<Issue>>>();
-
-function readIssueDetail(qc: QueryClient, wsId: string, id: string): Promise<Issue> {
-  let reads = issueDetailReads.get(qc);
-  if (!reads) {
-    reads = new Map();
-    issueDetailReads.set(qc, reads);
-  }
-  const key = `${wsId}:${id}`;
-  const existing = reads.get(key);
-  if (existing) return existing;
-  const request = api.getIssue(id).finally(() => {
-    reads.delete(key);
-    if (reads.size === 0) issueDetailReads.delete(qc);
-  });
-  reads.set(key, request);
-  return request;
-}
-
 export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
-    queryFn: ({ client }) => readIssueDetail(client, wsId, id),
+    queryFn: () => api.getIssue(id),
   });
 }
 

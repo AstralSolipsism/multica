@@ -140,7 +140,6 @@ describe("dagBusDependencyIds / dagDependencyEdgeIds", () => {
 describe("motion policy", () => {
   it("maps states to their motion", () => {
     expect(dagStateMotion("advancing")).toBe("flow");
-    expect(dagStateMotion("cancelled-blocking")).toBe("breathe");
     expect(dagStateMotion("blocking")).toBeNull();
     expect(dagStateMotion("satisfied")).toBeNull();
   });
@@ -179,12 +178,11 @@ describe("motion policy", () => {
     expect(result.flows.size).toBe(5);
   });
 
-  it("a chain longer than the budget keeps cancelled blockers, then unsatisfied, then satisfied", () => {
+  it("a chain longer than the budget keeps unsatisfied routes before satisfied ones", () => {
     const routes = [
       ...lit(20, "satisfied", "sat"),
       ...lit(4, "advancing", "adv"),
-      ...lit(DAG_MOTION_MAX_SEGMENTS - 5, "blocking", "block"),
-      ...lit(6, "cancelled-blocking", "cancel"),
+      ...lit(DAG_MOTION_MAX_SEGMENTS, "blocking", "block"),
     ];
     const result = dagMotionPlan({
       candidates: [],
@@ -193,9 +191,8 @@ describe("motion policy", () => {
       reducedMotion: false,
     });
     expect(result.flows.size).toBe(DAG_MOTION_MAX_SEGMENTS);
-    // Every cancelled blocker survives; satisfied routes yield first, then
-    // the unsatisfied in scene order (the sort is stable).
-    for (let i = 0; i < 6; i++) expect(result.flows.has(`cancel:${i}`)).toBe(true);
+    // Satisfied routes yield first, then the unsatisfied in scene order (the
+    // sort is stable).
     expect([...result.flows].filter((id) => id.startsWith("sat:"))).toEqual([]);
     expect([...result.flows].filter((id) => id.startsWith("adv:"))).toEqual([
       "adv:0",
@@ -204,7 +201,7 @@ describe("motion policy", () => {
       "adv:3",
     ]);
     expect([...result.flows].filter((id) => id.startsWith("block:")).length).toBe(
-      DAG_MOTION_MAX_SEGMENTS - 6 - 4,
+      DAG_MOTION_MAX_SEGMENTS - 4,
     );
   });
 

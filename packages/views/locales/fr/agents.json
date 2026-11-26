@@ -533,7 +533,6 @@
       "handoff_required": "Sélectionnez un modèle de relais pour ce mode d'exécution.",
       "same_main_model": "Ce modèle est identique au modèle principal ; ce rôle supplémentaire ne délèguera pas le travail.",
       "model_inherit_main": "Hériter du modèle principal",
-      "create_section": "Collaboration OMP (facultatif)",
       "memory": "Mémoire et apprentissage",
       "memory_backend": "Backend de mémoire",
       "memory_off": "Désactivée",

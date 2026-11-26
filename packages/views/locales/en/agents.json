@@ -533,7 +533,6 @@
       "handoff_required": "Select a handoff model for this execution mode.",
       "same_main_model": "This matches the main model, so the extra role will not offload work.",
       "model_inherit_main": "Inherit main model",
-      "create_section": "OMP collaboration (optional)",
       "memory": "Memory & auto-learn",
       "memory_backend": "Memory backend",
       "memory_off": "Off",

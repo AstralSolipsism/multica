@@ -496,20 +496,11 @@ func (s *AutopilotService) completeAutopilotRun(ctx context.Context, params auto
 }
 
 func (s *AutopilotService) failAutopilotRun(ctx context.Context, params autopilotRunFailure) (db.AutopilotRun, error) {
-	return s.failAutopilotRunWithResult(ctx, params, nil)
-}
-
-// failAutopilotRunWithResult records a failed terminal AND an optional
-// structured first-terminal payload (OL-25 review R11: the issue-sync
-// boundary persists the status it observed; the shared SQL only overwrites
-// result when a non-null value arrives, so ordinary task failures without a
-// structured payload never erase existing evidence).
-func (s *AutopilotService) failAutopilotRunWithResult(ctx context.Context, params autopilotRunFailure, result []byte) (db.AutopilotRun, error) {
 	return s.settleAutopilotRunTerminal(ctx, db.UpdateAutopilotRunTerminalWithQuotaParams{
 		TerminalStatus: "failed",
 		FailureReason:  params.FailureReason,
 		ReasonCode:     params.ReasonCode,
-		Result:         result,
+		Result:         nil,
 		RunID:          params.ID,
 	})
 }

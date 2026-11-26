@@ -74,7 +74,6 @@
       "error_not_member": "當前登入的 Labrastro 帳號不是該工作區的成員。"
     },
     "wecom_bind": {
-      "page_title": "綁定企業微信帳號",
       "needs_auth_description": "登入以將你的企業微信帳號連線至你的 Labrastro 帳號。",
       "error_already_bound": "此企業微信帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "你登入的 Labrastro 帳號不是當前工作區成員。"

@@ -119,9 +119,6 @@ describe("SourceContextBadge", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Go to source comment" }));
     await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
-    // OL-270: the jump goes to the IDENTIFIER spelling — the identifier route
-    // needs no canonical rewrite, so the deep-link memento stays under one
-    // pathname and repeat jumps keep landing.
     expect(navigationPush).toHaveBeenCalledWith("/acme/issues/NEW-7#comment-selected");
   });
 

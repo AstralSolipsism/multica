@@ -514,7 +514,6 @@
       "handoff_required": "该模式需要指定换手施工模型。",
       "same_main_model": "与主模型相同，无法起到分流或换手的作用。",
       "model_inherit_main": "继承主模型",
-      "create_section": "OMP 协同策略（可选）",
       "memory": "记忆与 skill 沉淀",
       "memory_backend": "经验记忆模式",
       "memory_off": "关闭",

@@ -3209,10 +3209,7 @@ export function IssueDetail({ issueId, onDelete, inbox, defaultSidebarOpen = tru
   const currentIssueRenderContext = useMemo(
     () =>
       resolvedIssueId && resolvedIssueIdentifier
-        ? {
-            id: resolvedIssueId,
-            identifier: resolvedIssueIdentifier,
-          }
+        ? { id: resolvedIssueId, identifier: resolvedIssueIdentifier }
         : null,
     [resolvedIssueId, resolvedIssueIdentifier],
   );

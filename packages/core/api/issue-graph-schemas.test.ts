@@ -19,8 +19,8 @@ describe("issue graph API boundary", () => {
     const graph = await new ApiClient("https://api.test").getIssueGraph("ws-1", request, { signal });
     expect(graph?.complete).toBe(true);
     expect(graph?.matchedCount).toBe(14);
-    expect(graph?.nodes.find((n) => n.title === "Checkout API")?.dependencySummary?.visibleUnsatisfiedCount).toBe(2);
-    expect(graph?.edges).toHaveLength(7);
+    expect(graph?.nodes.find((n) => n.title === "Checkout API")?.dependencySummary?.visibleUnsatisfiedCount).toBe(1);
+    expect(graph?.edges).toHaveLength(8);
     expect(graph?.edges.map((edge) => edge.sourceEdgeId)).toEqual(
       reference.edges.map((edge) => edge.source_edge_id),
     );

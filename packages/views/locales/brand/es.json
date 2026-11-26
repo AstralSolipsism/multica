@@ -69,7 +69,6 @@
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "wecom_bind": {
-      "page_title": "Vincular cuenta de WeCom",
       "needs_auth_description": "Inicia sesión para conectar tu cuenta de WeCom con tu cuenta de Labrastro.",
       "error_already_bound": "Esta cuenta de WeCom ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
@@ -217,7 +216,6 @@
     },
     "welcome": {
       "wordmark": "Te damos la bienvenida a Labrastro",
-      "lede_web": "La app de escritorio incluye el runtime local, sin necesidad de configurar la CLI. Continúa en la web para conectar tu propia CLI.",
       "download_desktop": "Descargar Labrastro Desktop"
     },
     "source_backfill": {

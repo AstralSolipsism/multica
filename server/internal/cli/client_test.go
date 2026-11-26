@@ -13,24 +13,20 @@ import (
 
 func TestHTTPErrorBodyLimits(t *testing.T) {
 	for _, tc := range []struct {
-		name, path  string
-		size, limit int
+		name string
+		size int
 	}{
-		{"ordinary", "/api/agents", 2 * maxErrorBodyBytes, maxErrorBodyBytes},
-		{"similar_prefix", "/api/issues-other", 2 * maxErrorBodyBytes, maxErrorBodyBytes},
-		{"issue_above_old_cap", "/api/issues/id", 6000, 1 << 20},
-		{"issue_at_limit", "/api/issues/id/comments", 1 << 20, 1 << 20},
-		{"issue_over_limit", "/api/issues/id/timeline", 2 << 20, 1 << 20},
-		{"issue_root_over_limit", "/api/issues", 2 << 20, 1 << 20},
+		{"exact_limit", maxErrorBodyBytes},
+		{"over_limit", maxErrorBodyBytes + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := strings.NewReader(strings.Repeat("x", tc.size))
-			err := newHTTPError("POST", tc.path, &http.Response{StatusCode: 409, Body: io.NopCloser(body)})
-			if len(err.Body) != min(tc.size, tc.limit) || tc.size-body.Len() > tc.limit+1 {
-				t.Fatalf("body=%d bytes, consumed=%d bytes, limit=%d", len(err.Body), tc.size-body.Len(), tc.limit)
+			err := newHTTPError("POST", "/api/agents", &http.Response{StatusCode: 409, Body: io.NopCloser(body)})
+			if len(err.Body) != min(tc.size, maxErrorBodyBytes) || tc.size-body.Len() > maxErrorBodyBytes+1 {
+				t.Fatalf("body=%d bytes, consumed=%d bytes, limit=%d", len(err.Body), tc.size-body.Len(), maxErrorBodyBytes)
 			}
-			if err.BodyTruncated != (tc.size > tc.limit) {
-				t.Fatalf("BodyTruncated=%t for size=%d limit=%d", err.BodyTruncated, tc.size, tc.limit)
+			if err.BodyTruncated != (tc.size > maxErrorBodyBytes) {
+				t.Fatalf("BodyTruncated=%t for size=%d limit=%d", err.BodyTruncated, tc.size, maxErrorBodyBytes)
 			}
 		})
 	}

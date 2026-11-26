@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { AgentSkillSummary, Attachment } from "@multica/core/types";
 import type { Editor } from "@tiptap/core";
-import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
+import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { issueKeys } from "@multica/core/issues/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { WorkspaceSlugProvider } from "@multica/core/paths";

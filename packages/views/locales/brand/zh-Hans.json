@@ -69,7 +69,6 @@
       "error_not_member": "当前登录的 Labrastro 账号不是该工作区的成员。"
     },
     "wecom_bind": {
-      "page_title": "关联企业微信账号",
       "needs_auth_description": "登录 Labrastro，将你的企业微信账号关联到当前账号。",
       "error_already_bound": "该企业微信账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"

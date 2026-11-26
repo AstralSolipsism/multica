@@ -295,7 +295,7 @@ test("quality checks have exactly one runner and reuse the product build install
     }
   }
   const action = readFileSync(new URL("../.github/actions/frontend-quality/action.yml", import.meta.url), "utf8");
-  assert.match(action, /node --test scripts\/check-branding\.test\.mjs\n\s+node scripts\/check-branding\.mjs/);
+  assert.match(action, /run: node scripts\/check-branding\.mjs/);
   assert.match(action, /run: pnpm knip/);
   assert.doesNotMatch(action, /continue-on-error:/);
   assert.doesNotMatch(action, /pnpm install/);

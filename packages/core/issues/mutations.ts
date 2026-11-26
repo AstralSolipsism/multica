@@ -211,9 +211,7 @@ export function useUpdateIssue() {
       // is resolved against that base on the server and therefore is not safe
       // to predict optimistically. Keep the authoritative raw description in
       // cache so hidden channel-media markers remain available as the base for
-      // rapid follow-up edit. mutationFn still sends the full payload.
-      // Blocker fields describe relations, not Issue columns — never patch
-      // them into the entity cache.
+      // a rapid follow-up edit. mutationFn still sends the full payload.
       const {
         suppress_run: _suppressRun,
         stop_previous_assignee_runs: _stopPreviousAssigneeRuns,
@@ -316,9 +314,6 @@ export function useUpdateIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-      if (vars.blocked_by !== undefined || vars.remove_blocked_by !== undefined) {
-        void invalidateIssueQueries(qc, wsId, "graph");
-      }
     },
     onSuccess: (serverIssue, vars) => {
       // Reconcile with the authoritative server entity by patching the one card
@@ -444,16 +439,6 @@ export function useUpdateIssue() {
       if (ctx?.parentId || newParentId) {
         qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
       }
-      // Blocker/status/parent writes change graph readiness even if their WS
-      // event is delayed or missed.
-      if (
-        vars.status !== undefined ||
-        Object.prototype.hasOwnProperty.call(vars, "parent_issue_id") ||
-        vars.blocked_by !== undefined ||
-        vars.remove_blocked_by !== undefined
-      ) {
-        void invalidateIssueQueries(qc, wsId, "graph");
-      }
     },
   });
 }
@@ -546,7 +531,6 @@ export function useDeleteIssue() {
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.sidebarAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-      // The deleted issue may have been a registered prerequisite.
       void invalidateIssueQueries(qc, wsId, "graph");
       if (ctx?.metadata) invalidateDeletedIssueParentCaches(qc, wsId, ctx.metadata);
     },
@@ -747,17 +731,6 @@ export function useBatchUpdateIssues() {
           Object.prototype.hasOwnProperty.call(_vars.updates, "project_id"),
       });
       qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-      // Dependency projections read the CURRENT status/parent chain of every
-      // registered prerequisite — so a batch that moved status or parents
-      // refreshes them locally even while the WS event is still in transit
-      // (or the socket is down). A successful batch may have changed
-      // relation-gated dispatch state and refreshes the graph alongside.
-      if (
-        _vars.updates.status !== undefined ||
-        Object.prototype.hasOwnProperty.call(_vars.updates, "parent_issue_id")
-      ) {
-        void invalidateIssueQueries(qc, wsId, "graph");
-      }
       if (ctx) {
         invalidateStaleListKeys(qc, ctx.staleKeys);
       }
@@ -907,7 +880,6 @@ export function useBatchDeleteIssues() {
       qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
       qc.invalidateQueries({ queryKey: issueKeys.sidebarAll(wsId) });
       qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-      // Any deleted issue may have been a registered prerequisite.
       void invalidateIssueQueries(qc, wsId, "graph");
       if (ctx?.parentIssueIds && ctx.parentIssueIds.size > 0) {
         invalidateDeletedIssueParentCaches(qc, wsId, {

@@ -74,7 +74,6 @@
       "error_not_member": "Vous êtes connecté avec un compte Labrastro qui n'est pas membre de cet espace de travail."
     },
     "wecom_bind": {
-      "page_title": "Associer un compte WeCom",
       "needs_auth_description": "Connectez-vous pour associer votre compte WeCom à votre compte Labrastro.",
       "error_already_bound": "Ce compte WeCom est déjà associé à un autre compte Labrastro. Dissociez-le d'abord de ce compte avant de l'associer ici.",
       "error_not_member": "Vous êtes connecté avec un compte Labrastro qui n'est pas membre de cet espace de travail."

@@ -79,8 +79,6 @@ var corsAllowedHeaders = []string{
 	"Content-Type",
 	"Idempotency-Key",
 	"If-Match",
-	"X-Base-Revision",
-	"X-Content-SHA256",
 	"X-Workspace-ID",
 	"X-Workspace-Slug",
 	"X-Request-ID",
@@ -104,13 +102,6 @@ var corsAllowedHeaders = []string{
 // Referencing the handler constant rather than re-typing the string keeps a
 // rename from quietly switching the signal off (MUL-5492).
 var corsExposedHeaders = []string{
-	"Content-Disposition",
-	"X-File-ID",
-	"X-Revision",
-	"X-Base-Revision",
-	"X-Version-ID",
-	"X-Content-SHA256",
-	"X-Candidate-ID",
 	"ETag",
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,

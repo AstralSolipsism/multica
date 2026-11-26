@@ -8,10 +8,10 @@
     "no_agent_action": "Новый агент"
   },
   "fab": {
-    "running": "Labrastro работает...",
+    "running": "Multica работает...",
     "unread_one": "{{count}} непрочитанный чат",
     "unread_other": "{{count}} непрочитанных чата",
-    "default": "Спросить Labrastro",
+    "default": "Спросить Multica",
     "unread_few": "{{count}} непрочитанных чата",
     "unread_many": "{{count}} непрочитанных чатов"
   },
@@ -186,7 +186,7 @@
     "first_time_pillars_suffix": ".",
     "first_time_actions": "Попросите сводку, спланируйте день или передайте быструю задачу.",
     "returning_title_named": "Привет, я {{name}}",
-    "returning_title_default": "Добро пожаловать в Labrastro",
+    "returning_title_default": "Добро пожаловать в Multica",
     "returning_subtitle": "Попробуйте спросить",
     "chat_with_named": "Чат с {{name}}"
   },

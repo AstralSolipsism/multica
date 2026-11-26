@@ -76,9 +76,6 @@ export interface DagCompletedVisibility {
   hiddenRoots: ReadonlySet<string>;
   /** Standalone finished tasks (including independent-group members). */
   hiddenSingles: ReadonlySet<string>;
-  /** Retained for model shape compatibility; empty because native blockers
-   *  treat cancelled (closed) as satisfied just like done. */
-  keptCancelled: ReadonlySet<string>;
   /** Rep ids of the hidden lines, including lines nested inside them. */
   hiddenLineIds: readonly string[];
 }
@@ -104,12 +101,11 @@ export function dagCompletedVisibility(
       if (dagDescendants(children, root).every(finished)) hiddenRoots.add(root.id);
     } else if (finished(root)) hiddenSingles.add(root.id);
   }
-  const keptCancelled = new Set<string>();
   const hiddenLineIds: string[] = [];
   for (const rootId of hiddenRoots)
     for (const member of dagDescendants(children, byId.get(rootId)!))
       if (children.has(member.id)) hiddenLineIds.push(dagFeatureRepId(member.id));
-  return { hiddenRoots, hiddenSingles, keptCancelled, hiddenLineIds };
+  return { hiddenRoots, hiddenSingles, hiddenLineIds };
 }
 
 /** Independent tasks have no hierarchy, dependency endpoints or unknown /

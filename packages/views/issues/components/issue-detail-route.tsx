@@ -73,6 +73,12 @@ export function useCanonicalIssueUrl(
   }, [canonicalHref, identifier, routeId, navigation]);
 }
 
+/** `#app-request-<id>`: an app's confirmation request on the issue, as a notification links it. */
+export function parseAppRequestHighlightHash(hash: string): string | undefined {
+  const match = /^#app-request-([A-Za-z0-9_-]+)$/.exec(hash);
+  return match?.[1];
+}
+
 /**
  * The `#comment-…` fragment the current URL carries, read through the
  * navigation adapter rather than `window.location`.
@@ -91,13 +97,9 @@ export function useCanonicalIssueUrl(
  *    `window.location.hash` is always empty; the adapter's hash comes from
  *    the tab URL and is frame-accurate.
  */
-export function parseAppRequestHighlightHash(hash: string): string | undefined {
-  const match = /^#app-request-([A-Za-z0-9_-]+)$/.exec(hash);
-  return match?.[1];
-}
-
 function useHighlightHash(): { hash: string; commentId?: string; appRequestId?: string } {
   const { hash } = useNavigation();
+
   return { hash, commentId: parseCommentHighlightHash(hash), appRequestId: parseAppRequestHighlightHash(hash) };
 }
 

@@ -735,9 +735,6 @@ function AssistantMessage({
 }) {
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
 
-  // Use the shared taskMessagesOptions so this cache entry is the same one
-  // seeded by useRealtimeSync during task execution — zero refetch when the
-  // task finishes, since WS already populated it.
   const [processOpen, setProcessOpen] = useState(false);
 
   // Use the shared taskMessagesOptions so this cache entry is the same one
@@ -1301,7 +1298,6 @@ interface HistoryProcess {
   failed: boolean;
   retry: () => void;
 }
-
 
 function TimelineView({
   items,

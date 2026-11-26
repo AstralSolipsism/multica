@@ -154,7 +154,6 @@ describe("issue deep links on the real desktop adapter + tab store", () => {
     mockApiObj.getWorkspaceWorkingAgents.mockResolvedValue([]);
     mockApiObj.listProperties.mockResolvedValue({ properties: [], total: 0 });
     mockApiObj.listIssues.mockResolvedValue({ issues: [], total: 0 });
-    mockApiObj.getActiveTasksForIssue.mockResolvedValue({ tasks: [] });
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
     mockApiObj.listTaskMessages.mockResolvedValue([]);
     mockApiObj.listMembers.mockResolvedValue([

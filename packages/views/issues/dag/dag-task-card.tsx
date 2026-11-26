@@ -76,8 +76,8 @@ function DependencyBadge({ issue }: { issue: DagIssue }) {
 
 /**
  * The 248×116 task card, unchanged in content from the previous canvas.
- * Finished tasks fade out (OL-183 comparison ③); context and
- * cancelled-still-blocking cards keep the dashed border.
+ * Finished tasks fade out (OL-183 comparison ③); context cards keep the
+ * dashed border.
  */
 export const DagTaskCard = memo(
   function DagTaskCard({ data }: NodeProps<DagTaskFlowNode>) {
@@ -103,7 +103,7 @@ export const DagTaskCard = memo(
           "nopan flex h-full w-full flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-left shadow-xs transition-opacity",
           "border-border hover:border-foreground/30",
           done && "opacity-55",
-          (task.role === "context" || task.cancelledBlocking) && "border-dashed",
+          task.role === "context" && "border-dashed",
         )}
         style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
         data-dag-task={issue.identifier}
@@ -121,16 +121,10 @@ export const DagTaskCard = memo(
           />
           <IssueCostBadge issueIds={issue.id} />
           <DagRunBadge issue={issue} />
-          {task.cancelledBlocking ? (
-            <span className="ml-auto min-w-0 truncate rounded-full bg-warning/10 px-1.5 py-0.5 text-micro font-medium text-warning">
-              {t(($) => $.cancelled_blocking)}
+          {task.role === "context" && (
+            <span className="ml-auto min-w-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
+              {t(($) => $.context_badge)}
             </span>
-          ) : (
-            task.role === "context" && (
-              <span className="ml-auto min-w-0 truncate rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground">
-                {t(($) => $.context_badge)}
-              </span>
-            )
           )}
         </div>
         <div className="line-clamp-2 text-body leading-snug">{issue.title}</div>

@@ -160,7 +160,6 @@ describe("issue deep links under measured Next 16.3.4 timing (real adapters)", (
     mockApiObj.getWorkspaceWorkingAgents.mockResolvedValue([]);
     mockApiObj.listProperties.mockResolvedValue({ properties: [], total: 0 });
     mockApiObj.listIssues.mockResolvedValue({ issues: [], total: 0 });
-    mockApiObj.getActiveTasksForIssue.mockResolvedValue({ tasks: [] });
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
     mockApiObj.listTaskMessages.mockResolvedValue([]);
     mockApiObj.listMembers.mockResolvedValue([

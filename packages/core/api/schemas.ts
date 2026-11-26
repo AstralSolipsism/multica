@@ -1,5 +1,4 @@
 export * from "./labrastro-agent-folder-schemas";
-import { DispatchOutcomeSchema } from "./dispatch-schemas";
 import { SkillImportDiagnosticSchema } from "./labrastro-skill-schemas";
 export * from "./labrastro-skill-schemas";
 export * from "./labrastro-message-delivery-schemas";
@@ -1711,7 +1710,6 @@ const IssueBlockerSchema = z.object({
 });
 
 export const IssueSchema = z.object({
- dispatch: DispatchOutcomeSchema.nullable().catch(null),
   blocked_count: z.number().int().nonnegative().optional().catch(undefined),
   blocked_by: z.array(IssueBlockerSchema).optional().catch(undefined),
   // Detail reads only: the issues waiting on this one.
@@ -3988,11 +3986,6 @@ const BatchIssueResultSchema = z
       message: value.message,
     }),
   );
-
-export const IssueBatchUpdateSchema = z.object({
-  updated: z.number().int().nonnegative(),
-});
-export type IssueBatchUpdateResult = z.infer<typeof IssueBatchUpdateSchema>;
 
 /** `results` is absent on servers that predate per-issue batch results. */
 export const BatchUpdateIssuesResponseSchema = z

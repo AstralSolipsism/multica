@@ -3,10 +3,10 @@
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { AVATAR_SIZE_PX, type AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { ExecutionActorRef } from "../../issues/surface/execution-actors";
 import type { TipAnchorDescriptor } from "@multica/core/you-should-know/anchors";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import type { ExecutionActorRef } from "../../issues/surface/execution-actors";
 import { useTipAnchor } from "../../you-should-know/anchors/use-tip-anchor";
 import { TipAnchorDot } from "../../you-should-know/anchors/tip-anchor-dot";
 

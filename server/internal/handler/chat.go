@@ -2204,8 +2204,6 @@ func chatLastMessagePreview(content string) string {
 
 // buildChatLastMessage assembles the preview from list-row columns; returns nil
 // when there is no last message (the LEFT JOIN produced a NULL timestamp).
-// Callers pass content through chatListPreview: the list renders one preview
-// line, while detail and /messages paths return the full text.
 func buildChatLastMessage(at pgtype.Timestamptz, content, role string, failure pgtype.Text, kind string) *ChatLastMessage {
 	if !at.Valid || protocol.IsHiddenChatMessageKind(kind) {
 		return nil

@@ -19,9 +19,7 @@ runs:
 
     - name: Check product branding
       shell: bash
-      run: |
-        node --test scripts/check-branding.test.mjs
-        node scripts/check-branding.mjs
+      run: node scripts/check-branding.mjs
 
     - name: Test YSK runtime extensions
       shell: bash

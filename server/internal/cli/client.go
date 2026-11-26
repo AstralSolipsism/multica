@@ -106,18 +106,11 @@ const maxErrorBodyBytes = 64 << 10
 // classify the failure via errors.As(err, **HTTPError) regardless of which
 // HTTP verb the command used.
 func newHTTPError(method, path string, resp *http.Response) *HTTPError {
-	// Dependency refusals carry complete direct/inherited blocker projections
-	// (OL-42), so issue routes keep a 1 MiB cap. Every other route uses the
-	// upstream structured-error cap, which must hold a whole workflow 409 plan.
-	limit := maxErrorBodyBytes
-	if path == "/api/issues" || strings.HasPrefix(path, "/api/issues/") {
-		limit = 1 << 20
-	}
 	// Read one extra byte to distinguish an exact fit from an oversized body.
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
-	truncated := len(data) > limit
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, int64(maxErrorBodyBytes)+1))
+	truncated := len(data) > maxErrorBodyBytes
 	if truncated {
-		data = data[:limit]
+		data = data[:maxErrorBodyBytes]
 	}
 	return &HTTPError{
 		Method:        method,

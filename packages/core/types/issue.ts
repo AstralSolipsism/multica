@@ -1,4 +1,3 @@
-import type { DispatchOutcome } from "../api/dispatch-schemas";
 import type { Label } from "./label";
 import type { IssuePropertyValues } from "./property";
 
@@ -190,7 +189,6 @@ export interface IssueBlocker extends IssueDuplicateOf {
 }
 
 export interface Issue {
- dispatch?: DispatchOutcome | null;
  blocked_by?: IssueBlocker[];
  blocked_count?: number;
  /** The issues waiting on this one. Only the detail read carries it. */

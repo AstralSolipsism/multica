@@ -1778,7 +1778,6 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		// Scan the per-task session JSONL for either missing value. Session usage
 		// is only a fallback, so it must never replace a JSON-RPC usage sample.
 		taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
-		var scannedRateLimits *codexRawRateLimits
 		usageMap, scannedRateLimits := codexResultUsageMap(startTime, taskCodexHome, threadID, resumed, opts.Model, u, liveRateLimits)
 
 		// Plan quota: the live token_count capture is fresher than anything

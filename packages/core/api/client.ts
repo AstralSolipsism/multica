@@ -1,6 +1,6 @@
-import { ApiError, installLabrastroApi, parseRequiredResponse, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
+import { ApiError, installLabrastroApi, RuntimeListSchema, EMPTY_RUNTIME_LIST } from "./labrastro-api";
 export { ApiError } from "./labrastro-api";
-import { IssueUsageListSchema, IssueBatchUpdateSchema } from "./schemas";
+import { IssueUsageListSchema } from "./schemas";
 import type { ListWeixinInstallationsResponse, WeixinLogin } from "../types/weixin";
 import { ListWeixinInstallationsSchema, WeixinLoginSchema, EMPTY_WEIXIN_INSTALLATIONS, INVALID_WEIXIN_LOGIN } from "../weixin/schema";
 import {
@@ -725,7 +725,6 @@ function parseSearchIndexResponse<T>(raw: unknown, schema: ZodType, endpoint: st
   if (parsed === null) throw new Error(`Malformed response from ${endpoint}`);
   return parsed;
 }
-
 
 function parseRuntimeUpdate(raw: unknown, endpoint: string): RuntimeUpdate {
   const parsed = parseWithFallback<RuntimeUpdate | null>(raw, RuntimeUpdateSchema, null, { endpoint });
@@ -2072,12 +2071,7 @@ export class ApiClient {
     const response = parseWithFallback(raw, BatchUpdateIssuesResponseSchema, UNCONFIRMED_BATCH_UPDATE, {
       endpoint: "POST /api/issues/batch-update",
     });
-    if (response.unconfirmed) {
-      if (!ops.labels && !ops.properties) {
-        return parseRequiredResponse(raw, IssueBatchUpdateSchema, "POST /api/issues/batch-update");
-      }
-      return response;
-    }
+    if (response.unconfirmed) return response;
     // Older servers ignore label and property operations and answer with a
     // bare count, which would read as success.
     if ((ops.labels || ops.properties) && !response.results) {
@@ -2742,8 +2736,8 @@ export class ApiClient {
     );
   }
 
-  // The plan's monthly app call limit (MUL-10047). A response that cannot
-  // be read falls back to no limit: the gateway still checks every call.
+  // The plan's monthly app call limit (MUL-10047). A response that cannot be
+  // read falls back to no limit: the gateway still checks every call.
   async getAppCallUsage(workspaceId: string): Promise<AppCallUsage> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/app-call-usage`);
     return parseWithFallback<AppCallUsage>(
@@ -3059,18 +3053,6 @@ export class ApiClient {
     );
   }
 
-  async getRuntimeProfile(
-    workspaceId: string,
-    profileId: string,
-  ): Promise<RuntimeProfile> {
-    const result = await this.fetch<RuntimeProfile>(
-      `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
-    );
-    return parseWithFallback(result, RuntimeProfileSchema, result, {
-      endpoint: "runtimeProfile",
-    });
-  }
-
   async createRuntimeProfile(
     workspaceId: string,
     body: CreateRuntimeProfileRequest,
@@ -3178,8 +3160,15 @@ export class ApiClient {
     );
   }
 
-  // Workspace dashboard rollups. `onHistoryLimit` receives the plan's
-  // enforced history limit from the response, or null for none.
+  // Workspace dashboard — six rollups for `/{slug}/usage`. Each accepts an
+  // optional `project_id` to narrow the scope to one project and `tz` to cut
+  // its day boundary in the viewer's calendar. Cost is computed client-side
+  // from the model pricing table (same contract as the per-runtime endpoints
+  // above).
+  //
+  // `onHistoryLimit` receives the plan's enforced history limit the response
+  // was served under (X-Dashboard-History-Limit-Days), or null for none, so a
+  // page open across a plan change notices it (MUL-9490).
   private async fetchDashboardRows<T>(
     path: string,
     params: DashboardRequestParams,
@@ -3202,39 +3191,84 @@ export class ApiClient {
   }
 
   async getDashboardUsageDaily(params: DashboardRequestParams): Promise<DashboardUsageDaily[]> {
-    return this.fetchDashboardRows("/api/dashboard/usage/daily", params, DashboardUsageDailyListSchema, "GET /api/dashboard/usage/daily");
+    return this.fetchDashboardRows(
+      "/api/dashboard/usage/daily",
+      params,
+      DashboardUsageDailyListSchema,
+      "GET /api/dashboard/usage/daily",
+    );
   }
 
   async getDashboardUsageByAgent(params: DashboardRequestParams): Promise<DashboardUsageByAgent[]> {
-    return this.fetchDashboardRows("/api/dashboard/usage/by-agent", params, DashboardUsageByAgentListSchema, "GET /api/dashboard/usage/by-agent");
+    return this.fetchDashboardRows(
+      "/api/dashboard/usage/by-agent",
+      params,
+      DashboardUsageByAgentListSchema,
+      "GET /api/dashboard/usage/by-agent",
+    );
   }
 
   async getDashboardAgentRunTime(params: DashboardRequestParams): Promise<DashboardAgentRunTime[]> {
-    return this.fetchDashboardRows("/api/dashboard/agent-runtime", params, DashboardAgentRunTimeListSchema, "GET /api/dashboard/agent-runtime");
+    return this.fetchDashboardRows(
+      "/api/dashboard/agent-runtime",
+      params,
+      DashboardAgentRunTimeListSchema,
+      "GET /api/dashboard/agent-runtime",
+    );
   }
 
   async getDashboardRunTimeDaily(params: DashboardRequestParams): Promise<DashboardRunTimeDaily[]> {
-    return this.fetchDashboardRows("/api/dashboard/runtime/daily", params, DashboardRunTimeDailyListSchema, "GET /api/dashboard/runtime/daily");
+    return this.fetchDashboardRows(
+      "/api/dashboard/runtime/daily",
+      params,
+      DashboardRunTimeDailyListSchema,
+      "GET /api/dashboard/runtime/daily",
+    );
   }
 
   async getDashboardFailuresDaily(params: DashboardRequestParams): Promise<DashboardFailureDaily[]> {
-    return this.fetchDashboardRows("/api/dashboard/failures/daily", params, DashboardFailureDailyListSchema, "GET /api/dashboard/failures/daily");
+    return this.fetchDashboardRows(
+      "/api/dashboard/failures/daily",
+      params,
+      DashboardFailureDailyListSchema,
+      "GET /api/dashboard/failures/daily",
+    );
   }
 
   async getDashboardFailuresByAgent(params: DashboardRequestParams): Promise<DashboardFailureByAgent[]> {
-    return this.fetchDashboardRows("/api/dashboard/failures/by-agent", params, DashboardFailureByAgentListSchema, "GET /api/dashboard/failures/by-agent");
+    return this.fetchDashboardRows(
+      "/api/dashboard/failures/by-agent",
+      params,
+      DashboardFailureByAgentListSchema,
+      "GET /api/dashboard/failures/by-agent",
+    );
   }
 
   async getDashboardUsageBySquad(params: DashboardRequestParams): Promise<DashboardUsageBySquad[]> {
-    return this.fetchDashboardRows("/api/dashboard/usage/by-squad", params, DashboardUsageBySquadListSchema, "GET /api/dashboard/usage/by-squad");
+    return this.fetchDashboardRows(
+      "/api/dashboard/usage/by-squad",
+      params,
+      DashboardUsageBySquadListSchema,
+      "GET /api/dashboard/usage/by-squad",
+    );
   }
 
   async getDashboardSquadRunTime(params: DashboardRequestParams): Promise<DashboardSquadRunTime[]> {
-    return this.fetchDashboardRows("/api/dashboard/squad-runtime", params, DashboardSquadRunTimeListSchema, "GET /api/dashboard/squad-runtime");
+    return this.fetchDashboardRows(
+      "/api/dashboard/squad-runtime",
+      params,
+      DashboardSquadRunTimeListSchema,
+      "GET /api/dashboard/squad-runtime",
+    );
   }
 
   async getDashboardFailuresBySquad(params: DashboardRequestParams): Promise<DashboardFailureBySquad[]> {
-    return this.fetchDashboardRows("/api/dashboard/failures/by-squad", params, DashboardFailureBySquadListSchema, "GET /api/dashboard/failures/by-squad");
+    return this.fetchDashboardRows(
+      "/api/dashboard/failures/by-squad",
+      params,
+      DashboardFailureBySquadListSchema,
+      "GET /api/dashboard/failures/by-squad",
+    );
   }
 
   // queue_when_busy: a busy daemon holds the update and installs it once
@@ -3420,10 +3454,6 @@ export class ApiClient {
     return this.fetch(`/api/agent-run-counts`);
   }
 
-  async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
-    return this.fetch(`/api/issues/${issueId}/active-task`);
-  }
-
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
     const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/messages`);
     return parseWithFallback<TaskMessagePayload[]>(raw, TaskMessageListSchema, [], {
@@ -3468,7 +3498,6 @@ export class ApiClient {
       endpoint: "GET /api/issues/usage-summary",
     });
   }
-
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
@@ -3760,10 +3789,6 @@ export class ApiClient {
       method: "PUT", body: JSON.stringify({ pinned }),
     });
     return parseWithFallback(raw, WorkspacePinnedSchema, { pinned_at: null }, { endpoint: "PUT /api/workspaces/{id}/pin" });
-  }
-
-  async getWorkspace(id: string): Promise<Workspace> {
-    return this.fetch(`/api/workspaces/${id}`);
   }
 
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string; issue_prefix?: string }): Promise<Workspace> {
@@ -4366,10 +4391,6 @@ export class ApiClient {
     });
   }
 
-  async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
-    return this.fetch(`/api/agents/${agentId}/skills`);
-  }
-
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills`, {
       method: "PUT",
@@ -4841,10 +4862,6 @@ export class ApiClient {
     });
   }
 
-  async deleteAttachment(id: string): Promise<void> {
-    await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
-  }
-
   // Fetches the raw bytes of a text-previewable attachment.
   //
   // The endpoint sidesteps CloudFront CORS (not configured on the CDN) and
@@ -5139,7 +5156,7 @@ export class ApiClient {
    * Saves a workflow edit. When the edit removes statuses that issues of the
    * workflow's projects still use, the server answers 409
    * `workflow_status_mapping_required` with a plan; resend with
-   * `status_mapping`. `dryRunIssueWorkflowUpdate` fetches that plan up front.
+   * `status_mapping`.
    */
   async updateIssueWorkflow(id: string, data: IssueWorkflowWriteRequest): Promise<IssueWorkflow> {
     const raw = await this.fetch<unknown>(`/api/issue-workflows/${id}`, {
@@ -5148,16 +5165,6 @@ export class ApiClient {
     });
     return parseWithFallback(raw, IssueWorkflowSchema, EMPTY_ISSUE_WORKFLOW, {
       endpoint: "PATCH /api/issue-workflows/{id}",
-    });
-  }
-
-  async dryRunIssueWorkflowUpdate(id: string, data: IssueWorkflowWriteRequest): Promise<IssueWorkflowDryRunResponse> {
-    const raw = await this.fetch<unknown>(`/api/issue-workflows/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ ...data, dry_run: true }),
-    });
-    return parseWithFallback(raw, IssueWorkflowDryRunResponseSchema, EMPTY_ISSUE_WORKFLOW_DRY_RUN, {
-      endpoint: "PATCH /api/issue-workflows/{id} (dry run)",
     });
   }
 
@@ -6168,15 +6175,6 @@ export class ApiClient {
     return this.fetch(`/api/integrations/composio/connections`);
   }
 
-  /** Starts a hosted Composio connect flow for a toolkit and returns the
-   * redirect URL the browser should be sent to. */
-  async beginComposioConnect(toolkitSlug: string): Promise<ComposioConnectInitResponse> {
-    return this.fetch(`/api/integrations/composio/connect/init`, {
-      method: "POST",
-      body: JSON.stringify({ toolkit_slug: toolkitSlug }),
-    });
-  }
-
   /** Disconnects a Composio connection the caller owns. */
   async deleteComposioConnection(connectionId: string): Promise<void> {
     await this.fetch(`/api/integrations/composio/connections/${connectionId}`, {
@@ -6261,11 +6259,6 @@ export class ApiClient {
   async listIssueAppCalls(issueId: string): Promise<{ calls: IssueAppCall[] }> {
     const raw = await this.fetch<unknown>(`/api/app-calls?issue_id=${encodeURIComponent(issueId)}`);
     return parseWithFallback(raw, IssueAppCallsResponseSchema, { calls: [] }, { endpoint: "GET /api/app-calls" });
-  }
-
-  async getAppRules(toolkitSlug: string, scope: AppAccountScope): Promise<{ rules: AppRule[] }> {
-    const raw = await this.fetch<unknown>(`/api/apps/rules?toolkit_slug=${encodeURIComponent(toolkitSlug)}&scope=${scope}`);
-    return parseWithFallback(raw, AppRulesResponseSchema, { rules: [] }, { endpoint: "GET /api/apps/rules" });
   }
 
   async updateAppRules(

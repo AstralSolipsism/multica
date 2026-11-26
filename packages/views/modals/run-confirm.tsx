@@ -174,11 +174,9 @@ export function RunConfirmModal({
       toast.error(
         errorCode(err) === "revision_conflict"
           ? tIssues(($) => $.revision.conflict)
-          : errorCode(err) === "response_unreadable"
-            ? t(($) => $.run_confirm.toast_failed)
-            : err instanceof Error && err.message
-              ? err.message
-              : t(($) => $.run_confirm.toast_failed),
+          : err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.run_confirm.toast_failed),
       );
       setPendingAction(null);
     }

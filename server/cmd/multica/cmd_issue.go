@@ -850,9 +850,9 @@ func init() {
 	// issue search
 	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return (values outside 1-50 use 50)")
 	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
-	issueSearchCmd.Flags().String("project", "", "Filter by project UUID or ID prefix")
 	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
 	issueSearchCmd.Flags().Bool("include-closed", false, "Include done and cancelled issues")
+	issueSearchCmd.Flags().String("project", "", "Filter by project UUID or ID prefix")
 	issueSearchCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue subscriber list
@@ -3721,9 +3721,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	params := url.Values{}
 	params.Set("q", args[0])
-	if limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", limit))
-	}
+	params.Set("limit", fmt.Sprintf("%d", limit))
 	if offset > 0 {
 		params.Set("offset", fmt.Sprintf("%d", offset))
 	}
@@ -3734,11 +3732,6 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 		params.Set("scope", scope)
 	}
 	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
-		if client.WorkspaceID == "" {
-			if _, err := requireWorkspaceID(cmd); err != nil {
-				return err
-			}
-		}
 		project, err := resolveProjectID(ctx, client, projectInput)
 		if err != nil {
 			return err

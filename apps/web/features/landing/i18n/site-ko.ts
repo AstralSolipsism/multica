@@ -43,7 +43,7 @@ export const koSiteCopy: Pick<LandingDict, "site" | "home" | "demo" | "meta"> = 
     },
     privacy: {
       title: "개인정보 처리방침",
-      description: "Labrastro가 multica.ai와 Labrastro Cloud에서 개인정보를 수집, 이용, 보호하는 방법.",
+      description: "Labrastro가 개인정보를 수집, 이용, 보호하는 방법.",
       ogTitle: "개인정보 처리방침 — Labrastro",
       ogDescription: "Labrastro가 개인정보를 수집, 이용, 보호하는 방법.",
     },

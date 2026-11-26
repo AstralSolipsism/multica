@@ -169,7 +169,6 @@ export interface MoveIssueRequest
 /** Inputs to `POST /api/issues/preview-trigger`. A nil prospective field means
  *  "leave unchanged"; `isCreate` previews a not-yet-persisted issue. */
 export interface IssueTriggerPreviewParams {
-  mutation?: CreateIssueRequest | UpdateIssueRequest;
   issueIds?: string[];
   isCreate?: boolean;
   assigneeType?: IssueAssigneeType | null;

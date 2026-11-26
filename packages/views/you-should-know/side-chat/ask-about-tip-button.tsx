@@ -4,6 +4,7 @@ import { useId, useState, type MouseEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useReducedMotion } from "@multica/core/appearance";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import {
   tipChatBlockReason,
@@ -15,7 +16,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { useLocale, useT } from "../../i18n";
-import { usePrefersReducedMotion } from "../bubble/page-signals";
 import { useSideChatOpener } from "./open-chat-session";
 import { useTipChatAvailability } from "./use-tip-chat-availability";
 
@@ -56,7 +56,7 @@ export function AskAboutTipButton({
   const { t } = useT("you-should-know");
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
   const availability = useTipChatAvailability(tip.agent_id);
   const blockText = useTipChatBlockText();
   const openSession = useSideChatOpener();

@@ -193,9 +193,6 @@ func TestPrepareReasonixTaskStateHome(t *testing.T) {
 	home := t.TempDir()
 	redirectTestHome(t, home)
 	t.Setenv("USERPROFILE", home)
-	// The state home is asserted under $HOME; a daemon-injected task config
-	// root would redirect cli.ProfileDir elsewhere.
-	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	got, err := prepareReasonixTaskStateHome("work", "runtime-1", "agent_2")
 	if err != nil {
@@ -218,8 +215,6 @@ func TestPrepareDshTaskSessionRoot(t *testing.T) {
 	home := t.TempDir()
 	redirectTestHome(t, home)
 	t.Setenv("USERPROFILE", home)
-	// The session root is asserted under $HOME; keep the task config root out.
-	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	got, err := prepareDshTaskSessionRoot("work", "runtime-1", "agent_2")
 	if err != nil {

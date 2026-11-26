@@ -893,7 +893,7 @@ describe("IssueDetail (shared)", () => {
     useIssueSidebarSectionsStore.getState().reset();
   });
 
-  it("observes the issue list without fetching it and shares the cold detail read with reactions", async () => {
+  it("observes the issue list without fetching it", async () => {
     // Match production QueryClient staleTime (Infinity) so newly-enabled
     // observers of issueDetailOptions (such as the sidebar addables hook)
     // reuse the cold detail read instead of immediately refetching stale data.
@@ -3742,59 +3742,6 @@ describe("IssueDetail (shared)", () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "I can help with this" })).toBeInTheDocument();
-  });
-
-  it("expands a manually collapsed thread for an arrival reply", async () => {
-    const root = { ...mockTimeline[0]!, id: "collapsed-root" };
-    const target = { ...mockTimeline[1]!, id: "collapsed-reply", parent_id: root.id, content: "Reply hidden by manual collapse" };
-    mockApiObj.listTimeline.mockResolvedValue([root, target]);
-    useCommentCollapseStore.setState({ collapsedByIssue: { "issue-1": [root.id] } });
-
-    renderIssueDetailWithHighlight(target.id);
-
-    await waitFor(() => expect(
-      hasHighlightedCommentBackground(document.getElementById(`comment-${target.id}`)),
-    ).toBe(true));
-    expect(useCommentCollapseStore.getState().isCollapsed("issue-1", root.id)).toBe(false);
-    expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
-  });
-
-  describe("highlight change on an already-mounted detail", () => {
-    const detailTree = (queryClient: QueryClient, highlight?: string, token?: number) => (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
-        <QueryClientProvider client={queryClient}>
-          <IssueDetail issueId="issue-1" highlightCommentId={highlight} highlightRequestToken={token} />
-        </QueryClientProvider>
-      </I18nProvider>
-    );
-
-    it("jumps through Virtuoso without flattening the timeline", async () => {
-      const queryClient = createTestQueryClient();
-      const { rerender } = render(detailTree(queryClient));
-      await waitFor(() => expect(document.getElementById("comment-comment-1")).not.toBeNull());
-      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
-
-      rerender(detailTree(queryClient, "comment-2"));
-
-      await waitFor(() => expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 1 })));
-      await waitFor(() => expect(
-        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
-      ).toBe(true));
-      expect(screen.getByTestId("virtuoso-mock")).toBeInTheDocument();
-    });
-
-    it("replays and re-times the highlight when the host bumps its request token", async () => {
-      const queryClient = createTestQueryClient();
-      const { rerender } = render(detailTree(queryClient, "comment-2", 1));
-      await waitFor(() => expect(
-        hasHighlightedCommentBackground(document.getElementById("comment-comment-2")),
-      ).toBe(true));
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); });
-
-      rerender(detailTree(queryClient, "comment-2", 2));
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); });
-      expect(hasHighlightedCommentBackground(document.getElementById("comment-comment-2"))).toBe(true);
-    }, 10000);
   });
 
   describe("quick-jump rail replies", () => {

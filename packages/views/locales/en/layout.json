@@ -141,7 +141,6 @@
       "private_project": "Visible to project members only",
       "all_projects_one": "{{count}} project",
       "all_projects_other": "All {{count}} projects",
-      "project_actions": "Actions for {{name}}",
       "project_issues": "Issues in {{name}}",
       "project_issues_empty": "No issues",
       "project_issues_error": "Couldn't load issues",

@@ -3,7 +3,7 @@ import { DEPLOYMENT_URL } from "@multica/core/deployment";
 import { landingAlternates } from "@/lib/landing-locale-path";
 import { createEnDict } from "@/features/landing/i18n/en";
 import { isLiveRoute, siteRoutes } from "@/features/landing/site/sitemap";
-import { isRetiredMarketingPath } from "../lib/labrastro-marketing";
+import { isRetiredMarketingPath } from "@/lib/labrastro-marketing";
 
 type SitemapHints = Pick<MetadataRoute.Sitemap[number], "changeFrequency" | "priority">;
 
@@ -18,7 +18,7 @@ const HINTS: Readonly<Record<string, SitemapHints>> = {
 };
 
 /** Pages that list recent releases change with each one. */
-const RELEASE_PAGES: Record<string, true> = { "/": true, "/changelog": true };
+const RELEASE_PAGES = new Set(["/", "/changelog"]);
 
 function latestReleaseDate(): Date | undefined {
   const dates = createEnDict().changelog.entries.map((entry) => entry.date).sort();
@@ -34,7 +34,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     .filter((route) => !isRetiredMarketingPath(route))
     .map((route) => ({
       url: route === "/" ? DEPLOYMENT_URL : `${DEPLOYMENT_URL}${route}`,
-      ...(RELEASE_PAGES[route] && releasedAt ? { lastModified: releasedAt } : {}),
+      ...(RELEASE_PAGES.has(route) && releasedAt ? { lastModified: releasedAt } : {}),
       ...(HINTS[route] ?? { changeFrequency: "monthly", priority: 0.5 }),
       alternates: {
         languages: Object.fromEntries(

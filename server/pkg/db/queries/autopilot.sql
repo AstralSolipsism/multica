@@ -648,9 +648,7 @@ INSERT INTO agent_task_queue (
     id
 )
 SELECT
-    sqlc.arg(agent_id), enqueue_agent.runtime_id,
-    (SELECT issue_id FROM autopilot_run WHERE id = sqlc.narg(autopilot_run_id)::uuid),
-    'queued', sqlc.arg(priority), sqlc.narg(autopilot_run_id), sqlc.narg(trigger_summary),
+    sqlc.arg(agent_id), enqueue_agent.runtime_id, NULL, 'queued', sqlc.arg(priority), sqlc.narg(autopilot_run_id), sqlc.narg(trigger_summary),
     sqlc.narg(originator_user_id),
     sqlc.narg(accountable_user_id),
     sqlc.narg(rule_version_id),
