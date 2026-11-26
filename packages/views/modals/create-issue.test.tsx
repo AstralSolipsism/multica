@@ -151,7 +151,7 @@ const emptyIssueDraft = () => ({
     assigneeId: undefined as string | undefined,
     assigneePick: undefined as { type: "agent" | "squad" | "member"; id: string } | undefined,
     labelIds: [] as string[],
-    blockedBy: [] as string[],
+    blocked_by: [] as string[],
     propertyValues: {} as Record<string, string | number | boolean | string[]>,
   },
   agent: {
@@ -326,9 +326,9 @@ vi.mock("@multica/core/properties", async (importOriginal) => {
 
 
 vi.mock("@multica/core/api", async () => {
-  // Keep parsing and error-code extraction real, with one ApiError identity
-  // shared by the component, errorCode and the test fixtures.
-  const { ApiError, errorCode } = await vi.importActual<typeof import("@multica/core/api/client")>(
+  // Keep parsing real, with one ApiError identity shared by the component
+  // and the test fixtures.
+  const { ApiError } = await vi.importActual<typeof import("@multica/core/api/client")>(
     "@multica/core/api/client",
   );
   const { parseWithFallback } = await vi.importActual<typeof import("@multica/core/api/schema")>(
@@ -345,7 +345,6 @@ vi.mock("@multica/core/api", async () => {
       uploadFile: mockApiUploadFile,
     },
     ApiError,
-    errorCode,
     parseWithFallback,
     DuplicateIssueErrorBodySchema,
   };
@@ -840,51 +839,28 @@ describe("CreateIssueModal", () => {
     expect(screen.getByRole("button", { name: "Upload file" })).not.toHaveAttribute("data-size");
   });
 
-  it("creates with drafted prerequisites through the ordinary submit flow", async () => {
-    mockDraftStore.draft.manual.blockedBy = ["prerequisite-z", "prerequisite-a"];
+  it("creates with drafted blockers through the ordinary submit flow", async () => {
+    mockDraftStore.draft.manual.blocked_by = ["blocker-z", "blocker-a"];
     const onClose = vi.fn();
     renderModal(<CreateIssueModal onClose={onClose} />);
-    fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "Informational dependencies" } });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "Blocked issue" } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create issue" }));
     await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(1));
-    expect(mockCreateIssue.mock.calls[0]?.[0]).toMatchObject({ blockedBy: ["prerequisite-a", "prerequisite-z"] });
-    expect(mockCreateIssue.mock.calls[0]?.[0]).not.toHaveProperty("dependencyOverride");
+    expect(mockCreateIssue.mock.calls[0]?.[0]).toMatchObject({ blocked_by: ["blocker-a", "blocker-z"] });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("localizes an unreadable dependency create response and preserves the draft", async () => {
-    mockDraftStore.draft.manual.blockedBy = ["prerequisite-a"];
-    const diagnostic = "Unreadable response from POST /api/issues/with-dependencies";
-    mockCreateIssue.mockRejectedValueOnce(new ApiError(diagnostic, 0, "", {
-      code: "response_unreadable",
-    }));
-    const onClose = vi.fn();
-    renderModal(<CreateIssueModal onClose={onClose} />);
-    fireEvent.change(screen.getByPlaceholderText("Issue title"), {
-      target: { value: "Keep this draft" },
-    });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
-
-    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(enModals.create_issue.toast_failed));
-    expect(mockToastError).not.toHaveBeenCalledWith(diagnostic);
-    expect(mockToastCustom).not.toHaveBeenCalled();
-    expect(mockClearDraft).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByPlaceholderText("Issue title")).toHaveValue("Keep this draft");
-    expect(mockDraftStore.draft.manual.blockedBy).toEqual(["prerequisite-a"]);
-  });
-
-  it("clears informational prerequisites after create another", async () => {
+  it("clears drafted blockers after create another", async () => {
     mockQuickCreateStore.keepOpen = true;
-    mockDraftStore.draft.manual.blockedBy = ["prerequisite-a"];
+    mockDraftStore.draft.manual.blocked_by = ["blocker-a"];
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
     fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "First" } });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create issue" }));
     await waitFor(() => expect(screen.getByPlaceholderText("Issue title")).toHaveValue(""));
     fireEvent.change(screen.getByPlaceholderText("Issue title"), { target: { value: "Second" } });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Create Issue" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Create issue" }));
     await waitFor(() => expect(mockCreateIssue).toHaveBeenCalledTimes(2));
-    expect(mockCreateIssue.mock.calls[1]?.[0]).not.toHaveProperty("blockedBy");
+    expect(mockCreateIssue.mock.calls[1]?.[0]).not.toHaveProperty("blocked_by");
   });
 
   it("shows success feedback with a direct path to the new issue", async () => {

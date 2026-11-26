@@ -409,7 +409,7 @@ const emptyDraft = (): IssueCreateDraft => ({
     assigneeType: undefined,
     assigneeId: undefined,
     labelIds: [],
-    blockedBy: [],
+    blocked_by: [],
     propertyValues: {},
   },
   agent: { prompt: "", actorType: undefined, actorId: undefined },

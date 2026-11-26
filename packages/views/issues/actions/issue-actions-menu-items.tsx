@@ -13,6 +13,7 @@ import {
   CircleDot,
   CircleEqual,
   ExternalLink,
+  Flag,
   FolderOpen,
   Hash,
   Link2,
@@ -28,10 +29,10 @@ import {
   Type,
   Unlink,
   UserMinus,
-  Workflow,
   Zap,
 } from "@multica/ui/icons";
 import { useIssueDeletion } from "@multica/core/issues/use-issue-deletion";
+import { useIsGuest } from "@multica/core/permissions";
 import type { AgentTask, Issue } from "@multica/core/types";
 import { quickActionListOptions } from "@multica/core/quick-actions";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
@@ -105,11 +106,13 @@ export function IssueActionsMenuItems({
   onShowInSidebar,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
-  const { t: tDependencies } = useT("dependencies");
   const locale = useLocale();
   const formatDate = (date: string) => formatDateOnly(date, { month: "short", day: "numeric" }, locale);
   const wsId = useWorkspaceId();
-  const { canDelete } = useIssueDeletion(wsId);
+  const { canDelete, offersDelete } = useIssueDeletion(wsId);
+  // A guest (MUL-9420) changes nothing about an issue: the menu keeps only
+  // what the server lets it do — open, pin, copy, mark read.
+  const guest = useIsGuest(wsId);
   const sidebar = variant === "sidebar";
   const statusLabel = useStatusLabel(wsId);
   // Only the statuses the issue's workflow allows; entering a step that hands
@@ -142,7 +145,8 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openMarkDuplicate,
-    openEditDependencies,
+    openAddBlocker,
+    openAddBlocking,
     openDeleteConfirm,
   } = actions;
 
@@ -156,7 +160,7 @@ export function IssueActionsMenuItems({
   // the issue detail page is a free cache hit.
   const { data: tasks } = useQuery({
     ...issueTasksOptions(issue.id),
-    enabled: !sidebar,
+    enabled: !sidebar && !guest,
   });
   const workdirCopyTarget = useMemo(
     () => resolveWorkdirCopyTarget(tasks),
@@ -212,7 +216,7 @@ export function IssueActionsMenuItems({
           </div>
           <P.Separator />
         </>
-      ) : (
+      ) : guest ? null : (
         <>
           {/* Rename leads the menu: it is the only entry that changes what the
               issue *is* rather than a property of it, and on list/board rows
@@ -234,6 +238,8 @@ export function IssueActionsMenuItems({
         </>
       )}
 
+      {!guest && (
+        <>
       {/* Status */}
       <P.Sub>
         <P.SubTrigger>
@@ -389,6 +395,8 @@ export function IssueActionsMenuItems({
       )}
 
       <P.Separator />
+        </>
+      )}
 
       {/* Leads the "do something with this issue itself" group: the only
           discoverable way to open an issue elsewhere for users who don't know
@@ -444,7 +452,8 @@ export function IssueActionsMenuItems({
         <Type className="h-3.5 w-3.5" />
         {t(($) => $.actions.copy_title_as_link)}
       </P.Item>
-      {sidebar ? (
+      {/* A guest cannot read an issue's runs, so it has no workdir to copy. */}
+      {sidebar || guest ? (
         <P.Item onClick={copyIdentifier}>
           <Hash className="h-3.5 w-3.5" />
           {t(($) => $.actions.copy_identifier)}
@@ -458,7 +467,7 @@ export function IssueActionsMenuItems({
         </P.Item>
       )}
 
-      {sidebar ? (
+      {guest ? null : sidebar ? (
         onStopRun && <StopRunItems issueId={issue.id} primitives={P} onStopRun={onStopRun} />
       ) : (
         <>
@@ -467,7 +476,7 @@ export function IssueActionsMenuItems({
           {/* Relationship actions live under "Relations" — a semantically
               explicit label (unlike the old "More") so the first level tells
               you what the submenu does. Holds parent/sub-issue links today,
-              and will grow (blocks, duplicates, related) as we add more
+              blockers and duplicates, and will grow (related) as we add more
               relation types. */}
           <P.Sub>
             <P.SubTrigger>
@@ -489,6 +498,14 @@ export function IssueActionsMenuItems({
                 <ArrowDown className="h-3.5 w-3.5" />
                 {t(($) => $.actions.add_sub_issue)}
               </P.Item>
+              <P.Item onClick={openAddBlocker}>
+                <Flag className="h-3.5 w-3.5" />
+                {t(($) => $.actions.add_blocker)}
+              </P.Item>
+              <P.Item onClick={openAddBlocking}>
+                <Flag className="h-3.5 w-3.5" />
+                {t(($) => $.actions.add_blocking)}
+              </P.Item>
               {/* Marking a duplicate cancels the issue. (MUL-7420) */}
               {workflowAllowsStatus(workflow, "cancelled") && (
                 <P.Item onClick={openMarkDuplicate}>
@@ -496,10 +513,6 @@ export function IssueActionsMenuItems({
                   {t(($) => $.actions.mark_duplicate)}
                 </P.Item>
               )}
-              <P.Item onClick={openEditDependencies}>
-                <Workflow className="h-3.5 w-3.5" />
-                {tDependencies(($) => $.actions.edit_dependencies)}
-              </P.Item>
             </P.SubContent>
           </P.Sub>
 
@@ -514,17 +527,21 @@ export function IssueActionsMenuItems({
               person chose it, never on the plugin's own initiative. */}
           <PluginModalMenuItems issueId={issue.id} Item={P.Item} />
 
-          <P.Separator />
+          {offersDelete && (
+            <>
+              <P.Separator />
 
-          <P.Item
-            disabled={!canDelete(issue)}
-            title={!canDelete(issue) ? t(($) => $.batch.delete_restricted) : undefined}
-            variant="destructive"
-            onClick={() => openDeleteConfirm({ onDeletedFallbackPath })}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t(($) => $.actions.delete_issue)}
-          </P.Item>
+              <P.Item
+                disabled={!canDelete(issue)}
+                title={!canDelete(issue) ? t(($) => $.batch.delete_restricted) : undefined}
+                variant="destructive"
+                onClick={() => openDeleteConfirm({ onDeletedFallbackPath })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t(($) => $.actions.delete_issue)}
+              </P.Item>
+            </>
+          )}
         </>
       )}
     </>

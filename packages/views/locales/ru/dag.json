@@ -28,7 +28,6 @@
   "run_queued": "В очереди",
   "stage_badge": "Этап {{number}}",
   "open_detail": "Открыть подробности",
-  "edit_dependencies": "Изменить предшествующие задачи",
   "assign_issue": "Назначить",
   "focus_upstream": "Выделить предшествующие задачи",
   "focus_downstream": "Выделить зависимые задачи",

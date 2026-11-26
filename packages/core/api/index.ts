@@ -3,7 +3,6 @@ export {
   ApiError,
   BatchOpsUnsupportedError,
   clientErrorMessage,
-  dependencyErrorDetails,
   dispatchReasonCode,
   errorCode,
   PreviewTooLargeError,
@@ -13,7 +12,6 @@ export type {
   ApiClientOptions,
   ClientRuntimeSnapshot,
   ClientUsageRequest,
-  DependencyErrorDetails,
 } from "./client";
 export type {
   QuotaSource,
@@ -31,15 +29,10 @@ export type {
   UpdateQuotaSourceInput,
 } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
-export { dependencyReadiness } from "./dependency-schemas";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
 export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
 export * from "./labrastro-engineering-exports";
-export type {
-  DependencyView, IssuePrerequisite, IssueWithDependencies,
-  CreateIssueWithDependenciesRequest, UpdateIssueWithDependenciesRequest,
-  IssueBatchUpdateResult, DependencyMutationFields,
-} from "./dependency-schemas";
+export type { IssueBatchUpdateResult } from "./schemas";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";
 export type { DuplicateIssueErrorBody } from "./schemas";

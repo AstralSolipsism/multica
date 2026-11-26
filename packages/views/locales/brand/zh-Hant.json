@@ -19,7 +19,7 @@
       "byo_docs_link": "Step-by-step：把你的 Labrastro AI 代理連線到 Slack"
     },
     "dingtalk": {
-      "group_forget_description": "該群會從 Labrastro 的群列表中移除，對話和訊息記錄不會刪除。以後再次 @ 機器人時，群會重新出現。",
+      "group_forget_description": "將此群組從 Labrastro 清單中移除，不會刪除釘釘中的任何訊息。",
       "byo_docs_link": "Step-by-step：把你的 Labrastro AI 代理連線到釘釘"
     },
     "wecom": {
@@ -27,14 +27,14 @@
       "byo_conflict_other_workspace": "該機器人已連線到另一個 Labrastro 工作區。請先在那邊斷開，再連線到這裡。"
     },
     "telegram": {
-      "disconnect_confirm_description": "機器人將停止接收本工作區的 Telegram 訊息。Labrastro 中的會話記錄會保留；之後可在同一 AI 代理上重新連線。",
+      "disconnect_confirm_description": "該機器人將停止接收此工作區的 Telegram 訊息。Labrastro 中的對話記錄會保留；你之後可以從同一個 AI 代理重新連線。",
       "connect_docs_link": "分步指南：將 Labrastro AI 代理連線到 Telegram"
     },
     "mcp_sources": {
       "apps": "透過 Labrastro 連線團隊或個人帳號，再將應用新增至 AI 代理。"
     },
     "connected_apps": {
-      "catalog_description": "精選應用附有審核過的預設規則。「全部應用」包含 Composio 能連線的所有應用；Labrastro 無法辨識的操作一律先徵得同意。「指定名單」只允許你選中的應用。"
+      "catalog_description": "精選應用附有審核過的預設規則。「全部應用」包含 Labrastro 能連線的所有應用；Labrastro 無法辨識的操作一律先徵得同意。「指定名單」只允許你選中的應用。"
     },
     "shortcuts": {
       "actions": {
@@ -45,33 +45,38 @@
     },
     "chat": {
       "ask_agent_label": "「問 Labrastro」的 AI 代理"
+    },
+    "desktop": {
+      "daemon": {
+        "auto_start_description": "開啟 Labrastro 桌面端時自動啟動本機守護程序"
+      }
     }
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "需要登入 Labrastro 才能完成繫結。連結中的 token 會將你的飛書帳號繫結到當前登入的 Labrastro 使用者。",
-      "error_already_bound": "該飛書帳號已繫結到其他 Labrastro 使用者。帳戶轉移需要先顯式解綁。",
+      "needs_auth_description": "登入以將你的飛書 / Lark 帳號連線至你的 Labrastro 帳號。",
+      "error_already_bound": "此飛書 / Lark 帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "你登入的 Labrastro 帳號不是當前工作區成員。"
     },
     "slack_bind": {
-      "needs_auth_description": "需要登入 Labrastro 才能完成關聯。連結中的 token 會將你的 Slack 帳號繫結到當前登入的 Labrastro 使用者。",
-      "error_already_bound": "該 Slack 帳號已關聯到其他 Labrastro 使用者。帳戶轉移需要先顯式解綁。",
+      "needs_auth_description": "登入以將你的 Slack 帳號連線至你的 Labrastro 帳號。",
+      "error_already_bound": "此 Slack 帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "你登入的 Labrastro 帳號不是當前工作區成員。"
     },
     "dingtalk_bind": {
-      "needs_auth_description": "需要登入 Labrastro 才能完成關聯。連結中的 token 會將你的釘釘帳號繫結到當前登入的 Labrastro 使用者。",
-      "error_already_bound": "該釘釘帳號已關聯到其他 Labrastro 使用者。帳戶轉移需要先顯式解綁。",
+      "needs_auth_description": "登入以將你的釘釘帳號連線至你的 Labrastro 帳號。",
+      "error_already_bound": "此釘釘帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "你登入的 Labrastro 帳號不是當前工作區成員。"
     },
     "telegram_bind": {
-      "needs_auth_description": "請先登入 Labrastro 完成繫結。連結中的 token 會把你的 Telegram 帳號繫結到當前登入的 Labrastro 使用者，因此需要先登入。",
-      "error_already_bound": "該 Telegram 帳號已繫結到另一個 Labrastro 使用者。如需轉移帳號，請先顯式解綁。",
+      "needs_auth_description": "登入以將你的 Telegram 帳號連線至你的 Labrastro 帳號。",
+      "error_already_bound": "此 Telegram 帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "當前登入的 Labrastro 帳號不是該工作區的成員。"
     },
     "wecom_bind": {
-      "page_title": "關聯 Labrastro 帳號",
-      "needs_auth_description": "需要登入 Labrastro 才能完成關聯。連結中的 token 會將你在企業微信的身份繫結到當前登入的 Labrastro 使用者。",
-      "error_already_bound": "該企業微信身份已關聯到其他 Labrastro 使用者。帳戶轉移需要先顯式解綁。",
+      "page_title": "綁定企業微信帳號",
+      "needs_auth_description": "登入以將你的企業微信帳號連線至你的 Labrastro 帳號。",
+      "error_already_bound": "此企業微信帳號已關聯到另一個 Labrastro 帳號。請先從該帳號解除關聯，再於此處重新關聯。",
       "error_not_member": "你登入的 Labrastro 帳號不是當前工作區成員。"
     },
     "not_found": {
@@ -105,7 +110,7 @@
       "local_build_title": "該執行時報告的不是釋出版本，Labrastro 無法判斷是否有可升級的版本。請在這臺機器上自行更新。"
     },
     "profiles": {
-      "empty_description": "選擇一個基礎協議族，然後指定 Labrastro 要執行的命令。"
+      "empty_description": "選擇一個相容的基礎執行時，再指定 Labrastro 要執行的命令。"
     },
     "qoder": {
       "description": "連線 Qoder Cloud Agents，由 Labrastro 管理執行並加密儲存憑證。工作區管理員可修改配置。",
@@ -156,7 +161,8 @@
       "outdated_hint": "這台機器上的 Labrastro 更新後，才能在這裡操作。",
       "app_desktop_hint": "桌面 App。在執行它的那台機器上，用 Labrastro Desktop 切到它的視窗。",
       "app_remote_hint": "在 {{machine}} 上執行。在那台機器上用 Labrastro Desktop 切到它的視窗。",
-      "focus_unsupported": "這台機器的 daemon 暫時無法切換 App 視窗。更新 Labrastro 後再試。"
+      "focus_unsupported": "此機器上的 Labrastro 暫不支援切換應用程式視窗。請更新 Labrastro 後重試。",
+      "focus_unavailable": "本機 Labrastro 服務未執行"
     }
   },
   "billing": {

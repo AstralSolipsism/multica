@@ -17,6 +17,7 @@
     "./markdown/linkify": "./markdown/linkify.ts",
     "./markdown/mentions": "./markdown/mentions.ts",
     "./markdown/inline-math": "./markdown/inline-math.ts",
+    "./markdown/single-dollar-math": "./markdown/single-dollar-math.ts",
     "./markdown/file-cards": "./markdown/file-cards.ts",
     "./markdown/issue-identifiers": "./markdown/issue-identifiers.ts",
     "./markdown/sanitize": "./markdown/sanitize.ts",

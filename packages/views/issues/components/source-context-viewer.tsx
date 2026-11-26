@@ -10,7 +10,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { cn } from "@multica/ui/lib/utils";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useWorkspacePaths, issueRouteRef } from "@multica/core/paths";
 import { AppLink, useNavigation } from "../../navigation";
 import { useLocale, useT } from "../../i18n";
 import { ProgressRing } from "./progress-ring";
@@ -75,7 +75,7 @@ export function SourceContextBadge({
     // the canonical rewrite entirely — no UUID-route landing instance, no
     // rewrite remount, and the deep-link memento lives under one pathname
     // (OL-270: a UUID push + rewrite split the record across two pathnames).
-    navigation.push(`${paths.issueDetail(value.current_source.identifier)}#comment-${value.current_source.anchor_comment_id}`);
+    navigation.push(`${paths.issueDetail(issueRouteRef({ id: value.current_source.issue_id, identifier: value.current_source.identifier }))}#comment-${value.current_source.anchor_comment_id}`);
   };
   const refresh = async () => {
     try {
@@ -160,7 +160,7 @@ export function SourceContextBadge({
           </span>
           {parentIssue ? (
             <AppLink
-              href={paths.issueDetail(parentIssue.id)}
+              href={paths.issueDetail(issueRouteRef(parentIssue))}
               aria-label={`${originIdentifier} ${originTitle}`}
               className="group/source-parent flex min-w-0 items-center gap-1.5 rounded-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -213,7 +213,7 @@ export function SourceContextBadge({
         <DialogContent
           showCloseButton={false}
           className={cn(
-            "flex w-full max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 transition-[height,max-width] motion-reduce:transition-none",
+            "flex w-full max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 transition-[height,max-width] duration-100 motion-reduce:transition-none",
             viewerExpanded
               ? "h-[calc(100%-2rem)] sm:max-w-[calc(100%-2rem)]"
               : "h-[min(82%,56rem)] sm:max-w-4xl",

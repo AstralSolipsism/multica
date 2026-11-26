@@ -75,11 +75,11 @@ Amp ではデーモンまたはエージェントの環境に `AMP_API_KEY` も�
 2. 同じコンピューターで [Multica デスクトップアプリ](/desktop-app) を開くと、コンピューターが自動で接続されます。または CLI をインストールしてデーモンを起動します。
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+   curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
    multica setup
    ```
 
-   Windows では 1 行目を `irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex` にします。セルフホストのインスタンスでは[セルフホストクイックスタート](/self-host-quickstart)のコマンドを使います。
+   Windows では 1 行目を `irm https://multica.outlune.com/downloads/install.ps1 | iex` にします。セルフホストのインスタンスでは[セルフホストクイックスタート](/self-host-quickstart)のコマンドを使います。
 3. **ランタイム** ページでそのコンピューターの下にツールが表示されていることを確認します。`multica runtime list` でも確認できます。あとで別のツールを入れたら、`multica daemon restart` を実行するかデスクトップアプリを開き直します。
 4. そのランタイムで[エージェントを作成](/agents-create)し、タスクを割り当てます。
 

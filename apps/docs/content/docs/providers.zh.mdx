@@ -75,11 +75,11 @@ Amp 还需要在守护进程或智能体环境中设置 `AMP_API_KEY`，仅有�
 2. 在同一台电脑上打开 [Multica 桌面端](/desktop-app)，它会自动接入这台电脑；或者安装 CLI 并启动守护进程：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+   curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
    multica setup
    ```
 
-   Windows 上第一行换成 `irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`。自托管实例使用[自托管快速上手](/self-host-quickstart)里的命令。
+   Windows 上第一行换成 `irm https://multica.outlune.com/downloads/install.ps1 | iex`。自托管实例使用[自托管快速上手](/self-host-quickstart)里的命令。
 3. 在 **运行时** 页面这台电脑下确认工具已经出现，也可以运行 `multica runtime list`。之后再装新工具，运行 `multica daemon restart` 或重新打开桌面端。
 4. 在这个运行时上[创建智能体](/agents-create)，再给它分配任务。
 

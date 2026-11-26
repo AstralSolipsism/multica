@@ -75,11 +75,11 @@ Amp 還需要在守護行程或 AI 代理環境中設定 `AMP_API_KEY`，僅有�
 2. 在同一臺電腦上開啟 [Multica 桌面應用](/desktop-app)，它會自動接入這臺電腦；或者安裝 CLI 並啟動守護程序：
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+   curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
    multica setup
    ```
 
-   Windows 上第一行換成 `irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`。自託管例項使用[自託管快速上手](/self-host-quickstart)裡的命令。
+   Windows 上第一行換成 `irm https://multica.outlune.com/downloads/install.ps1 | iex`。自託管例項使用[自託管快速上手](/self-host-quickstart)裡的命令。
 3. 在 **執行時** 頁面這臺電腦下確認工具已經出現，也可以執行 `multica runtime list`。之後再裝新工具，執行 `multica daemon restart` 或重新開啟桌面應用。
 4. 在這個執行時上[建立 AI 代理](/agents-create)，再給它分配任務。
 

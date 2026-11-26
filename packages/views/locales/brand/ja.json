@@ -19,7 +19,7 @@
       "byo_docs_link": "Step-by-step：Labrastro エージェントを Slack に接続する"
     },
     "dingtalk": {
-      "group_forget_description": "Labrastro の一覧からのみ削除します。会話やメッセージは残り、ボットが再度 @メンションされると一覧に戻ります。",
+      "group_forget_description": "DingTalk 内のメッセージを削除せずに、このグループを Labrastro の一覧から削除します。",
       "byo_docs_link": "Step-by-step：Labrastro エージェントを DingTalk に接続する"
     },
     "wecom": {
@@ -27,14 +27,14 @@
       "byo_conflict_other_workspace": "このボットは別の Labrastro ワークスペースに接続済みです。先にそちらで切断してから接続してください。"
     },
     "telegram": {
-      "disconnect_confirm_description": "ボットはこのワークスペースの Telegram メッセージを受信しなくなります。Labrastro 内のチャット履歴は保持され、同じエージェントから再接続できます。",
+      "disconnect_confirm_description": "このボットはこのワークスペースの Telegram メッセージを受信しなくなります。Labrastro 内のチャット履歴は保持され、あとから同じエージェントから再接続できます。",
       "connect_docs_link": "手順ガイド：Labrastro エージェントを Telegram に接続する"
     },
     "mcp_sources": {
       "apps": "Labrastro で接続したチームまたは個人のアカウントを、各エージェントに追加します。"
     },
     "connected_apps": {
-      "catalog_description": "厳選アプリにはレビュー済みの既定ルールがあります。「すべてのアプリ」は Composio で接続できるすべてを含み、Labrastro が分類できない操作は必ず確認を求めます。カスタムリストでは選んだアプリだけを許可します。"
+      "catalog_description": "厳選アプリにはレビュー済みの既定ルールがあります。「すべてのアプリ」は Labrastro で接続できるすべてを含み、Labrastro が分類できない操作は必ず確認を求めます。カスタムリストでは選んだアプリだけを許可します。"
     },
     "shortcuts": {
       "actions": {
@@ -45,33 +45,38 @@
     },
     "chat": {
       "ask_agent_label": "「Labrastro に聞く」のエージェント"
+    },
+    "desktop": {
+      "daemon": {
+        "auto_start_description": "Labrastro Desktop の起動時にローカルデーモンを自動起動します"
+      }
     }
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "連携を完了するには Labrastro にログインしてください。リンク内のトークンが Lark アカウントを現在の Labrastro ユーザーに紐付けるため、先にログインが必要です。",
-      "error_already_bound": "この Lark アカウントはすでに別の Labrastro ユーザーに連携されています。アカウントを移すには、まず明示的に連携を解除する必要があります。",
+      "needs_auth_description": "サインインして Feishu / Lark アカウントを Labrastro アカウントに連携してください。",
+      "error_already_bound": "この Feishu / Lark アカウントはすでに別の Labrastro アカウントに連携されています。先に元のアカウントで連携を解除してから、もう一度連携してください。",
       "error_not_member": "現在ログイン中の Labrastro アカウントは、このワークスペースのメンバーではありません。"
     },
     "slack_bind": {
-      "needs_auth_description": "連携を完了するには Labrastro にサインインしてください。リンク内のトークンが、あなたの Slack アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
-      "error_already_bound": "この Slack アカウントは別の Labrastro ユーザーに連携済みです。移行するにはまず明示的に解除する必要があります。",
+      "needs_auth_description": "サインインして Slack アカウントを Labrastro アカウントに連携してください。",
+      "error_already_bound": "この Slack アカウントはすでに別の Labrastro アカウントに連携されています。先に元のアカウントで連携を解除してから、もう一度連携してください。",
       "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
     },
     "dingtalk_bind": {
-      "needs_auth_description": "連携を完了するには Labrastro にサインインしてください。リンク内のトークンが、あなたの DingTalk アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
-      "error_already_bound": "この DingTalk アカウントは別の Labrastro ユーザーに連携済みです。移行するにはまず明示的に解除する必要があります。",
+      "needs_auth_description": "サインインして DingTalk アカウントを Labrastro アカウントに連携してください。",
+      "error_already_bound": "この DingTalk アカウントはすでに別の Labrastro アカウントに連携されています。先に元のアカウントで連携を解除してから、もう一度連携してください。",
       "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
     },
     "telegram_bind": {
-      "needs_auth_description": "リンクを完了するには Labrastro にサインインしてください。リンク内のトークンはあなたの Telegram アカウントをこの Labrastro ユーザーに紐付けるため、先にログインが必要です。",
-      "error_already_bound": "この Telegram アカウントは別の Labrastro ユーザーにリンク済みです。アカウントの移行には先に明示的なリンク解除が必要です。",
+      "needs_auth_description": "サインインして Telegram アカウントを Labrastro アカウントにリンクしてください。",
+      "error_already_bound": "この Telegram アカウントはすでに別の Labrastro アカウントにリンクされています。先に元のアカウントでリンクを解除してから、もう一度リンクしてください。",
       "error_not_member": "サインイン中の Labrastro アカウントはこのワークスペースのメンバーではありません。"
     },
     "wecom_bind": {
-      "page_title": "Labrastro アカウントをリンク",
-      "needs_auth_description": "リンクを完了するには Labrastro にサインインしてください。トークンは WeCom の ID を、サインイン中の Labrastro ユーザーに紐付けます。",
-      "error_already_bound": "この WeCom ID は別の Labrastro ユーザーにリンクされています。アカウントの移行には明示的な解除が必要です。",
+      "page_title": "WeCom アカウントを連携",
+      "needs_auth_description": "サインインして WeCom アカウントを Labrastro アカウントにリンクしてください。",
+      "error_already_bound": "この WeCom アカウントはすでに別の Labrastro アカウントにリンクされています。先に元のアカウントでリンクを解除してから、もう一度リンクしてください。",
       "error_not_member": "サインインしている Labrastro アカウントはこのワークスペースのメンバーではありません。"
     },
     "not_found": {
@@ -105,7 +110,7 @@
       "local_build_title": "このランタイムはリリース版ではないバージョンを報告しているため、Labrastro はアップグレードの有無を判断できません。マシン上で直接更新してください。"
     },
     "profiles": {
-      "empty_description": "ベースプロトコルファミリーを選び、Labrastro が実行するコマンドを指定します。"
+      "empty_description": "互換性のあるベースランタイムを選択し、Labrastro が実行するコマンドを指定してください。"
     },
     "qoder": {
       "description": "Connect Qoder Cloud Agents. Labrastro manages execution and stores credentials encrypted. Workspace administrators can change this configuration.",
@@ -165,7 +170,8 @@
       "outdated_hint": "このマシンの Labrastro を更新すると、ここから操作できます。",
       "app_desktop_hint": "デスクトップアプリです。実行中のマシンの Labrastro Desktop からウィンドウに切り替えられます。",
       "app_remote_hint": "{{machine}} で実行中です。そのマシンの Labrastro Desktop からウィンドウに切り替えられます。",
-      "focus_unsupported": "このマシンのデーモンはまだアプリのウィンドウに切り替えられません。Labrastro を更新してもう一度お試しください。"
+      "focus_unsupported": "このマシンの Labrastro はまだアプリウィンドウの切り替えに対応していません。Labrastro を更新してもう一度お試しください。",
+      "focus_unavailable": "Labrastro のローカルサービスが起動していません"
     }
   },
   "billing": {
@@ -262,6 +268,13 @@
         "managed_title": "Labrastro で管理",
         "managed_empty": "Labrastro で管理されている MCP Server はありません。",
         "runtime_overridden_badge": "Labrastro で上書き"
+      }
+    }
+  },
+  "modals": {
+    "create_issue": {
+      "agent": {
+        "prompt_placeholder": "エージェントにやってほしいことを伝えてください。例: 「Mizuki に Web プロジェクトのインボックス読み込みの遅さを直してもらう」"
       }
     }
   }

@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
-import { paths } from "@multica/core/paths";
+import { issueRouteRef, paths } from "@multica/core/paths";
 import type { Issue, TimelineEntry } from "@multica/core/types";
 import { issueStatusCategory } from "@multica/core/issues";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -99,7 +99,7 @@ function EngineeringDecisionDetail({ workspaceSlug, projectId, issue, timeline, 
         ) : null}
       </div>
       <footer className="flex shrink-0 justify-end border-t px-5 py-2">
-        <AppLink href={paths.workspace(workspaceSlug).issueDetail(issue.id)} className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-caption hover:bg-muted">
+        <AppLink href={paths.workspace(workspaceSlug).issueDetail(issueRouteRef(issue))} className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-caption hover:bg-muted">
           {t(($) => $.decisions.openIssue, { identifier: issue.identifier })}<ArrowRight aria-hidden="true" />
         </AppLink>
       </footer>

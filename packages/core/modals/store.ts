@@ -18,7 +18,6 @@ type ModalType =
   | "issue-rename"
   | "issue-delete-confirm"
   | "issue-run-confirm"
-  | "issue-edit-dependencies"
   | "issue-workflow-handoff"
   | null;
 

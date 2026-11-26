@@ -90,6 +90,10 @@ vi.mock("@multica/views/layout", () => ({
   WorkspacePresencePrefetch: () => null,
 }));
 
+vi.mock("./document-title-sync", () => ({
+  DocumentTitleSync: () => null,
+}));
+
 // The provider's own behavior is covered in packages/views; here it only
 // marks where the layout mounts it.
 vi.mock("@multica/views/you-should-know", () => ({

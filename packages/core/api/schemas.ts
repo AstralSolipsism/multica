@@ -3989,6 +3989,11 @@ const BatchIssueResultSchema = z
     }),
   );
 
+export const IssueBatchUpdateSchema = z.object({
+  updated: z.number().int().nonnegative(),
+});
+export type IssueBatchUpdateResult = z.infer<typeof IssueBatchUpdateSchema>;
+
 /** `results` is absent on servers that predate per-issue batch results. */
 export const BatchUpdateIssuesResponseSchema = z
   .object({

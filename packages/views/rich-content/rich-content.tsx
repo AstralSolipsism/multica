@@ -43,13 +43,12 @@ import { cn } from "@multica/ui/lib/utils";
 import { useWorkspaceSlug } from "@multica/core/paths";
 import { useConfigStore } from "@multica/core/config";
 import type { Attachment } from "@multica/core/types";
-import {
-  isAllowedFileCardHref,
-  isIssueIdentifier,
-  markdownSanitizeSchema,
-  markdownUrlTransform,
-  remarkSingleDollarMath,
-} from "@multica/ui/markdown";
+// Subpath imports, not the @multica/ui/markdown barrel: the barrel also
+// exports the shiki-based CodeBlock, which would pull shiki into the chunk.
+import { isAllowedFileCardHref } from "@multica/ui/markdown/file-cards";
+import { isIssueIdentifier } from "@multica/ui/markdown/issue-identifiers";
+import { markdownSanitizeSchema, markdownUrlTransform } from "@multica/ui/markdown/sanitize";
+import { remarkSingleDollarMath } from "@multica/ui/markdown/single-dollar-math";
 import {
   resolveClickIntent,
   useAppOrigin,

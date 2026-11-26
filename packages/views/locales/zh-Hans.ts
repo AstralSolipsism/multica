@@ -5,7 +5,6 @@ import zhHansQuota from "./zh-Hans/quota.json";
 import zhHansThinking from "./zh-Hans/thinking.json";
 import zhHansLark from "./zh-Hans/lark.json";
 import zhHansForkUi from "./zh-Hans/fork-ui.json";
-import zhHansDependencies from "./zh-Hans/dependencies.json";
 import zhHansDag from "./zh-Hans/dag.json";
 import zhHansAgentConfig from "./zh-Hans/agent-config.json";
 import zhHansAuth from "./zh-Hans/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: zhHansThinking,
   lark: zhHansLark,
   "fork-ui": zhHansForkUi,
-  dependencies: zhHansDependencies,
   dag: zhHansDag,
   "agent-config": zhHansAgentConfig,
   auth: zhHansAuth,

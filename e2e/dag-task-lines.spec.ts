@@ -34,16 +34,10 @@ async function setBlockedBy(api: TestApiClient, workspaceId: string, id: string,
     Authorization: `Bearer ${api.getToken()}`,
     "X-Workspace-ID": workspaceId,
   };
-  const before = await fetch(`${API_BASE}/api/issues/${id}/dependencies`, { headers });
-  expect(before.ok, `${before.status} ${await before.clone().text()}`).toBe(true);
-  const body = await before.json();
-  const write = await fetch(`${API_BASE}/api/issues/${id}/with-dependencies`, {
-    method: "PATCH",
+  const write = await fetch(`${API_BASE}/api/issues/${id}`, {
+    method: "PUT",
     headers,
-    body: JSON.stringify({
-      blocked_by: blockedBy,
-      expected_dependency_version: body.dependency_version,
-    }),
+    body: JSON.stringify({ blocked_by: blockedBy }),
   });
   expect(write.ok, await write.text()).toBe(true);
 }

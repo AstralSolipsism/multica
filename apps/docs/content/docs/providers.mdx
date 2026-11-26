@@ -77,11 +77,11 @@ Every tool in the table connects the same way: the Multica daemon on a computer 
 2. On the same computer, open [Multica Desktop](/desktop-app), which connects the computer automatically, or install the CLI and start the daemon:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+   curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
    multica setup
    ```
 
-   On Windows, use `irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex` for the first line. Self-hosted instances use the commands in the [Self-host quickstart](/self-host-quickstart).
+   On Windows, use `irm https://multica.outlune.com/downloads/install.ps1 | iex` for the first line. Self-hosted instances use the commands in the [Self-host quickstart](/self-host-quickstart).
 3. Check that the tool shows up as a runtime under that computer on the **Runtimes** page, or with `multica runtime list`. After installing another tool, run `multica daemon restart` or reopen Desktop.
 4. [Create an agent](/agents-create) on that runtime and assign it an issue.
 

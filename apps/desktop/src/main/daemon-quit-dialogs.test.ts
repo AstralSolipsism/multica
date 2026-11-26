@@ -22,7 +22,9 @@ describe("daemon quit dialog copy", () => {
     ["zh-MO", "結束 Labrastro"],
     ["ja-JP", "Labrastro を終了"],
     ["ko-KR", "Labrastro 종료"],
-    ["fr-FR", "Quit Labrastro"],
+    ["fr-FR", "Quitter Labrastro"],
+    ["es-ES", "Salir de Labrastro"],
+    ["ru-RU", "Выйти из Labrastro"],
     ["", "Quit Labrastro"],
   ])("resolves OS language %s using the native menu locale policy", (language, title) => {
     const options = quitConfirmationOptions(language, 3);
@@ -31,7 +33,7 @@ describe("daemon quit dialog copy", () => {
     expect(options.message).not.toContain("Agent tasks");
   });
 
-  it.each(["en", "zh-Hans", "zh-Hant", "ja", "ko"])("distinguishes stopped and unconfirmed daemon states in %s", (language) => {
+  it.each(["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "es", "ru"])("distinguishes stopped and unconfirmed daemon states in %s", (language) => {
     const stopped = quitFailureOptions(language, true);
     const unknown = quitFailureOptions(language, false);
     expect(stopped.message).not.toEqual(unknown.message);

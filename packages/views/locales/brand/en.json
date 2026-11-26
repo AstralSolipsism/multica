@@ -13,13 +13,13 @@
       }
     },
     "lark": {
-      "install_error_bot_info": "Authorized, but Labrastro couldn't fetch the Bot's identity. Try again."
+      "install_error_bot_info": "Authorized, but Labrastro couldn't fetch the bot's identity. Try again."
     },
     "slack": {
       "byo_docs_link": "Step-by-step: connect your Labrastro agent to Slack"
     },
     "dingtalk": {
-      "group_forget_description": "This removes the group from Labrastro's inventory without deleting conversations or messages. It will reappear after someone @mentions the bot again.",
+      "group_forget_description": "Removes this group from Labrastro's list without deleting any messages in DingTalk.",
       "byo_docs_link": "Step-by-step: connect your Labrastro agent to DingTalk"
     },
     "wecom": {
@@ -27,14 +27,14 @@
       "byo_conflict_other_workspace": "This bot is already connected to a different Labrastro workspace. Disconnect it there before connecting it here."
     },
     "telegram": {
-      "disconnect_confirm_description": "The bot will stop receiving Telegram messages for this workspace. Chat history in Labrastro is kept; you can re-connect later from the same Agent.",
+      "disconnect_confirm_description": "The bot will stop receiving Telegram messages for this workspace. Chat history in Labrastro is kept; you can reconnect later from the same agent.",
       "connect_docs_link": "Step-by-step: connect your Labrastro agent to Telegram"
     },
     "mcp_sources": {
       "apps": "Team or personal accounts connected through Labrastro and added to each agent."
     },
     "connected_apps": {
-      "catalog_description": "Curated apps come with reviewed default rules. All apps adds everything Composio can connect; actions Labrastro can't classify always ask first. A custom list allows only the apps you pick."
+      "catalog_description": "Curated apps come with reviewed default rules. All apps includes every app Labrastro supports; actions Labrastro can't classify automatically always ask first. A custom list allows only the apps you pick."
     },
     "shortcuts": {
       "actions": {
@@ -49,29 +49,29 @@
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "Sign in to Labrastro to complete the binding. The token in the link binds your Lark account to this Labrastro user, so you must be logged in first.",
-      "error_already_bound": "This Lark account is already bound to a different Labrastro user. Account transfers must go through an explicit unbind first.",
+      "needs_auth_description": "Sign in to connect your Feishu / Lark account to your Labrastro account.",
+      "error_already_bound": "This Feishu / Lark account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "slack_bind": {
-      "needs_auth_description": "Sign in to Labrastro to complete the link. The token in the link binds your Slack account to this Labrastro user, so you must be logged in first.",
-      "error_already_bound": "This Slack account is already linked to a different Labrastro user. Account transfers must go through an explicit unbind first.",
+      "needs_auth_description": "Sign in to connect your Slack account to your Labrastro account.",
+      "error_already_bound": "This Slack account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "dingtalk_bind": {
-      "needs_auth_description": "Sign in to Labrastro to complete the link. The token in the link binds your DingTalk account to this Labrastro user, so you must be logged in first.",
-      "error_already_bound": "This DingTalk account is already linked to a different Labrastro user. Account transfers must go through an explicit unbind first.",
+      "needs_auth_description": "Sign in to connect your DingTalk account to your Labrastro account.",
+      "error_already_bound": "This DingTalk account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "telegram_bind": {
-      "needs_auth_description": "Sign in to Labrastro to complete the link. The token in the link binds your Telegram account to this Labrastro user, so you must be logged in first.",
-      "error_already_bound": "This Telegram account is already linked to a different Labrastro user. Account transfers must go through an explicit unbind first.",
+      "needs_auth_description": "Sign in to connect your Telegram account to your Labrastro account.",
+      "error_already_bound": "This Telegram account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "wecom_bind": {
-      "page_title": "Link your Labrastro account",
-      "needs_auth_description": "Sign in to Labrastro to complete the link. The token in the link binds your WeCom identity to this Labrastro user, so you must be logged in first.",
-      "error_already_bound": "This WeCom identity is already linked to a different Labrastro user. Account transfers must go through an explicit unbind first.",
+      "page_title": "Link your WeCom account",
+      "needs_auth_description": "Sign in to connect your WeCom account to your Labrastro account.",
+      "error_already_bound": "This WeCom account is already linked to another Labrastro account. Unlink it from that account first before linking it here.",
       "error_not_member": "You're signed in to a Labrastro account that isn't a member of this workspace."
     },
     "not_found": {
@@ -105,7 +105,7 @@
       "local_build_title": "This runtime reports a non-release version, so Labrastro cannot tell whether an upgrade is available. Update it from the machine itself."
     },
     "profiles": {
-      "empty_description": "Pick a base protocol family, then point Labrastro at the command to run."
+      "empty_description": "Pick a compatible base runtime, then point Labrastro to the command to run."
     },
     "qoder": {
       "description": "Connect Qoder Cloud Agents. Labrastro manages execution and stores credentials encrypted. Workspace administrators can change this configuration.",
@@ -168,7 +168,8 @@
       "outdated_hint": "Update Labrastro on this machine to manage it from here.",
       "app_desktop_hint": "A desktop app. Switch to its window from Labrastro Desktop on the machine running it.",
       "app_remote_hint": "Runs on {{machine}}. Switch to its window from Labrastro Desktop on that machine.",
-      "focus_unsupported": "This machine's daemon can't switch to app windows yet. Update Labrastro and try again."
+      "focus_unsupported": "Labrastro on this machine can't switch to app windows yet. Update Labrastro and try again.",
+      "focus_unavailable": "Labrastro's local service isn't running"
     }
   },
   "billing": {

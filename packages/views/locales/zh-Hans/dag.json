@@ -25,7 +25,6 @@
   "run_queued": "排队中",
   "stage_badge": "阶段 {{number}}",
   "open_detail": "打开详情",
-  "edit_dependencies": "编辑前置关系",
   "assign_issue": "发起指派",
   "focus_upstream": "突出前置依赖",
   "focus_downstream": "突出后续依赖",

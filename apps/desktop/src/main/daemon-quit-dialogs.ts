@@ -100,7 +100,7 @@ const labels: Record<DialogLocale, QuitLabels> = {
     ignoreAndQuit: "무시하고 종료",
   },
   fr: {
-    title: "Quitter Multica",
+    title: "Quitter Labrastro",
     activeRuns: (count) =>
       count === 1
         ? "1 exécution est en cours sur cet appareil."
@@ -113,13 +113,13 @@ const labels: Record<DialogLocale, QuitLabels> = {
     failureTitle: "Impossible de confirmer l'arrêt",
     daemonStopped: "Le démon s'est arrêté, mais la fin de toutes ses exécutions n'a pas pu être confirmée.",
     shutdownUnknown: "Impossible de confirmer que le démon et ses exécutions se sont arrêtés.",
-    cancelAfterStop: "Si vous annulez, Multica reste ouvert et le démon reste arrêté. Les exécutions en arrière-plan peuvent continuer.",
-    cancelUnconfirmed: "Si vous annulez, Multica reste ouvert avec le redémarrage automatique du démon désactivé. Les exécutions en arrière-plan peuvent continuer.",
+    cancelAfterStop: "Si vous annulez, Labrastro reste ouvert et le démon reste arrêté. Les exécutions en arrière-plan peuvent continuer.",
+    cancelUnconfirmed: "Si vous annulez, Labrastro reste ouvert avec le redémarrage automatique du démon désactivé. Les exécutions en arrière-plan peuvent continuer.",
     cancelQuit: "Annuler la fermeture",
     ignoreAndQuit: "Ignorer et quitter",
   },
   es: {
-    title: "Salir de Multica",
+    title: "Salir de Labrastro",
     activeRuns: (count) =>
       count === 1
         ? "Hay 1 ejecución activa en este dispositivo."
@@ -132,13 +132,13 @@ const labels: Record<DialogLocale, QuitLabels> = {
     failureTitle: "No se pudo confirmar el cierre",
     daemonStopped: "El daemon se detuvo, pero no se pudo confirmar que todas sus ejecuciones hayan finalizado.",
     shutdownUnknown: "No se pudo confirmar si el daemon y sus ejecuciones se detuvieron.",
-    cancelAfterStop: "Si cancelas, Multica permanece abierto y el daemon detenido. Las ejecuciones en segundo plano pueden continuar.",
-    cancelUnconfirmed: "Si cancelas, Multica permanece abierto con el reinicio automático del daemon desactivado. Las ejecuciones en segundo plano pueden continuar.",
+    cancelAfterStop: "Si cancelas, Labrastro permanece abierto y el daemon detenido. Las ejecuciones en segundo plano pueden continuar.",
+    cancelUnconfirmed: "Si cancelas, Labrastro permanece abierto con el reinicio automático del daemon desactivado. Las ejecuciones en segundo plano pueden continuar.",
     cancelQuit: "Cancelar salida",
     ignoreAndQuit: "Ignorar y salir",
   },
   ru: {
-    title: "Выйти из Multica",
+    title: "Выйти из Labrastro",
     activeRuns: (count) => `На этом устройстве активно запусков: ${count}.`,
     unknownRuns: "Не удалось проверить, активны ли запуски на этом устройстве.",
     interruptRuns: "Остановка демона сейчас прервёт активные запуски.",
@@ -148,8 +148,8 @@ const labels: Record<DialogLocale, QuitLabels> = {
     failureTitle: "Не удалось подтвердить остановку",
     daemonStopped: "Демон остановлен, но не удалось подтвердить завершение всех запусков.",
     shutdownUnknown: "Не удалось подтвердить, что демон и его запуски остановлены.",
-    cancelAfterStop: "При отмене Multica останется открытым, а демон — остановленным. Фоновые запуски могут продолжиться.",
-    cancelUnconfirmed: "При отмене Multica останется открытым с отключённым автозапуском демона. Фоновые запуски могут продолжиться.",
+    cancelAfterStop: "При отмене Labrastro останется открытым, а демон — остановленным. Фоновые запуски могут продолжиться.",
+    cancelUnconfirmed: "При отмене Labrastro останется открытым с отключённым автозапуском демона. Фоновые запуски могут продолжиться.",
     cancelQuit: "Отменить выход",
     ignoreAndQuit: "Игнорировать и выйти",
   },

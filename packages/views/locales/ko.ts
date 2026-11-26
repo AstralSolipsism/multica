@@ -5,7 +5,6 @@ import koQuota from "./ko/quota.json";
 import koThinking from "./ko/thinking.json";
 import koLark from "./ko/lark.json";
 import koForkUi from "./ko/fork-ui.json";
-import koDependencies from "./ko/dependencies.json";
 import koDag from "./ko/dag.json";
 import koAgentConfig from "./ko/agent-config.json";
 import koAuth from "./ko/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: koThinking,
   lark: koLark,
   "fork-ui": koForkUi,
-  dependencies: koDependencies,
   dag: koDag,
   "agent-config": koAgentConfig,
   auth: koAuth,

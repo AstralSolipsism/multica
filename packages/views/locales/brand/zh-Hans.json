@@ -16,11 +16,11 @@
       "install_error_bot_info": "授权完成，但 Labrastro 无法获取 Bot 身份信息，请重试。"
     },
     "slack": {
-      "byo_docs_link": "Step-by-step：把你的 Labrastro 智能体连接到 Slack"
+      "byo_docs_link": "分步指南：将 Labrastro 智能体连接到 Slack"
     },
     "dingtalk": {
       "group_forget_description": "该群会从 Labrastro 的群列表中移除，对话和消息记录不会删除。以后再次 @ 机器人时，群会重新出现。",
-      "byo_docs_link": "Step-by-step：把你的 Labrastro 智能体连接到钉钉"
+      "byo_docs_link": "分步指南：将 Labrastro 智能体连接到钉钉"
     },
     "wecom": {
       "byo_bot_name_placeholder": "例如 Labrastro Bot",
@@ -34,7 +34,7 @@
       "apps": "通过 Labrastro 连接团队或个人账号，再将应用添加到智能体。"
     },
     "connected_apps": {
-      "catalog_description": "精选应用带有审核过的默认规则。「全部应用」包含 Composio 能连接的所有应用；Labrastro 无法识别的操作一律先征得同意。「指定名单」只允许你选中的应用。"
+      "catalog_description": "精选应用带有审核过的默认规则。\"全部应用\"包含 Labrastro 支持的所有应用，无法自动分类的操作会先征得同意。\"指定名单\"只允许你选中的应用。"
     },
     "shortcuts": {
       "actions": {
@@ -44,34 +44,34 @@
       }
     },
     "chat": {
-      "ask_agent_label": "「问 Labrastro」的智能体"
+      "ask_agent_label": "\"问 Labrastro\"的智能体"
     }
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "需要登录 Labrastro 才能完成绑定。链接中的 token 会将你的飞书账号绑定到当前登录的 Labrastro 用户。",
-      "error_already_bound": "该飞书账号已绑定到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "needs_auth_description": "登录 Labrastro，将你的飞书 / Lark 账号关联到当前账号。",
+      "error_already_bound": "该飞书 / Lark 账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
     },
     "slack_bind": {
-      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你的 Slack 账号绑定到当前登录的 Labrastro 用户。",
-      "error_already_bound": "该 Slack 账号已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "needs_auth_description": "登录 Labrastro，将你的 Slack 账号关联到当前账号。",
+      "error_already_bound": "该 Slack 账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
     },
     "dingtalk_bind": {
-      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你的钉钉账号绑定到当前登录的 Labrastro 用户。",
-      "error_already_bound": "该钉钉账号已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "needs_auth_description": "登录 Labrastro，将你的钉钉账号关联到当前账号。",
+      "error_already_bound": "该钉钉账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
     },
     "telegram_bind": {
-      "needs_auth_description": "请先登录 Labrastro 完成绑定。链接中的 token 会把你的 Telegram 账号绑定到当前登录的 Labrastro 用户，因此需要先登录。",
-      "error_already_bound": "该 Telegram 账号已绑定到另一个 Labrastro 用户。如需转移账号，请先显式解绑。",
+      "needs_auth_description": "登录 Labrastro，将你的 Telegram 账号关联到当前账号。",
+      "error_already_bound": "该 Telegram 账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "当前登录的 Labrastro 账号不是该工作区的成员。"
     },
     "wecom_bind": {
-      "page_title": "关联 Labrastro 账号",
-      "needs_auth_description": "需要登录 Labrastro 才能完成关联。链接中的 token 会将你在企业微信的身份绑定到当前登录的 Labrastro 用户。",
-      "error_already_bound": "该企业微信身份已关联到其他 Labrastro 用户。账户转移需要先显式解绑。",
+      "page_title": "关联企业微信账号",
+      "needs_auth_description": "登录 Labrastro，将你的企业微信账号关联到当前账号。",
+      "error_already_bound": "该企业微信账号已关联到其他 Labrastro 账号，请先在原账号中解除关联后再试。",
       "error_not_member": "你登录的 Labrastro 账号不是当前工作区成员。"
     },
     "not_found": {
@@ -87,7 +87,7 @@
   "runtimes": {
     "page": {
       "add_menu": {
-        "cloud_runtime_hint": "创建一台 Labrastro 托管的云节点"
+        "cloud_runtime_hint": "由 Labrastro 托管的云端节点，随时可用"
       }
     },
     "mika_setup": {
@@ -95,7 +95,7 @@
       "description": "让 Mizuki 帮你安排任务和协调智能体。",
       "action": "和 Mizuki 开始",
       "failed": "无法启动 Mizuki",
-      "dialog_title": "让 Mizuki 在哪台机器上运行？"
+      "dialog_title": "让 Mizuki 在哪个运行时上运行？"
     },
     "connect": {
       "step1_label": "安装 Labrastro CLI"
@@ -105,7 +105,7 @@
       "local_build_title": "该运行时报告的不是发布版本，Labrastro 无法判断是否有可升级的版本。请在这台机器上自行更新。"
     },
     "profiles": {
-      "empty_description": "选择一个基础协议族，然后指定 Labrastro 要运行的命令。"
+      "empty_description": "选择一个兼容的基础运行时，再指定 Labrastro 要执行的自定义命令。"
     },
     "qoder": {
       "description": "连接 Qoder Cloud Agents，由 Labrastro 管理执行并加密保存凭证。工作区管理员可修改配置。",
@@ -116,12 +116,15 @@
     "intro": {
       "slides": {
         "cloud": {
-          "description": "不想自己管机器？创建一台 Labrastro 托管的云节点。"
+          "description": "无需本机开机，直接使用 Labrastro 托管的云端节点运行智能体。"
         }
       },
       "art": {
         "connected": "{{name}} 已连接到 Labrastro"
       }
+    },
+    "cloud_runtime": {
+      "description": "由 Labrastro 托管的云端运行时，可随时运行智能体。"
     }
   },
   "workspace": {
@@ -154,9 +157,10 @@
     },
     "environments": {
       "outdated_hint": "这台机器上的 Labrastro 更新后，才能在这里操作。",
-      "app_desktop_hint": "桌面 App。在运行它的那台机器上，用 Labrastro Desktop 切到它的窗口。",
+      "app_desktop_hint": "桌面应用。请在运行它的那台机器上，通过 Labrastro Desktop 切换到它的窗口。",
       "app_remote_hint": "运行在 {{machine}} 上。在那台机器上用 Labrastro Desktop 切到它的窗口。",
-      "focus_unsupported": "这台机器的 daemon 暂时不能切换 App 窗口。更新 Labrastro 后再试。"
+      "focus_unsupported": "这台机器上的 Labrastro 暂不支持切换应用窗口，请更新后重试。",
+      "focus_unavailable": "本机 Labrastro 服务未运行"
     }
   },
   "billing": {
@@ -174,8 +178,8 @@
     "web": {
       "desktop_handoff": {
         "opening_title": "正在打开 Labrastro",
-        "opening_description": "没有自动打开？点击“打开 Labrastro Desktop”。",
-        "open_button": "打开 Labrastro 桌面应用"
+        "opening_description": "没有自动打开？点击\"打开 Labrastro 桌面端\"。",
+        "open_button": "打开 Labrastro 桌面端"
       }
     },
     "desktop": {
@@ -221,7 +225,7 @@
       "creation_disabled_lede": "该 Labrastro 实例不允许创建新的工作区。等管理员把你邀请到某个工作区后，接受邀请并刷新即可继续。"
     },
     "step_runtime": {
-      "found_headline": "让 Mizuki 在哪台电脑上运行？",
+      "found_headline": "让 Mizuki 使用哪个运行时？",
       "hint_pick": "在上方选择一个智能体运行时，就可以开始使用 Mizuki。",
       "continue": "开始使用 Mizuki"
     },
@@ -251,7 +255,7 @@
       },
       "mcp_config": {
         "managed_title": "由 Labrastro 管理",
-        "managed_empty": "暂无由 Labrastro 管理的 MCP Server。",
+        "managed_empty": "暂无由 Labrastro 管理的 MCP 服务器。",
         "runtime_overridden_badge": "已由 Labrastro 覆盖"
       }
     }

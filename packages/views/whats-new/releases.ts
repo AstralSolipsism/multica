@@ -1521,11 +1521,11 @@ export const WHATS_NEW_RELEASES: CompleteWhatsNewRelease[] = [
             body: "Changez la langue de l'application dans Paramètres → Préférences.",
           },
           es: {
-            title: "Multica en chino tradicional",
+            title: "Labrastro en chino tradicional",
             body: "Cambia el idioma de la aplicación en Ajustes → Preferencias.",
           },
           ru: {
-            title: "Multica на традиционном китайском",
+            title: "Labrastro на традиционном китайском",
             body: "Переключить язык интерфейса можно в разделе «Настройки» → «Язык».",
           },
         },

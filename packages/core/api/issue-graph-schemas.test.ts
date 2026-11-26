@@ -21,6 +21,10 @@ describe("issue graph API boundary", () => {
     expect(graph?.matchedCount).toBe(14);
     expect(graph?.nodes.find((n) => n.title === "Checkout API")?.dependencySummary?.visibleUnsatisfiedCount).toBe(2);
     expect(graph?.edges).toHaveLength(7);
+    expect(graph?.edges.map((edge) => edge.sourceEdgeId)).toEqual(
+      reference.edges.map((edge) => edge.source_edge_id),
+    );
+    expect(graph?.edges.every((edge) => edge.type === "blocked_by")).toBe(true);
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ signal, headers: { "X-Workspace-ID": "ws-1", "X-Workspace-Slug": "" } });
   });
 

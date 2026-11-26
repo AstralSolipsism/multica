@@ -92,6 +92,9 @@ can produce both A → B and B → A; those display arrows do not imply a task
 dependency cycle. Explain the original edges, never the aggregate IDs: a
 `manual:` source edge is a stored blocker, a `stage:` source edge is
 same-parent stage order, and there is no separate dependency detail endpoint.
+Selected nodes reuse the native Relations actions to add blockers in either
+direction. The bus popup removes only `manual:` edges through the native
+blocker mutation; `stage:` edges display their Stage tag and stay read-only.
 
 ## DAG stage ordering
 

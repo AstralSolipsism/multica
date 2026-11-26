@@ -75,11 +75,11 @@ Tous les outils du tableau se connectent de la même façon : le daemon Multica 
 2. Sur le même ordinateur, ouvrez [Multica Desktop](/desktop-app), qui connecte l'ordinateur automatiquement, ou installez la CLI et démarrez le daemon :
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+   curl -fsSL https://multica.outlune.com/downloads/install.sh | bash
    multica setup
    ```
 
-   Sous Windows, remplacez la première ligne par `irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`. Les instances auto-hébergées utilisent les commandes du [Démarrage rapide en auto-hébergement](/self-host-quickstart).
+   Sous Windows, remplacez la première ligne par `irm https://multica.outlune.com/downloads/install.ps1 | iex`. Les instances auto-hébergées utilisent les commandes du [Démarrage rapide en auto-hébergement](/self-host-quickstart).
 3. Vérifiez que l'outil apparaît sous cet ordinateur sur la page **Runtimes**, ou avec `multica runtime list`. Après avoir installé un autre outil, lancez `multica daemon restart` ou rouvrez Desktop.
 4. [Créez un agent](/agents-create) sur ce runtime et assignez-lui une tâche.
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useWorkspacePaths } from "@multica/core/paths";
+import { issueRouteRef, useWorkspacePaths } from "@multica/core/paths";
 import type { TipChatSource } from "@multica/core/you-should-know";
 import { cn } from "@multica/ui/lib/utils";
 import { CHAT_COLUMN, CHAT_GUTTER } from "../../chat/components/chat-column";
@@ -61,7 +61,7 @@ export function TipSideChatBanner({
         )}
         {invalidNote && <p className="text-micro text-muted-foreground">{invalidNote}</p>}
         <AppLink
-          href={paths.issueDetail(source.issue_id)}
+          href={paths.issueDetail(issueRouteRef({ id: source.issue_id, identifier: source.issue_identifier }))}
           className="w-fit rounded-sm text-micro font-medium text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
         >
           {t(($) => $.side_chat.open_issue, { identifier: source.issue_identifier })}

@@ -25,7 +25,6 @@
   "run_queued": "キュー待ち",
   "stage_badge": "ステージ {{number}}",
   "open_detail": "詳細を開く",
-  "edit_dependencies": "前提関係を編集",
   "assign_issue": "割り当て開始",
   "focus_upstream": "前提タスクを強調",
   "focus_downstream": "後続タスクを強調",

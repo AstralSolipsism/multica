@@ -45,7 +45,7 @@ export interface IssueCreateShared {
 }
 
 export interface IssueCreateManual {
-  blockedBy: string[];
+  blocked_by: string[];
   title: string;
   description: string;
   status: IssueStatus;
@@ -84,7 +84,7 @@ const emptyShared = (): IssueCreateShared => ({
 });
 
 const emptyManual = (): IssueCreateManual => ({
-  blockedBy: [],
+  blocked_by: [],
   title: "",
   description: "",
   status: "todo",
@@ -196,7 +196,7 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
       // drops `uploading` placeholders (bytes are gone).
       attachments: normalizeStoredUploads(sharedRaw.attachments),
     },
-    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}), blockedBy: normalizeDraftPrerequisiteIds((d.manual as Partial<IssueCreateManual> | undefined)?.blockedBy) },
+    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}) },
     agent: { ...emptyAgent(), ...((d.agent as Partial<IssueCreateAgent>) ?? {}) },
     activeMode: d.activeMode === "agent" ? "agent" : "manual",
   };
@@ -403,8 +403,3 @@ registerDraftCleanup({
       batchContinuationBaseline: undefined,
     }),
 });
-
-function normalizeDraftPrerequisiteIds(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((e): e is string => typeof e === "string" && e.length > 0);
-}

@@ -5,7 +5,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLink, resolveClickIntent, useNavigation } from "../navigation";
 import {
-  Workflow,
+  Flag,
   AlertTriangle,
   ArrowDown,
   ArrowLeftRight,
@@ -86,7 +86,6 @@ import { useAttachLabelToIssue } from "@multica/core/labels";
 import { propertyListOptions } from "@multica/core/properties";
 import {
   ApiError,
-  errorCode,
   DuplicateIssueErrorBodySchema,
   type DuplicateIssueErrorBody,
   parseWithFallback,
@@ -266,7 +265,6 @@ export function ManualCreatePanel({
   setIsExpanded: (v: boolean) => void;
 }) {
   const { t } = useT("modals");
-  const { t: tDependencies } = useT("dependencies");
   const { t: tIssues } = useT("issues");
   const { t: tEditor } = useT("editor");
   const { t: tProjects } = useT("projects");
@@ -358,11 +356,11 @@ export function ManualCreatePanel({
   );
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [blockedByIds, setBlockedByIds] = useState<string[]>(
-    () => draft.manual.blockedBy ?? [],
+    () => draft.manual.blocked_by ?? [],
   );
   const updateBlockedBy = (ids: string[]) => {
     setBlockedByIds(ids);
-    setManual({ blockedBy: ids });
+    setManual({ blocked_by: ids });
   };
   const [blockedByPickerOpen, setBlockedByPickerOpen] = useState(false);
 
@@ -650,7 +648,7 @@ export function ManualCreatePanel({
           label_ids: labelIds.length > 0 ? labelIds : undefined,
           ...(Object.keys(propertyValues).length > 0 ? { properties: propertyValues } : {}),
           parent_issue_id: parentIssueId,
-          ...(blockedByIds.length > 0 ? { blockedBy: [...blockedByIds].sort() } : {}),
+          ...(blockedByIds.length > 0 ? { blocked_by: [...blockedByIds].sort() } : {}),
           // Stage is only meaningful for a sub-issue (relative to its siblings).
           stage: parentIssueId && stage != null ? stage : undefined,
           project_id: projectId,
@@ -871,11 +869,9 @@ export function ManualCreatePanel({
         }
       }
       toast.error(
-        errorCode(err) === "response_unreadable"
-          ? t(($) => $.create_issue.toast_failed)
-          : err instanceof Error && err.message
-            ? err.message
-            : t(($) => $.create_issue.toast_failed),
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.create_issue.toast_failed),
       );
       return false;
     }
@@ -1017,8 +1013,8 @@ export function ManualCreatePanel({
       ) : (
         <>
           {t(($) => $.create_issue.submit)}
-          {/* Decorative: the accessible name must stay "Create Issue", not
-              "Create Issue Command Enter". Absent when `send` is unbound.
+          {/* Decorative: the accessible name must stay "Create issue", not
+              "Create issue Command Enter". Absent when `send` is unbound.
               Hidden on phones — no ⌘ key there, and the footer row is at its
               tightest. */}
           {sendShortcut ? (
@@ -1408,16 +1404,15 @@ export function ManualCreatePanel({
                 </div>
               ))}
 
-              {/* Prerequisite chips — one per queued blocked_by edge, sent with
-                  the create in the same compound write (OL-44). */}
+              {/* Blocked-by chips are sent with the native create request. */}
               {blockedByIds.map((b, i) => (
                 <div
                   key={b}
                   className="inline-flex items-center rounded-full border text-caption transition-colors hover:bg-accent/60"
                 >
                   <div className="flex items-center gap-1.5 py-1 pl-2.5">
-                    <Workflow className="size-3 text-muted-foreground" />
-                    <span>{tDependencies(($) => $.create_issue.prerequisite_chip, { identifier: blockedByLabelOf(b, i) })}</span>
+                    <Flag className="size-3 text-muted-foreground" />
+                    <span>{blockedByLabelOf(b, i)}</span>
                   </div>
                   <button
                     type="button"
@@ -1425,7 +1420,7 @@ export function ManualCreatePanel({
                       updateBlockedBy(blockedByIds.filter((x) => x !== b))
                     }
                     className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
-                    aria-label={tDependencies(($) => $.create_issue.remove_prerequisite_aria, { identifier: blockedByLabelOf(b, i) })}
+                    aria-label={tIssues(($) => $.waiting.remove, { identifier: blockedByLabelOf(b, i) })}
                   >
                     <XIcon className="size-3" />
                   </button>
@@ -1507,7 +1502,7 @@ export function ManualCreatePanel({
                       {t(($) => $.create_issue.set_parent)}
                     </DropdownMenuItem>
                   ))}
-                  {!anchorCommentId && <DropdownMenuItem onClick={() => setBlockedByPickerOpen(true)}><Workflow className="size-3.5" />{tDependencies(($) => $.create_issue.prerequisite_picker.title)}</DropdownMenuItem>}
+                  {!anchorCommentId && <DropdownMenuItem onClick={() => setBlockedByPickerOpen(true)}><Flag className="size-3.5" />{tIssues(($) => $.relations.wait_title)}</DropdownMenuItem>}
                   <DropdownMenuItem onClick={() => setChildPickerOpen(true)}>
                     <ArrowDown className="h-3.5 w-3.5" />
                     {t(($) => $.create_issue.add_subissue)}
@@ -1585,14 +1580,13 @@ export function ManualCreatePanel({
 
             {/* Parent / child pickers — rendered inline so they stack over this
                 modal instead of replacing it via useModalStore. */}
-            {/* Prerequisite picker — the parent and queued children are
-                excluded because ancestor↔descendant edges are structural
-                conflicts the server rejects anyway. */}
+            {/* Blocker picker — the parent and queued children are excluded
+                because ancestor/descendant edges are structural conflicts. */}
             <IssuePickerModal
               open={blockedByPickerOpen}
               onOpenChange={setBlockedByPickerOpen}
-              title={tDependencies(($) => $.create_issue.prerequisite_picker.title)}
-              description={tDependencies(($) => $.create_issue.prerequisite_picker.description)}
+              title={tIssues(($) => $.relations.wait_title)}
+              description={tIssues(($) => $.waiting.picker_hint)}
               excludeIds={[
                 ...blockedByIds,
                 ...childIssues.map((c) => c.id),

@@ -589,17 +589,21 @@ describe("ChatMessageList command tool rows", () => {
         </I18nProvider>
       </TooltipProvider>,
     );
-    const label = await screen.findByText(tool);
+    const fold = await screen.findByRole("button", { name: /1 step/ });
+    fireEvent.click(fold);
+    const label = screen.getAllByText(tool).at(-1)!;
     label.style.overflowX = "hidden";
     Object.defineProperties(label, {
       scrollWidth: { value: 360 },
       clientWidth: { value: 120 },
     });
 
-    const trigger = screen.getByRole("button", { name: /mcp__company-knowledge-base__search_documents_with_filters/ });
+    const trigger = screen.getAllByRole("button", { name: /mcp__company-knowledge-base__search_documents_with_filters/ }).at(-1)!;
     await act(async () => { trigger.focus(); });
     expect(trigger).toHaveFocus();
-    expect(document.querySelector("[data-slot='tooltip-content']")).toHaveTextContent(`${tool} · release checklist`);
+    await waitFor(() =>
+      expect(document.querySelector("[data-slot='tooltip-content']")).toHaveTextContent(`${tool} · release checklist`),
+    );
 
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -937,12 +941,12 @@ describe("ChatMessageList older-messages header (OL-272)", () => {
     // mounted and only its visibility flips, so the header's height — and the
     // reader's position — never moves (OL-272).
     const idle = renderWithFetchState(false);
-    const idleCaption = screen.getByText("Loading older messages…");
+    const idleCaption = screen.getByText("Loading older messages...");
     expect(idleCaption).toHaveClass("invisible");
 
     idle.unmount();
     const fetching = renderWithFetchState(true);
-    const fetchingCaption = screen.getByText("Loading older messages…");
+    const fetchingCaption = screen.getByText("Loading older messages...");
     expect(fetchingCaption).not.toHaveClass("invisible");
     fetching.unmount();
   });

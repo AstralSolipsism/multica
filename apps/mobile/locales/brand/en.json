@@ -14,7 +14,8 @@
   },
   "inbox": {
     "detail": {
-      "review_billing_web": "Open Labrastro on the web to review billing options."
+      "review_billing_web": "Open Labrastro on the web to review billing options.",
+      "buy_runs_web": "Open Labrastro on the web to buy more runs."
     }
   }
 }

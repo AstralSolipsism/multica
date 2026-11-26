@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { isEditableShortcutTarget } from "@multica/core/shortcuts";
+import { useReducedMotion as useSharedReducedMotion } from "@multica/core/appearance";
 import type { TipAnchorRect } from "@multica/core/you-should-know/anchors";
 
 // Page-wide conditions the tip bubble reacts to (OL-194): every one of them
@@ -43,21 +44,9 @@ export function useEditableFocus(): boolean {
   );
 }
 
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-
-function subscribeReducedMotion(onChange: () => void) {
-  const query = window.matchMedia(REDUCED_MOTION_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-/** The OS asks for reduced motion: the bubble then gets no transition at all. */
+/** The OS or Appearance settings ask for reduced motion. */
 export function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    () => window.matchMedia(REDUCED_MOTION_QUERY).matches,
-    () => false,
-  );
+  return useSharedReducedMotion();
 }
 
 /** Base UI marks everything outside a modal layer (dialog, modal menu). */

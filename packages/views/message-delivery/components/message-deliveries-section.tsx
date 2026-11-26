@@ -17,7 +17,8 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { TranscriptButton } from "../../common/task-transcript";
 import type { AgentTask } from "@multica/core/types/agent";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useIssueRouteRef } from "@multica/core/issues/canonical-id";
+import { issueRouteRef, useWorkspacePaths } from "@multica/core/paths";
 import { ApiError, errorCode } from "@multica/core/api";
 import type { MessageDelivery } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -336,7 +337,7 @@ export function DeliveryDetailDialog({
       }}
       badge={t(($) => $.deliveries.source_kind[messageDeliverySourceKindKey(full.source_kind)])}
       issueLink={sourceRef?.issue_identifier ? {
-        href: wsPaths.issueDetail(sourceRef.issue_identifier),
+        href: wsPaths.issueDetail(issueRouteRef({ id: sourceRef.issue_id ?? "", identifier: sourceRef.issue_identifier })),
         label: `${t(($) => $.deliveries.detail.view_issue)} ${sourceRef.issue_identifier}`,
       } : undefined}
       description={full.status === "sent" ? t(($) => $.deliveries.description) : undefined}
@@ -430,6 +431,7 @@ function SourceRunRow({
   const { data: run, isLoading } = useQuery(
     autopilotRunOptions(wsId, autopilotId, runId, { enabled: true }),
   );
+  const issueRef = useIssueRouteRef(wsId, run?.issue_id ?? "");
   const { data: autopilotData } = useQuery(autopilotDetailOptions(wsId, autopilotId));
   const autopilot = autopilotData?.autopilot;
 
@@ -481,7 +483,7 @@ function SourceRunRow({
       )}
       {run?.issue_id && (
         <AppLink
-          href={wsPaths.issueDetail(run.issue_id)}
+          href={wsPaths.issueDetail(issueRef)}
           className="font-medium text-foreground underline underline-offset-2"
         >
           {t(($) => $.deliveries.detail.view_issue)}

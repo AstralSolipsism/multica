@@ -75,6 +75,8 @@ export const IssueGraphSchema = z.object({
   matched_count: count,
   context_count: count,
   nodes: z.array(node),
+  // `manual|stage:<dependent>:<blocker>` remains intact for DAG provenance;
+  // the relation direction and wire type stay blocker -> dependent / blocked_by.
   edges: z.array(z.object({ source_edge_id: id, source: id, target: id, type: z.literal("blocked_by") })),
   projects: z.array(z.object({ id, title: z.string() })),
   has_restricted_context: z.boolean(),

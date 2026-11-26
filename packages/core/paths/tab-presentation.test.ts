@@ -64,6 +64,13 @@ describe("resolveTabPresentation — direct resources", () => {
     });
   });
 
+  it("titles the project Engineering subroute independently of project loading", () => {
+    expect(present("/acme/projects/p1/engineering")).toEqual({
+      visual: { kind: "project-icon", icon: null },
+      title: { kind: "text", text: "Engineering" },
+    });
+  });
+
   it("actor shows avatar visual and resolved name", () => {
     expect(present("/acme/agents/ag1")).toEqual({
       visual: { kind: "actor", actorType: "agent", id: "ag1" },

@@ -158,13 +158,13 @@ describe("useRealtimeSync — ws instance change", () => {
     // prefixes + the workspace working-agents projection + 6 per-chat prefixes
     // + workspaceKeys.list() + the cross-workspace inbox unread summary + issue
     // unread marks + subscribed issue ids + the account invitation list) plus
-    // the fork's 3 (dependency recovery, agent folders, project engineering
-    // reads).
+    // the fork's 2 (agent folders and project engineering reads), less the
+    // retired dependency projection and standalone reactions query.
     //
     // Awaited rather than counted synchronously: the inbox unread summary
     // refresh cancels any in-flight request before invalidating (see
     // onInboxSummaryInvalidate), so that one lands after the synchronous ones.
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(42));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(40));
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -326,7 +326,6 @@ describe("useRealtimeSync — ws instance change", () => {
 
     const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
     expect(calls).toContainEqual(["issues", "timeline"]);
-    expect(calls).toContainEqual(["issues", "reactions"]);
     expect(calls).toContainEqual(["issues", "subscribers"]);
     expect(calls).toContainEqual(["issues", "usage"]);
     expect(calls).toContainEqual(["issues", "attachments"]);
@@ -464,6 +463,24 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(qc.getQueryState(issueKeys.subtreeTasks("parent"))?.isInvalidated).toBe(true);
     expect(qc.getQueryState(issueKeys.subtreeTasks("another-parent"))?.isInvalidated).toBe(true);
     expect(qc.getQueryState(issueKeys.tasks("parent"))?.isInvalidated).toBe(false);
+  });
+
+  it("refreshes the other end of a blocker edge: its detail lists this issue under blocking", () => {
+    const emit = subtreeEvents();
+    qc.setQueryData(issueKeys.detail("ws-1", "blocker"), { id: "blocker", blocking: [] });
+    emit("issue:updated", { title_changed: true, issue: { id: "child" } });
+    expect(qc.getQueryState(issueKeys.detail("ws-1", "blocker"))?.isInvalidated).toBe(false);
+    emit("issue:updated", { blockers_changed: true, issue: { id: "child" } });
+    expect(qc.getQueryState(issueKeys.detail("ws-1", "blocker"))?.isInvalidated).toBe(true);
+  });
+
+  it("refreshes blockers' details when an issue is created waiting on them", () => {
+    const emit = subtreeEvents();
+    qc.setQueryData(issueKeys.detail("ws-1", "blocker"), { id: "blocker", blocking: [] });
+    emit("issue:created", { issue: { id: "child", blocked_by: [] } });
+    expect(qc.getQueryState(issueKeys.detail("ws-1", "blocker"))?.isInvalidated).toBe(false);
+    emit("issue:created", { issue: { id: "child", blocked_by: [{ id: "blocker", via: "manual" }] } });
+    expect(qc.getQueryState(issueKeys.detail("ws-1", "blocker"))?.isInvalidated).toBe(true);
   });
 
   it("does not invalidate subtree history when an issue is created", () => {

@@ -5,7 +5,6 @@ import jaQuota from "./ja/quota.json";
 import jaThinking from "./ja/thinking.json";
 import jaLark from "./ja/lark.json";
 import jaForkUi from "./ja/fork-ui.json";
-import jaDependencies from "./ja/dependencies.json";
 import jaDag from "./ja/dag.json";
 import jaAgentConfig from "./ja/agent-config.json";
 import jaAuth from "./ja/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: jaThinking,
   lark: jaLark,
   "fork-ui": jaForkUi,
-  dependencies: jaDependencies,
   dag: jaDag,
   "agent-config": jaAgentConfig,
   auth: jaAuth,

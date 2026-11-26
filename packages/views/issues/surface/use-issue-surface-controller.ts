@@ -44,12 +44,6 @@ import {
   assigneeTypesForActorKind,
   type IssueScope,
 } from "@multica/core/issues/surface/scope";
-import {
-  combineFilterDependencies,
-  filterDependencyState,
-  statusCatalogSource,
-  type FilterDependencyState,
-} from "@multica/core/issues/surface/filter-dependency";
 import type {
   IssueDateFilter,
   NegatableFilterDimension,
@@ -79,7 +73,13 @@ import {
   useIssueSurfaceActions,
   type MoveIssueUpdates,
 } from "./use-issue-surface-actions";
-import { useIssueSurfaceData } from "./use-issue-surface-data";
+import {
+  combineFilterDependencies,
+  filterDependencyState,
+  statusCatalogSource,
+  useIssueSurfaceData,
+  type FilterDependencyState,
+} from "./use-issue-surface-data";
 import {
   useIssueStatusBranches,
   type IssueStatusPagination,

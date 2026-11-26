@@ -216,15 +216,10 @@ async function setBlockedBy(id: string, blockedBy: string[]) {
     Authorization: `Bearer ${api.getToken()}`,
     "X-Workspace-ID": ws.id,
   };
-  const before = await fetch(`${base}/api/issues/${id}/dependencies`, { headers });
-  const body = await before.json();
-  const write = await fetch(`${base}/api/issues/${id}/with-dependencies`, {
-    method: "PATCH",
+  const write = await fetch(`${base}/api/issues/${id}`, {
+    method: "PUT",
     headers,
-    body: JSON.stringify({
-      blocked_by: blockedBy,
-      expected_dependency_version: body.dependency_version,
-    }),
+    body: JSON.stringify({ blocked_by: blockedBy }),
   });
   expect(write.ok, `${write.status} ${await write.text()}`).toBe(true);
 }

@@ -35,6 +35,7 @@ import { createIssueStatusListStore } from "@multica/core/issue-statuses";
 import { baselineFromQuery } from "@multica/core/issue-views/baseline";
 import { useActiveIssueViewStore } from "@multica/core/issue-views/active-view-store";
 import { setCurrentWorkspace } from "@multica/core/platform";
+import { memberListOptions } from "@multica/core/workspace/queries";
 import { statusTableMethodsFromLegacy } from "./status-table-test-api";
 
 // Mutable so tests can simulate a workspace switch — the workspace layout
@@ -94,6 +95,7 @@ vi.mock("../../i18n", () => ({
 }));
 
 vi.mock("../../navigation", () => ({
+  useWarmRoute: () => undefined,
   AppLink: ({ children, href, ...props }: React.ComponentProps<"a">) => (
     <a href={href} {...props}>
       {children}
@@ -186,7 +188,6 @@ describe("IssueSurface — scope switch loading semantics", () => {
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getChildIssueProgress: vi.fn(() => never()),
@@ -295,7 +296,6 @@ describe("IssueSurface — scope switch loading semantics", () => {
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getChildIssueProgress: vi.fn(() => never()),
@@ -387,7 +387,6 @@ describe("IssueSurface — table pagination ownership", () => {
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() =>
         Promise.resolve(
@@ -484,7 +483,6 @@ describe("IssueSurface — table pagination ownership", () => {
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => Promise.resolve([])),
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
@@ -566,7 +564,6 @@ describe("IssueSurface — table pagination ownership", () => {
         }),
       ),
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => Promise.resolve([])),
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
@@ -628,7 +625,6 @@ describe("IssueSurface — table pagination ownership", () => {
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => Promise.resolve([])),
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
@@ -724,7 +720,6 @@ describe("IssueSurface — table pagination ownership", () => {
         }),
       ),
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => Promise.resolve([])),
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
@@ -792,7 +787,6 @@ describe("IssueSurface — filtered empty state", () => {
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getWorkspaceWorkingAgents: vi.fn(() => Promise.resolve([])),
@@ -1032,7 +1026,6 @@ describe("IssueSurface — status catalog failure", () => {
         rowRequests.push(request);
         return tableMethods.listIssueTableRows(request);
       }),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getChildIssueProgress: vi.fn(() => never()),
@@ -1207,7 +1200,6 @@ describe("summaryScopeIssues (OL-193)", () => {
         next_cursor: null,
       }),
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getWorkspaceWorkingAgents: vi.fn(() => never<WorkspaceWorkingAgent[]>()),
@@ -1265,7 +1257,6 @@ describe("summaryScopeIssues (OL-193)", () => {
         next_cursor: null,
       }),
       listIssueTableFacets: vi.fn(() => never()),
-      listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
       getWorkspaceWorkingAgents: vi.fn(() => never<WorkspaceWorkingAgent[]>()),
@@ -1388,5 +1379,128 @@ describe("workspace usage request gating on a cold cache", () => {
       if (!showCost) store.getState().toggleCardProperty("cost");
     });
     await waitFor(() => expect(listWorkspaceIssueUsage).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("IssueSurface — guest create affordances (MUL-9420)", () => {
+  let qc: QueryClient;
+
+  function seedRole(role: "member" | "guest") {
+    qc.setQueryData(memberListOptions("ws-1").queryKey, [
+      {
+        id: "m-1",
+        workspace_id: "ws-1",
+        user_id: mockAuthUser.id,
+        role,
+        created_at: "2026-01-01T00:00:00Z",
+        name: mockAuthUser.name,
+        email: mockAuthUser.email,
+        avatar_url: null,
+      },
+    ]);
+  }
+
+  function useIssues(issues: Issue[]) {
+    const listIssues = vi.fn((params?: ListIssuesParams) => {
+      const rows = params?.status === "todo" ? issues : [];
+      return Promise.resolve({ issues, total: rows.length } satisfies ListIssuesResponse);
+    });
+    setApiInstance({
+      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listIssues,
+      ...statusTableMethodsFromLegacy(listIssues),
+      listProjects: vi.fn(() => never()),
+      listMembers: vi.fn(() => never()),
+      getAgentTaskSnapshot: vi.fn(() => never<AgentTask[]>()),
+      getWorkspaceWorkingAgents: vi.fn(() => Promise.resolve([])),
+      getChildIssueProgress: vi.fn(() => never()),
+      listIssueUnread: vi.fn(() => Promise.resolve([])),
+      listSubscribedIssueIds: vi.fn(() => Promise.resolve([])),
+      listIssueViews: vi.fn(() => Promise.resolve([])),
+    } as unknown as ApiClient);
+  }
+
+  beforeEach(() => {
+    mockWsId.current = "ws-1";
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Resolve `t(($) => $.a.b)` to "a.b" so controls can be found by key.
+    mockTranslate.mockImplementation(((...args: unknown[]) => {
+      const path: string[] = [];
+      const probe: unknown = new Proxy(() => {}, {
+        get: (_target, property) => {
+          path.push(String(property));
+          return probe;
+        },
+      });
+      (args[0] as (value: unknown) => unknown)(probe);
+      return path.join(".");
+    }) as unknown as () => string);
+    pruneIssueSurfaceViewStates([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+    qc.clear();
+    pruneIssueSurfaceViewStates([]);
+    mockTranslate.mockImplementation(() => "translated");
+    vi.restoreAllMocks();
+  });
+
+  function surface(renderEmpty?: (context: { canCreate: boolean }) => React.ReactNode) {
+    return (
+      <QueryClientProvider client={qc}>
+        <IssueSurface
+          scope={{ type: "project", projectId: "pg" }}
+          modes={["list"]}
+          renderHeader={() => null}
+          renderEmpty={renderEmpty}
+          batchToolbar="never"
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  it("offers a member the empty state's create actions", async () => {
+    useIssues([]);
+    seedRole("member");
+    render(surface());
+
+    await screen.findByText("detail.empty_issues_title");
+    expect(screen.getByRole("button", { name: "detail.empty_issues_new_button" })).toBeInTheDocument();
+  });
+
+  it("drops the empty state's create actions for a guest", async () => {
+    useIssues([]);
+    seedRole("guest");
+    render(surface());
+
+    await screen.findByText("detail.empty_issues_title");
+    expect(screen.queryByRole("button", { name: "detail.empty_issues_new_button" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "detail.empty_issues_add_existing" })).toBeNull();
+  });
+
+  it("tells a page's own empty state that a guest cannot create", async () => {
+    useIssues([]);
+    seedRole("guest");
+    const renderEmpty = vi.fn(({ canCreate }: { canCreate: boolean }) => (
+      <div data-testid="custom-empty">{String(canCreate)}</div>
+    ));
+    render(surface(renderEmpty));
+
+    expect(await screen.findByTestId("custom-empty")).toHaveTextContent("false");
+  });
+
+  it("hides the list group's add-issue button from a guest only", async () => {
+    useIssues([makeIssue("g1", "Guest-visible issue", "pg")]);
+    seedRole("member");
+    const { unmount } = render(surface());
+    await screen.findByText("Guest-visible issue");
+    expect(screen.getAllByRole("button", { name: "list.add_issue_tooltip" }).length).toBeGreaterThan(0);
+    unmount();
+
+    seedRole("guest");
+    render(surface());
+    await screen.findByText("Guest-visible issue");
+    expect(screen.queryByRole("button", { name: "list.add_issue_tooltip" })).toBeNull();
   });
 });

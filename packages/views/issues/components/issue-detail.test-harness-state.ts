@@ -78,6 +78,7 @@ export interface MockApi {
   listIssues: Mock;
   uploadFile: Mock;
   listIssueReactions: Mock;
+  createIssueCollabTicket: Mock;
   addIssueReaction: Mock;
   removeIssueReaction: Mock;
   listAttachments: Mock;
@@ -117,6 +118,7 @@ export const mockApiObj: MockApi = {
   listIssues: vi.fn().mockResolvedValue({ issues: [], total: 0 }),
   uploadFile: vi.fn(),
   listIssueReactions: vi.fn().mockResolvedValue([]),
+  createIssueCollabTicket: vi.fn().mockResolvedValue({ enabled: false }),
   addIssueReaction: vi.fn(),
   removeIssueReaction: vi.fn(),
   listAttachments: vi.fn().mockResolvedValue([]),

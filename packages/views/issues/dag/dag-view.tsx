@@ -18,7 +18,7 @@ import {
 } from "@multica/core/issues/stores/view-store-context";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { issueRouteRef, useWorkspacePaths } from "@multica/core/paths";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { useViewBaseline } from "../surface/view-baseline-context";
@@ -325,9 +325,9 @@ export function DagView({
   const onOpenIssue = useCallback(
     (issueId: string) => {
       persistPaintedViewport(true);
-      navigation.push(paths.issueDetail(issueId));
+      navigation.push(paths.issueDetail(issueRouteRef({ id: issueId, identifier: issuesById.get(issueId)?.identifier })));
     },
-    [navigation, paths, persistPaintedViewport],
+    [navigation, paths, persistPaintedViewport, issuesById],
   );
 
   // Pending long enough to offer a cancel (same five seconds as before).

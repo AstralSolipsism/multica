@@ -68,7 +68,7 @@ vi.mock("@multica/core/paths", async () => {
 vi.mock("./dag-issue-actions", () => ({
   useDagIssueSelection: () => ({
     issue: null,
-    actions: { openEditDependencies: vi.fn(), updateField: vi.fn() },
+    actions: { openAddBlocker: vi.fn(), openAddBlocking: vi.fn(), updateField: vi.fn() },
     detailFailed: false,
     retryDetail: vi.fn(),
   }),

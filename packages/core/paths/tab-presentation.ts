@@ -181,7 +181,9 @@ export function resolveTabPresentation(
     case "project":
       return {
         visual: { kind: "project-icon", icon: data.project?.icon ?? null },
-        title: textOr(data.project?.title, "project"),
+        title: subject.section === "engineering"
+          ? { kind: "text", text: "Engineering" }
+          : textOr(data.project?.title, "project"),
       };
     case "autopilot":
       return {

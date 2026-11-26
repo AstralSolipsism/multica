@@ -1,6 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useCurrentWorkspace } from "@multica/core/paths";
+import { notificationPreferenceOptions } from "@multica/core/notification-preferences/queries";
+import { notificationPreferenceValue } from "@multica/core/notification-preferences/patch";
 import { useT } from "../../i18n";
 import type { SettingsSearchEntry } from "./settings-search";
 import { CHANNEL_INTEGRATIONS } from "./settings-navigation";
@@ -36,6 +40,14 @@ export function useSettingsSearchIndex(
   pages: readonly SettingsSearchPage[],
 ): SettingsSearchIndexEntry[] {
   const { t } = useT("settings");
+  const workspace = useCurrentWorkspace();
+  // Reads what the Notifications tab loaded; never fetches on its own.
+  const { data: notificationPreferences } = useQuery({
+    ...notificationPreferenceOptions(workspace?.id ?? ""),
+    enabled: false,
+  });
+  const commentsOn =
+    notificationPreferenceValue(notificationPreferences?.preferences ?? {}, "comments") !== "muted";
   // Fork (OL-187 §8): the personal YSK entry follows the workspace switch.
   const yskEntries = useYouShouldKnowSearchEntries();
   return useMemo(() => {
@@ -185,6 +197,13 @@ export function useSettingsSearchIndex(
         title: t(($) => $.notifications.groups[group].label),
         description: t(($) => $.notifications.groups[group].description),
       })),
+      // The row is hidden while comments are off; Comments is the closest spot.
+      {
+        tab: "notifications",
+        anchor: commentsOn ? "squad_handoffs" : "comments",
+        title: t(($) => $.notifications.groups.squad_handoffs.label),
+        description: t(($) => $.notifications.groups.squad_handoffs.description),
+      },
       {
         tab: "notifications",
         anchor: "others_issues",
@@ -194,8 +213,8 @@ export function useSettingsSearchIndex(
       {
         tab: "notifications",
         anchor: "auto_archive_completed",
-        title: t(($) => $.notifications.leaving.done_label),
-        description: t(($) => $.notifications.leaving.done_description),
+        title: t(($) => $.notifications.leaving.auto_label),
+        description: t(($) => $.notifications.leaving.auto_description),
       },
       {
         tab: "notifications",
@@ -294,11 +313,6 @@ export function useSettingsSearchIndex(
         anchor: "voice-history",
         title: t(($) => $.voice_input.history.title),
         description: t(($) => $.voice_input.history.description),
-      },
-      {
-        tab: "apps",
-        title: t(($) => $.page.tabs.apps),
-        description: t(($) => $.connected_apps.description),
       },
       // Workspace
       { tab: "workspace", anchor: "name", title: t(($) => $.workspace.name_label) },
@@ -403,5 +417,5 @@ export function useSettingsSearchIndex(
       ...pageEntries,
       ...rows.filter((row) => row.anchor || row.integration),
     ].filter((entry) => visible.has(entry.tab));
-  }, [pages, t, yskEntries]);
+  }, [pages, t, commentsOn, yskEntries]);
 }

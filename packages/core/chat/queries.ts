@@ -13,7 +13,6 @@ import type {
   ChatQuickActionsFailureState,
   ChatQuickActionsPendingState,
   ChatSession,
-  ChatMessagesPage,
 } from "../types/chat";
 
 /**

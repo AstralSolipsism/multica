@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import type { IssueGraphNode } from "@multica/core/api";
-import { paths } from "@multica/core/paths";
+import { issueRouteRef, paths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useT } from "../../i18n";
 import { AppLink } from "../../navigation";
@@ -37,7 +37,7 @@ export function EngineeringTaskRow({ node, workspaceSlug, workspaceId, compact =
   const { getActorName } = useActorName();
   return (
     <li className={cn("grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-border/70 last:border-b-0", compact ? "h-10 items-center py-0" : "items-start py-2.5")} data-engineering-task={node.identifier}>
-      <AppLink href={paths.workspace(workspaceSlug).issueDetail(node.id)} className="min-w-0 text-body hover:underline">
+      <AppLink href={paths.workspace(workspaceSlug).issueDetail(issueRouteRef(node))} className="min-w-0 text-body hover:underline">
         <span className="mr-2 font-mono text-caption text-muted-foreground">{node.identifier}</span>
         <span className={isClosedEngineeringNode(node) ? "text-muted-foreground" : undefined}>{node.title}</span>
       </AppLink>

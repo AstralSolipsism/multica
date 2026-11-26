@@ -25,7 +25,6 @@
   "run_queued": "대기 중",
   "stage_badge": "단계 {{number}}",
   "open_detail": "상세 열기",
-  "edit_dependencies": "선행 관계 편집",
   "assign_issue": "할당 시작",
   "focus_upstream": "선행 의존성 강조",
   "focus_downstream": "후속 의존성 강조",

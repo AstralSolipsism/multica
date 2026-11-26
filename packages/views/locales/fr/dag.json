@@ -26,7 +26,6 @@
   "run_queued": "Queued",
   "stage_badge": "Stage {{number}}",
   "open_detail": "Open detail",
-  "edit_dependencies": "Edit prerequisites",
   "assign_issue": "Assign",
   "focus_upstream": "Afficher les prérequis",
   "focus_downstream": "Afficher les dépendants",

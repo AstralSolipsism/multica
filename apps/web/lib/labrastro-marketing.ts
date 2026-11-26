@@ -8,6 +8,7 @@ export const RETIRED_MARKETING_PATHS = [
   "/homepage",
   "/changelog",
   "/contact-sales",
+  "/llms.txt",
   "/usecases",
   "/blog",
   "/careers",

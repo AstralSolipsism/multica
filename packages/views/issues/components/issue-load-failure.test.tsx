@@ -57,7 +57,7 @@ beforeEach(() => {
     if (["SYN-1", uuid, "OTHER-2"].some((id) => pathname === `/api/issues/${id}`)) {
       return primary(url);
     }
-    const body = /\/(members|agents|squads|assignee-frequency)$/.test(pathname)
+    const body = /\/(members|agents|squads)$/.test(pathname)
       ? []
       : { issues: [], total: 0, members: [], agents: [], comments: [], tasks: [], entries: [], has_more: false };
     return Promise.resolve(response(200, body));
@@ -112,8 +112,7 @@ describe("primary issue read failures through the production API client", () => 
     fireEvent.click(retry);
     await screen.findAllByText("Synthetic issue");
     expect(screen.queryByText("Could not load issue.")).not.toBeInTheDocument();
-    // Route recovery mounts reactions; UUID hosts reuse the recovered detail.
-    expect(primary).toHaveBeenCalledTimes(initialReads + (host === "route" ? 3 : 2));
+    expect(primary).toHaveBeenCalledTimes(initialReads + 2);
     expect(qc.getQueryData(unrelatedKey)).toEqual(issue);
   });
   it.each([400, 422])("does not infer nonexistence from other HTTP %s or error text", async (status) => {
@@ -171,8 +170,8 @@ describe("primary issue read failures through the production API client", () => 
     render(surface(id));
     await screen.findAllByText("Synthetic issue");
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
-    // One primary read plus the existing independent reactions read.
-    expect(primary).toHaveBeenCalledTimes(2);
+    // Reactions are read off the primary detail, not a second request.
+    expect(primary).toHaveBeenCalledTimes(1);
     if (id === uuid) expect(replace).toHaveBeenCalledWith("/synthetic/issues/SYN-1#comment-synthetic");
   });
   it.each(["route", "inbox", "peek"] as const)("%s recovers the real detail after a manual retry returns 200", async (host) => {
@@ -182,8 +181,7 @@ describe("primary issue read failures through the production API client", () => 
     fireEvent.click(retry);
     await screen.findAllByText("Synthetic issue");
     expect(screen.queryByText("Could not load issue.")).not.toBeInTheDocument();
-    // Route recovery mounts reactions; UUID hosts reuse the recovered detail.
-    expect(primary).toHaveBeenCalledTimes(host === "route" ? 3 : 2);
+    expect(primary).toHaveBeenCalledTimes(2);
   });
   it.each(["route", "inbox", "peek"] as const)("%s keeps hydrated content on a background refresh failure", async (host) => {
     qc.setQueryData(issueKeys.detail(scope.wsId, uuid), issue);

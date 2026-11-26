@@ -24,6 +24,7 @@ describe("parseTabSubject", () => {
     // Resource details
     ["/acme/issues/bug-1", { kind: "issue", id: "bug-1" }],
     ["/acme/projects/p1", { kind: "project", id: "p1" }],
+    ["/acme/projects/p1/engineering", { kind: "project", id: "p1", section: "engineering" }],
     ["/acme/autopilots/a1", { kind: "autopilot", id: "a1" }],
     ["/acme/skills/s1", { kind: "skill", id: "s1" }],
     ["/acme/apps/gmail", { kind: "app", slug: "gmail" }],
@@ -95,6 +96,10 @@ describe("parseTabSubject", () => {
 describe("tabSubjectKey", () => {
   it("is stable for the same subject and distinct across selections", () => {
     expect(tabSubjectKey({ kind: "issue", id: "x" })).toBe("issue:x");
+    expect(tabSubjectKey({ kind: "project", id: "p1" })).toBe("project:p1");
+    expect(tabSubjectKey({ kind: "project", id: "p1", section: "engineering" })).toBe(
+      "project:p1:engineering",
+    );
     expect(tabSubjectKey({ kind: "chat", sessionId: null })).toBe("chat:");
     expect(tabSubjectKey({ kind: "chat", sessionId: "s1" })).toBe("chat:s1");
     expect(tabSubjectKey({ kind: "myAgents" })).not.toBe(
