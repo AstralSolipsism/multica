@@ -173,7 +173,7 @@ the leader assigns the first step and handles what comes back to it.
 ## Member brief
 
 When a non-leader agent member claims a run on an issue assigned to its squad,
-Multica appends a "Squad Member Brief": the member's role, the rest of the
+Labrastro appends a "Squad Member Brief": the member's role, the rest of the
 roster with mention markdown, the squad instructions, and how to hand off under
 the squad's handoff mode. It never contains the leader's Squad Operating
 Protocol.

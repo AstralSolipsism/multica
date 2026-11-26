@@ -11,7 +11,7 @@ import (
 // never reply under an earlier discussion's --parent.
 func buildDocCommentPrompt(task Task) string {
 	var b strings.Builder
-	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
+	b.WriteString("You are running as a local coding agent for a Labrastro workspace.\n\n")
 	fmt.Fprintf(&b, "You were asked for in a discussion on the doc %q (doc ID: %s, discussion ID: %s).\n\n", task.DocTitle, task.DocID, task.DocThreadID)
 	if quote := strings.TrimSpace(task.DocThreadQuote); quote != "" {
 		b.WriteString("The discussion is about this text in the doc (it may have changed since):\n\n")

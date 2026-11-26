@@ -19,8 +19,8 @@ func TestHTTPErrorBodyLimits(t *testing.T) {
 		{"ordinary", "/api/agents", 2 * maxErrorBodyBytes, maxErrorBodyBytes},
 		{"similar_prefix", "/api/issues-other", 2 * maxErrorBodyBytes, maxErrorBodyBytes},
 		{"issue_above_old_cap", "/api/issues/id", 6000, 1 << 20},
-		{"issue_at_limit", "/api/issues/id/dependencies", 1 << 20, 1 << 20},
-		{"issue_over_limit", "/api/issues/id/with-dependencies", 2 << 20, 1 << 20},
+		{"issue_at_limit", "/api/issues/id/comments", 1 << 20, 1 << 20},
+		{"issue_over_limit", "/api/issues/id/timeline", 2 << 20, 1 << 20},
 		{"issue_root_over_limit", "/api/issues", 2 << 20, 1 << 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

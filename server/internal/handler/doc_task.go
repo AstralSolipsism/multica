@@ -177,7 +177,7 @@ func (h *Handler) applyDocCommentClaim(r *http.Request, task *db.AgentTaskQueue,
 	ctx := r.Context()
 	if !requestHasClientCapability(r, protocol.DaemonCapabilityDocCommentV1) {
 		return h.failClaimedTaskBeforeLaunch(ctx, task,
-			"This agent's runtime is too old to answer doc comments. Update the Multica CLI on that machine, then ask again.",
+			"This agent's runtime is too old to answer doc comments. Update the Labrastro CLI on that machine, then ask again.",
 			taskfailure.ReasonAgentRuntimeVersionUnsupported,
 			"error_doc_comment_unsupported", http.StatusConflict, "daemon does not support doc discussion tasks")
 	}

@@ -259,7 +259,7 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 var squadBriefsCmd = &cobra.Command{
 	Use:   "briefs <squad-id>",
 	Short: "Show the squad context each agent receives",
-	Long: `Show the squad section Multica appends to each agent's instructions when it
+	Long: `Show the squad section Labrastro appends to each agent's instructions when it
 works on an issue assigned to this squad: the leader briefing for the leader,
 and the member brief for every other agent member. Use --agent to print one.
 

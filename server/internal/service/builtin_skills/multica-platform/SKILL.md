@@ -1,6 +1,6 @@
 ---
 name: multica-platform
-description: "Use for Labrastro actions the runtime brief does not fully cover: issue and PR contracts, sub-issues, prerequisites, batch changes, saved views, comment charts and files, mentions, inbox, docs, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes. Not for product code you edit."
+description: "Use for Labrastro actions the runtime brief does not fully cover: issue and PR contracts, sub-issues, batch changes, saved views, comment charts and files, mentions, inbox, docs, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes. Not for product code you edit."
 user-invocable: false
 allowed-tools: Bash(multica *), Bash(git *), Bash(gh *)
 ---
@@ -23,7 +23,6 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/issues.md` | Issues: saved views (reading, creating, changing), custom properties, status side effects, who else is running, wakeups (events, conditions, timers, check-ins), charts vs attached files in a comment |
 | `references/batch-changes.md` | Changing many issues at once (`issue batch update`, `issue delete <id>... --dry-run`): label and property operations, per-issue results, dry runs |
 | `references/sub-issues.md` | Sub-issues: whether to split an issue at all, `todo` vs `backlog` children, serial chains, stages and the parent wakeups they drive |
-| `references/issue-dependencies.md` | Informational prerequisites, relation editing and complete dependency graphs; these do not gate execution |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing; steering another agent's running turn (`comment add --steer`) |
 | `references/docs.md` | Docs (the workspace knowledge base): reading, searching, editing a doc people may be editing live, folders, review comment threads, version history and restore, which doc actions are human-only |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
@@ -32,7 +31,8 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/projects.md` | Projects and their durable resources (`github_repo`, `local_directory`, worktree mode); project workflows — status columns, handoffs, a `[Project workflow]` block in your prompt, reading or changing a workflow (`multica workflow`, `multica project workflow`) |
 | `references/runtimes.md` | Runtimes, daemons, `repo checkout`, and the task CLI boundary |
 | `references/environments.md` | Local environments in the issue sidebar: writing `.multica/environments.toml`, `multica env start` / `stop` / `list`, detected servers |
-| `references/skill-import.md` | Importing skills; managing skill folders, placements and packages; exporting or migrating skill organization; editing a workspace skill's content without overwriting someone else's save (`--base-revision`) |
+| `references/skill-import.md` | Importing a skill into this workspace from a URL or a local archive; editing a workspace skill's content without overwriting someone else's save (`--base-revision`) |
+| `references/skill-organization.md` | Managing skill folders, placements and packages; exporting or migrating skill organization |
 | `references/themes.md` | Building or changing a Labrastro app theme: the format, the checker, delivering to Desktop's themes folder or as a `.zip` |
 | `references/inbox.md` | Going through the runtime owner's inbox for them: listing unread notifications, marking read or unread, archiving, snoozing, bulk clean-up (`multica inbox`) |
 

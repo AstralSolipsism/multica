@@ -355,7 +355,6 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 		"references/issues.md":             "issue",
 		"references/pull-requests.md":      "pr",
 		"references/sub-issues.md":         "sub-issue",
-		"references/issue-dependencies.md": "prerequisite",
 		"references/mentions.md":           "mention",
 		"references/agents.md":             "agent",
 		"references/squads.md":             "squad",
@@ -363,6 +362,7 @@ func TestPlatformSkillDescriptionNamesEveryDomain(t *testing.T) {
 		"references/projects.md":           "project",
 		"references/runtimes.md":           "runtime",
 		"references/skill-import.md":       "skill import",
+		"references/skill-organization.md": "skill",
 		"references/environments.md":       "local environment",
 		"references/batch-changes.md":      "batch",
 		"references/themes.md":             "theme",
@@ -443,6 +443,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"references/runtimes.md",
 				"references/environments.md",
 				"references/skill-import.md",
+				"references/skill-organization.md",
 				"references/themes.md",
 				"references/inbox.md",
 				"references/docs.md",
@@ -803,7 +804,7 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			},
 		},
 		{
-			file: "references/skill-import.md",
+			file: "references/skill-organization.md",
 			want: []string{
 				"multica skill package import <url> --dry-run --output json",
 				"multica skill package list --output json",
@@ -836,6 +837,14 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"work limit remains 45 seconds",
 				"at least 60 seconds",
 				"MULTICA_HTTP_TIMEOUT",
+			},
+			notWant: []string{
+				"the CLI has no detach command",
+			},
+		},
+		{
+			file: "references/skill-import.md",
+			want: []string{
 				"multica skill import --url <url> --output json",
 				"/api/skills/import",
 				"clawhub.ai",
@@ -864,7 +873,6 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Do not drop `--base-revision` to force the write through",
 			},
 			notWant: []string{
-				"the CLI has no detach command",
 				"The single supported path",
 				"multica agent skills set <agent-id> --skill-ids <skill-id>",
 				"merge the new skill id with the existing ids",

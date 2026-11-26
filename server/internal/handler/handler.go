@@ -1172,12 +1172,6 @@ func (h *Handler) isWorkspaceEntity(ctx context.Context, userType, userID, works
 }
 
 func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issueID string) (db.Issue, bool) {
-	return h.loadIssueForUserWithNotFound(w, r, issueID, func() {
-		writeError(w, http.StatusNotFound, "issue not found")
-	})
-}
-
-func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Request, issueID string, notFound func()) (db.Issue, bool) {
 	if _, ok := requireUserID(w, r); !ok {
 		return db.Issue{}, false
 	}
@@ -1191,26 +1185,12 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	// Try identifier format first (e.g., "JIA-42"). resolveIssueByIdentifier
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
-	visible := func(issue db.Issue) bool {
-		if !issue.ProjectID.Valid {
-			return true
-		}
-		hidden, ok := h.requestHiddenProjects(w, r, workspaceID)
-		if !ok {
-			return false
-		}
-		if !hidden.CanSeeProject(issue.ProjectID) {
-			notFound()
-			return false
-		}
-		return true
-	}
 	issue, found, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID)
 	if writeQueryCancellation(w, r, err) {
 		return db.Issue{}, false
 	}
 	if found {
-		if !visible(issue) {
+		if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
 			return db.Issue{}, false
 		}
 		return issue, true
@@ -1220,7 +1200,7 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		// Not a valid UUID and didn't match identifier format → 404 (consistent
 		// with previous silent-zero behavior, which would also have produced 404).
-		notFound()
+		writeError(w, http.StatusNotFound, "issue not found")
 		return db.Issue{}, false
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
@@ -1236,12 +1216,12 @@ func (h *Handler) loadIssueForUserWithNotFound(w http.ResponseWriter, r *http.Re
 		if writeQueryCancellation(w, r, err) {
 			return db.Issue{}, false
 		}
-		notFound()
+		writeError(w, http.StatusNotFound, "issue not found")
 		return db.Issue{}, false
 	}
 	// MUL-8472: an issue in a private project the caller cannot see does not
 	// exist for them, on every route that loads it through here.
-	if !visible(issue) {
+	if !h.requireProjectVisible(w, r, workspaceID, issue.ProjectID, http.StatusNotFound, "issue not found") {
 		return db.Issue{}, false
 	}
 	return issue, true

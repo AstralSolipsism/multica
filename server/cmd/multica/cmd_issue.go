@@ -28,10 +28,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-func inlineTextFlagUsage(label string, alternatives ...string) string {
-	return fmt.Sprintf("%s (preserves literal text. Use %s for multi-line input)", label, strings.Join(alternatives, " or "))
-}
-
 // resolveTextFlag picks between a `--<name>` inline value, a `--<name>-stdin`
 // flag, and a `--<name>-file <path>` flag, mirroring the existing `--content`
 // / `--content-stdin` pattern. It returns the resolved string and an error
@@ -534,19 +530,15 @@ var issueSearchCmd = &cobra.Command{
 	Short: "Search issues by title, description, or comments",
 	Long: "Search issues in the current workspace. The query matches issue titles,\n" +
 		"descriptions, and comment bodies, so a conclusion that only lives in a\n" +
-		"comment thread is still findable. Pass --scope title_desc to skip comments\n" +
-		"when comment threads add too much noise or slow down large workspaces.\n\n" +
+		"comment thread is still findable.\n\n" +
 		"A bare number or an identifier-shaped query (\"412\", \"AGE-412\") matches\n" +
 		"the issue with that number. The prefix is not validated, and number\n" +
 		"matches rank first, so pasting an identifier from another tracker can\n" +
 		"put an unrelated local issue at the top of the results.\n\n" +
 		"The MATCH column (match_source in --output json) reports the strongest\n" +
 		"field that matched — title, description, or comment — and falls back to\n" +
-		"\"comment\" for a number-only hit (\"description\" with --scope title_desc,\n" +
-		"where comments are skipped). Treat it as a display hint, not a\n" +
-		"filter.\n\n" +
-		"Results are paginated: --output json reports has_more, and --offset\n" +
-		"advances by the number of issues in that same response.",
+		"\"comment\" for a number-only hit. Treat it as a display hint, not a\n" +
+		"filter.",
 	Args: cobra.ExactArgs(1),
 	RunE: runIssueSearch,
 }
@@ -566,10 +558,6 @@ var validIssuePriorities = []string{
 // issueListMaxPageSize mirrors the page clamp in the server's ListIssues
 // handler; the two must move together.
 const issueListMaxPageSize = 100
-
-// issueSearchMaxLimit mirrors the page clamp in the server's SearchIssues
-// handler; the two must move together.
-const issueSearchMaxLimit = 50
 
 // validIssueSortColumns are the sort keys `issue list --sort` accepts. They
 // mirror the server's ListIssues handler. "position" is the default and is
@@ -668,7 +656,6 @@ func init() {
 	issueCmd.AddCommand(issueRerunTaskCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueSearchCmd)
-	issueCmd.AddCommand(newIssueDependencyCmd())
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
@@ -717,7 +704,7 @@ func init() {
 
 	// issue create
 	issueCreateCmd.Flags().String("title", "", "Issue title (required)")
-	issueCreateCmd.Flags().String("description", "", inlineTextFlagUsage("Issue description", "--description-file", "--description-stdin"))
+	issueCreateCmd.Flags().String("description", "", "Issue description (preserves literal text. Use --description-stdin or --description-file for multi-line input)")
 	issueCreateCmd.Flags().Bool("description-stdin", false, "Read issue description from stdin (preserves multi-line content verbatim)")
 	issueCreateCmd.Flags().String("description-file", "", "Read issue description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueCreateCmd.Flags().Bool("allow-external-file", false, "Allow --description-file / --attachment to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
@@ -739,11 +726,9 @@ func init() {
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
 	issueCreateCmd.Flags().StringArray("property", nil, `Set a custom property atomically with creation as "Name=Value" (repeatable, one distinct property per flag). Multi-value properties use comma-separated values; multi_text/multi_url also accept JSON arrays (required for commas in entries or values starting with "["). Property and option/member names are case-insensitive; UUIDs are accepted. Filter-only __none__, >=, <=, and != forms are rejected.`)
 
-	registerIssueDependencyFlags(issueCreateCmd, false)
-
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
-	issueUpdateCmd.Flags().String("description", "", inlineTextFlagUsage("New description", "--description-file", "--description-stdin"))
+	issueUpdateCmd.Flags().String("description", "", "New description (preserves literal text. Use --description-stdin or --description-file for multi-line input)")
 	issueUpdateCmd.Flags().Bool("description-stdin", false, "Read new description from stdin (preserves multi-line content verbatim)")
 	issueUpdateCmd.Flags().String("description-file", "", "Read new description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueUpdateCmd.Flags().Int64("description-base-revision", 0, "The description_revision (from `multica issue get`) your new description was written from. Changes made since then are merged in when live description editing is on and the update changes nothing else (no other field flags or --attachment), and the update is refused only where both changed the same paragraphs; otherwise the update is refused if the description changed at all. Without it the description is replaced as given.")
@@ -765,8 +750,6 @@ func init() {
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
 	issueUpdateCmd.Flags().String("duplicate-of", "", "Mark the issue as a duplicate of this original issue (key like MUL-123, or full UUID) and cancel it; --status, if given, must be cancelled, and description/attachment changes must go in a separate update")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
-	registerIssueDependencyFlags(issueUpdateCmd, true)
-	issueUpdateCmd.Example = "  multica issue update MUL-42 --blocked-by MUL-39 --blocked-by MUL-41\n  multica issue update MUL-42 --clear-blocked-by"
 
 	// issue edit-description
 	issueEditDescriptionCmd.Flags().String("old", "", "Exact text to replace (this or --old-file is required)")
@@ -833,7 +816,7 @@ func init() {
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short run ID prefix resolution")
 
 	// issue comment add
-	issueCommentAddCmd.Flags().String("content", "", inlineTextFlagUsage("Comment content", "--content-file", "--content-stdin"))
+	issueCommentAddCmd.Flags().String("content", "", "Comment content (preserves literal text. Use --content-stdin or --content-file for multi-line input)")
 	issueCommentAddCmd.Flags().Bool("content-stdin", false, "Read comment content from stdin (preserves multi-line content verbatim)")
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueCommentAddCmd.Flags().Bool("allow-external-file", false, "Allow --content-file / --attachment to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
@@ -845,7 +828,7 @@ func init() {
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment update
-	issueCommentUpdateCmd.Flags().String("content", "", inlineTextFlagUsage("New comment content", "--content-file", "--content-stdin"))
+	issueCommentUpdateCmd.Flags().String("content", "", "New comment content (preserves literal text. Use --content-stdin or --content-file for multi-line input)")
 	issueCommentUpdateCmd.Flags().Bool("content-stdin", false, "Read new comment content from stdin (preserves multi-line content verbatim)")
 	issueCommentUpdateCmd.Flags().String("content-file", "", "Read new comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueCommentUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --content-file to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
@@ -857,11 +840,9 @@ func init() {
 	issueCommentUnresolveCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue search
-	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return (values outside 1-50 use 50)")
-	issueSearchCmd.Flags().Int("offset", 0, "Number of results to skip (for pagination; --output json reports has_more, advance it by the number of issues in that same response)")
-	issueSearchCmd.Flags().String("project", "", "Filter by project UUID or ID prefix")
-	issueSearchCmd.Flags().String("scope", "all", "Match scope: all (title, description, comments) or title_desc (title and description only)")
+	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return")
 	issueSearchCmd.Flags().Bool("include-closed", false, "Include done and cancelled issues")
+	issueSearchCmd.Flags().String("project", "", "Filter by project ID")
 	issueSearchCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue subscriber list
@@ -1764,9 +1745,6 @@ func pickIssueCreateAssignee(ctx context.Context, client *cli.APIClient, cmd *co
 }
 
 func runIssueCreate(cmd *cobra.Command, _ []string) error {
-	if _, _, err := issueDependencyFlagValues(cmd); err != nil {
-		return err
-	}
 	prAutoCompleteDisabled, err := issuePRAutoCompleteFlag(cmd)
 	if err != nil {
 		return err
@@ -1918,14 +1896,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	compound, err := prepareIssueDependencyWrite(ctx, client, cmd, body, "")
-	if err != nil {
-		return err
-	}
-	path := "/api/issues"
-	if compound {
-		path += "/with-dependencies"
-	}
 
 	// Upload BEFORE creating the issue, and append each file's markdown to the
 	// description. A file is visible on an issue only when the description
@@ -1956,7 +1926,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, path, body, &result); err != nil {
+	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
 		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
 			return errors.New(msg)
 		}
@@ -1971,7 +1941,20 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("issue %s was created, but the server did not confirm its custom properties; review it before retrying: %w", issueDisplayKey(result), err)
 	}
 
-	return printIssueMutation(cmd, result)
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
+		rows := [][]string{{
+			issueDisplayKey(result),
+			strVal(result, "title"),
+			strVal(result, "status"),
+			strVal(result, "priority"),
+		}}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+
+	return cli.PrintJSON(os.Stdout, result)
 }
 
 func verifyIssueCreateProperties(expected map[string]json.RawMessage, issue map[string]any) error {
@@ -2167,10 +2150,6 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		body["position"] = v
 	}
 
-	compound, err := prepareIssueDependencyWrite(ctx, client, cmd, body, issueRef.ID)
-	if err != nil {
-		return err
-	}
 	if len(body) == 0 && len(attachmentPaths) == 0 && prAutoCompleteDisabled == nil {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
 	}
@@ -2220,13 +2199,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if len(body) > 0 {
-		updateIssue := func() error {
-			if compound {
-				return client.PatchJSON(ctx, "/api/issues/"+issueRef.ID+"/with-dependencies", body, &result)
-			}
-			return client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result)
-		}
-		err := updateIssue()
+		err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result)
 		// Someone edited the description during the upload: add the files to
 		// the new text instead of writing the old text over it.
 		for retry := 0; retry < 3 && descRevision != nil && isIssueDescriptionConflict(err); retry++ {
@@ -2234,7 +2207,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 				break
 			}
 			setDescription(desc, descRevision)
-			err = updateIssue()
+			err = client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result)
 		}
 		if err != nil {
 			if len(attachmentIDs) > 0 {
@@ -2265,7 +2238,20 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	}
 	reportIssueRunOutcome(os.Stderr, result, noStart)
 
-	return printIssueMutation(cmd, result)
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
+		rows := [][]string{{
+			issueDisplayKey(result),
+			strVal(result, "title"),
+			strVal(result, "status"),
+			strVal(result, "priority"),
+		}}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+
+	return cli.PrintJSON(os.Stdout, result)
 }
 
 // fetchIssueDescription reads an issue's description and its revision. The
@@ -2843,6 +2829,19 @@ func floatVal(m map[string]any, key string) float64 {
 // Comment commands
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
 	since, _ := cmd.Flags().GetString("since")
 	thread, _ := cmd.Flags().GetString("thread")
 	recent, _ := cmd.Flags().GetInt("recent")
@@ -2930,19 +2929,6 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if before != "" {
 		params.Set("before", before)
 		params.Set("before_id", beforeID)
-	}
-
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
 	}
 
 	path := "/api/issues/" + issueRef.ID + "/comments"
@@ -3149,12 +3135,10 @@ func finishIssueCommentAdd(cmd *cobra.Command, issueDisplay string, steerTargets
 	}
 
 	output, _ := cmd.Flags().GetString("output")
-	if output != "table" {
-		if err := cli.PrintJSON(os.Stdout, result); err != nil {
-			return cli.WithUserMessage(fmt.Sprintf("Comment %s saved, but output failed; do not repost the comment.", strVal(result, "id")), err)
-		}
+	if output == "table" {
+		return nil
 	}
-	return commentDispatchError(result)
+	return cli.PrintJSON(os.Stdout, result)
 }
 
 // lookupIdempotentComment reports the comment already saved under key, if the
@@ -3701,43 +3685,13 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	if client.WorkspaceID == "" {
-		if _, err := requireWorkspaceID(cmd); err != nil {
-			return err
-		}
-	}
-
-	scope, _ := cmd.Flags().GetString("scope")
-	if scope != "all" && scope != "title_desc" {
-		return fmt.Errorf("invalid --scope %q: valid values are all, title_desc", scope)
-	}
-
-	includeClosed, _ := cmd.Flags().GetBool("include-closed")
-
-	limit, _ := cmd.Flags().GetInt("limit")
-	offset, _ := cmd.Flags().GetInt("offset")
-	if offset < 0 {
-		return fmt.Errorf("--offset must be zero or greater")
-	}
-	// The server caps the page at 50; echo the effective limit so callers
-	// paging with offset += limit do not skip issues (OL-458 review #4).
-	if limit <= 0 || limit > issueSearchMaxLimit {
-		limit = issueSearchMaxLimit
-	}
-
 	params := url.Values{}
 	params.Set("q", args[0])
-	if limit > 0 {
-		params.Set("limit", fmt.Sprintf("%d", limit))
+	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
+		params.Set("limit", fmt.Sprintf("%d", v))
 	}
-	if offset > 0 {
-		params.Set("offset", fmt.Sprintf("%d", offset))
-	}
-	if includeClosed {
+	if v, _ := cmd.Flags().GetBool("include-closed"); v {
 		params.Set("include_closed", "true")
-	}
-	if scope == "title_desc" {
-		params.Set("scope", scope)
 	}
 	if projectInput, _ := cmd.Flags().GetString("project"); projectInput != "" {
 		if client.WorkspaceID == "" {
@@ -3763,13 +3717,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
-		wrapped := map[string]any{
-			"issues":   issuesRaw,
-			"limit":    limit,
-			"offset":   offset,
-			"has_more": boolVal(result, "has_more"),
-		}
-		return cli.PrintJSON(os.Stdout, wrapped)
+		return cli.PrintJSON(os.Stdout, result)
 	}
 
 	headers := []string{"KEY", "TITLE", "STATUS", "MATCH"}
@@ -3795,9 +3743,6 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
-	if hasMore := boolVal(result, "has_more"); hasMore {
-		fmt.Fprintf(os.Stderr, "More results available: --offset %d\n", offset+len(issuesRaw))
-	}
 	return nil
 }
 
@@ -4343,13 +4288,6 @@ func compactComments(comments []map[string]any) {
 			}
 		}
 	}
-}
-
-// boolVal reads a boolean field from a decoded JSON object, defaulting to
-// false when the backend omitted it.
-func boolVal(m map[string]any, key string) bool {
-	v, _ := m[key].(bool)
-	return v
 }
 
 // applyIssueBlockerFlags resolves each reference before any issue mutation.

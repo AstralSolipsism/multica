@@ -2365,7 +2365,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// (agents-working ids facet) — see QueryIssues.
 				r.Post("/query", h.QueryIssues)
 				r.Post("/", h.CreateIssue)
-				r.Post("/with-dependencies", h.CreateIssueWithDependencies)
 				r.Post("/quick-create", h.QuickCreateIssue)
 				r.Post("/preview-trigger", h.PreviewIssueTrigger)
 				r.Post("/batch-update", h.BatchUpdateIssues)
@@ -2375,8 +2374,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateIssue)
 					r.Post("/description/edits", h.EditIssueDescription)
 					r.Post("/collab-ticket", h.CreateIssueCollabTicket)
-					r.Get("/dependencies", h.GetIssueDependencies)
-					r.Patch("/with-dependencies", h.UpdateIssueWithDependencies)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)

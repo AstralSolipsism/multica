@@ -14,32 +14,28 @@ func TestLabrastroWorkflowHandoffSurvivesAtomicRefresh(t *testing.T) {
 	seedTestCatalog(t)
 	agent := seededReadyAgentID(t)
 	project := deliveryProject(t, "Atomic handoff", agent)
-	h := *testHandler
-	is := *h.IssueService
-	ds := *is.Dependencies
-	ds.WritesEnabled = true
-	is.Dependencies = &ds
-	h.IssueService = &is
-	for _, compound := range []bool{false, true} {
-		t.Run(map[bool]string{false: "description", true: "dependencies"}[compound], func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+	}{
+		// A description write and a blocker edit both take the atomic transaction.
+		{"description", map[string]any{"status": "in_progress", "description": "Updated with the handoff"}},
+		{"blockers", map[string]any{"status": "in_progress", "blocked_by": []string{}}},
+		{"status only", map[string]any{"status": "in_progress"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			issue := dbfx.Issue(t, "Handoff with text", testutil.Cols{"project_id": project, "status": "todo"})
-			body := map[string]any{"status": "in_progress", "description": "Updated with the handoff"}
-			if compound {
-				body["blocked_by"] = []string{}
-				body["expected_dependency_version"] = dependencies(t, &h, dbfx, issue).DependencyVersion
-				req := withURLParam(newRequest("PATCH", "/api/issues/"+issue+"/with-dependencies", body), "id", issue)
-				testutil.Call(t, h.UpdateIssueWithDependencies, req).Want(http.StatusOK)
-			} else {
-				updateIssueForTest(t, issue, body).Want(http.StatusOK)
-			}
+			updateIssueForTest(t, issue, tc.body).Want(http.StatusOK)
 			status, kind, id := issueStatusAndAssignee(t, issue)
 			if status != "in_progress" || kind != "agent" || id != agent {
 				t.Fatalf("handoff overwritten by row refresh: %s %s/%s", status, kind, id)
 			}
-			var description string
-			dbfx.QueryRow(t, "SELECT description FROM issue WHERE id=$1", issue).Scan(&description)
-			if description != body["description"] {
-				t.Fatal("atomic handoff lost the description")
+			if want, ok := tc.body["description"].(string); ok {
+				var description string
+				dbfx.QueryRow(t, "SELECT description FROM issue WHERE id=$1", issue).Scan(&description)
+				if description != want {
+					t.Fatal("atomic handoff lost the description")
+				}
 			}
 		})
 	}

@@ -19,15 +19,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Shapes reproduce OL-38 benchmark.cjs. Its zero-based stage labels become
-// 1-based database stages; dates remain unset. Sizes are probes, never limits.
+// Shapes reproduce the OL-38 benchmark.cjs layout. Dates and stages stay
+// unset, so every reported edge is a stored issue_blocker row. Sizes are
+// probes, never limits.
 func seedGraphScale(t *testing.T, fx *testutil.Fixture, size int, kind string) (map[string]bool, map[string]service.IssueGraphEdge) {
 	t.Helper()
 	projects := []string{fx.Project(t, "Account"), fx.Project(t, "Orders")}
 	ids := make([]string, size)
 	parents := make(map[int]bool)
 	for i := range ids {
-		cols := testutil.Cols{"number": i + 1, "status": "backlog", "stage": i%5 + 1}
+		cols := testutil.Cols{"number": i + 1, "status": "backlog"}
 		if i%4 == 0 {
 			cols["status"] = "done"
 		}
@@ -47,7 +48,8 @@ func seedGraphScale(t *testing.T, fx *testutil.Fixture, size int, kind string) (
 	}
 	edges := make(map[string]service.IssueGraphEdge)
 	add := func(a, b int) {
-		id := fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": ids[b], "depends_on_issue_id": ids[a], "type": "blocked_by"})
+		addBlocker(t, fx, ids[b], ids[a])
+		id := "manual:" + ids[b] + ":" + ids[a]
 		edges[id] = service.IssueGraphEdge{SourceEdgeID: id, Source: ids[a], Target: ids[b], Type: "blocked_by"}
 	}
 	switch kind {
@@ -117,7 +119,7 @@ func TestIssueGraphScale(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%d-%s", size, kind), func(t *testing.T) {
-				h, fx := dependencyFixture(t)
+				h, fx := issueGraphFixture(t)
 				nodes, edges := seedGraphScale(t, fx, size, kind)
 				calls := 0
 				h.TxStarter = graphTestStarter{inner: h.TxStarter, queryCount: &calls}

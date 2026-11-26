@@ -258,10 +258,6 @@ func (h *Handler) writeBatchIssue(ctx context.Context, workspaceID pgtype.UUID, 
 	}
 	defer tx.Rollback(ctx)
 	q := h.Queries.WithTx(tx)
-	dependencyWrite, err := h.beforeIssueWrite(ctx, q, workspaceID, rawFields)
-	if err != nil {
-		return out, err
-	}
 
 	// Property locks first, then the status catalog lock, then row locks —
 	// the order SetIssueProperty and the status guard each take theirs in.
@@ -283,12 +279,6 @@ func (h *Handler) writeBatchIssue(ctx context.Context, workspaceID pgtype.UUID, 
 			return out, err
 		}
 		out.issue, cancelled, err = updateIssueStoppingWakeups(ctx, q, *params)
-		if err != nil {
-			return out, err
-		}
-	}
-	if params != nil {
-		out.issue, _, err = dependencyWrite.AfterIssueWrite(ctx, q, out.issue, out.prev.Revision)
 		if err != nil {
 			return out, err
 		}

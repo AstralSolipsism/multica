@@ -18,21 +18,20 @@
     {"id":"UNDATED","title":"Unscheduled investigation","project_id":null,"parent_issue_id":null,"status":"backlog"}
   ],
   "defaults": {"start_date":null,"due_date":null,"assignee_type":null,"assignee_id":null},
-  "dependencies": [
-    {"id":"E1","issue_id":"A_MODEL","depends_on_issue_id":"U","type":"blocked_by"},
-    {"id":"E2","issue_id":"A_API","depends_on_issue_id":"A_MODEL","type":"blocked_by"},
-    {"id":"E3","issue_id":"FCHECKOUT","depends_on_issue_id":"FAUTH","type":"blocked_by"},
-    {"id":"E4","issue_id":"B_API","depends_on_issue_id":"A_API","type":"blocked_by"},
-    {"id":"E5","issue_id":"B_API","depends_on_issue_id":"B_MODEL","type":"blocked_by"},
-    {"id":"E6","issue_id":"B_UI","depends_on_issue_id":"B_API","type":"blocked_by"},
-    {"id":"E7","issue_id":"A_UI","depends_on_issue_id":"B_REPORT","type":"blocked_by"}
+  "blockers": [
+    {"id":"E1","issue_id":"A_MODEL","blocker_issue_id":"U"},
+    {"id":"E2","issue_id":"A_API","blocker_issue_id":"A_MODEL"},
+    {"id":"E3","issue_id":"FCHECKOUT","blocker_issue_id":"FAUTH"},
+    {"id":"E4","issue_id":"B_API","blocker_issue_id":"A_API"},
+    {"id":"E5","issue_id":"B_API","blocker_issue_id":"B_MODEL"},
+    {"id":"E6","issue_id":"B_UI","blocker_issue_id":"B_API"},
+    {"id":"E7","issue_id":"A_UI","blocker_issue_id":"B_REPORT"}
   ],
   "expectations": {
-    "B_API": {"direct":["A_API","B_MODEL"],"inherited":["FAUTH"],"blocked":["B_MODEL","FAUTH"]},
-    "B_MODEL": {"direct":[],"inherited":["FAUTH"],"blocked":["FAUTH"]},
-    "A_TEST": {"direct":[],"inherited":["A_MODEL"],"blocked":[]},
-    "project_aggregate": "Both P1->P2 and P2->P1 exist, with no issue dependency cycle.",
-    "completion": "Changing FAUTH to done satisfies its edges regardless of A_TEST; parent status is authoritative.",
-    "scheduling": "Changing FAUTH to done does not create a new run solely from E3."
+    "B_API": {"stored":["A_API","B_MODEL"],"open":["B_MODEL"]},
+    "B_UI": {"stored":["B_API"],"open":["B_API"],"stage_order":["B_MODEL"],"note":"B_MODEL blocks B_UI through same-parent stage order: edge S1, never a stored row"},
+    "FCHECKOUT": {"stored":["FAUTH"],"open":["FAUTH"]},
+    "project_aggregate": "Both P1->P2 and P2->P1 exist; the issue_blocker rules reject cycles including stages.",
+    "scheduling": "Blockers gate execution through the blockers_done system wakeup; the graph is read-only."
   }
 }

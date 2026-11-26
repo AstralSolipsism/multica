@@ -45,7 +45,7 @@ func (s *Service) dispatchRemote(ctx context.Context, rn *run, app RemoteApp, re
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": app.Slug, "version": "1"},
-			"instructions": fmt.Sprintf("%s tools, run through Multica with the account and permissions set there. "+
+			"instructions": fmt.Sprintf("%s tools, run through Labrastro with the account and permissions set there. "+
 				"If a call says the account is not connected, call %s on the %s server and end your turn.",
 				app.Name, toolRequestConnection, GatewayServerName),
 		}

@@ -160,6 +160,19 @@ still compiles and still points at the fork symbol.
 The CLI attachment rewrite now uses upstream `applyAttachmentLinks`; its
 three fork plugs and dedicated implementation have been retired.
 
+`server/cmd/multica/cmd_issue.go` carries no fork plug since the v0.13.0
+upgrade (OL-1517): the issue-dependency CLI went with the fork's
+`issue_dependency` backend, and the file is upstream `35b54a3742bb` except
+for one brand string in its unsynced-PR error. After every sync,
+`git diff <upstream-sha> -- server/cmd/multica/cmd_issue.go` must show that
+line only. Blockers are read from upstream `effective_issue_blocker` by the
+fork-owned `issue_graph.{go,sql}`; see [the graph API](../issue-graph-api.md).
+
+`issue search` keeps its OL-458 `--scope` / `--offset` paging and JSON
+envelope in fork-owned `cmd_labrastro_issue_search.go`: a copy of upstream
+`runIssueSearch` plus those additions. When a sync changes upstream's
+`runIssueSearch`, carry the change into that copy.
+
 ### `server/internal/daemon/daemon.go`
 
 | Anchor (function / symbol) | Fork file providing the implementation |

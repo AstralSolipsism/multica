@@ -123,8 +123,6 @@ type IssueResponse struct {
 	RunOutcome *IssueRunOutcome `json:"run_outcome,omitempty"`
 	// duplicateOfIssueID is the raw mark, kept off the wire; see DuplicateOf.
 	duplicateOfIssueID pgtype.UUID
-
-	Dependencies *service.DependencyView `json:"dependencies,omitempty"`
 }
 
 // IssueRefResponse names another issue inside a response: enough to render
@@ -288,10 +286,6 @@ func (h *Handler) runWithIssueStatusGuard(ctx context.Context, workspaceID pgtyp
 // leaving fields rawFields does not name as the locked row has them. It returns
 // the written issue and the row it replaced.
 func (h *Handler) updateIssueWithStatusGuard(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, workflowAssignee bool) (db.Issue, db.Issue, error) {
-	if issueWriteNeedsStructureLock(ctx, rawFields) {
-		issue, current, _, err := h.updateIssueAtomically(ctx, workspaceID, params, rawFields, issueBlockerEdit{}, nil, nil, nil, nil, statusKey, workflowAssignee)
-		return issue, current, err
-	}
 	var issue, current db.Issue
 	var cancelledWakeups []db.AgentTaskQueue
 	err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
@@ -3436,8 +3430,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	r = h.withBlockerViewer(r)
 	r = h.withWakeupActor(r)
 	var req CreateIssueRequest
-	r, ok := h.prepareIssueCreate(w, r, &req)
-	if !ok {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.Title = sanitizeNullBytes(req.Title)
@@ -3814,9 +3808,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if writeIssueBlockerError(w, err) {
 		return
 	}
-	if h.writeDependencyError(w, r, err) {
-		return
-	}
 	if writeIssueNumberCollision(w, err) {
 		return
 	}
@@ -3830,7 +3821,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
-	h.fillIssueDependencyResponse(r, issue, res.Dependencies, &resp)
 	fillCreated(&resp)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	// Echo the authoritative labels attached in the create transaction. Always
@@ -4004,10 +3994,6 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	defer tx.Rollback(ctx)
 
 	qtx := h.Queries.WithTx(tx)
-	dependencyWrite, err := h.beforeIssueWrite(ctx, qtx, workspaceID, rawFields)
-	if err != nil {
-		return db.Issue{}, db.Issue{}, false, err
-	}
 	// Recheck the target custom status in this transaction. The catalog lock
 	// must precede both attachment and issue row locks everywhere. (MUL-6243)
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
@@ -4092,10 +4078,6 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 
-	issue, _, err = dependencyWrite.AfterIssueWrite(ctx, qtx, issue, current.Revision)
-	if err != nil {
-		return db.Issue{}, current, false, err
-	}
 	for _, blocker := range blockers.remove {
 		if err = qtx.RemoveIssueBlocker(ctx, db.RemoveIssueBlockerParams{WorkspaceID: workspaceID, IssueID: issue.ID, BlockerIssueID: blocker}); err != nil {
 			return db.Issue{}, current, false, err
@@ -4167,8 +4149,8 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateIssueRequest
-	r, ok = h.prepareIssueUpdate(w, r, bodyBytes, &req)
-	if !ok {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	// PostgreSQL TEXT rejects NUL, which survives a JSON round trip. The bases
@@ -4491,9 +4473,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if writeIssueBlockerError(w, err) {
 			return
 		}
-		if h.writeDependencyError(w, r, err) {
-			return
-		}
 		if writeIssueStatusRaceError(w, err) {
 			return
 		}
@@ -4529,7 +4508,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	h.fillIssueDependencyResponse(r, issue, nil, &resp)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, projectaccess.Hidden{}, &resp)
@@ -4910,9 +4888,6 @@ func (h *Handler) deleteIssuesAndCollectAttachmentURLs(ctx context.Context, issu
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
-	if err := h.beforeIssueDelete(ctx, qtx, issues); err != nil {
-		return issueDeleteResult{}, err
-	}
 	if len(issues) > 0 {
 		if err = qtx.LockIssueBlockerGraph(ctx, issues[0].WorkspaceID); err != nil {
 			return issueDeleteResult{}, err

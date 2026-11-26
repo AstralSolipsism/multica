@@ -32,7 +32,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if uuidToString(ws) != h.resolveWorkspaceID(r) {
-		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
+		writeIssueGraphRefusal(w, &service.IssueGraphError{Code: "not_found", Message: "workspace not found"})
 		return
 	}
 	user, ok := parseUUIDOrBadRequest(w, userID, "user_id")
@@ -85,7 +85,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(context.Background())
 	access, err := snapshot.Queries.GetIssueGraphAccess(ctx, db.GetIssueGraphAccessParams{ID: ws, UserID: user})
 	if errors.Is(err, pgx.ErrNoRows) {
-		h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "workspace not found"})
+		writeIssueGraphRefusal(w, &service.IssueGraphError{Code: "not_found", Message: "workspace not found"})
 		return
 	}
 	if err != nil {
@@ -104,7 +104,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		project, err := snapshot.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: id, WorkspaceID: ws})
 		if errors.Is(err, pgx.ErrNoRows) {
-			h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "project not found"})
+			writeIssueGraphRefusal(w, &service.IssueGraphError{Code: "not_found", Message: "project not found"})
 			return
 		}
 		if err != nil {
@@ -113,14 +113,14 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		projectID := uuidToString(project.ID)
 		if !hidden.CanSeeProject(project.ID) {
-			h.writeDependencyError(w, r, &service.DependencyError{Code: "not_found", Message: "project not found"})
+			writeIssueGraphRefusal(w, &service.IssueGraphError{Code: "not_found", Message: "project not found"})
 			return
 		}
 		scope.ProjectID = &projectID
 	}
 	var focus *string
 	if raw := r.URL.Query().Get("focus_issue_id"); raw != "" {
-		issue, ok := snapshot.loadDependencyIssue(w, r, raw)
+		issue, ok := h.loadIssueForUser(w, r, raw)
 		if !ok {
 			return
 		}
@@ -149,7 +149,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		matched[id] = true
 	}
-	deps, err := h.IssueService.Dependencies.Load(ctx, snapshot.Queries, ws)
+	model, err := service.LoadIssueGraph(ctx, snapshot.Queries, ws)
 	if err != nil {
 		writeIssueGraphFailure(w, r, err)
 		return
@@ -184,7 +184,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	projects := make(map[string]service.IssueGraphProject)
 	for _, detail := range details {
 		id := uuidToString(detail.ID)
-		base := deps.Model.Issues[id]
+		base := model.Issues[id]
 		n := service.IssueGraphNode{ID: id, Title: base.Title, Identifier: access.IssuePrefix + "-" + strconv.Itoa(int(base.Number)), Status: base.Status, StatusCategory: base.Category, Revision: base.Revision, Priority: detail.Priority, RunSummary: runByIssue[id]}
 		if base.ParentID != "" {
 			n.ParentIssueID = &base.ParentID
@@ -194,7 +194,7 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 		}
 		if detail.ProjectID.Valid {
 			if !detail.ProjectTitle.Valid {
-				h.writeDependencyError(w, r, &service.DependencyError{Code: "dependency_data_unverified", Message: "graph project references must be audited"})
+				writeIssueGraphRefusal(w, &service.IssueGraphError{Code: "dependency_data_unverified", Message: "graph project references must be audited"})
 				return
 			}
 			projectID := uuidToString(detail.ProjectID)
@@ -210,12 +210,12 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	for _, p := range projects {
 		projectList = append(projectList, p)
 	}
-	graph, err := deps.Graph(nodes, projectList, matched, scope, focus, access.CapturedAt.Time, func(id string) bool {
-		projectID, exists := deps.ProjectIDs[id]
-		return exists && hidden.CanSeeProject(projectID)
+	graph, err := model.Graph(nodes, projectList, matched, scope, focus, access.CapturedAt.Time, func(id string) bool {
+		issue, exists := model.Issues[id]
+		return exists && hidden.CanSeeProject(issue.ProjectID)
 	})
 	if err != nil {
-		if !h.writeDependencyError(w, r, err) {
+		if !writeIssueGraphRefusal(w, err) {
 			writeIssueGraphFailure(w, r, err)
 		}
 		return
@@ -226,6 +226,25 @@ func (h *Handler) GetIssueGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusOK, graph)
+}
+
+// writeIssueGraphRefusal answers the graph's stable reason codes: a hidden or
+// missing object is indistinguishable (404), and an unverified graph is never
+// shown as complete (422).
+func writeIssueGraphRefusal(w http.ResponseWriter, err error) bool {
+	var e *service.IssueGraphError
+	if !errors.As(err, &e) {
+		return false
+	}
+	status := http.StatusConflict
+	switch e.Code {
+	case "not_found":
+		status = http.StatusNotFound
+	case "dependency_data_unverified":
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, map[string]string{"error": e.Message, "reason_code": e.Code})
+	return true
 }
 
 func writeIssueGraphFailure(w http.ResponseWriter, r *http.Request, err error) {

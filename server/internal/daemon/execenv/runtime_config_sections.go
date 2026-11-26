@@ -644,7 +644,7 @@ func writeWorkflowChat(b *strings.Builder) {
 // (MUL-9933). The doc, the discussion and the reply command change per turn
 // and travel in the per-turn user message.
 func writeWorkflowDocComment(b *strings.Builder) {
-	b.WriteString("**You were asked for in a discussion on a Multica doc.** There is no Multica issue for this run; the per-turn user message names the doc, the discussion and the comment to answer.\n\n")
+	b.WriteString("**You were asked for in a discussion on a Labrastro doc.** There is no Labrastro issue for this run; the per-turn user message names the doc, the discussion and the comment to answer.\n\n")
 	b.WriteString("- Read the doc and the whole discussion before answering.\n")
 	b.WriteString("- You may change the doc when the discussion asks for it or it is clearly the best answer; every change is kept in the doc's history.\n")
 	b.WriteString("- You can only reply in the discussion that asked for you. Starting a discussion, resolving one and deleting comments are left to people.\n")
@@ -835,7 +835,7 @@ const platformSkillName = "multica-platform"
 // description, repeated in the brief's recall hint for agents that never read
 // the skill listing. TestPlatformSkillDomainsMatchDescription keeps it equal to
 // the description, so a new reference cannot ship without reaching the brief.
-const platformSkillDomains = "issue and PR contracts, sub-issues, prerequisites, batch changes, saved views, comment charts and files, mentions, inbox, docs, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes"
+const platformSkillDomains = "issue and PR contracts, sub-issues, batch changes, saved views, comment charts and files, mentions, inbox, docs, agents, squads, autopilots, projects, runtimes, local environments, skill import, themes"
 
 // subIssueContractsSkill returns how the brief should refer to the skill
 // carrying the sub-issue contracts, and whether any such skill is installed.

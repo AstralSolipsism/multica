@@ -63,7 +63,7 @@ func TestPluginIssueConditionalPatchAfterDeletion(t *testing.T) {
 func TestPluginContentUpdateAfterWorkspaceDeletion(t *testing.T) {
 	for _, conditional := range []bool{false, true} {
 		t.Run(fmt.Sprintf("conditional=%t", conditional), func(t *testing.T) {
-			h, fx := dependencyFixture(t)
+			h, fx := issueGraphFixture(t)
 			id := fx.Issue(t, "Deleted workspace content")
 			ctx := context.Background()
 			issue, err := h.Queries.GetIssue(ctx, parseUUID(id))

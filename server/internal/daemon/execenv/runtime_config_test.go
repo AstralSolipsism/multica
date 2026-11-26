@@ -2711,7 +2711,7 @@ func TestDocCommentBriefDeliversIntoDiscussion(t *testing.T) {
 	t.Parallel()
 
 	brief := buildMetaSkillContentSlim("claude", TaskContextForEnv{DocID: "doc-1", AgentID: "a-1", AgentName: "Eve", DocsEnabled: true})
-	for _, want := range []string{"discussion on a Multica doc", "`multica doc comment add`", "## Mentions"} {
+	for _, want := range []string{"discussion on a Labrastro doc", "`multica doc comment add`", "## Mentions"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("doc brief missing %q:\n%s", want, brief)
 		}

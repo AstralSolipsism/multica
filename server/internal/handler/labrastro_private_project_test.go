@@ -13,34 +13,28 @@ import (
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
-func TestLabrastroPrivateProjectDependenciesAndGraph(t *testing.T) {
+// The DAG canvas reads upstream blockers. A blocker in a private project the
+// caller cannot see is restricted, never disclosed, and answers like missing.
+func TestLabrastroPrivateProjectBlockersAndGraph(t *testing.T) {
 	f := newPrivateProjectFixture(t)
-	edge := dbfx.Insert(t, "issue_dependency", testutil.Cols{
-		"issue_id": f.publicIssue, "depends_on_issue_id": f.secretIssue, "type": "blocked_by",
-	})
-	getDependencies := func(user, issue string) *testutil.Response {
-		req := withURLParam(asUser(newRequest("GET", "/api/issues/"+issue+"/dependencies", nil), user), "id", issue)
-		return testutil.Call(t, testHandler.GetIssueDependencies, req)
-	}
+	addBlocker(t, dbfx, f.publicIssue, f.secretIssue)
 	getGraph := func(user string, params url.Values) *testutil.Response {
 		return testutil.Call(t, testHandler.GetIssueGraph, asUser(graphRequest(dbfx, params), user))
 	}
 	for _, user := range []string{f.outsider, f.insider, testUserID} {
-		var deps service.DependencyView
-		body := getDependencies(user, f.publicIssue).Want(200).JSON(&deps).Text()
 		var graph service.IssueGraph
-		graphBody := getGraph(user, url.Values{"focus_issue_id": {f.publicIssue}}).Want(200).JSON(&graph).Text()
+		body := getGraph(user, url.Values{"focus_issue_id": {f.publicIssue}}).Want(http.StatusOK).JSON(&graph).Text()
 		if user == f.outsider {
-			if !deps.HasRestrictedBlockers || len(deps.BlockedBy) != 0 || len(deps.Unsatisfied) != 0 || !graph.HasRestrictedContext || len(graph.Nodes) != 1 || len(graph.Edges) != 0 {
-				t.Fatalf("hidden prerequisite was not restricted: deps=%+v graph=%+v", deps, graph)
+			if !graph.HasRestrictedContext || len(graph.Nodes) != 1 || len(graph.Edges) != 0 || !graphNodes(graph)[f.publicIssue].DependencySummary.HasRestrictedBlockers {
+				t.Fatalf("hidden blocker was not restricted: %+v", graph)
 			}
-			for _, secret := range []string{f.secretIssue, f.projectID, f.marker + " secret", edge} {
-				if strings.Contains(body+graphBody, secret) {
-					t.Fatalf("restricted response leaks %q: %s %s", secret, body, graphBody)
+			for _, secret := range []string{f.secretIssue, f.projectID, f.marker + " secret"} {
+				if strings.Contains(body, secret) {
+					t.Fatalf("restricted response leaks %q: %s", secret, body)
 				}
 			}
-		} else if len(deps.BlockedBy) != 1 || deps.BlockedBy[0].IssueID != f.secretIssue || deps.BlockedBy[0].Identifier == "" || len(graph.Nodes) != 2 || len(graph.Edges) != 1 {
-			t.Fatalf("authorized caller lost prerequisite: deps=%+v graph=%+v", deps, graph)
+		} else if len(graph.Nodes) != 2 || len(graph.Edges) != 1 || graph.Edges[0].Source != f.secretIssue || graph.Edges[0].Target != f.publicIssue {
+			t.Fatalf("authorized caller lost the blocker: %+v", graph)
 		}
 	}
 	for _, key := range []string{"project_id", "focus_issue_id"} {
@@ -48,29 +42,28 @@ func TestLabrastroPrivateProjectDependenciesAndGraph(t *testing.T) {
 		if key == "focus_issue_id" {
 			id = f.secretIssue
 		}
-		hidden := getGraph(f.outsider, url.Values{key: {id}}).Want(404)
-		missing := getGraph(f.outsider, url.Values{key: {uuid.NewString()}}).Want(404)
+		hidden := getGraph(f.outsider, url.Values{key: {id}}).Want(http.StatusNotFound)
+		missing := getGraph(f.outsider, url.Values{key: {uuid.NewString()}}).Want(http.StatusNotFound)
 		if hidden.Text() != missing.Text() {
 			t.Fatalf("%s hidden and missing differ: %s / %s", key, hidden.Text(), missing.Text())
 		}
 	}
-	getDependencies(f.outsider, f.secretIssue).Want(404)
-	workspace := getGraph(f.outsider, nil).Want(200).Text()
+	workspace := getGraph(f.outsider, nil).Want(http.StatusOK).Text()
 	if strings.Contains(workspace, f.secretIssue) || strings.Contains(workspace, f.projectID) {
 		t.Fatal("workspace graph exposes private project")
 	}
-	// A public child must not expose its hidden parent or inherited blockers.
+	// A public child must not expose its hidden parent.
 	child := dbfx.Issue(t, "public child", testutil.Cols{"parent_issue_id": f.secretIssue})
 	var graph service.IssueGraph
-	getGraph(f.outsider, url.Values{"focus_issue_id": {child}}).Want(200).JSON(&graph)
+	getGraph(f.outsider, url.Values{"focus_issue_id": {child}}).Want(http.StatusOK).JSON(&graph)
 	if len(graph.Nodes) != 1 || !graph.Nodes[0].HasRestrictedParent || graph.Nodes[0].ParentIssueID != nil {
 		t.Fatalf("hidden parent was not redacted: %+v", graph)
 	}
 	removeProjectMemberAsOwner(t, f, f.insider)
-	var revoked service.DependencyView
-	getDependencies(f.insider, f.publicIssue).Want(200).JSON(&revoked)
-	if !revoked.HasRestrictedBlockers || len(revoked.BlockedBy) != 0 {
-		t.Fatal("revoked member still sees private prerequisites")
+	var revoked service.IssueGraph
+	getGraph(f.insider, url.Values{"focus_issue_id": {f.publicIssue}}).Want(http.StatusOK).JSON(&revoked)
+	if !revoked.HasRestrictedContext || len(revoked.Edges) != 0 {
+		t.Fatal("revoked member still sees private blockers")
 	}
 }
 
@@ -82,13 +75,13 @@ func TestLabrastroPrivateProjectEngineeringHTTP(t *testing.T) {
 		read := func(user, project string) *testutil.Response {
 			return testutil.Call(t, router.ServeHTTP, asUser(newRequest("GET", "/api/projects/"+project+"/"+path, nil), user))
 		}
-		hidden, missing := read(f.outsider, f.projectID).Want(404), read(f.outsider, uuid.NewString()).Want(404)
+		hidden, missing := read(f.outsider, f.projectID).Want(http.StatusNotFound), read(f.outsider, uuid.NewString()).Want(http.StatusNotFound)
 		if hidden.Text() != missing.Text() {
 			t.Fatalf("%s distinguishes hidden project: %s / %s", path, hidden.Text(), missing.Text())
 		}
 		if path == "engineering" || path == "baseline/tree" {
-			read(f.insider, f.projectID).Want(200)
-			read(testUserID, f.projectID).Want(200)
+			read(f.insider, f.projectID).Want(http.StatusOK)
+			read(testUserID, f.projectID).Want(http.StatusOK)
 		}
 	}
 }
@@ -128,57 +121,6 @@ func TestLabrastroPrivateProjectGroupedInbox(t *testing.T) {
 	response := testutil.Call(t, list.ServeHTTP, asUser(newRequest("GET", "/api/inbox?view=grouped", nil), f.outsider)).Want(200).Text()
 	if strings.Contains(response, f.secretIssue) || !strings.Contains(response, f.publicIssue) {
 		t.Fatalf("grouped inbox isolation failed: %s", response)
-	}
-}
-
-func TestLabrastroPrivateProjectDependencyCycleWitness(t *testing.T) {
-	f := newPrivateProjectFixture(t)
-	other := dbfx.Issue(t, "visible prerequisite")
-	for _, pair := range [][2]string{{f.publicIssue, f.secretIssue}, {f.secretIssue, other}} {
-		dbfx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": pair[0], "depends_on_issue_id": pair[1], "type": "blocked_by"})
-	}
-	for _, user := range []string{f.outsider, f.insider} {
-		var deps service.DependencyView
-		req := withURLParam(asUser(newRequest("GET", "/api/issues/"+other+"/dependencies", nil), user), "id", other)
-		testutil.Call(t, testHandler.GetIssueDependencies, req).Want(200).JSON(&deps)
-		write := withURLParam(asUser(newRequest("PATCH", "/api/issues/"+other+"/with-dependencies", map[string]any{
-			"blocked_by": []string{f.publicIssue}, "expected_dependency_version": deps.DependencyVersion,
-		}), user), "id", other)
-		body := testutil.Call(t, testHandler.UpdateIssueWithDependencies, write).Want(409).Text()
-		if strings.Contains(body, f.secretIssue) != (user == f.insider) {
-			t.Fatalf("cycle witness did not respect project visibility: %s", body)
-		}
-	}
-}
-
-func TestLabrastroPrivateProjectDependencyReplacementKeepsHiddenEdge(t *testing.T) {
-	f := newPrivateProjectFixture(t)
-	edge := dbfx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": f.publicIssue, "depends_on_issue_id": f.secretIssue, "type": "blocked_by"})
-	other := dbfx.Issue(t, "visible prerequisite")
-	read := func(user string) service.DependencyView {
-		var view service.DependencyView
-		testutil.Call(t, testHandler.GetIssueDependencies, withURLParam(asUser(newRequest("GET", "/", nil), user), "id", f.publicIssue)).Want(200).JSON(&view)
-		return view
-	}
-	write := func(user string, ids []string, status int) {
-		view := read(user)
-		r := withURLParam(asUser(newRequest("PATCH", "/", map[string]any{"blocked_by": ids, "expected_dependency_version": view.DependencyVersion}), user), "id", f.publicIssue)
-		body := testutil.Call(t, testHandler.UpdateIssueWithDependencies, r).Want(status).Text()
-		if user == f.outsider && (strings.Contains(body, f.secretIssue) || strings.Contains(body, edge)) {
-			t.Fatal("write response disclosed the hidden edge")
-		}
-	}
-	for _, ids := range [][]string{{other}, {}} {
-		write(f.outsider, ids, 200)
-		view := read(f.outsider)
-		if !view.HasRestrictedBlockers || len(view.BlockedBy) != len(ids) || dbfx.Count(t, "SELECT count(*) FROM issue_dependency WHERE id=$1", edge) != 1 {
-			t.Fatalf("visible replacement removed or disclosed hidden blocker: %+v", view)
-		}
-	}
-	write(f.outsider, []string{f.secretIssue}, 404)
-	write(f.insider, []string{}, 200)
-	if read(f.insider).HasRestrictedBlockers || dbfx.Count(t, "SELECT count(*) FROM issue_dependency WHERE id=$1", edge) != 0 {
-		t.Fatal("authorized member could not remove the private prerequisite")
 	}
 }
 

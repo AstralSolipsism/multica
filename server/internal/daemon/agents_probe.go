@@ -566,7 +566,7 @@ func probeDshMulticaProfile(ctx context.Context, executablePath string) dshProbe
 	if ctx.Err() == nil && completed {
 		if summary := dshCompatibilitySummary(stderr.String(), dshBridgeCompatibilityRefusal); summary != "" {
 			repairSummary := fmt.Sprintf(
-				"%s; back up and inspect %q, update the Multica bridge to a build compatible with the installed DSH, and rerun dsh --profile multica --probe.",
+				"%s; back up and inspect %q, update the Labrastro bridge to a build compatible with the installed DSH, and rerun dsh --profile multica --probe.",
 				summary, dshMulticaProfileManifestPath())
 			return dshProbeResult{verdict: dshProbeNeedsMigration, repairSummary: repairSummary, detail: repairSummary + " " + detail}
 		}

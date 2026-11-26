@@ -41,9 +41,8 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics      *obsmetrics.BusinessMetrics
-	TaskService  *TaskService
-	Dependencies *DependencyService
+	Metrics     *obsmetrics.BusinessMetrics
+	TaskService *TaskService
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
@@ -53,8 +52,6 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 		Bus:         bus,
 		Analytics:   ac,
 		TaskService: ts,
-
-		Dependencies: NewDependencyService(q, tx),
 	}
 }
 
@@ -217,8 +214,6 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
-
-	Dependencies *DependencySnapshot
 }
 
 // Create is the entry point every creator shares. It runs the pipeline below and
@@ -296,11 +291,6 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
-	// Every create eventually updates this counter. Lock it before any issue
-	// or property rows so relation-aware creates use the same lock order.
-	if _, err := qtx.LockWorkspaceForDependencyWrite(ctx, p.WorkspaceID); err != nil {
-		return IssueCreateResult{}, err
-	}
 	if len(p.BlockedBy) > 0 || p.Stage.Valid {
 		if err = qtx.LockIssueBlockerGraph(ctx, p.WorkspaceID); err != nil {
 			return IssueCreateResult{}, err
@@ -315,12 +305,6 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 	if err != nil {
 		return IssueCreateResult{}, err
 	}
-
-	dependencyWrite, err := s.beforeIssueCreate(ctx, qtx, p.WorkspaceID)
-	if err != nil {
-		return IssueCreateResult{}, err
-	}
-
 	if p.SourceContext != nil {
 		if _, err := qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
 			ID: p.SourceContext.SourceIssueID, WorkspaceID: p.WorkspaceID,
@@ -538,10 +522,6 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 		}
 	}
 
-	issue, dependencyAfter, err := dependencyWrite.AfterIssueWrite(ctx, qtx, issue, 0)
-	if err != nil {
-		return IssueCreateResult{}, err
-	}
 	if p.SourceContext != nil {
 		if _, err := PersistSourceContext(ctx, qtx, *p.SourceContext, issue.ID, pgtype.UUID{}); err != nil {
 			return IssueCreateResult{}, fmt.Errorf("persist source context: %w", err)
@@ -678,7 +658,7 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 		s.TaskService.RecordHumanDelegation(ctx, attribution.DirectHumanRun(p.CreatorID, attribution.EvidenceIssueAssignment, issue.ID))
 	}
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID, Dependencies: dependencyAfter}, nil
+	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID}, nil
 }
 
 // validateIssueCreateProperties returns the canonical JSONB bag to put on the

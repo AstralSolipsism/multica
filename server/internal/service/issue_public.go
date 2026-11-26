@@ -40,6 +40,11 @@ func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch 
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
+	// A revision-checked write against an issue that is already gone is the
+	// same conflict as a stale revision, not a storage failure.
+	if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
+		return db.Issue{}, ErrIssueRevisionConflict
+	}
 	if err != nil {
 		return db.Issue{}, fmt.Errorf("lock issue for content update: %w", err)
 	}
