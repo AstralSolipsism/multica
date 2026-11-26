@@ -772,7 +772,6 @@ function ImageAttachmentView({
             if (failedSrc === src) setFailedSrc(null);
           }}
           onError={() => {
-            setLoadedSrc(src);
             setFailedSrc(src);
             onError?.();
           }}

@@ -112,7 +112,7 @@ describe("SkillPickerList flat mode (regression)", () => {
     expect(onToggle).toHaveBeenCalledWith(skills[0]);
 
     await userEvent.type(
-      screen.getByPlaceholderText("Search skills…"),
+      screen.getByPlaceholderText("Search skills..."),
       "first",
     );
     expect(screen.queryByText("beta")).toBeNull();
@@ -216,12 +216,12 @@ describe("SkillPickerList tree mode", () => {
         onToggleMany={vi.fn()}
       />,
     );
-    await userEvent.type(await screen.findByPlaceholderText("Search skills…"), "alpha");
+    await userEvent.type(await screen.findByPlaceholderText("Search skills..."), "alpha");
     expect(await screen.findByText("Engineering / Frontend")).toBeTruthy();
     expect(screen.queryByText("beta")).toBeNull();
     // Not-imported candidates never match: only bindable skills are listed.
-    await userEvent.clear(screen.getByPlaceholderText("Search skills…"));
-    await userEvent.type(screen.getByPlaceholderText("Search skills…"), "gray");
+    await userEvent.clear(screen.getByPlaceholderText("Search skills..."));
+    await userEvent.type(screen.getByPlaceholderText("Search skills..."), "gray");
     expect(await screen.findByText("No skills match.")).toBeTruthy();
     expect(screen.queryByText("gray-skill")).toBeNull();
   });

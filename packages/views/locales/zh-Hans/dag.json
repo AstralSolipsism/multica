@@ -46,7 +46,7 @@
   "legend_label": "图例",
   "cancelled_blocking": "已取消，仍在阻塞",
   "focus_hidden_tasks_other": "链路上还有 {{count}} 个已隐藏任务",
-  "show_completed_enable": "打开“显示已完成”",
+  "show_completed_enable": "打开 \"显示已完成\"",
   "hidden_completed_tooltip_other": "已隐藏 {{count}} 条任务线（{{tasks}} 个任务）和 {{singles}} 个单独任务",
   "all_lines": "全部任务线",
   "back_to_overview": "返回总图",
@@ -78,5 +78,5 @@
   "focus_breadcrumb": "聚焦 {{identifier}}",
   "exit_focus": "退出聚焦模式",
   "focus_unavailable": "当前视图中已无此任务，已返回上一层。",
-  "focus_current_hidden": "当前任务已隐藏，打开“显示已完成”可查看。"
+  "focus_current_hidden": "当前任务已隐藏，打开 \"显示已完成\" 可查看。"
 }

@@ -226,7 +226,7 @@ describe("UpdateSection queued updates", () => {
     vi.spyOn(Date, "now").mockReturnValue(clock);
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ tag_name: "v0.5.0" }) }),
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: "v0.5.0" }) }),
     );
   });
 

@@ -166,7 +166,7 @@
       "help_glm_key": "在智谱开放平台控制台（open.bigmodel.cn）创建 Coding Plan API Key 后粘贴到这里。凭证经服务端加密存储，保存后仅回显末 4 位。",
       "help_zenmux_key": "在 ZenMux 控制台创建 Management API Key——普通推理 Key 无法读取订阅窗口。凭证经服务端加密存储，保存后仅回显末 4 位。",
       "help_deepseek_key": "在 platform.deepseek.com 创建 API Key 后粘贴到这里。凭证经服务端加密存储，保存后仅回显末 4 位。",
-      "help_opencode_cookie": "1. 浏览器登录 https://opencode.ai 并进入控制台。\n2. 按 F12（或右键“检查”）打开开发者工具，切换到 Application（应用）面板。\n3. 在左侧展开 Cookies → https://opencode.ai，找到 __Host-console_session（旧版工作区为 auth）并复制其 Value（值）；也支持从 Network 请求头直接复制整段 Cookie。\n\n凭证经服务端 AES-GCM 加密存储，保存后仅回显末 4 位。",
+      "help_opencode_cookie": "1. 浏览器登录 https://opencode.ai 并进入控制台。\n2. 按 F12（或右键 \"检查\"）打开开发者工具，切换到 Application（应用）面板。\n3. 在左侧展开 Cookies → https://opencode.ai，找到 __Host-console_session（旧版工作区为 auth）并复制其 Value（值）；也支持从 Network 请求头直接复制整段 Cookie。\n\n凭证经服务端 AES-GCM 加密存储，保存后仅回显末 4 位。",
       "help_opencode_workspace": "留空即可自动读取账号下的默认工作区。\n若账号下有多个工作区，可从控制台地址栏（如 opencode.ai/workspace/wrk_xxx/billing 或 opencode.ai/console/org_xxx）复制 wrk_ / org_ 开头的 ID，或直接粘贴完整网址。",
       "help_opencode_zen_key": "登录 https://opencode.ai 控制台，在 API Keys 区域创建并复制密钥，用于查询 OpenCode Go 订阅的 5 小时 / 7 天 / 30 天窗口额度。"
     },
@@ -182,7 +182,7 @@
       "refresh_cooldown": "刚刚已刷新，请等待 30 秒冷却结束。"
     },
     "delete": {
-      "title": "删除“{{name}}”？",
+      "title": "删除 \"{{name}}\"？",
       "description": "对应卡片将不再显示，加密凭证会被销毁。此操作无法撤销。",
       "cancel": "取消",
       "confirm": "删除监控项",

@@ -315,7 +315,7 @@ describe("the floating chat on a side chat", () => {
     expect(pinned.getByText("Clients still call it, so it stays until they move.")).toBeInTheDocument();
     expect(pinned.getByRole("link", { name: "Open OL-1" })).toHaveAttribute(
       "href",
-      "/acme/issues/issue-1",
+      "/acme/issues/OL-1",
     );
     await waitFor(() =>
       expect(

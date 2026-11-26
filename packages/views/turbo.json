@@ -17,7 +17,9 @@
         // targets; ee's are the only ones outside views' dependencies.
         "$TURBO_ROOT$/apps/*/package.json",
         "$TURBO_ROOT$/packages/*/package.json",
-        "$TURBO_ROOT$/packages/ee/index.ts"
+        "$TURBO_ROOT$/packages/ee/index.ts",
+        // projects/components/engineering-baseline-comment-text.test.tsx reads the shared anchor fixture.
+        "$TURBO_ROOT$/server/internal/engineering/testdata/anchors.json"
       ]
     }
   }

@@ -69,7 +69,10 @@ func TestUploadFileImageDimensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(store.files[store.KeyFromURL(stored.Url)], tc.data) {
+			store.mu.Lock()
+			uploaded := store.files[store.KeyFromURL(stored.Url)]
+			store.mu.Unlock()
+			if !bytes.Equal(uploaded, tc.data) {
 				t.Fatal("metadata inspection changed the uploaded bytes")
 			}
 			if tc.image {

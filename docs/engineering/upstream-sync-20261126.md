@@ -336,9 +336,11 @@ matches both `git rev-parse 35b54a3742bb51bdf5ffa688655367ec98044862:<path>` and
 
 Stage 3 verification environment: Go 1.27.4, Node 24.21.0, pnpm 10.28.2,
 GoReleaser v2.18.0, Playwright 1.58.2 (Chrome Headless Shell 145.0.7632.6 /
-chromium v1208), native PostgreSQL 17.12. Tested exact application HEAD:
-`58e5b762c8ecc17d3cc37bb981e1ddbbf260eb14` (the Stage 3 commit touches sync
-documentation only; application code is unchanged).
+chromium v1208), native PostgreSQL 17.12. Initial PG17 four-path parity and
+isolated retained E2E ran against `58e5b762c8ecc17d3cc37bb981e1ddbbf260eb14`
+(zero migrations changed afterward), and the Stage 3 CI-admission rework below
+was re-verified locally across all affected Go, frontend, docs, mobile, brand
+and cache-input gates.
 
 - **Static, brand, UI & script gates**: `pnpm install --frozen-lockfile`,
   `bash scripts/check-gofmt.test.sh`, `bash scripts/check-gofmt.sh`,
@@ -381,6 +383,86 @@ documentation only; application code is unchanged).
     temporary directories, browsers, `test-results/` and built server binaries
     were removed before commit. The retained E2E HTML report and logs archive
     are attached to OL-1520 (not committed).
+
+## Stage 3 admission CI rework (PR #340 runs `45770931139` & `45770932289`)
+
+Initial remote CI on `e5b967ae89e35359fec50cce5c6f66e6792a61e4` passed
+`retained-e2e-tests` (4m42s), `backend-format`, `frontend-test`, `sqlc-check`,
+`backend-agent-tests`, `image-budget`, `installer`, `windows-execenv`,
+`go-vulnerability-scan`, `candidate-checks`, `macos-processtree`,
+`backend-darwin-vet` and `Migration numbers`, and surfaced six deterministic
+failure groups fixed in the linear follow-up commit on
+`sync/v0.13.0-ol-1517`:
+
+1. **`CI/script-checks` (`scripts/selfhost-config.test.sh:118`)**: unset
+   `MULTICA_IMAGE_TAG` alongside `FF_DOCS_V1` in the `env -u ... docker compose`
+   command checking the default collab image tag (line 14 exports
+   `MULTICA_IMAGE_TAG=dev-config-test`).
+2. **`CI/docs-test` (`apps/docs/content/docs/tutorial.zh-Hant.mdx:202`)**: fixed
+   broken internal heading anchor `/mentioning-agents#給正在運行的-ai-代理插話`
+   → `/mentioning-agents#給正在執行的-ai-代理插話`.
+3. **`Mobile Verify/mobile` (`apps/mobile/components/brand/multica-logo.tsx`,
+   `scripts/brand/labrastro-assets.json`)**: added upstream-consistent
+   `// eslint-disable-next-line no-restricted-syntax -- brand proper noun`
+   directives for the two `Labrastro` brand literals and updated the tracked
+   SHA-256 in `scripts/brand/labrastro-assets.json`.
+4. **`CI/frontend-build` (`apps/desktop/turbo.json`, `packages/core/turbo.json`,
+   `packages/views/turbo.json`, `.github/ci-paths.json`,
+   `scripts/ci-scope.test.mjs`)**: declared the four cross-package test input
+   files (`scripts/check-release.mjs`,
+   `server/pkg/agent/testdata/adapt_thinking_candidates.json`,
+   `server/internal/engineering/testdata/wikilinks.json`,
+   `server/internal/engineering/testdata/anchors.json`) in Turbo `test` inputs
+   and `.github/ci-paths.json` `"frontend"` scope, and aligned
+   `scripts/ci-scope.test.mjs` (`candidate release preflight` now includes
+   `frontend`).
+5. **`CI/backend-tests` (`server/internal/notify/notify.go`,
+   `server/internal/handler/attachment_dimensions_test.go`)**: registered
+   upstream `doc_comment` and `doc_mentioned` in `notify.inboxTypes` so
+   `TestInboxTypesMatchRegistry` matches the notification registry; guarded the
+   `store.files` read in `TestUploadFileImageDimensions` with `store.mu.Lock()`
+   to eliminate the `-race` data race with background thumbnail prewarming.
+6. **`CI/frontend-views-test` (17 test files + dependent assertions)**:
+   - Production fixes (3 files): removed the stray 3-way-merge
+     `setLoadedSrc(src)` call from `onError` in
+     `packages/views/editor/attachment.tsx`; synced `delimiter` attribute and
+     `data-delimiter` HTML codec onto `InlineMathSchema` in
+     `packages/views/editor/schema/math.ts` to match `InlineMathExtension`;
+     restored `tCommon(($) => $.more_actions)` (`"More actions"`) on the issue
+     detail actions trigger in `packages/views/issues/components/issue-detail.tsx`.
+   - Locale copy hygiene (`packages/views/locales/copy-hygiene.test.ts`):
+     normalized all 15 English Unicode ellipses (`…` → `...`) across
+     `en/{chat,dag,engineering,fork-ui,lark}.json` and all 53 `zh-Hans`
+     violations (ASCII `...`, straight `"..."`, lowercase `skill` / `Skills`)
+     across `zh-Hans/{agents,dag,engineering,fork-ui,message-delivery,runtimes,skill-packages}.json`,
+     updating corresponding test assertions (`code-tab.test.tsx`,
+     `engineering-baseline.test.tsx`, `e2e/perf/dag-view.spec.ts`).
+   - Test mock & v0.13.0 contract updates: `issue-detail.test.tsx` (use
+     production `staleTime: Infinity` in the cold-detail sharing test),
+     `update-section.test.tsx` (`version` manifest shape),
+     `attachment-html-block.test.tsx` / `readonly-content.test.tsx` /
+     `skill-picker-list.test.tsx` (ASCII `...`), `message-deliveries-section.test.tsx` /
+     `route-deliveries-dialog.test.tsx` / `archive-section.test.tsx` (export
+     `issueRouteRef` in `@multica/core/paths` mock),
+     `side-chat-surfaces.test.tsx` (canonical `/acme/issues/OL-1`),
+     `ysk-settings-toggles.test.tsx` (`QueryClientProvider` around
+     `useSettingsSearchIndex`), `workspace-agent-working-chip.tip-anchor.test.tsx` /
+     `sub-issues-agent-working-chip.tip-anchor.test.tsx` (`agentTaskSnapshotOptions`),
+     `tip-anchor-headers.test.tsx` (`useIsGuest`), and
+     `agents-page.folder-explorer.test.tsx` (`queryOptions` + `importOriginal`
+     for `@multica/core/agents`).
+
+Post-rework local verification: full `packages/views` suite (890/890 files
+across both shards, with the 8 CPU-contended shard-1 files re-verified 8/8 /
+242 tests green), all 6 other frontend workspace suites (`core`, `ui`, `web`,
+`desktop`, `collab`, `ee`), `pnpm test`, `pnpm --filter @multica/mobile test` &
+`lint`, `pnpm --filter @multica/docs test` (1,150/1,150), `pnpm test:brand`,
+`node scripts/check-test-cache-inputs.mjs`, `node scripts/ci-scope.test.mjs`
+(109/109), `pnpm check:ui-{exports,radii,outlines}`, `pnpm check:deps-catalog`,
+`pnpm typecheck` (14/14), `pnpm knip` (0 issues), `bash scripts/check-gofmt.sh`,
+and Go `-race` tests (`./internal/notify` + `TestUploadFileImageDimensions`
+against a fresh migrated disposable PG17.12 database, torn down cleanly) all
+pass.
 
 ## Cross-family review and Stage 4/5 handoff
 

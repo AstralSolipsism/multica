@@ -67,7 +67,7 @@
   },
   "message_list": {
     "process_history": "Execution process",
-    "process_loading": "Loading execution process…",
+    "process_loading": "Loading execution process...",
     "process_retry": "Couldn’t load the process. Retry",
     "process_empty": "No execution steps recorded.",
     "jump_to_latest": "Jump to latest",

@@ -7,6 +7,7 @@
  */
 
 import { cleanup, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkingAgentSummary } from "@multica/core/types";
 import {
@@ -14,6 +15,17 @@ import {
   type TipAnchorRegistry,
 } from "@multica/core/you-should-know/anchors";
 import { TipAnchorRegistryProvider } from "../../you-should-know/anchors/tip-anchor-context";
+
+vi.mock("@multica/core/hooks", () => ({
+  useWorkspaceId: () => "ws-1",
+}));
+
+vi.mock("@multica/core/agents", () => ({
+  agentTaskSnapshotOptions: (wsId: string) => ({
+    queryKey: ["agent-task-snapshot", wsId],
+    queryFn: async () => [],
+  }),
+}));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
@@ -85,15 +97,20 @@ function makeAgent(id = "agent-1"): WorkingAgentSummary {
 let registry: TipAnchorRegistry;
 
 function renderChip(agents: readonly WorkingAgentSummary[] | undefined, scope?: typeof SCOPE) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <TipAnchorRegistryProvider registry={registry}>
-      <WorkspaceAgentWorkingChip
-        value={false}
-        onToggle={() => {}}
-        agents={agents}
-        tipAnchorScope={scope}
-      />
-    </TipAnchorRegistryProvider>,
+    <QueryClientProvider client={queryClient}>
+      <TipAnchorRegistryProvider registry={registry}>
+        <WorkspaceAgentWorkingChip
+          value={false}
+          onToggle={() => {}}
+          agents={agents}
+          tipAnchorScope={scope}
+        />
+      </TipAnchorRegistryProvider>
+    </QueryClientProvider>,
   );
 }
 

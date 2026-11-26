@@ -109,7 +109,7 @@ describe("AttachmentHtmlBlock", () => {
     getAttachmentTextContentMock.mockReturnValue(new Promise(() => {}));
     const { container } = renderBlock();
 
-    expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+    expect(screen.getByText("Loading preview...")).toBeInTheDocument();
     expect(container.querySelector("[data-dynamic-block='html']")).not.toBeNull();
     expect(screen.queryByTestId("html-preview")).toBeNull();
   });
@@ -127,7 +127,7 @@ describe("AttachmentHtmlBlock", () => {
     vi.useFakeTimers();
     try {
       renderBlock({ attachments: undefined, phase: "settled" });
-      expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+      expect(screen.getByText("Loading preview...")).toBeInTheDocument();
       expect(screen.queryByRole("alert")).toBeNull();
 
       act(() => vi.advanceTimersByTime(1_999));

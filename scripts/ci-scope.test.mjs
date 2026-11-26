@@ -48,7 +48,7 @@ for (const [name, files, selected] of [
   ["container entrypoint", ["docker/entrypoint.sh"], ["scripts"]],
   ["candidate pipeline entry", ["scripts/candidate.py"], ["candidate"]],
   ["candidate pipeline test", ["scripts/candidate.test.py"], ["candidate"]],
-  ["candidate release preflight", ["scripts/check-release.mjs"], ["quality", "candidate"]],
+  ["candidate release preflight", ["scripts/check-release.mjs"], ["frontend", "quality", "candidate"]],
   ["backend archive builder", ["scripts/build-backend.py"], ["candidate"]],
   ["desktop candidate staging", ["apps/desktop/scripts/stage-candidate.mjs"], ["frontend", "e2e", "quality", "candidate"]],
   ["deployment origin config", ["packages/core/deployment/origin.json"], ["frontend", "e2e", "quality", "candidate"]],

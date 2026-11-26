@@ -1406,7 +1406,7 @@ export function IssueDetailSkeleton({
 export function IssueDetail({ issueId, onDelete, inbox, defaultSidebarOpen = true, layoutId = ISSUE_DETAIL_LAYOUT_ID, highlightCommentId: linkedCommentId, highlightRequestToken: linkedRequestToken, highlightRequestPending = false, onHighlightLanded, highlightAppRequestId, leadingAction, variant = "page", trailingActions, readsInbox = true, skipInitialRefetch = false, commentDraftRequest, onCommentDraftRequestHandled, openDeliverable, onDeliverableLinkDone }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
-  const { t: tForkUi } = useT("fork-ui");
+  const { t: tCommon } = useT("common");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
@@ -3935,7 +3935,7 @@ export function IssueDetail({ issueId, onDelete, inbox, defaultSidebarOpen = tru
               rowMenu={pageMenu.rowMenu}
               trigger={
                 <IconButton
-                  label={tForkUi(($) => $.issues.detail.more_actions)}
+                  label={tCommon(($) => $.more_actions)}
                   tooltipSide="bottom"
                   className="text-muted-foreground"
                 >

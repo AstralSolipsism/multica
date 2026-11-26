@@ -3,8 +3,8 @@
     "tooltip_dag": "Dependency graph view",
     "dag": "Graph"
   },
-  "loading": "Loading the complete dependency graph…",
-  "layout_pending": "Computing layout…",
+  "loading": "Loading the complete dependency graph...",
+  "layout_pending": "Computing layout...",
   "layout_cancel": "Cancel",
   "error_title": "Couldn't load the dependency graph",
   "error_unavailable": "This server version doesn't support the dependency graph yet — upgrade and try again.",

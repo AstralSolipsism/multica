@@ -17,6 +17,10 @@ export const InlineMathSchema = Node.create({
         default: "",
         rendered: false,
       },
+      delimiter: {
+        default: "$",
+        rendered: false,
+      },
     };
   },
 
@@ -26,6 +30,7 @@ export const InlineMathSchema = Node.create({
         tag: 'span[data-type="inline-math"]',
         getAttrs: (el) => ({
           expression: (el as HTMLElement).getAttribute("data-expression") ?? "",
+          delimiter: (el as HTMLElement).getAttribute("data-delimiter") === "$$" ? "$$" : "$",
         }),
       },
     ];
@@ -37,6 +42,7 @@ export const InlineMathSchema = Node.create({
       mergeAttributes(HTMLAttributes, {
         "data-type": "inline-math",
         "data-expression": node.attrs.expression,
+        "data-delimiter": node.attrs.delimiter,
       }),
       node.attrs.expression,
     ];

@@ -12,10 +12,15 @@ export function MulticaLogo({ size = 24, color }: MulticaLogoProps) {
   const { isDarkColorScheme } = useColorScheme();
   const resolvedColor = color ?? (isDarkColorScheme ? THEME.dark.foreground : THEME.light.foreground);
   return (
-    <Svg width={(size * 142) / 28} height={size} viewBox="0 0 142 28" accessibilityLabel="Labrastro">
-      <Text x={0} y={22} fontSize={26} fontWeight="600" fill={resolvedColor}>
-        Labrastro
-      </Text>
+    <Svg
+      width={(size * 142) / 28}
+      height={size}
+      viewBox="0 0 142 28"
+      // eslint-disable-next-line no-restricted-syntax -- brand proper noun
+      accessibilityLabel="Labrastro"
+    >
+      {/* eslint-disable-next-line no-restricted-syntax -- brand proper noun */}
+      <Text x={0} y={22} fontSize={26} fontWeight="600" fill={resolvedColor}>Labrastro</Text>
     </Svg>
   );
 }

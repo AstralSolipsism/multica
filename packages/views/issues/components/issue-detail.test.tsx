@@ -772,12 +772,13 @@ function createTestQueryClient() {
 function renderIssueDetail(issueId = "issue-1", options: {
   commentDraftRequest?: { content: string; token: number } | null;
   onCommentDraftRequestHandled?: () => void;
+  queryClient?: QueryClient;
 } = {}) {
-  const queryClient = createTestQueryClient();
+  const { queryClient = createTestQueryClient(), ...detailProps } = options;
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} {...options} />
+        <IssueDetail issueId={issueId} {...detailProps} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -893,7 +894,16 @@ describe("IssueDetail (shared)", () => {
   });
 
   it("observes the issue list without fetching it and shares the cold detail read with reactions", async () => {
-    renderIssueDetail();
+    // Match production QueryClient staleTime (Infinity) so newly-enabled
+    // observers of issueDetailOptions (such as the sidebar addables hook)
+    // reuse the cold detail read instead of immediately refetching stale data.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: Infinity },
+        mutations: { retry: false },
+      },
+    });
+    renderIssueDetail("issue-1", { queryClient });
     await screen.findByText("Implement authentication");
     await waitFor(() => expect(mockApiObj.getIssue).toHaveBeenCalledTimes(1));
     expect(mockApiObj.listIssues).not.toHaveBeenCalled();

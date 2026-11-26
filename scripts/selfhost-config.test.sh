@@ -115,7 +115,7 @@ fi
 kill_switch_env="$tmp_dir/.env.kill-switch"
 sed 's/^# FF_LOCAL_SEARCH_INDEX=off$/FF_LOCAL_SEARCH_INDEX=off/' "$tmp_env" >"$kill_switch_env"
 require_env "$(backend_flags "$kill_switch_env")" 'FF_LOCAL_SEARCH_INDEX=off'
-collab_config="$(env -u COLLAB_SECRET -u COLLAB_INTERNAL_URL -u COMPOSE_PROFILES -u FF_DOCS_V1 \
+collab_config="$(env -u COLLAB_SECRET -u COLLAB_INTERNAL_URL -u COMPOSE_PROFILES -u FF_DOCS_V1 -u MULTICA_IMAGE_TAG \
   docker compose --env-file "$collab_env" -f docker-compose.selfhost.yml config --format json)"
 node -e '
   const config = JSON.parse(process.argv[1]);
