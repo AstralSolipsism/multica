@@ -1,0 +1,405 @@
+# Upstream v0.13.0 sync — 2026-11-26 (OL-1517 / OL-1520)
+
+Stages 1–4 share `sync/v0.13.0-ol-1517`, targeting
+`AstralSolipsism/multica:main`. Stage 1 (OL-1518) owns the two-parent merge
+base `M1`, server/CLI three-way fusion, retiring the fork's `issue_dependency`
+backend/CLI in favor of upstream's native `issue_blocker`, pure data migration
+`9079` and retargeting `GET /api/workspaces/{workspaceId}/issues/graph` onto
+`effective_issue_blocker`. Stage 2 (OL-1519) owns frontend/Core/Web/Desktop
+three-way fusion, retiring duplicate dependency UI, retargeting the retained
+DAG canvas onto native blockers, realigning engineering and HTML dynamic-block
+thin plugs, and real-browser screenshots. Stage 3 (OL-1520) owns independent
+PostgreSQL 17 four-path migration parity (including `9079` live-data and
+cycle-conflict verification), isolated retained E2E execution, this sync
+record and opening the sole formal PR (kept **OPEN** pending Stage 4 after
+cross-family dual review and green remote `CI required`). Stage 4 (OL-1521)
+owns the whole-branch file-by-file, line-by-line restraint and necessity audit
+before Master's release sign-off; Stage 5 (OL-1522) owns tagging and deploying
+`v0.13.0-labrastro.1`.
+
+## Ancestry
+
+| Boundary | Full SHA |
+| --- | --- |
+| Merge base / `v0.11.1` | `e1fe10d6694848e35dd1aa00e08cd11d93e545ac` |
+| Released production baseline (`v0.11.1-labrastro.2`) | `055423a63c999b3ca940fec61134c3b485c7097c` |
+| Fork `origin/main` / `M1` first parent | `d0fde9ffc33feafc25c68cb88cdec6915ebfd95c` |
+| Upstream `v0.13.0` / `M1` second parent | `35b54a3742bb51bdf5ffa688655367ec98044862` |
+| Two-parent merge `M1` | `f5014b69b12c16e328a931e7054c625a34e2753a` |
+| Stage 1 primary fusion commit (OL-1518) | `af079ef47d1971d0b91571a938775c56dcac634d` |
+| Stage 1 reviewed head (OL-1518) | `30d98d18e751ed1d4372df1fac8c93a87cd5390a` |
+| Stage 2 primary fusion commit (OL-1519) | `0873827fe8ad497723815082da619890bf055a4c` |
+| Stage 2 DAG review fix commit (OL-1519) | `05de82adad1e673478ad2e44a1f83d436e83d249` |
+| Stage 2 reviewed head / Stage 3 tested application head | `58e5b762c8ecc17d3cc37bb981e1ddbbf260eb14` |
+
+`v0.11.1..v0.13.0` spans **361 commits** across `v0.12.0`, `v0.12.1`, `v0.12.2`
+and `v0.13.0` (59 new migration stems `697`–`755`). Zero unreleased commits
+from `v0.13.0..upstream/main` were cherry-picked. History is strictly
+append-only (no rebase), `origin/main` remains at
+`d0fde9ffc33feafc25c68cb88cdec6915ebfd95c`, `git merge-tree --write-tree
+origin/main HEAD` confirms a clean merge, and all external upstream-PR
+candidate branches (`upstream-pr/*`, `upstream-base/*`, `feat/*`, `fix/*`)
+were untouched.
+
+## Approved decisions (1A + 2A + 3) and pre-stage rulings
+
+1. **1A — Converge blocking dependencies onto upstream native `issue_blocker` (`MUL-8860`, migrations `743`–`746`, `754`) while retaining Labrastro's DAG canvas**:
+   - **Backend & CLI retirement**: deleted 27 fork `issue_dependency` files
+     (`server/internal/service/issue_dependency*.go`,
+     `server/internal/handler/issue_dependency*.go`,
+     `server/internal/handler/dependency_*.go`,
+     `server/internal/issuedependency/`,
+     `server/cmd/multica/cmd_issue_dependency*.go`,
+     `server/cmd/audit_issue_dependencies/`,
+     `server/pkg/db/queries/issue_dependency.sql`,
+     `server/internal/service/builtin_skills/multica-platform/references/issue-dependencies.md`).
+     All six historical `issue_dependency` plugs in
+     `server/cmd/multica/cmd_issue.go` are removed; blockers use upstream's
+     native `--blocked-by`, `--remove-blocked-by` and `--blocked` flags.
+   - **Frontend redundant UI retirement**: removed
+     `packages/views/issues/components/issue-dependencies-section.tsx`,
+     `dependency-prerequisites.tsx`, `packages/views/modals/edit-dependencies*.tsx`,
+     `packages/core/api/labrastro-dependency-api.ts`,
+     `packages/core/api/dependency-schemas*.ts`,
+     `packages/views/locales/*/dependencies.json`, obsolete dependency unit
+     tests and `e2e/issue-dependencies.spec.ts`. Detail Relations (`#11414`),
+     menu/context add-blocker (`#11394`), list/board blocked badge & hover card
+     (`#11396`), `Blocked` filter (`#11395`) and right sidebar slimming
+     (`#11352`) are adopted verbatim from upstream `v0.13.0`.
+   - **R2 ruling — `filter-dependency.ts` retained**:
+     `packages/core/issues/surface/filter-dependency.ts` and
+     `packages/core/issues/surface/filter-dependency.test.ts` are upstream
+     `MUL-8591` generic client-side filter prerequisite coordination (unrelated
+     to the retired `issue_dependency` table). Both were removed from the
+     deletion set and restored to **0-diff** against `v0.13.0`
+     (`35b54a3742bb51bdf5ffa688655367ec98044862`).
+   - **Retained DAG topology canvas (`List | Board | Table | DAG`)**: kept
+     fork-owned `packages/views/issues/dag/*`, `packages/core/issues/dag/*` and
+     read-only `GET /api/workspaces/{workspaceId}/issues/graph`
+     (`issue_graph.{go,sql}`), switching the graph query to upstream
+     `effective_issue_blocker`. The canvas distinguishes editable
+     `manual:<issue>:<blocker>` edges from read-only `stage:<issue>:<blocker>`
+     edges, delegates writes to upstream native blocker mutations, enforces the
+     workspace Guest 403 boundary and `projectaccess` private-project
+     isolation, and keeps minimal thin plugs in host files.
+2. **2A — Lossless historical data migration `9079` (`issue_dependency` → `issue_blocker`)**:
+   - Added pure data migration
+     `server/migrations/9079_labrastro_migrate_issue_dependency_to_blocker.{up,down}.sql`
+     with zero DDL (`issue_dependency` and `issue_dependency_audit` stay intact
+     so schema parity and historical records are never lost).
+   - **R1 attribution ruling**: both forward `type = 'blocked_by'` and reverse
+     `type = 'blocks'` edges preserve the dependent issue's
+     `(creator_type, creator_id)` pair (`member` or `agent`).
+   - Non-blocking `'related'`, self-loop and cross-workspace rows are ignored;
+     any legacy edge violating upstream's cycle (`issue_blocker_cycle`) or
+     ancestor-descendant (`issue_blocker_ancestor`) triggers is caught by
+     `EXCEPTION WHEN check_violation`, logged via `RAISE NOTICE` and skipped
+     without failing the upgrade. `9079.down.sql` is a safe no-op (`SELECT 1;`).
+3. **3 — Retained fork capabilities, release contract and production toggles**:
+   - **Project folders (`server/ee` & `packages/ee`)**: kept **0-diff** vs
+     `v0.13.0` (`35b54a3742bb51bdf5ffa688655367ec98044862`), absorbing all four
+     upstream `packages/ee` updates while preserving OL-1485 private-project
+     realtime fencing and workspace folder-write locking; both default and
+     `-tags oss` builds and `./cmd/server/...` suites pass.
+   - **Engineering module & baseline Wiki (`OL-1494`)**: all 22 upstream thin
+     plugs survived at **60 lines** total (within the prior 61-line budget),
+     with `ProjectEngineeringHeaderActions` mounted on the `#10627` refactored
+     project detail header.
+   - **Same-entity HTML attachment `src` & decision-card bridge (`OL-1422`/`OL-1494`)**:
+     aligned with upstream `#11163` dynamic-block refactoring
+     (`editor/utils/fence-title.ts`, `dynamic-block.tsx`,
+     `html-block-preview.tsx`, `streaming-fence.ts`).
+   - **8-provider unified Runtime quota (`OL-1472` 3A)**: continues rendering
+     `RuntimeQuotaCell` / `RuntimeQuotaCard` (upstream `RateLimitSection` /
+     `RateLimitCell` remain absent) alongside `#11557` inline runtime
+     visibility editing.
+   - **Recent thin plugs**: preserved Antigravity managed MCP (`OL-1513`),
+     Chat streaming folding and intermediate reply visibility (`OL-1510`) and
+     optional `NEXT_ASSET_PREFIX` (`OL-1508`).
+   - **Self-hosted defaults, branding & security boundaries**: commercial
+     entitlement gates stay `off` when `h.Features == nil`; `StarPrompt` stays
+     unmounted; `SHOW_SOURCE_BACKFILL = false`; `you_should_know = "all"`
+     coexists with upstream `status_changes = "muted"`, `auto_archive_prompt`
+     and `squad_handoff`; `server/internal/daemon/planquota_kimi.go` has
+     **0-diff** vs fork `main` `d0fde9ffc3` (same-UID peer-proof boundary
+     untouched).
+   - **Production 149 toggles (Stage 5)**: keep `FF_DOCS_V1=false` and
+     `FF_ISSUE_DESCRIPTION_LIVE=false` and do **not** deploy `multica-collab`;
+     generate and inject a 32-byte base64 `MULTICA_APPS_SECRET_KEY` (zero
+     plaintext secrets in logs/docs) into `multica-backend` so Connected Apps
+     with Composio (`OL-1516`) also support remote OAuth MCP.
+
+## Fork candidate release chain retained (`ours` in M1)
+
+The three release-orchestration files keep **0-diff** vs fork `main`
+(`d0fde9ffc33feafc25c68cb88cdec6915ebfd95c`), preserving Labrastro's offline
+single-tag `candidate` release contract (no `multica-collab` image built or
+published):
+
+| File | Resolution vs `d0fde9ffc3` | Verification in Stage 3 |
+| --- | --- | --- |
+| `.github/workflows/release.yml` | 0-diff (fork `ours`) | `actionlint .github/workflows/release.yml .github/workflows/ci.yml`: clean |
+| `.goreleaser.yml` | 0-diff (fork `ours`) | `goreleaser check` (v2.18.0): 1 configuration file validated |
+| `.github/RELEASING.md` | 0-diff (fork `ours`) | Offline single-tag `candidate` contract intact |
+
+## Migration identities and PostgreSQL 17 evidence
+
+The ledger contains **896 full migration identities**: **821** in `001`–`755`
+(762 carried forward from `v0.11.1` + 59 incoming `697`–`755`) and **75** in
+`9001`–`9079` (`9055`–`9058` remain historically absent; `9079` is the sole new
+fork migration). Every stem has a complete `.up.sql` / `.down.sql` pair.
+
+All **59 incoming upstream stems (`697`–`755`, 118 SQL files)** are 100%
+byte-identical to upstream `v0.13.0`
+(`35b54a3742bb51bdf5ffa688655367ec98044862`), verified by comparing
+`git rev-parse <upstream>:server/migrations/<file>` with `git ls-tree HEAD`:
+
+| Range | Incoming stems (59 stems / 118 SQL files) | Up/down identity |
+| --- | --- | --- |
+| `697`–`702` | `697_autopilot_run_idempotency_key`, `698_autopilot_run_idempotency_key_idx`\*, `699_member_guest_role`, `700_member_search_access`, `701_member_search_access_pkey_index`\*, `702_member_search_access_pkey` | byte-identical |
+| `703`–`709` | `703_doc_comment`, `704_doc_comment_pkey_index`\*, `705_doc_comment_pkey`, `706_doc_comment_doc_idx`\*, `707_doc_comment_workspace_idx`\*, `708_attachment_workspace_size_idx`\*, `709_drop_attachment_workspace_index`† | byte-identical |
+| `710`–`717` | `710_autopilot_quota_limit_notice`, `711_dashboard_range_view`, `712_dashboard_range_view_scope_idx`\*, `713_doc_collab`, `714_doc_collab_state_pkey_index`\*, `715_doc_collab_state_pkey`, `716_doc_revision_pkey_index`\*, `717_doc_revision_pkey` | byte-identical |
+| `718`–`722` | `718_auto_archive_prompt`, `719_remote_app_connection`, `720_remote_app_oauth_client_idx`\*, `721_remote_app_connection_owner_idx`\*, `722_auto_archive_agent_trigger_prompt` | byte-identical |
+| `723`–`730` | `723_issue_description_collab`, `724_issue_description_collab_state_pkey_index`\*, `725_issue_description_collab_state_pkey`, `726_issue_description_revision_pkey_index`\*, `727_issue_description_revision_pkey`, `728_app_account_requests`, `729_remote_app_connection_workspace_idx`\*, `730_drop_remote_app_connection_owner_idx`† | byte-identical |
+| `731`–`734` | `731_skill_revision`, `732_comment_idempotency_receipt`, `733_comment_idempotency_receipt_key`\*, `734_comment_idempotency_receipt_created`\* | byte-identical |
+| `735`–`742` | `735_task_usage_hourly_squad_col`, `736_task_usage_hourly_squad_uq_idx`\*, `737_task_usage_hourly_dirty_squad_uq_idx`\*, `738_task_usage_hourly_workspace_squad_idx`\*, `739_task_usage_hourly_squad_pipeline`, `740_task_usage_hourly_drop_legacy_key`†, `741_task_usage_hourly_dirty_drop_legacy_key`†, `742_task_usage_hourly_squad_rollback_merge` | byte-identical |
+| `743`–`747` | `743_issue_blocker`, `744_issue_blocker_unique`\*, `745_issue_blocker_reverse`\*, `746_issue_blocker_rules`, `747_squad_handoff_mode` | byte-identical |
+| `748`–`755` | `748_app_tool_call_quota_period`, `749_app_tool_call_quota_period_scope_idx`\*, `750_app_tool_call_quota_columns`, `751_app_tool_call_workspace_metered_idx`\*, `752_doc_comment_agent_runs`, `753_agent_task_queue_doc_idx`\*, `754_issue_stage_blockers_skip_top_level`, `755_task_usage_hourly_rollup_hour_key` | byte-identical |
+
+\* denotes the **24** incoming `CREATE INDEX CONCURRENTLY` up-migrations
+registered in `concurrentIndexCleanups`; † denotes the **4** incoming
+`CREATE INDEX CONCURRENTLY` down-migrations registered in
+`concurrentDownIndexCleanups` (`server/cmd/migrate/main.go`).
+`go test -count=1 ./cmd/migrate` (including `TestEveryConcurrentUpBuildHasCleanup`
+and `TestLabrastroIssueDependencyMigratesToBlockers`) passes in **60.19s**.
+
+All 836 existing migrations from `v0.11.1-labrastro.2` (`055423a63c`) and fork
+`origin/main` (`d0fde9ffc3`) retain identical bytes. Across the entire upstream
+inventory (`001`–`755`), only the historical `467` override differs:
+
+| Filename | `v0.13.0` blob | Fork blob |
+| --- | --- | --- |
+| `467_autopilot_trigger_creator_from_autopilot.down.sql` | `1c32fd2368ae0ae78e2bf5dc8886b780cbed69eb` | `ee35bfe58e35fccdeee0e32d4ae077fac5136c15` |
+| `467_autopilot_trigger_creator_from_autopilot.up.sql` | `40a3888825985738469996a1596110ae62038ac6` | `9d9719921186f406855115c4a5a7e73b9c377896` |
+
+`467` continues to update `autopilot_trigger` column comments only (verified
+live via `pg_description` on `created_by_type` / `created_by_id` across all
+four databases) and never infers a trigger principal from the autopilot
+creator. `9066_labrastro_retire_conversation_provenance` continues to restore
+upstream `579_wakeup_skip_handed_to_agent`'s `capture_issue_wakeup` verbatim:
+`go test -count=1 ./internal/migrations` (including all
+`TestLabrastroWakeupCapture*` cases) passes in **0.92s**, and live
+`pg_get_functiondef('capture_issue_wakeup'::regproc)` SHA-256 is identical
+across all four databases
+(`917ae5a18b0340ee588b5c38069920ad74f02f1503291fe6ef793d8555032f7f`).
+
+Four-path validation ran against a newly initialized task-private native
+**PostgreSQL 17.12 (Debian 17.12-1.pgdg12+1) / UTF8** cluster bound to
+`127.0.0.1:15432` (stopped and deleted before handoff). Each baseline ran its
+own archived `cmd/migrate` runner; the candidate `cmd/migrate` runner applied
+increments and executed the `9079` + `755`→`697` rollback/reapply pass:
+
+| Path | Ledger progression | Invalid indexes | Final normalized schema SHA-256 |
+| --- | --- | --- | --- |
+| 1. Fresh empty DB | `0 → 896` | 0 | `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659` |
+| 2. Released `v0.11.1-labrastro.2` (`055423a63c`) upgrade | `0 → 836 → 896` (`697`–`755` + `9079`) | 0 | `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659` |
+| 3. Fork `origin/main` (`d0fde9ffc3`) upgrade + `9079` data injection | `0 → 836 → 896` (`697`–`755` + `9079`) | 0 | `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659` |
+| 4. Clone Path 3 → rollback `9079` & `755`→`697` → reapply `697`→`755` + `9079` | `896 → 836 → 896` | 0 | `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659` |
+
+- **Final 896-entry normalized schema SHA-256** (`pg_dump --schema-only
+  --no-owner --no-privileges`, stripping randomized `\restrict` / `\unrestrict`
+  lines): **all four paths 100% equal** at
+  `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659`.
+- **Pre-upgrade & rollback mid-state 836-entry SHA-256**: both pre-upgrade
+  baselines (`v0.11.1-labrastro.2` and `origin/main`) match the previously
+  recorded 836-entry schema
+  (`926455a58b0261f3b94e0e931871dee354de8bec62d25a243129c22acf2a2bd3`). The Path
+  4 mid-state after rolling back `9079` and `755`→`697` hashes to
+  `6976bcd7e1a11781636dcdef8d58707e3632a51f22699b203baea7c2abd9f186` solely due
+  to upstream's own down-migrations (`739.down.sql` restores 3 task-usage
+  functions without inline `--` comments; `699.down.sql` and `750.down.sql`
+  re-add `member_role_check`, `workspace_invitation_role_check` and
+  `app_tool_call_outcome_check` with `NOT VALID` to avoid table-scan locks).
+  Replaying `697`→`755` + `9079` converges identically back to
+  `1320dff84a988762601b9e6f066074b8eca9d1c983eef6415142735b17220659`.
+- **Path 3 & Path 4 live `9079` regression evidence**:
+  - Eight historical rows were injected into `issue_dependency` on the 836-entry
+    `origin/main` database before upgrading: (1) open `blocked_by` (member),
+    (2) done historical `blocked_by` (member), (3) reverse `type = 'blocks'`
+    pointing to an agent-created in-progress issue, (4) `type = 'related'`,
+    (5) stage-order cycle dirty edge (`stage 1 blocked_by stage 2` under the
+    same parent), (6) parent-child ancestor dirty edge (`child blocked_by
+    parent`), (7) self-loop edge, and (8) cross-workspace edge.
+  - After upgrading (`836 → 896`) and again after Path 4 rollback/replay
+    (`896 → 836 → 896`):
+    - All **8** historical `issue_dependency` rows remain untouched.
+    - Exactly **3** valid edges landed in `issue_blocker`: open member edge
+      `(member, 33333333-...)`, finished historical edge `(member, 33333333-...)`,
+      and agent-created reverse `blocks` edge preserving `(agent, 44444444-...)`.
+    - Exactly **2** `blockers_done` system wakeups were armed automatically for
+      the two open dependent issues (`enabled=true, blockers=1`), and **0** for
+      the finished historical issue and conflicting stage child.
+    - `'related'`, self-loop and cross-workspace rows were ignored (`0` foreign
+      rows); both conflicting edges were caught cleanly by `check_violation`
+      with zero migration error, emitting PostgreSQL `RAISE NOTICE` entries:
+      `Parent and child issues cannot block each other` and
+      `Blockers cannot form a cycle (including stages)`.
+
+`TestWorkspaceDeletionManifestCoversPublicSchema`, `./internal/migrations`,
+`./cmd/migrate`, `./ee/...`, `./cmd/server/...` (both default and `-tags oss`),
+`./internal/branding` and targeted `TestIssueGraph*` /
+`TestNotificationPreferencesReportStatusChangesMutedByDefault` all pass against
+the migrated PG17 database.
+
+## Engineering insertion measurements and high-churn plugs
+
+Measured with `git diff -U0 <base> HEAD -- <file>` matching
+`engineering|baseline|wikilink` identifiers (excluding `tabStorage?.setBaseline`
+and the unrelated YSK documentation reference in `events.ts`) against both
+`e1fe10d6694848e35dd1aa00e08cd11d93e545ac` (`v0.11.1`) and
+`35b54a3742bb51bdf5ffa688655367ec98044862` (`v0.13.0`). Both bases yield
+identical counts: **22 files, 60/60 lines** (backend 7 files `17/17`, frontend
+15 files `43/43`; down 1 from 61 after upstream `v0.13.0` removed per-route
+`handle.title` from `apps/desktop/src/renderer/src/routes.tsx`):
+
+| Upstream file | Measured / budget |
+| --- | --- |
+| `packages/views/projects/components/project-detail.tsx` | 2 / 2 |
+| `packages/views/layout/panels/work-tree.tsx` | 2 / 2 |
+| `packages/core/realtime/use-realtime-sync.ts` | 4 / 4 |
+| `packages/core/types/events.ts` | 8 / 8 |
+| `packages/core/projects/queries.ts` | 4 / 4 |
+| `packages/core/projects/mutations.ts` | 2 / 2 |
+| `packages/core/api/index.ts` | 1 / 1 |
+| `apps/desktop/src/renderer/src/App.tsx` | 5 / 5 |
+| `apps/desktop/src/renderer/src/stores/tab-store.ts` | 4 / 4 |
+| `apps/desktop/src/renderer/src/routes.tsx` | 3 / 3 (was 4 in v0.11.1) |
+| `packages/core/paths/paths.ts` | 2 / 2 |
+| `packages/views/projects/components/index.ts` | 1 / 1 |
+| `packages/views/i18n/resources-types.ts` | 2 / 2 |
+| `packages/core/diagnostics/diagnostic-context.ts` | 1 / 1 |
+| `server/cmd/server/router.go` | 1 / 1 |
+| `server/cmd/multica/main.go` | 1 / 1 |
+| `server/cmd/multica/cmd_project.go` | 2 / 2 |
+| `server/internal/handler/project_resource.go` | 1 / 1 |
+| `server/internal/handler/project.go` | 4 / 4 |
+| `server/internal/service/issue.go` | 3 / 3 |
+| `server/internal/handler/workspace.go` | 5 / 5 |
+| `packages/core/package.json` | 2 / 2 |
+
+High-churn file anchors:
+
+- **`server/cmd/multica/cmd_issue.go`**: all six historical `issue_dependency`
+  plugs are cleared (`0` dependency plugs). The full diff against `v0.13.0`
+  (`35b54a3742bb51bdf5ffa688655367ec98044862`) is strictly `+79 / -23` across
+  the three documented non-dependency in-place differences (1 brand string in
+  `runIssuePullRequestsLink`, local flag validation in `runIssueCommentList`,
+  OL-458 `--scope`/`--offset`/`issueSearchMaxLimit`/`has_more` in
+  `issueSearchCmd`/`runIssueSearch` + `boolVal`), byte-identical to fork `main`'s
+  original functions.
+- **`server/internal/daemon/daemon.go`**: two `heartbeatExtrasFor` calls
+  (~lines 4817, 4974), two `recordTaskPlanQuota` calls (~lines 9634, 9991), one
+  `reportedTaskUsageEntries` call (~line 9999), three `planQuotaCache.Delete`
+  evictions (~lines 1565, 1635, 1645), `dshMissingProfileReason` (~line 2588),
+  and all fork struct fields (`planQuotaCache`, `jevClient`, `jevSamples`,
+  `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*`).
+  `server/internal/daemon/planquota_kimi.go` has **0-diff** vs fork `main`
+  `d0fde9ffc3`.
+
+## Go formatting scope
+
+`scripts/gofmt-upstream-exceptions.txt` is reconciled against
+`35b54a3742bb51bdf5ffa688655367ec98044862` (`v0.13.0`): 8 → **11** entries
+(`-2` upstream-formatted Lark files `ws_chunk_assembler.go` and
+`ws_chunk_assembler_test.go`, `+5` new unformatted upstream test files, `6`
+unchanged). All 11 entries were verified in Stage 3: every recorded Git blob ID
+matches both `git rev-parse 35b54a3742bb51bdf5ffa688655367ec98044862:<path>` and
+`git hash-object --no-filters -- <path>`, and all 11 are genuinely flagged by
+`gofmt -l`. Both `bash scripts/check-gofmt.test.sh` and
+`bash scripts/check-gofmt.sh` pass cleanly:
+
+| Blob ID (`v0.13.0`) | Path | Change vs `v0.11.1` |
+| --- | --- | --- |
+| `b1b8dd45e3f24caeb7df018969ce11be48bd6e0a` | `server/cmd/multica/cmd_quick_action_test.go` | added |
+| `eda4419b3475e58bc2d86a9b39814da1e4d2c6ba` | `server/cmd/multica/cmd_squad_test.go` | added |
+| `f90234704257dffc4ed7345d9f9f4273d5215fdb` | `server/internal/auth/cloud_pat_test.go` | unchanged |
+| `ad7d259dec1d351b8482db2a81ef9e1a942c9fde` | `server/internal/auth/membership_cache_test.go` | unchanged |
+| `2295b12ea2f93382201e1996a4854c259f5f7151` | `server/internal/handler/dashboard_squad_integration_test.go` | added |
+| `766b722dbad2d88f0174291aed08d2821704e679` | `server/internal/handler/doc_comment_test.go` | added |
+| `12153b91e33754a517f7b6e173de66185058d259` | `server/internal/handler/team_app_feature_test.go` | added |
+| `fa16c63ab8b87beda8104898b29b06a96e7d340d` | `server/internal/integrations/lark/markdown_detect.go` | unchanged |
+| `31e8b12d48ef29d696024552dede3a9c3931fd65` | `server/internal/integrations/lark/ws_frame_test.go` | unchanged |
+| `f2574a29d596239b2131b16d0f9c61b4ca49a1bd` | `server/internal/middleware/daemon_auth_test.go` | unchanged |
+| `620746cb12de71098d96282a23dc0c6331677b8f` | `server/pkg/featureflag/eval_context_test.go` | unchanged |
+
+## Validation and isolated retained E2E gate
+
+Stage 3 verification environment: Go 1.27.4, Node 24.21.0, pnpm 10.28.2,
+GoReleaser v2.18.0, Playwright 1.58.2 (Chrome Headless Shell 145.0.7632.6 /
+chromium v1208), native PostgreSQL 17.12. Tested exact application HEAD:
+`58e5b762c8ecc17d3cc37bb981e1ddbbf260eb14` (the Stage 3 commit touches sync
+documentation only; application code is unchanged).
+
+- **Static, brand, UI & script gates**: `pnpm install --frozen-lockfile`,
+  `bash scripts/check-gofmt.test.sh`, `bash scripts/check-gofmt.sh`,
+  `node scripts/brand/sync.mjs --check`, `pnpm test:brand` (13 node + 19
+  Vitest), `go test -count=1 ./internal/branding`, `pnpm knip` (zero issues),
+  `pnpm check:ui-exports` (76 files), `pnpm check:ui-radii` (3,183 files),
+  `pnpm check:ui-outlines` (3,337 files), `pnpm check:deps-catalog` (15
+  workspaces), `pnpm typecheck` (14/14 tasks), `bash scripts/test-retained-e2e.test.sh`,
+  `node scripts/ci-scope.test.mjs` (109/109), `bash scripts/dev-env.test.sh`,
+  `goreleaser check`, `actionlint .github/workflows/release.yml .github/workflows/ci.yml`
+  and `git diff --check` all pass. (`scripts/selfhost-config.test.sh` requires
+  local `docker` not present in this container; remote CI `script-checks` is
+  authoritative.)
+- **Bounded unit contract suite (`pnpm test`)**: **909 passed** (`ysk` 20,
+  `core` 102, `desktop` 19, `brand` 13 node + 19 Vitest, `mobile` 442, `web`
+  101, `views` 193) in **57.3 seconds** (< 1-minute budget).
+- **Backend / PG17 tests**: `go build ./...`, `go build -tags oss ./cmd/...`,
+  `go vet ./...`, `./internal/migrations` (0.92s), `./cmd/migrate` (60.19s,
+  covering `9079` and all concurrent index cleanup hooks),
+  `TestWorkspaceDeletionManifestCoversPublicSchema` (0.10s), `./ee/...`
+  (0.10s), `./cmd/server/...` default (9.64s) and `-tags oss` (8.72s),
+  `./internal/branding` (1.65s) and targeted `TestIssueGraph*` /
+  `TestNotificationPreferencesReportStatusChangesMutedByDefault` (0.55s) all
+  pass.
+- **Isolated retained E2E gate (`bash scripts/test-retained-e2e.sh`)**:
+  - Calibrated in Stage 2 (`scripts/test-retained-e2e.sh`,
+    `scripts/test-retained-e2e.test.sh`, `playwright.retained.config.ts`,
+    `docs/engineering/ci-gates.md`) to retire `e2e/issue-dependencies.spec.ts`
+    and cover `e2e/onboarding-smoke.spec.ts`, `e2e/dag-task-lines.spec.ts`
+    (wiring native `PUT /api/issues/:id { blocked_by }` + DAG canvas navigation
+    and canonical identifier detail routes) and `e2e/comments.spec.ts`.
+  - Executed unmodified against a fresh disposable `labrastro_e2e` PG17.12
+    database on `127.0.0.1:15432` with Chromium v1208 in a task-local
+    `PLAYWRIGHT_BROWSERS_PATH` and zero dotenv overrides:
+  - **Result: 20/20 passed, 0 failed, 0 skipped, 0 retries**
+    (`e2e/comments.spec.ts` 4/4, `e2e/dag-task-lines.spec.ts` 2/2,
+    `e2e/onboarding-smoke.spec.ts` 14/14); Playwright browser phase **1.3m**,
+    complete command **286.28 seconds** (< 5-minute budget).
+  - The task-private PG17 cluster was stopped via `pg_ctl stop`, and all
+    temporary directories, browsers, `test-results/` and built server binaries
+    were removed before commit. The retained E2E HTML report and logs archive
+    are attached to OL-1520 (not committed).
+
+## Cross-family review and Stage 4/5 handoff
+
+- **Author model families & reviewer exclusion**: commits on
+  `sync/v0.13.0-ol-1517` were authored across **GLM** (Stage 1 / OL-1518),
+  **Kimi** (Stage 2 / OL-1519) and **Gemini** (Stage 3 / OL-1520). Sequential
+  high-risk dual review on the sole formal PR must therefore be performed by
+  **Codex** (`审阅专家·Codex`) and **Claude** (`审阅专家·Claude`).
+- **Keep formal PR OPEN after Stage 3 dual review**: once both reviewers
+  approve and remote `CI required` turns green, **do NOT run `gh pr merge`**.
+  Leave the PR **OPEN** and advance OL-1520 to `done_2` so Stage 4 (OL-1521)
+  can complete the whole-branch file-by-file, line-by-line restraint and
+  necessity audit on the same open PR branch and report to Master for explicit
+  release authorization.
+- **Stage 5 (OL-1522 — release & production deployment)**: unlocked only after
+  Stage 4 completes, Master approves release on OL-1517 and the PR merges into
+  `AstralSolipsism/multica:main` with green `CI required`. Tag and publish
+  `v0.13.0-labrastro.1`, keep `FF_DOCS_V1=false` /
+  `FF_ISSUE_DESCRIPTION_LIVE=false` with no `multica-collab` container, and
+  provision/forward `MULTICA_APPS_SECRET_KEY` on 149 `multica-backend`.
+
+No temporary screenshots, archives, raw logs or audit scripts belong in Git.

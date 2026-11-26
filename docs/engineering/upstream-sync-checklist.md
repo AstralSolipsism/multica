@@ -6,9 +6,9 @@ remain acceptance criteria. A clean merge is insufficient. The external
 conversation boundary of [upstream-sync-20261002.md](upstream-sync-20261002.md)
 was retired by OL-1274; Feishu ingress, task tokens and wakeups follow upstream.
 
-Current upstream baseline: **v0.11.1**, commit
-`e1fe10d6694848e35dd1aa00e08cd11d93e545ac`.
-The [2026-11-21 sync record](upstream-sync-20261121.md) records the merge
+Current upstream baseline: **v0.13.0**, commit
+`35b54a3742bb51bdf5ffa688655367ec98044862`.
+The [2026-11-26 sync record](upstream-sync-20261126.md) records the merge
 lineage, migration evidence and insertion measurements.
 
 ## Migration identity and execution order
@@ -112,7 +112,7 @@ an upstream insertion requires updating this ledger in the same PR.
 | `packages/core/api/index.ts` | schema/type re-exports | `export * from "./labrastro-engineering-exports"` | 1 |
 | `apps/desktop/src/renderer/src/App.tsx` | re-auth destination restore, logout clear, expiry preserve | `engineeringReauthDestination` etc. (`platform/engineering-deep-links.ts`) | 5 |
 | `apps/desktop/src/renderer/src/stores/tab-store.ts` | `?page=&section=&thread=` landing on a matched tab | `applyEngineeringWikiLanding` (`platform/engineering-deep-links.ts`) | 4 |
-| `apps/desktop/src/renderer/src/routes.tsx` | desktop route entry | `ProjectEngineeringPage` | 4 |
+| `apps/desktop/src/renderer/src/routes.tsx` | desktop route entry | `ProjectEngineeringPage` | 3 |
 | `packages/core/paths/paths.ts` | `projectEngineering(id, target?: {page?, section?, thread?})` path builder | — | 2 |
 | `packages/views/projects/components/index.ts` | barrel export | `EngineeringOverview` | 1 |
 | `packages/views/i18n/resources-types.ts` | locale resource typing | `engineering.json` | 2 |
@@ -127,15 +127,14 @@ an upstream insertion requires updating this ledger in the same PR.
 | `packages/core/package.json` | engineering subpath exports | `./projects/baseline-wiki-diff`, `./projects/wikilink-resolution` | 2 |
 
 "Expected lines" uses one mechanical metric: added lines vs the recorded
-upstream base that mention an engineering/baseline identifier
+upstream base that mention an engineering/baseline/wikilink identifier
 (`git diff -U0 <base> HEAD -- <file>`), using base
-`e1fe10d6694848e35dd1aa00e08cd11d93e545ac` (v0.11.1; identical counts against
-v0.10.0 `2fcb424b72b024f65161809081009063846ea44d`). Table total: **61 lines**
-(58 existing + 3 carrier plugs). The three raised cells were re-measured on
-2026-11-21 while syncing v0.11.1: baseline attachment cleanup in
-`project.go`/`workspace.go` and the wiki-link export in `package.json` landed
-after the previous count. Verified against `3eaed6ed6` that the delta predates
-this sync, so no plug was widened by it. Exclude the unrelated YSK documentation
+`35b54a3742bb51bdf5ffa688655367ec98044862` (v0.13.0; identical counts against
+v0.11.1 `e1fe10d6694848e35dd1aa00e08cd11d93e545ac`). Table total: **60 lines**
+(17 backend across 7 files + 43 frontend across 15 files; reduced from 61 to
+60 during the v0.13.0 sync when upstream removed per-route `handle.title`
+from `apps/desktop/src/renderer/src/routes.tsx` in favor of URL-derived tab
+subjects). Exclude the unrelated YSK documentation
 reference in `events.ts` and tab persistence's `tabStorage?.setBaseline`.
 The path builder has two identifier-bearing lines; the old ledger's nine
 counted its whole multiline body. When a file's
@@ -161,11 +160,14 @@ The CLI attachment rewrite now uses upstream `applyAttachmentLinks`; its
 three fork plugs and dedicated implementation have been retired.
 
 `server/cmd/multica/cmd_issue.go` carries no `issue_dependency` plug since the
-v0.13.0 upgrade (OL-1517): the issue-dependency CLI went with the fork's
-`issue_dependency` backend, and blockers use upstream's native flags. The
-file keeps exactly three non-dependency differences from upstream
-`35b54a3742bb`; after every sync, `git diff <upstream-sha> --
-server/cmd/multica/cmd_issue.go` must show these and nothing else:
+v0.13.0 upgrade (OL-1517): all six historical dependency plugs were removed
+with the fork's `issue_dependency` backend, and blockers use upstream's native
+flags (`--blocked-by`, `--remove-blocked-by`, `--blocked`). The file keeps
+exactly three non-dependency differences (`+79 / -23`, byte-identical to fork
+`main`'s original functions) from upstream
+`35b54a3742bb51bdf5ffa688655367ec98044862`; after every sync,
+`git diff <upstream-sha> -- server/cmd/multica/cmd_issue.go` must show these
+and nothing else:
 
 | # | Where | Difference |
 | --- | --- | --- |
@@ -181,12 +183,12 @@ by the fork-owned `issue_graph.{go,sql}`; see [the graph API](../issue-graph-api
 
 | Anchor (function / symbol) | Fork file providing the implementation |
 | --- | --- |
-| `runHeartbeatTick` (~line 4777) and `handlePendingWorkHint` (~line 4934): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
-| `runTask` OnPlanQuota callback (~line 9500) and terminal report (~line 9832): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
-| Terminal usage conversion (~line 9840): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
-| `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1539, 1609, 1619): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
+| `runHeartbeatTick` (~line 4817) and `handlePendingWorkHint` (~line 4974): `d.client.SendHeartbeat(..., d.heartbeatExtrasFor(rid))` | `planquota_cache.go` |
+| `runTask` OnPlanQuota callback (~line 9634) and terminal report (~line 9991): `d.recordTaskPlanQuota(...)` | `planquota_cache.go` |
+| Terminal usage conversion (~line 9999): `reportedTaskUsageEntries(provider, result.Usage)` | `labrastro_task_usage.go` |
+| `removeStaleRuntime` / `applyRegisterResponseInPlace` (~lines 1565, 1635, 1645): `d.planQuotaCache.Delete(...)` — one-line cache eviction next to upstream runtime-row deletion | `planquota_cache.go` (field) |
 | `Daemon` struct fields `planQuotaCache`, `jevClient`, `jevSamples`, `jevProbe`, `hostMetrics`, `stepEffort`, `nativeMedia*` — field declarations stay in daemon.go; all methods live in fork files | `planquota_cache.go`, `jevprobe.go`, `hostmetrics.go`, `thinking_step.go`, `media.go` |
-| DSH reason consts `dshMissingProfileReason` etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
+| DSH reason consts `dshMissingProfileReason` (~line 2588) etc. — in-place rebrand + rewording of upstream consts; not movable | `dsh_profile.go` (shared) |
 
 `planquota_kimi.go`'s loopback same-UID peer-proof security boundary
 (`/proc/net/tcp` + `lsof`) is a hard red line: never move, weaken, or "clean
