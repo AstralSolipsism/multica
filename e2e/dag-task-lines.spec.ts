@@ -405,7 +405,7 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await expect(scopeTag).toHaveText("One layer", { timeout: 3_000 });
 
     await taskC.dblclick();
-    await expect(page).toHaveURL(new RegExp(`/issues/${c.id}`), { timeout: 30_000 });
+    await expect(page).toHaveURL(new RegExp(`/issues/${c.identifier}`), { timeout: 30_000 });
     await page.goBack();
     await expect(page.locator("[data-dag-task]")).toHaveCount(2, { timeout: 30_000 });
     await expect(selection.locator("[data-dag-scope]")).toHaveText("One layer");
@@ -436,7 +436,7 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     // Opening the detail and coming back restores the line and its viewport.
     const lineViewport = await readViewport(page);
     await selectThenDblclick(page, taskC);
-    await expect(page).toHaveURL(new RegExp(`/issues/${c.id}`), { timeout: 30_000 });
+    await expect(page).toHaveURL(new RegExp(`/issues/${c.identifier}`), { timeout: 30_000 });
     await page.goBack();
     await expect(page.locator("[data-dag-task]")).toHaveCount(2, { timeout: 30_000 });
     await expect.poll(() => readViewport(page)).toEqual(lineViewport);

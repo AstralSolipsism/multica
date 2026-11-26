@@ -145,11 +145,6 @@ export const issueKeys = {
   graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
   graph: (wsId: string, request: IssueGraphRequest) =>
     [...issueKeys.graphAll(wsId), request] as const,
-  /** Workspace-wide issue search used by pickers and the
-   *  dependency editor — a server read, so it lives in Query like every
-   *  other one, keyed with wsId per the workspace-scoping rule. */
-  search: (wsId: string, q: string, limit = 20) =>
-    [...issueKeys.all(wsId), "search", q, limit] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
@@ -534,21 +529,6 @@ export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
     queryFn: ({ client }) => readIssueDetail(client, wsId, id),
-  });
-}
-
-/**
- * Workspace-wide issue search (`GET /api/issues/search`) for picker-style UI.
- * Cross-project within the workspace; closed issues included so a completed
- * prerequisite can still be referenced. The query key carries the wsId and
- * the trimmed query and page size; callers debounce the input and gate with `enabled`.
- */
-export function issueSearchOptions(wsId: string, query: string, limit = 20) {
-  return queryOptions({
-    queryKey: issueKeys.search(wsId, query, limit),
-    queryFn: ({ signal }) =>
-      api.searchIssues({ q: query, limit, include_closed: true, signal }),
-    staleTime: 30_000,
   });
 }
 
