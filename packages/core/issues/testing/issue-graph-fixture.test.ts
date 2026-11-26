@@ -75,7 +75,7 @@ describe("synthetic issue graph fixtures", () => {
       expect(stats.lines).toBeGreaterThanOrEqual(6);
       expect(stats.fullyDoneLines).toBeGreaterThanOrEqual(1);
       expect(stats.hiddenLineTasks).toBeGreaterThan(0);
-      expect(stats.cancelledStillBlocking).toBeGreaterThanOrEqual(1);
+      expect(stats.cancelledSatisfiedEdges).toBeGreaterThanOrEqual(1);
     } else {
       expect(stats.lines).toBe(1);
     }
@@ -106,37 +106,75 @@ describe("synthetic issue graph fixtures", () => {
     },
   );
 
-  it("computes dependency summaries the way the backend does", () => {
-    const graph = buildIssueGraphFixture("stress-5000");
-    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-    // Backend: unique direct prerequisites of the node AND its ancestors,
-    // satisfied only by `done` (model.go Prerequisites + VisibleUnsatisfied).
-    const sourcesOf = new Map<string, Set<string>>();
-    for (const edge of graph.edges) {
-      const set = sourcesOf.get(edge.target) ?? new Set<string>();
-      set.add(edge.source);
-      sourcesOf.set(edge.target, set);
-    }
-    for (const node of graph.nodes.slice(0, 500)) {
-      const closure = new Set<string>();
-      let current: string | null = node.id;
-      while (current != null) {
-        for (const source of sourcesOf.get(current) ?? []) closure.add(source);
-        current = byId.get(current)!.parent_issue_id;
+  it.each(DATASETS)(
+    "aligns dependency summaries and edge provenance with native effective_issue_blocker: %s",
+    (name) => {
+      const graph = buildIssueGraphFixture(name);
+      const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+      // Native backend contract (server/internal/service/issue_graph.go:260):
+      // count only direct incoming edges of the node (no ancestor inheritance),
+      // and both `done` and `cancelled` satisfy a prerequisite.
+      const sourcesOf = new Map<string, string[]>();
+      let manualCount = 0;
+      let stageCount = 0;
+      for (const edge of graph.edges) {
+        const source = byId.get(edge.source)!;
+        const target = byId.get(edge.target)!;
+        const expectedVia =
+          source.parent_issue_id !== null &&
+          source.parent_issue_id === target.parent_issue_id &&
+          source.stage !== null &&
+          target.stage !== null &&
+          source.stage < target.stage
+            ? "stage"
+            : "manual";
+        expect(edge.source_edge_id).toBe(`${expectedVia}:${edge.target}:${edge.source}`);
+        if (expectedVia === "stage") stageCount += 1;
+        else manualCount += 1;
+        const list = sourcesOf.get(edge.target) ?? [];
+        list.push(edge.source);
+        sourcesOf.set(edge.target, list);
       }
-      const expected = [...closure].filter((id) => byId.get(id)!.status !== "done").length;
-      expect(node.dependency_summary!.visible_unsatisfied_count).toBe(expected);
-    }
-    // And the cancelled-but-blocking anchor really blocks: a cancelled node
-    // whose downstream target stays unfinished.
-    const cancelled = graph.nodes.filter((n) => n.status === "cancelled");
-    expect(cancelled.length).toBeGreaterThan(0);
-    const blockingCancelled = cancelled.filter((n) => {
-      const targets = graph.edges.filter((e) => e.source === n.id).map((e) => byId.get(e.target)!);
-      return targets.some((t) => t.status !== "done" && t.status !== "cancelled");
-    });
-    expect(blockingCancelled.length).toBeGreaterThan(0);
-  });
+      expect(manualCount).toBeGreaterThan(0);
+      expect(stageCount).toBeGreaterThan(0);
+
+      let mismatched = 0;
+      for (const node of graph.nodes) {
+        const directSources = sourcesOf.get(node.id) ?? [];
+        const expected = directSources.filter((id) => {
+          const status = byId.get(id)!.status;
+          return status !== "done" && status !== "cancelled";
+        }).length;
+        if (node.dependency_summary!.visible_unsatisfied_count !== expected) {
+          mismatched += 1;
+        }
+      }
+      expect(mismatched).toBe(0);
+
+      // Cancelled prerequisites retain their relationship edges in the graph
+      // while already counting as satisfied (never blocking downstream tasks).
+      if (name !== "big-line") {
+        const cancelledEdgesToUnfinished = graph.edges.filter((edge) => {
+          const source = byId.get(edge.source)!;
+          const target = byId.get(edge.target)!;
+          return (
+            source.status === "cancelled" &&
+            target.status !== "done" &&
+            target.status !== "cancelled"
+          );
+        });
+        expect(cancelledEdgesToUnfinished.length).toBeGreaterThan(0);
+        for (const edge of cancelledEdgesToUnfinished) {
+          const target = byId.get(edge.target)!;
+          const nonTerminalDirect = (sourcesOf.get(target.id) ?? []).filter((id) => {
+            const status = byId.get(id)!.status;
+            return status !== "done" && status !== "cancelled";
+          }).length;
+          expect(target.dependency_summary!.visible_unsatisfied_count).toBe(nonTerminalDirect);
+        }
+      }
+    },
+  );
 
   it("regenerates byte-identical documents for the same dataset", () => {
     // Fresh-process semantics are emulated by config objects (the named cache
@@ -160,7 +198,7 @@ describe("synthetic issue graph fixtures", () => {
       crossLineTasks: 0, crossLineShare: 0, crossLineAgainstFlow: 0, ancestorEdges: 0,
       leavesWithoutInlinePrereq: 0, inlinePrereqMin: 0, inlinePrereqMax: 0,
       inProgressWithoutRunSummary: 0, inProgressWithoutActiveRun: 0,
-      cancelledStillBlocking: 0, acyclic: true,
+      cancelledSatisfiedEdges: 0, acyclic: true,
     });
     // Cached documents are shared read-only: mutation must throw in strict
     // mode (vitest transpiles ESM, which is strict).
@@ -175,7 +213,7 @@ describe("synthetic issue graph fixtures", () => {
       ...ISSUE_GRAPH_FIXTURE_DATASETS["2500"]!,
       name: "probe-infeasible", totalTasks: 85, seed: "x",
     })).toThrow(/infeasible spread bounds/);
-    // No unfinished line for the cancelled-blocking anchor.
+    // No unfinished line for the cancelled-satisfied anchor.
     expect(() => buildIssueGraphFixture({
       ...ISSUE_GRAPH_FIXTURE_DATASETS["2500"]!,
       name: "probe-all-done", seed: "x",
@@ -281,9 +319,9 @@ describe("synthetic issue graph fixtures", () => {
       expect(inlineStats.crossLineTasks).toBe(1);
     });
 
-    it("counts only fully-done lines as hidden and finds cancelled blockers", () => {
-      // Line a fully done (done + cancelled members) but its cancelled member
-      // still blocks an unfinished task in line b.
+    it("counts only fully-done lines as hidden and finds cancelled satisfied edges", () => {
+      // Line a is completed (done + cancelled members) and its cancelled member
+      // retains a satisfied outgoing edge to an unfinished task in line b.
       const nodes = [
         node("a", null, "done"),
         node("a1", "a", "done", 1),
@@ -294,10 +332,10 @@ describe("synthetic issue graph fixtures", () => {
       const stats = analyzeIssueGraphFixture(graphOf(nodes, [["a2", "b1"]]));
       expect(stats.fullyDoneLines).toBe(1);
       expect(stats.hiddenLineTasks).toBe(3);
-      expect(stats.cancelledStillBlocking).toBe(1);
+      expect(stats.cancelledSatisfiedEdges).toBe(1);
       expect(stats.unfinished).toBe(2);
-      // A cancelled member with no downstream edge blocks nothing.
-      expect(analyzeIssueGraphFixture(graphOf(nodes, [])).cancelledStillBlocking).toBe(0);
+      // A cancelled member with no outgoing edge has zero satisfied edges.
+      expect(analyzeIssueGraphFixture(graphOf(nodes, [])).cancelledSatisfiedEdges).toBe(0);
     });
 
     it("counts same-flow cross-line edges as against the flow (N11)", () => {

@@ -528,10 +528,10 @@ reviewed head (`H0 = f6c6d9b050`) were mechanically partitioned:
 | Mechanical bucket at `H0` | Count | Stage 4 action |
 | --- | ---: | --- |
 | Trivial upstream (`h == u && m == b`) | 8,464 | Mechanically excluded (zero fork divergence) |
-| Untouched fork-only (`h == m && u == b`) | 1,905 | Retained (18 dependent files slimmed, 2 dead files deleted, 1 restored to `v0.13.0` 0-diff in lockstep) |
+| Untouched fork-only (`h == m && u == b`) | 1,905 | Retained (21 dependent files slimmed/fixed, 2 dead files deleted, 1 restored to `v0.13.0` 0-diff in lockstep) |
 | **Non-trivial audited 100% file-by-file** | **732** | **51 restored to `v0.13.0` 0-diff, 2 deleted, 118 slimmed/fixed, 561 verified keep** |
 
-Key Stage 4 fixes and slimming outcomes (all applied as a single linear commit
+Key Stage 4 fixes and slimming outcomes (all applied as linear commits
 on `sync/v0.13.0-ol-1517`, no rebase):
 
 1. **52 files restored to exact `v0.13.0` 0-diff** (51 from the 732 non-trivial
@@ -559,6 +559,16 @@ on `sync/v0.13.0-ol-1517`, no rebase):
      `packages/core/api/testdata/issue-graph.json` against live PG17 and
      updated `packages/core/api/issue-graph-schemas.test.ts` (8 edges,
      `visibleUnsatisfiedCount = 1`).
+   - `packages/core/issues/testing/issue-graph-fixture.{ts,test.ts}` (plus
+     `packages/views/issues/dag/dag-scene-layout.test.ts` dense-line selector):
+     aligned shared synthetic DAG fixture (`ISSUE_GRAPH_FIXTURE_VERSION =
+     2.2.0`) with native `effective_issue_blocker` rules — both `done` and
+     `cancelled` satisfy prerequisites, direct-only blocker counting (no
+     ancestor inheritance), native `manual:<target>:<source>` /
+     `stage:<target>:<source>` edge provenance IDs, zero summary drift across
+     all 6 datasets (`accept-5000`, `stress-5000`, `1000`, `2500`, `10000`,
+     `big-line`) and the Go reference snapshot, and replaced legacy
+     `cancelledStillBlocking` assertions with `cancelledSatisfiedEdges`.
    - `server/internal/service/autopilot.go`: restored missing
      `errors.Is(err, errRunAlreadyTerminal)` early return; inlined unused
      `failAutopilotRunWithResult` in `autopilot_quota.go`; restored `NULL` in
