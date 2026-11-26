@@ -481,8 +481,10 @@ were resolved in a single linear follow-up commit on `sync/v0.13.0-ol-1517`:
    `cancelledBlockedIds` / `attention: "exception"`, removed the legacy
    `keptCancelled` pull-out walk in `dagCompletedVisibility` so finished
    (done/cancelled) lines and singles hide uniformly when `showCompleted` is
-   off, removed the retired cancelled-blocking legend entry, and updated
-   `models.test.ts` and views DAG tests accordingly.
+   off, removed the retired cancelled-blocking legend entry and aligned
+   `legend_lit_flow` across all six `dag.json` locales (`en`, `fr`, `ja`, `ko`,
+   `ru`, `zh-Hans`), and updated `models.test.ts` and views DAG tests
+   accordingly.
 2. **R2 — DAG non-inheritance of parent blockers (`packages/core/issues/dag/traversal.ts`,
    `redundancy.ts`, `detail.ts`, `model-index.ts`, `packages/views/issues/dag/dag-scene-inputs.ts`)**:
    removed parent/child blocker inheritance from `dagDependencyClosure`,

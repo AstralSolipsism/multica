@@ -194,9 +194,12 @@ describe("DagToolbar navigation", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "On a lit chain, a glowing dot with a short tail travels from prerequisite to dependent: brand blue while blocking, soft green when satisfied, red when cancelled but still blocking",
+        "On a lit chain, a glowing dot with a short tail travels from prerequisite to dependent: brand blue while blocking, soft green when satisfied",
       ),
     ).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(7);
+    expect(items.every((item) => !/cancelled/i.test(item.textContent ?? ""))).toBe(true);
   });
 });
 
