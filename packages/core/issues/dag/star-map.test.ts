@@ -4,7 +4,7 @@ import { createDagModelIndex } from "./model-index";
 import { graphNode as n, issueGraph as g } from "./test-fixtures";
 import {
   buildStarMapHierarchy, clampStarMapCamera, fitStarMapCamera,
-  nearestStarMapNode, starMapMacroBounds, starMapMorphAt,
+  nearestStarMapNode, starMapMacroBounds, starMapMorphAt, starMapScreenRadius,
 } from "./star-map";
 
 const done = { status: "done", statusCategory: "done" };
@@ -76,7 +76,7 @@ describe("star map hierarchy", () => {
     expect(second.sectorGuides).toEqual(first.sectorGuides);
     expect(new Set(first.roots.map((root) => `${root.anchor.x},${root.anchor.y}`)).size).toBe(300);
 
-    const innerRing = first.roots.filter((root) => Math.abs(Math.hypot(root.anchor.x, root.anchor.y) - 72) < 1e-9);
+    const innerRing = first.roots.filter((root) => Math.abs(Math.hypot(root.anchor.x, root.anchor.y) - 76) < 1e-9);
     expect(innerRing).toHaveLength(6);
     const innerAngles = innerRing.map((root) => Math.atan2(root.anchor.y, root.anchor.x)).sort((a, b) => a - b);
     const angularGaps = innerAngles.map((angle, index) =>
@@ -128,15 +128,15 @@ describe("star map hierarchy", () => {
         const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), size, {
           insets, minZoom: 0.05, maxZoom: 4, fill: 0.92,
         });
-        let outside = 0, minimumDistance = Infinity;
+        let outside = 0, minimumDistance = Infinity, maximumRadius = 0;
         for (let left = 0; left < hierarchy.roots.length; left += 1) {
           const root = hierarchy.roots[left]!, a = root.anchor;
           const x = a.x * camera.zoom + camera.x, y = a.y * camera.zoom + camera.y;
-          const minimumRadius = root.children.length ? 12 : 9;
-          const radius = Math.max(root.coreRadius, minimumRadius / camera.zoom) * camera.zoom;
-          if (x - radius < insets.left || x + radius > size.width - insets.right ||
-            y - radius < insets.top || y + radius > size.height - insets.bottom) outside += 1;
-          if (kind === "independent") expect(radius * 2).toBeGreaterThanOrEqual(18);
+          const rPx = starMapScreenRadius(root, camera.zoom, true) * camera.zoom;
+          maximumRadius = Math.max(maximumRadius, rPx);
+          if (x - rPx < insets.left || x + rPx > size.width - insets.right ||
+            y - rPx < insets.top || y + rPx > size.height - insets.bottom) outside += 1;
+          expect(rPx * 2).toBeGreaterThanOrEqual(18);
           for (let right = left + 1; right < hierarchy.roots.length; right += 1) {
             const b = hierarchy.roots[right]!.anchor;
             minimumDistance = Math.min(minimumDistance, Math.hypot(a.x - b.x, a.y - b.y) * camera.zoom);
@@ -144,6 +144,7 @@ describe("star map hierarchy", () => {
         }
         expect(outside).toBe(0);
         if (kind === "independent") expect(minimumDistance).toBeGreaterThanOrEqual(22);
+        else expect(minimumDistance).toBeGreaterThan(maximumRadius * 2);
       }
     }
   });

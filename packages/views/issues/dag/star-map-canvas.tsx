@@ -8,6 +8,7 @@ import {
   starMapMacroBounds,
   nearestStarMapNode,
   starMapMorphAt,
+  starMapScreenRadius,
   type StarMapEdge,
   type StarMapHierarchy,
   type StarMapNode,
@@ -344,6 +345,57 @@ export function starMapSpriteRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">
 export function starMapTimeScaleTarget(orbiting: boolean, reducedMotion: boolean, slowed: boolean, morph: number) {
   if (!orbiting || reducedMotion) return 0;
   return (slowed ? 0.08 : 1) * (1 - morph);
+}
+
+export interface StarMapRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Opaque base first; orb material is only allowed inside that same contour. */
+export function drawStarMapMorphNode(
+  ctx: CanvasRenderingContext2D,
+  render: {
+    rect: StarMapRect;
+    radius: number;
+    morph: number;
+    alpha: number;
+    light: boolean;
+    closed: boolean;
+    sprite: HTMLCanvasElement;
+    spriteRect: StarMapRect;
+    zoom: number;
+    dashed: boolean;
+  },
+) {
+  const { rect, radius, morph, alpha, light, closed, sprite, spriteRect, zoom, dashed } = render;
+  const cornerRadius = starMapCornerRadius(radius, rect.w, rect.h, morph);
+  const { x, y } = rect;
+  ctx.globalAlpha = alpha;
+  roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
+  const gradient = ctx.createLinearGradient(x, y, x, y + rect.h);
+  gradient.addColorStop(0, light ? "rgba(255,255,255,.98)" : "rgba(26,32,46,.94)");
+  gradient.addColorStop(1, light ? "rgba(248,250,252,.95)" : "rgba(17,21,31,.96)");
+  ctx.fillStyle = closed ? (light ? "rgba(248,250,252,.72)" : "rgba(15,19,28,.72)") : gradient;
+  ctx.fill();
+  const orbMix = 1 - smoothstep(0.06, 0.58, morph);
+  if (orbMix > 0.01) {
+    ctx.save();
+    roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
+    ctx.clip();
+    ctx.globalAlpha = alpha * orbMix;
+    ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
+    ctx.restore();
+  }
+  ctx.globalAlpha = alpha;
+  roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
+  ctx.strokeStyle = light ? "rgba(15,23,42,.14)" : "rgba(226,232,240,.16)";
+  ctx.lineWidth = 1 / zoom;
+  if (dashed) ctx.setLineDash([4 / zoom, 3 / zoom]);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 function edgeAppearance(edge: StarMapEdge, runtime: Runtime, current: StarMapCanvasProps) {
@@ -684,12 +736,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         const veilTarget = data.childrenIds.length ? (1 - smoothstep(from, to, runtime.camera.zoom)) * (1 - easeM) : 0;
         node.veil += (veilTarget - node.veil) * Math.min(1, dt * 10);
         node.emergence = parent ? parent.emergence * Math.pow(Math.max(0, 1 - parent.veil), 1.4) : 1;
-        const dense = current.hierarchy.nodes.length > 180;
-        const baseMinPx = data.depth === 0
-          ? (data.childrenIds.length ? dense ? 12 : 20.5 : dense ? 9 : 14.5)
-          : data.depth === 1 ? dense ? 10.5 : 14.8 : dense ? 9 : 13.8;
-        const minPx = baseMinPx;
-        const radius = Math.max(data.coreRadius, minPx / runtime.camera.zoom);
+        const radius = starMapScreenRadius(data, runtime.camera.zoom, current.hierarchy.nodes.length > 180);
         node.x = parent ? node.orbX * (1 - parent.veil) + parent.x * parent.veil : node.orbX;
         node.y = parent ? node.orbY * (1 - parent.veil) + parent.y * parent.veil : node.orbY;
         node.r = parent ? radius * (1 - parent.veil) + parent.r * parent.veil : radius;
@@ -910,33 +957,18 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
       const spriteRect = starMapSpriteRect(node);
       ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
     } else {
-      const { x, y } = rect;
-      const cornerRadius = starMapCornerRadius(r, rect.w, rect.h, m);
-      const cardAlpha = smoothstep(0.2, 0.86, m);
-      ctx.globalAlpha = alpha * cardAlpha;
-      roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
-      const gradient = ctx.createLinearGradient(x, y, x, y + rect.h);
-      gradient.addColorStop(0, current.light ? "rgba(255,255,255,.98)" : "rgba(26,32,46,.94)");
-      gradient.addColorStop(1, current.light ? "rgba(248,250,252,.95)" : "rgba(17,21,31,.96)");
-      ctx.fillStyle = isClosed ? (current.light ? "rgba(248,250,252,.72)" : "rgba(15,19,28,.72)") : gradient;
-      ctx.fill();
-      const spriteAlpha = 1 - smoothstep(0.05, 0.55, m);
-      if (spriteAlpha > 0) {
-        const spriteRect = starMapSpriteRect(node);
-        ctx.save();
-        roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
-        ctx.clip();
-        ctx.globalAlpha = alpha * spriteAlpha;
-        ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
-        ctx.restore();
-      }
-      ctx.globalAlpha = alpha * cardAlpha;
-      roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
-      ctx.strokeStyle = current.light ? "rgba(15,23,42,.14)" : "rgba(226,232,240,.16)";
-      ctx.lineWidth = 1 / runtime.camera.zoom;
-      if (node.target && (node.target.w < 248 || node.data.issue.role === "context")) ctx.setLineDash([4 / runtime.camera.zoom, 3 / runtime.camera.zoom]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      drawStarMapMorphNode(ctx, {
+        rect,
+        radius: r,
+        morph: m,
+        alpha,
+        light: current.light,
+        closed: isClosed,
+        sprite,
+        spriteRect: starMapSpriteRect(node),
+        zoom: runtime.camera.zoom,
+        dashed: Boolean(node.target && (node.target.w < 248 || node.data.issue.role === "context")),
+      });
     }
     ctx.globalAlpha = alpha;
     if (m < 0.5) {

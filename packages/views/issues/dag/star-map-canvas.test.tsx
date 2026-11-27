@@ -3,7 +3,8 @@ import { cleanup, fireEvent } from "@testing-library/react";
 import { buildStarMapHierarchy, createDagModelIndex, fitStarMapCamera, starMapMacroBounds } from "@multica/core/issues/dag";
 import { renderWithI18n } from "../../test/i18n";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
-import { StarMapCanvas, starMapCornerRadius, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
+import { starMapScreenRadius } from "@multica/core/issues/dag";
+import { StarMapCanvas, drawStarMapMorphNode, starMapCornerRadius, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
 import { SPRITE_CORE_RATIO } from "./star-map-sprites";
 
 const layers = { completed: false, manual: true, wakeup: true, mention: true, stage: true };
@@ -61,6 +62,57 @@ describe("star map corner interpolation", () => {
         10,
       );
     }
+  });
+});
+
+describe("star map morph draw calls", () => {
+  it("keeps the base opaque and clips every sprite image to that contour", () => {
+    for (const morph of [0.5, 0.559, 0.56, 0.559, 0.5]) {
+      const operations: string[] = [];
+      const gradient = { addColorStop: vi.fn() };
+      const ctx = {
+        globalAlpha: 1,
+        beginPath: vi.fn(),
+        roundRect: vi.fn(() => operations.push("roundRect")),
+        createLinearGradient: vi.fn(() => gradient),
+        fill: vi.fn(() => operations.push(`fill:${ctx.globalAlpha}`)),
+        save: vi.fn(() => operations.push("save")),
+        clip: vi.fn(() => operations.push("clip")),
+        drawImage: vi.fn(() => operations.push("image")),
+        restore: vi.fn(() => operations.push("restore")),
+        stroke: vi.fn(() => operations.push("stroke")),
+        setLineDash: vi.fn(),
+      } as unknown as CanvasRenderingContext2D;
+      const size = starMapNodeSize(15, { x: 0, y: 0, w: 248, h: 116 }, morph);
+      drawStarMapMorphNode(ctx, {
+        rect: starMapNodeRect({ x: 80, y: 60, ...size }),
+        radius: 15,
+        morph,
+        alpha: 1,
+        light: false,
+        closed: false,
+        sprite: document.createElement("canvas"),
+        spriteRect: starMapSpriteRect({ x: 80, y: 60, ...size }),
+        zoom: 1,
+        dashed: false,
+      });
+      expect(operations[0]).toBe("roundRect");
+      expect(operations[1]).toBeDefined();
+      expect(Number(operations[1]!.split(":")[1])).toBeGreaterThanOrEqual(0.9);
+      const imageIndex = operations.indexOf("image");
+      if (imageIndex >= 0) {
+        expect(operations[imageIndex - 2]).toBe("roundRect");
+        expect(operations[imageIndex - 1]).toBe("clip");
+      }
+      expect(operations.at(-1)).toBe("stroke");
+    }
+  });
+
+  it("preserves 18px independent and 24px parent minimum screen diameters", () => {
+    const solo = { coreRadius: 14, depth: 0, childrenIds: [] };
+    const parent = { coreRadius: 22, depth: 0, childrenIds: ["child"] };
+    expect(2 * starMapScreenRadius(solo, 0.3, true) * 0.3).toBeCloseTo(18, 10);
+    expect(2 * starMapScreenRadius(parent, 0.3, true) * 0.3).toBeCloseTo(24, 10);
   });
 });
 
