@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent } from "@testing-library/react";
-import { buildStarMapHierarchy, createDagModelIndex, fitStarMapCamera } from "@multica/core/issues/dag";
+import { buildStarMapHierarchy, createDagModelIndex, fitStarMapCamera, starMapMacroBounds } from "@multica/core/issues/dag";
 import { renderWithI18n } from "../../test/i18n";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
-import { StarMapCanvas, starMapMacroBounds, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, STAR_MAP_ORB_VISIBLE_FRACTION, type StarMapCanvasProps } from "./star-map-canvas";
+import { StarMapCanvas, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
+import { SPRITE_CORE_RATIO } from "./star-map-sprites";
 
 const layers = { completed: false, manual: true, wakeup: true, mention: true, stage: true };
 
@@ -43,10 +44,10 @@ describe("star map sprite outline", () => {
     for (const morph of [0.559, 0.56]) {
       const size = starMapNodeSize(15, { x: 0, y: 0, w: 248, h: 116 }, morph);
       const rect = starMapSpriteRect({ x: 80, y: 60, ...size });
-      expect(rect.w * STAR_MAP_ORB_VISIBLE_FRACTION).toBeCloseTo(size.w, 10);
-      expect(rect.h * STAR_MAP_ORB_VISIBLE_FRACTION).toBeCloseTo(size.h, 10);
-      expect(rect.x + rect.w * (1 - STAR_MAP_ORB_VISIBLE_FRACTION) / 2).toBeCloseTo(80 - size.w / 2, 10);
-      expect(rect.y + rect.h * (1 - STAR_MAP_ORB_VISIBLE_FRACTION) / 2).toBeCloseTo(60 - size.h / 2, 10);
+      expect(rect.w * SPRITE_CORE_RATIO).toBeCloseTo(size.w, 10);
+      expect(rect.h * SPRITE_CORE_RATIO).toBeCloseTo(size.h, 10);
+      expect(rect.x + rect.w * (1 - SPRITE_CORE_RATIO) / 2).toBeCloseTo(80 - size.w / 2, 10);
+      expect(rect.y + rect.h * (1 - SPRITE_CORE_RATIO) / 2).toBeCloseTo(60 - size.h / 2, 10);
     }
   });
 });
@@ -69,7 +70,7 @@ describe("star map macro camera", () => {
       }));
       const hierarchy = buildStarMapHierarchy(createDagModelIndex(issueGraph(nodes)), { layout: "constellation", showCompleted: true });
       const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), { width: 1280, height: 720 }, {
-        insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
+        insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.05, maxZoom: 0.45, fill: 0.92,
       });
       for (const root of hierarchy.roots) {
         const x = root.anchor.x * camera.zoom + camera.x;
@@ -139,7 +140,7 @@ describe("star map manual edge interaction", () => {
       bottom = Math.max(bottom, node.anchor.y + pad);
     }
     const camera = fitStarMapCamera({ left, right, top, bottom }, { width: 800, height: 600 }, {
-      insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
+      insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.05, maxZoom: 0.45, fill: 0.92,
     });
     const clientX = world.x * camera.zoom + camera.x;
     const clientY = world.y * camera.zoom + camera.y;

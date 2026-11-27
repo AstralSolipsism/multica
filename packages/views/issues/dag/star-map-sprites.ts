@@ -1,4 +1,5 @@
 export type StarMapRGB = readonly [number, number, number];
+export const SPRITE_CORE_RATIO = 0.68;
 
 export function rgba(rgb: StarMapRGB, alpha: number) {
   return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
@@ -81,7 +82,7 @@ export class StarMapSpriteCache {
   orb(rgb: StarMapRGB, luminous: boolean, closed: boolean) {
     return this.get(`orb:${rgb.join(",")}:${luminous}:${closed}`, (ctx, size) => {
       const c = size / 2;
-      const r = size * 0.34;
+      const r = size * (SPRITE_CORE_RATIO / 2);
       ctx.beginPath();
       ctx.arc(c, c, r, 0, Math.PI * 2);
       if (closed) {

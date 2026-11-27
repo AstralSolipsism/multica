@@ -20,9 +20,10 @@ issue graph + DagModelIndex
 ```
 
 - `star-map-canvas.tsx` owns only the HTML Canvas orbital camera, hit testing, LOD, sprites and
-  sphere-to-card interpolation. Orbital text is painted after leaving the world transform, so its
-  screen-pixel size stays fixed. Hidden moon tracks are culled at far LOD; gradients are cached as
-  sprites instead of recreated per body per frame.
+  sphere-to-card interpolation. `starMapMacroBounds` lives in core and covers root and sector
+  envelopes for initialization, layout changes, Fit All and resize. Orbital text is painted after
+  leaving the world transform, so its screen-pixel size stays fixed. Hidden moon tracks are culled
+  at far LOD; gradients are cached as sprites instead of recreated per body per frame.
 - A wheel crossing resolves the visible node nearest the live cursor, ignoring any older selection.
   Parent systems use `computeDagLine`; standalone/chain intent uses `computeDagFocus`. The camera
   fits the complete ELK bounds into the remaining viewport, including the issue-peek inset. The

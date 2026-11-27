@@ -116,7 +116,7 @@ function packStandaloneRings(count: number, firstRadius: number, arcSpan: number
   for (let placed = 0, ringIndex = 0; placed < count; ringIndex += 1) {
     const radius = firstRadius + ringIndex * minimumRootSpacing;
     const minimumAngle = 2 * Math.asin(minimumRootSpacing / (2 * radius));
-    const capacity = Math.max(1, Math.floor(arcSpan / minimumAngle));
+    const capacity = Math.max(1, Math.floor(arcSpan / minimumAngle + 1e-9));
     const ringCount = Math.min(capacity, count - placed);
     const angles = Array.from({ length: ringCount }, (_, index) =>
       ((index + 0.5) / ringCount - 0.5) * arcSpan);
@@ -291,7 +291,8 @@ function layoutPolar(roots: DraftNode[], sectors: (string | null)[], index: DagM
     if (project) guides.push({
       kind: "sector", sector: project,
       start: startAngle, end: endAngle, mid: midAngle,
-      innerR: 150, outerR: Math.max(740, outerStandaloneRadius + 36),
+      innerR: count === 1 && suns.length === 0 ? Math.max(0, minimumRootSpacing - 36) : 150,
+      outerR: Math.max(740, outerStandaloneRadius + 36),
     });
   }
   return guides;
