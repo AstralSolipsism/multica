@@ -9,6 +9,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
@@ -42,6 +45,7 @@ export function DagNodeSelection({
   onEnterFocus?: (issueId: string) => void;
 }) {
   const { t: tDag } = useT("dag");
+  const { t: tIssues } = useT("issues");
   const storeApi = useViewStoreApi();
   const focus = useViewStore((s) => s.dagFocus);
   const showCompleted = useViewStore((s) => s.dagShowCompleted);
@@ -114,14 +118,28 @@ export function DagNodeSelection({
       </Button>
     ),
     edit: (
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={!issue}
-        onClick={actions.openEditDependencies}
-      >
-        {tDag(($) => $.edit_dependencies)}
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!issue}
+              aria-label={tIssues(($) => $.actions.relations)}
+            />
+          }
+        >
+          {tIssues(($) => $.actions.relations)}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onClick={actions.openAddBlocker}>
+            {tIssues(($) => $.actions.add_blocker)}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={actions.openAddBlocking}>
+            {tIssues(($) => $.actions.add_blocking)}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     ),
     assign: <DagAssignAction issue={issue} onUpdate={actions.updateField} />,
   };
@@ -160,13 +178,19 @@ export function DagNodeSelection({
       </DropdownMenuCheckboxItem>
     ),
     edit: (
-      <DropdownMenuItem
-        key="edit"
-        disabled={!issue}
-        onClick={actions.openEditDependencies}
-      >
-        {tDag(($) => $.edit_dependencies)}
-      </DropdownMenuItem>
+      <DropdownMenuSub key="edit">
+        <DropdownMenuSubTrigger disabled={!issue}>
+          {tIssues(($) => $.actions.relations)}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={actions.openAddBlocker}>
+            {tIssues(($) => $.actions.add_blocker)}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={actions.openAddBlocking}>
+            {tIssues(($) => $.actions.add_blocking)}
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
     ),
     assign: (
       <DropdownMenuItem key="assign" onClick={() => setAssignFromMenu(true)}>

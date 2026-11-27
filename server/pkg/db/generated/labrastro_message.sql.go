@@ -2267,7 +2267,7 @@ func (q *Queries) ListLabrastroMessageDeliveriesByRoute(ctx context.Context, arg
 
 const listLabrastroMessageDeliveryCandidateRoutes = `-- name: ListLabrastroMessageDeliveryCandidateRoutes :many
 
-SELECT r.id, r.autopilot_id, r.trigger_id, r.source, r.status, r.issue_id, r.task_id, r.triggered_at, r.completed_at, r.failure_reason, r.trigger_payload, r.result, r.created_at, r.squad_id, r.planned_at, r.webhook_delivery_id, r.quota_reservation_id, r.reason_code, a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason, rt.id, rt.workspace_id, rt.autopilot_id, rt.installation_id, rt.channel_type, rt.target_type, rt.target_user_id, rt.target_chat_id, rt.target_message_id, rt.target_thread_id, rt.target_key, rt.conditions, rt.content_mode, rt.enabled, rt.revision, rt.created_by, rt.updated_by, rt.effective_from, rt.created_at, rt.updated_at, rt.source_kind, rt.project_id, rt.event_types, rt.last_disabled_at,
+SELECT r.id, r.autopilot_id, r.trigger_id, r.source, r.status, r.issue_id, r.task_id, r.triggered_at, r.completed_at, r.failure_reason, r.trigger_payload, r.result, r.created_at, r.squad_id, r.planned_at, r.webhook_delivery_id, r.quota_reservation_id, r.reason_code, r.idempotency_key, a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.pause_reason, rt.id, rt.workspace_id, rt.autopilot_id, rt.installation_id, rt.channel_type, rt.target_type, rt.target_user_id, rt.target_chat_id, rt.target_message_id, rt.target_thread_id, rt.target_key, rt.conditions, rt.content_mode, rt.enabled, rt.revision, rt.created_by, rt.updated_by, rt.effective_from, rt.created_at, rt.updated_at, rt.source_kind, rt.project_id, rt.event_types, rt.last_disabled_at,
     COALESCE(r.task_id, CASE WHEN r.issue_id IS NULL THEN (
         SELECT t.id FROM agent_task_queue t
         WHERE t.autopilot_run_id = r.id ORDER BY t.created_at LIMIT 1
@@ -2342,6 +2342,7 @@ func (q *Queries) ListLabrastroMessageDeliveryCandidateRoutes(ctx context.Contex
 			&i.AutopilotRun.WebhookDeliveryID,
 			&i.AutopilotRun.QuotaReservationID,
 			&i.AutopilotRun.ReasonCode,
+			&i.AutopilotRun.IdempotencyKey,
 			&i.Autopilot.ID,
 			&i.Autopilot.WorkspaceID,
 			&i.Autopilot.Title,
@@ -2751,7 +2752,7 @@ func (q *Queries) ListLabrastroMessageSourceRoutes(ctx context.Context, arg List
 }
 
 const listStaleCreateIssueAutopilotIssues = `-- name: ListStaleCreateIssueAutopilotIssues :many
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.duplicate_of_issue_id, i.requester_user_id FROM issue i
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.duplicate_of_issue_id, i.requester_user_id, i.description_revision FROM issue i
 JOIN autopilot_run r ON r.issue_id = i.id
 WHERE r.issue_id IS NOT NULL
   AND r.status IN ('pending', 'issue_created', 'running')
@@ -2815,6 +2816,7 @@ func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg L
 			&i.TriageState,
 			&i.DuplicateOfIssueID,
 			&i.RequesterUserID,
+			&i.DescriptionRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -2827,7 +2829,7 @@ func (q *Queries) ListStaleCreateIssueAutopilotIssues(ctx context.Context, arg L
 }
 
 const listStaleLinkedIssueTaskFailures = `-- name: ListStaleLinkedIssueTaskFailures :many
-SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.dependency_admission, t.issue_snapshot, t.conversation_root_task_id, t.workflow_step FROM agent_task_queue t
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.dependency_admission, t.issue_snapshot, t.conversation_root_task_id, t.workflow_step, t.usage_squad_id, t.doc_id, t.doc_thread_id, t.doc_comment_id FROM agent_task_queue t
 JOIN issue i ON i.id = t.issue_id
 JOIN autopilot_run r ON r.issue_id = i.id
 WHERE t.autopilot_run_id IS NULL
@@ -2925,6 +2927,10 @@ func (q *Queries) ListStaleLinkedIssueTaskFailures(ctx context.Context, arg List
 			&i.IssueSnapshot,
 			&i.ConversationRootTaskID,
 			&i.WorkflowStep,
+			&i.UsageSquadID,
+			&i.DocID,
+			&i.DocThreadID,
+			&i.DocCommentID,
 		); err != nil {
 			return nil, err
 		}
@@ -2937,7 +2943,7 @@ func (q *Queries) ListStaleLinkedIssueTaskFailures(ctx context.Context, arg List
 }
 
 const listStaleRunOnlyAutopilotTasks = `-- name: ListStaleRunOnlyAutopilotTasks :many
-SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.dependency_admission, t.issue_snapshot, t.conversation_root_task_id, t.workflow_step FROM agent_task_queue t
+SELECT t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.branch_name, t.durable_work_dir, t.channel_context_revision, t.comment_thread_id, t.cancelled_by_type, t.cancelled_by_id, t.cancelled_by_name, t.dependency_admission, t.issue_snapshot, t.conversation_root_task_id, t.workflow_step, t.usage_squad_id, t.doc_id, t.doc_thread_id, t.doc_comment_id FROM agent_task_queue t
 JOIN autopilot_run r ON r.id = t.autopilot_run_id
     OR (t.autopilot_run_id IS NULL AND r.task_id = t.id)
 WHERE r.issue_id IS NULL
@@ -3035,6 +3041,10 @@ func (q *Queries) ListStaleRunOnlyAutopilotTasks(ctx context.Context, arg ListSt
 			&i.IssueSnapshot,
 			&i.ConversationRootTaskID,
 			&i.WorkflowStep,
+			&i.UsageSquadID,
+			&i.DocID,
+			&i.DocThreadID,
+			&i.DocCommentID,
 		); err != nil {
 			return nil, err
 		}

@@ -11,6 +11,7 @@ import {
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useStore } from "zustand";
 import { useAuthStore } from "@multica/core/auth";
+import { useReducedMotion } from "@multica/core/appearance";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -35,7 +36,6 @@ import {
   useDocumentHidden,
   useEditableFocus,
   useOverlayState,
-  usePrefersReducedMotion,
 } from "./page-signals";
 import { TipBubble } from "./tip-bubble";
 import { TipFeedbackRow } from "./tip-feedback-row";
@@ -268,7 +268,7 @@ export function TipBubbleHost({
   const [engaged, setEngaged] = useState(false);
   const typing = useEditableFocus();
   const pageHidden = useDocumentHidden();
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
   // Overlays are judged against whichever layer is up: the row or the bubble.
   const { modalOpen, anchorPopupOpen } = useOverlayState(layer.measure);
 

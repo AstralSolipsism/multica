@@ -36,6 +36,10 @@ type privateProjectAudience interface {
 	// user ids that may receive it. err means the decision could not be made;
 	// the caller drops the event rather than widen it.
 	Audience(ctx context.Context, e events.Event) (userIDs []string, private bool, err error)
+	// IssueRefReaders and Members narrow what an event says about issues other
+	// than its own; see issue_ref_realtime.go.
+	IssueRefReaders(ctx context.Context, e events.Event) (map[string]map[string]bool, error)
+	Members(ctx context.Context, workspaceID string) ([]string, error)
 }
 
 type audienceQuerier interface {
@@ -44,6 +48,7 @@ type audienceQuerier interface {
 	GetCommentIssueProjectID(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	GetAutopilot(ctx context.Context, id pgtype.UUID) (db.Autopilot, error)
+	ListMembers(ctx context.Context, workspaceID pgtype.UUID) ([]db.Member, error)
 	projectaccess.TaskQuerier
 }
 

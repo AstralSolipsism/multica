@@ -20,6 +20,7 @@ vi.mock("../../navigation", () => ({
 }));
 
 vi.mock("@multica/core/paths", () => ({
+  issueRouteRef: (issue: { id: string; identifier?: string | null }) => issue.identifier || issue.id,
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/acme/issues/${id}` }),
 }));
 
@@ -102,7 +103,7 @@ describe("SourceContextBadge", () => {
     expect(summary).toHaveClass("border-border/60", "bg-muted/30");
     expect(screen.getByRole("link", { name: /MUL-7 Current source title/ })).toHaveAttribute(
       "href",
-      "/acme/issues/source-issue",
+      "/acme/issues/MUL-7",
     );
     expect(screen.getByText("1/3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Context snapshot" })).toBeInTheDocument();
@@ -118,9 +119,6 @@ describe("SourceContextBadge", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Go to source comment" }));
     await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
-    // OL-270: the jump goes to the IDENTIFIER spelling — the identifier route
-    // needs no canonical rewrite, so the deep-link memento stays under one
-    // pathname and repeat jumps keep landing.
     expect(navigationPush).toHaveBeenCalledWith("/acme/issues/NEW-7#comment-selected");
   });
 

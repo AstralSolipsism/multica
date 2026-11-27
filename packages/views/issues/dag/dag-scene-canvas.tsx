@@ -54,7 +54,7 @@ import {
 import { dagExternalNodeId } from "./dag-scene";
 import { dagProjectColor } from "./dag-project-colors";
 import { DAG_CLICK_CYCLE_MS, DAG_FIT_VIEW_PADDING, DAG_GROUP_HEADER_HEIGHT, DAG_MOTION_MIN_ZOOM, DAG_SIMPLIFIED_HYSTERESIS, DAG_SIMPLIFIED_ZOOM } from "./dag-constants";
-import { usePrefersReducedMotion } from "./use-prefers-reduced-motion";
+import { useReducedMotion } from "@multica/core/appearance";
 
 const nodeTypes = {
   dagOverviewCard: DagOverviewCardView,
@@ -169,7 +169,7 @@ export function DagSceneCanvasInner({
     });
   }, [zoom]);
   const simplified = simplifiedHysteresis ?? zoom < DAG_SIMPLIFIED_ZOOM;
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
   // Culling re-renders the edge layer only when the visible window crosses a
   // quantization boundary, not on every pan frame.
   const cullKey = useFlowStore((state) =>
@@ -400,7 +400,7 @@ export function DagSceneCanvasInner({
           ...box,
           kind: "overview",
           color: dagProjectColor(card.project?.id, colorMode === "dark"),
-          dashed: card.cancelledBlocking,
+          dashed: false,
         });
       }
       return blocks;
@@ -421,7 +421,7 @@ export function DagSceneCanvasInner({
           ...box,
           kind: "task",
           color: null,
-          dashed: task.role === "context" || task.cancelledBlocking,
+          dashed: task.role === "context",
         });
       }
       return blocks;
@@ -456,7 +456,7 @@ export function DagSceneCanvasInner({
         ...box,
         kind: "task",
         color: null,
-        dashed: task.role === "context" || task.cancelledBlocking,
+        dashed: task.role === "context",
       });
     }
     return blocks;

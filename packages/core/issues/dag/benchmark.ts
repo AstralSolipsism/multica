@@ -56,7 +56,6 @@ export function inspectDagOverview(payload: unknown) {
     cards: overview.cards.map((card) => ({
       identifier: card.issue?.identifier ?? "independent", kind: card.kind,
       progress: card.progress, unfinished: card.unfinished, attention: card.attention,
-      cancelledBlocking: card.cancelledBlocking,
     })),
     lines: overview.cards.filter((card) => card.kind === "line").map((card) => {
       const line = computeDagLine(index, card.issue!.id)!;

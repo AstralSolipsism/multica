@@ -84,6 +84,7 @@ vi.mock("@tanstack/react-query", () => ({
     invalidateQueries: vi.fn(),
     setQueryData: vi.fn(),
   }),
+  queryOptions: <T,>(opts: T) => opts,
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -148,7 +149,8 @@ vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
   runtimeDisplayLabel: () => "runtime",
 }));
-vi.mock("@multica/core/agents", () => ({
+vi.mock("@multica/core/agents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/agents")>()),
   isAgentRuntimeBound: () => true,
   agentRunCounts30dOptions: () => ({ queryKey: ["agent-run-counts"] }),
   useWorkspaceActivityMap: () => ({ byAgent: new Map(), loading: false }),

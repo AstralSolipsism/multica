@@ -173,7 +173,10 @@ export function routeContentLinkPath(
   store.openTab(path, "", { activate: disposition === "foreground-tab" });
 }
 
-/** A desktop deep link explicitly targets its URL, including a new comment. */
+/**
+ * A desktop deep link (an issue or a chat session) explicitly targets its URL,
+ * including a new comment or the chat session to select.
+ */
 export function routeIssueDeepLinkPath(path: string): void {
   const store = useTabStore.getState();
   const slug = workspaceSlugForPath(path);
@@ -186,6 +189,7 @@ export function routeIssueDeepLinkPath(path: string): void {
   }
   // Ordinary opens restore a reused tab's view. A deep link must also apply
   // this address after deduplication, through the session's history flow.
+  clearCommentHighlightMemento(path);
   useTabStore.getState().navigateActiveSession(path);
 }
 

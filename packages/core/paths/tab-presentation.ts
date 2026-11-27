@@ -49,6 +49,7 @@ export type TabLabelKey =
   | "doc"
   | "docFolder"
   | "skill"
+  | "app"
   | "machine"
   | "runtime"
   | "attachment"
@@ -89,6 +90,7 @@ export interface TabEntityData {
   skill?: { name: string };
   doc?: {title: string};
   docFolder?: {title: string};
+  app?: { name: string };
   machine?: { name: string };
   runtime?: { name: string };
   /** Resolved chat session title (already includes the "New chat" fallback). */
@@ -179,7 +181,9 @@ export function resolveTabPresentation(
     case "project":
       return {
         visual: { kind: "project-icon", icon: data.project?.icon ?? null },
-        title: textOr(data.project?.title, "project"),
+        title: subject.section === "engineering"
+          ? { kind: "text", text: "Engineering" }
+          : textOr(data.project?.title, "project"),
       };
     case "autopilot":
       return {
@@ -199,6 +203,11 @@ export function resolveTabPresentation(
       return {
         visual: { kind: "icon", icon: "BookOpenText" },
         title: textOr(data.skill?.name, "skill"),
+      };
+    case "app":
+      return {
+        visual: { kind: "icon", icon: "Plug" },
+        title: textOr(data.app?.name, "app"),
       };
     case "machine":
       return {

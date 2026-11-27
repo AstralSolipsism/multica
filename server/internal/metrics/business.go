@@ -77,6 +77,9 @@ type BusinessMetrics struct {
 	entitlementVersionRegression   prometheus.Counter
 	autopilotQuotaDecision         *prometheus.CounterVec
 	runtimePlanQuotaDropped        *prometheus.CounterVec
+	storageQuotaSum                *prometheus.CounterVec
+	storageQuotaSumDuration        *prometheus.HistogramVec
+	storageQuotaDecision           *prometheus.CounterVec
 
 	// agentRuntimeLookup counts logical agent_runtime lookups by product
 	// source — one increment per requested runtime id, whether that id was
@@ -302,6 +305,18 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Namespace: "multica", Subsystem: "runtime_plan_quota", Name: "dropped_total",
 			Help: "Total invalid plan quota snapshots dropped by heartbeats, including log-suppressed drops.",
 		}, metricLabels("multica_runtime_plan_quota_dropped_total")),
+		storageQuotaSum: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "storage_quota", Name: "sum_total",
+			Help: "Total attachment storage usage sums by source and result (ok, timeout, error).",
+		}, metricLabels("multica_storage_quota_sum_total")),
+		storageQuotaSumDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "storage_quota", Name: "sum_duration_seconds",
+			Help: "Duration of attachment storage usage sums.", Buckets: chatClaimResumeQueryDurationBuckets,
+		}, metricLabels("multica_storage_quota_sum_duration_seconds")),
+		storageQuotaDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "storage_quota", Name: "decision_total",
+			Help: "Total attachment storage limit outcomes.",
+		}, metricLabels("multica_storage_quota_decision_total")),
 		agentRuntimeLookup: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "agent_runtime", Name: "lookup_total",
 			Help: "Total logical agent_runtime lookups by product source and outcome (one per requested id, not per SQL query).",
@@ -370,6 +385,9 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.entitlementDecision,
 		m.entitlementVersionRegression,
 		m.autopilotQuotaDecision,
+		m.storageQuotaSum,
+		m.storageQuotaSumDuration,
+		m.storageQuotaDecision,
 		m.agentRuntimeLookup,
 		m.runtimePlanQuotaDropped,
 		m.issueMetadataMutation,
@@ -471,6 +489,49 @@ func (m *BusinessMetrics) RecordAutopilotQuotaDecision(action, source, result st
 		source = "other"
 	}
 	m.autopilotQuotaDecision.WithLabelValues(action, source, result).Inc()
+}
+
+func normalizeStorageQuotaSource(source string) string {
+	switch source {
+	case "upload", "sub_issue", "channel", "usage":
+		return source
+	default:
+		return "other"
+	}
+}
+
+// RecordStorageQuotaSum records one attachment storage usage sum.
+func (m *BusinessMetrics) RecordStorageQuotaSum(source, result string, durationSeconds float64) {
+	if m == nil {
+		return
+	}
+	switch result {
+	case "ok", "timeout", "error":
+	default:
+		result = "error"
+	}
+	source = normalizeStorageQuotaSource(source)
+	m.storageQuotaSum.WithLabelValues(source, result).Inc()
+	m.storageQuotaSumDuration.WithLabelValues(source).Observe(durationSeconds)
+}
+
+// RecordStorageQuotaDecision records one storage limit outcome: admitted,
+// observed, rejected, or fail_open.
+func (m *BusinessMetrics) RecordStorageQuotaDecision(action, source, result string) {
+	if m == nil {
+		return
+	}
+	switch action {
+	case "observe", "enforce":
+	default:
+		action = "other"
+	}
+	switch result {
+	case "admitted", "observed", "rejected", "fail_open":
+	default:
+		result = "other"
+	}
+	m.storageQuotaDecision.WithLabelValues(action, normalizeStorageQuotaSource(source), result).Inc()
 }
 
 func (m *BusinessMetrics) RecordRuntimeGCDeleted() {

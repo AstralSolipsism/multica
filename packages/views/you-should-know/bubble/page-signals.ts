@@ -43,23 +43,6 @@ export function useEditableFocus(): boolean {
   );
 }
 
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-
-function subscribeReducedMotion(onChange: () => void) {
-  const query = window.matchMedia(REDUCED_MOTION_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-/** The OS asks for reduced motion: the bubble then gets no transition at all. */
-export function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    () => window.matchMedia(REDUCED_MOTION_QUERY).matches,
-    () => false,
-  );
-}
-
 /** Base UI marks everything outside a modal layer (dialog, modal menu). */
 const MODAL_MARKER = "data-base-ui-inert";
 /** Base UI marks a trigger while its popup (hover card, popover, menu) is open. */

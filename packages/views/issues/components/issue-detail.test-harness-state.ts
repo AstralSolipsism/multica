@@ -66,7 +66,6 @@ export interface MockApi {
   subscribeToIssue: Mock;
   unsubscribeFromIssue: Mock;
   unsubscribeFromIssueSubtree: Mock;
-  getActiveTasksForIssue: Mock;
   listTasksByIssue: Mock;
   rerunIssue: Mock;
   listTaskMessages: Mock;
@@ -78,6 +77,7 @@ export interface MockApi {
   listIssues: Mock;
   uploadFile: Mock;
   listIssueReactions: Mock;
+  createIssueCollabTicket: Mock;
   addIssueReaction: Mock;
   removeIssueReaction: Mock;
   listAttachments: Mock;
@@ -104,7 +104,6 @@ export const mockApiObj: MockApi = {
   subscribeToIssue: vi.fn().mockResolvedValue(undefined),
   unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
   unsubscribeFromIssueSubtree: vi.fn().mockResolvedValue(undefined),
-  getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
   listTasksByIssue: vi.fn().mockResolvedValue([]),
   rerunIssue: vi.fn(),
   listTaskMessages: vi.fn().mockResolvedValue([]),
@@ -117,6 +116,7 @@ export const mockApiObj: MockApi = {
   listIssues: vi.fn().mockResolvedValue({ issues: [], total: 0 }),
   uploadFile: vi.fn(),
   listIssueReactions: vi.fn().mockResolvedValue([]),
+  createIssueCollabTicket: vi.fn().mockResolvedValue({ enabled: false }),
   addIssueReaction: vi.fn(),
   removeIssueReaction: vi.fn(),
   listAttachments: vi.fn().mockResolvedValue([]),

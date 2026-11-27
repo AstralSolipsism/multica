@@ -32,7 +32,7 @@ vi.mock("@multica/core/auth", () => ({
   }),
 }));
 
-import { DesktopNavigationProvider, routeContentLinkPath } from "./navigation";
+import { DesktopNavigationProvider, routeContentLinkPath, routeIssueDeepLinkPath } from "./navigation";
 import { currentPath, useNavigation } from "@multica/views/navigation";
 import { useTabStore, getActiveTab, scrollMementoKey } from "@/stores/tab-store";
 
@@ -304,6 +304,18 @@ describe("comment deep-link memento handling", () => {
     routeContentLinkPath("/acme/issues/TES-2#comment-c1");
 
     expect(acmeGroup().tabs[0].memento.view).toEqual({});
+  });
+
+  it("clears the record for a desktop issue deep link targeting an existing tab", () => {
+    const store = useTabStore.getState();
+    store.openTab("/acme/issues/TES-2", "TES-2", { activate: true });
+    const tabId = acmeGroup().activeTabId;
+    store.commitViewState(tabId, "/acme/issues/TES-2", "highlight:i2", "c1");
+
+    routeIssueDeepLinkPath("/acme/issues/TES-2#comment-c1");
+
+    expect(getActiveTab(useTabStore.getState())?.memento.view).toEqual({});
+    expect(getActiveTab(useTabStore.getState())?.url).toBe("/acme/issues/TES-2#comment-c1");
   });
 
   it("carries view-state records over only on replaceCanonical (the canonical rewrite)", () => {

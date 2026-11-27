@@ -68,7 +68,7 @@ vi.mock("@multica/core/paths", async () => {
 vi.mock("./dag-issue-actions", () => ({
   useDagIssueSelection: () => ({
     issue: null,
-    actions: { openEditDependencies: vi.fn(), updateField: vi.fn() },
+    actions: { openAddBlocker: vi.fn(), openAddBlocking: vi.fn(), updateField: vi.fn() },
     detailFailed: false,
     retryDetail: vi.fn(),
   }),
@@ -639,7 +639,7 @@ describe("DagView detail navigation", () => {
     );
     act(() => toolbarSpy.mock.calls.at(-1)![0].onOpenIssue("t1"));
     expect(store.getState().dagViewports["line:r1"]).toEqual({ x: -47, y: 93, zoom: 1.35 });
-    expect(mockPush).toHaveBeenCalledWith("/test/issues/t1");
+    expect(mockPush).toHaveBeenCalledWith("/test/issues/T-T1");
   });
 
   it("hands focus-frame requests to the canvas as a line-level focus request", async () => {

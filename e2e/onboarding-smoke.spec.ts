@@ -76,13 +76,13 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "在 web 端继续");
+  await waitForPageText(page, "在网页端继续");
 
   // Click the CTA by name. `getByRole("button").first()` used to stand in for
   // it, but the welcome screen renders the pinned Log out button first in DOM
   // order — so this step was signing the user out and the assertions below
   // were waiting on a page that had already redirected to login.
-  await page.getByRole("button", { name: "在 web 端继续" }).click();
+  await page.getByRole("button", { name: "在网页端继续" }).click();
 
   // Workspace step — Chinese headline, no About-you screen in between.
   await expect(page.getByRole("heading", { name: /给工作区起个名字/ })).toBeVisible({ timeout: 10000 });
@@ -92,7 +92,7 @@ test("onboarding — zh-Hans renders Chinese labels", async ({ page, context, ba
 });
 
 for (const pathname of [
-  "/about", "/homepage", "/changelog", "/contact-sales", "/usecases",
+  "/about", "/homepage", "/changelog", "/contact-sales", "/llms.txt", "/usecases",
   "/usecases/auto-data-analysis", "/usecases/auto-data-analysis.en", "/%61bout", "/ABOUT",
 ]) {
   test("retired marketing route " + pathname + " shows not found", async ({ page }) => {
@@ -109,7 +109,7 @@ test("sitemap excludes retired marketing routes", async ({ request }) => {
   const response = await request.get("/sitemap.xml");
   expect(response.ok()).toBe(true);
   const xml = await response.text();
-  for (const route of ["about", "homepage", "changelog", "contact-sales", "usecases"]) {
+  for (const route of ["about", "homepage", "changelog", "contact-sales", "llms.txt", "usecases"]) {
     expect(xml).not.toContain("/" + route + "</loc>");
   }
 });

@@ -45,13 +45,17 @@ export interface IssueCreateShared {
 }
 
 export interface IssueCreateManual {
-  blockedBy: string[];
+  blocked_by: string[];
   title: string;
   description: string;
   status: IssueStatus;
   startDate: string | null;
   assigneeType?: IssueAssigneeType;
   assigneeId?: string;
+  /** The assignee last picked by hand in this draft, not yet counted toward
+   *  the picker's local ranking. A create submitting this same assignee
+   *  counts it once; a prefilled assignee never matches it. */
+  assigneePick?: { type: IssueAssigneeType; id: string };
   /** Label IDs chosen in the create dialog. Attached to the issue right after
    *  it is created (the create endpoint takes no labels), so they are kept as
    *  a plain id list rather than full Label objects. */
@@ -80,7 +84,7 @@ const emptyShared = (): IssueCreateShared => ({
 });
 
 const emptyManual = (): IssueCreateManual => ({
-  blockedBy: [],
+  blocked_by: [],
   title: "",
   description: "",
   status: "todo",
@@ -192,7 +196,7 @@ function migrateDraft(raw: unknown): IssueCreateDraft {
       // drops `uploading` placeholders (bytes are gone).
       attachments: normalizeStoredUploads(sharedRaw.attachments),
     },
-    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}), blockedBy: normalizeDraftPrerequisiteIds((d.manual as Partial<IssueCreateManual> | undefined)?.blockedBy) },
+    manual: { ...emptyManual(), ...((d.manual as Partial<IssueCreateManual>) ?? {}) },
     agent: { ...emptyAgent(), ...((d.agent as Partial<IssueCreateAgent>) ?? {}) },
     activeMode: d.activeMode === "agent" ? "agent" : "manual",
   };
@@ -399,8 +403,3 @@ registerDraftCleanup({
       batchContinuationBaseline: undefined,
     }),
 });
-
-function normalizeDraftPrerequisiteIds(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((e): e is string => typeof e === "string" && e.length > 0);
-}

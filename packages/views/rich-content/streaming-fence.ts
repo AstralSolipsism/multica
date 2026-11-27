@@ -1,5 +1,6 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Root, RootContent, Code } from "mdast";
+import { parseFenceTitle } from "../editor/utils/fence-title";
 
 /**
  * Fenced-code closedness gate for streaming RichContent (MUL-4922).
@@ -75,11 +76,7 @@ function endsWithClosingFence(raw: string): boolean {
   return closeFence[0] === marker && closeFence.length >= openFence.length;
 }
 
-function parseFenceMeta(meta: string | null | undefined): {
-  title: string | null;
-  src: string | null;
-} {
-  let title: string | null = null;
+function parseFenceMeta(meta: string | null | undefined): ClosedFence {
   let src: string | null = null;
   let index = 0;
   while (meta && index < meta.length) {
@@ -109,21 +106,9 @@ function parseFenceMeta(meta: string | null | undefined): {
       while (/\S/.test(meta[index] ?? "")) index++;
       value = meta.slice(valueStart, index);
     }
-    if (!valid) continue;
-
-    const normalized = value.trim() || null;
-    if (name === "title" && title === null) title = normalized;
-    if (name === "src" && src === null) src = normalized;
+    if (valid && name === "src" && src === null) src = value.trim() || null;
   }
-  return { title, src };
-}
-
-/**
- * The `title` attribute of a fence info string, e.g. `title="Weekly p95"` in
- * ```html title="Weekly p95". Double, single or no quotes.
- */
-export function parseFenceTitle(meta: string | null | undefined): string | null {
-  return parseFenceMeta(meta).title;
+  return { title: parseFenceTitle(meta), src };
 }
 
 export interface ClosedFence {

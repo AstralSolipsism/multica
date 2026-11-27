@@ -14,7 +14,7 @@
       "byo_docs_link": "Paso a paso: conecta tu agente de Labrastro a Slack"
     },
     "dingtalk": {
-      "group_forget_description": "Esto quita el grupo del inventario de Labrastro sin borrar conversaciones ni mensajes. Volverá a aparecer cuando alguien @mencione de nuevo al bot.",
+      "group_forget_description": "Elimina este grupo de la lista de Labrastro sin borrar ningún mensaje en DingTalk.",
       "byo_docs_link": "Paso a paso: conecta tu agente de Labrastro a DingTalk"
     },
     "wecom": {
@@ -22,14 +22,14 @@
       "byo_conflict_other_workspace": "Este bot ya está conectado a otro espacio de trabajo de Labrastro. Desconéctalo allí antes de conectarlo aquí."
     },
     "telegram": {
-      "disconnect_confirm_description": "El bot dejará de recibir mensajes de Telegram de este espacio de trabajo. El historial de chat en Labrastro se conserva; puedes volver a conectarlo más tarde desde el mismo Agente.",
+      "disconnect_confirm_description": "El bot dejará de recibir mensajes de Telegram para este espacio de trabajo. El historial de chat en Labrastro se conserva; puedes volver a conectarlo más adelante desde el mismo agente.",
       "connect_docs_link": "Paso a paso: conecta tu agente de Labrastro a Telegram"
     },
     "mcp_sources": {
       "apps": "Cuentas del equipo o personales conectadas a través de Labrastro y añadidas a cada agente."
     },
     "connected_apps": {
-      "catalog_description": "Las aplicaciones seleccionadas incluyen reglas predeterminadas revisadas. Todas las aplicaciones incluye todo lo que Composio puede conectar; las acciones que Labrastro no puede clasificar siempre piden confirmación. Una lista personalizada permite solo las aplicaciones que elijas."
+      "catalog_description": "Las aplicaciones seleccionadas incluyen reglas predeterminadas revisadas. Todas las aplicaciones incluye todo lo que Labrastro puede conectar; las acciones que Labrastro no puede clasificar siempre piden confirmación. Una lista personalizada permite solo las aplicaciones que elijas."
     },
     "shortcuts": {
       "actions": {
@@ -40,33 +40,37 @@
     },
     "chat": {
       "ask_agent_label": "Agente de Preguntar a Labrastro"
+    },
+    "desktop": {
+      "daemon": {
+        "auto_start_description": "Inicia automáticamente el daemon local al abrir Labrastro Desktop"
+      }
     }
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "Inicia sesión en Labrastro para completar la vinculación. El token del enlace vincula tu cuenta de Lark a este usuario de Labrastro, así que primero debes iniciar sesión.",
-      "error_already_bound": "Esta cuenta de Lark ya está vinculada a otro usuario de Labrastro. La transferencia de cuentas requiere una desvinculación explícita previa.",
+      "needs_auth_description": "Inicia sesión para conectar tu cuenta de Feishu / Lark con tu cuenta de Labrastro.",
+      "error_already_bound": "Esta cuenta de Feishu / Lark ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "slack_bind": {
-      "needs_auth_description": "Inicia sesión en Labrastro para completar la vinculación. El token del enlace vincula tu cuenta de Slack a este usuario de Labrastro, así que primero debes iniciar sesión.",
-      "error_already_bound": "Esta cuenta de Slack ya está vinculada a otro usuario de Labrastro. La transferencia de cuentas requiere una desvinculación explícita previa.",
+      "needs_auth_description": "Inicia sesión para conectar tu cuenta de Slack con tu cuenta de Labrastro.",
+      "error_already_bound": "Esta cuenta de Slack ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "dingtalk_bind": {
-      "needs_auth_description": "Inicia sesión en Labrastro para completar la vinculación. El token del enlace vincula tu cuenta de DingTalk a este usuario de Labrastro, así que primero debes iniciar sesión.",
-      "error_already_bound": "Esta cuenta de DingTalk ya está vinculada a otro usuario de Labrastro. La transferencia de cuentas requiere una desvinculación explícita previa.",
+      "needs_auth_description": "Inicia sesión para conectar tu cuenta de DingTalk con tu cuenta de Labrastro.",
+      "error_already_bound": "Esta cuenta de DingTalk ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "telegram_bind": {
-      "needs_auth_description": "Inicia sesión en Labrastro para completar la vinculación. El token del enlace vincula tu cuenta de Telegram a este usuario de Labrastro, así que primero debes iniciar sesión.",
-      "error_already_bound": "Esta cuenta de Telegram ya está vinculada a otro usuario de Labrastro. La transferencia de cuentas requiere una desvinculación explícita previa.",
+      "needs_auth_description": "Inicia sesión para conectar tu cuenta de Telegram con tu cuenta de Labrastro.",
+      "error_already_bound": "Esta cuenta de Telegram ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "wecom_bind": {
-      "page_title": "Vincula tu cuenta de Labrastro",
-      "needs_auth_description": "Inicia sesión en Labrastro para completar la vinculación. El token del enlace vincula tu identidad de WeCom a este usuario de Labrastro, así que primero debes iniciar sesión.",
-      "error_already_bound": "Esta identidad de WeCom ya está vinculada a otro usuario de Labrastro. La transferencia de cuentas requiere una desvinculación explícita previa.",
+      "needs_auth_description": "Inicia sesión para conectar tu cuenta de WeCom con tu cuenta de Labrastro.",
+      "error_already_bound": "Esta cuenta de WeCom ya está vinculada a otra cuenta de Labrastro. Desvincúlala primero de esa cuenta antes de vincularla aquí.",
       "error_not_member": "Has iniciado sesión en una cuenta de Labrastro que no es miembro de este espacio de trabajo."
     },
     "not_found": {
@@ -100,7 +104,7 @@
       "local_build_title": "Este runtime informa de una versión que no es de release, así que Labrastro no puede saber si hay una actualización disponible. Actualízalo desde la propia máquina."
     },
     "profiles": {
-      "empty_description": "Elige una familia de protocolos base y luego indica a Labrastro el comando que debe ejecutar."
+      "empty_description": "Elige un runtime base compatible y luego indica a Labrastro el comando que debe ejecutar."
     },
     "qoder": {
       "description": "Conecta Qoder Cloud Agents. Labrastro gestiona la ejecución y guarda las credenciales cifradas. Los administradores del espacio de trabajo pueden cambiar esta configuración.",
@@ -163,7 +167,8 @@
       "outdated_hint": "Actualiza Labrastro en este equipo para gestionarlo desde aquí.",
       "app_desktop_hint": "Una app de escritorio. Cambia a su ventana desde Labrastro Desktop en la máquina que la ejecuta.",
       "app_remote_hint": "Se ejecuta en {{machine}}. Cambia a su ventana desde Labrastro Desktop en esa máquina.",
-      "focus_unsupported": "El daemon de esta máquina aún no puede cambiar a ventanas de apps. Actualiza Labrastro e inténtalo de nuevo."
+      "focus_unsupported": "Labrastro en esta máquina aún no puede cambiar a ventanas de aplicaciones. Actualiza Labrastro e inténtalo de nuevo.",
+      "focus_unavailable": "El servicio local de Labrastro no está en ejecución"
     }
   },
   "billing": {
@@ -211,7 +216,6 @@
     },
     "welcome": {
       "wordmark": "Te damos la bienvenida a Labrastro",
-      "lede_web": "Labrastro Desktop incluye el runtime: no hay nada que instalar. Continúa en la web para conectar tu propia CLI.",
       "download_desktop": "Descargar Labrastro Desktop"
     },
     "source_backfill": {
@@ -267,6 +271,13 @@
         "managed_title": "Gestionado por Labrastro",
         "managed_empty": "Todavía no hay servidores MCP gestionados por Labrastro.",
         "runtime_overridden_badge": "Sobreescrito por Labrastro"
+      }
+    }
+  },
+  "modals": {
+    "create_issue": {
+      "agent": {
+        "prompt_placeholder": "Dile al agente qué hacer, p. ej. \"que Mizuki arregle la lentitud de carga de la bandeja en el proyecto Web\""
       }
     }
   }

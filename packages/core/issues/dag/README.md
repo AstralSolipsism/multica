@@ -42,19 +42,18 @@ creates the index once per snapshot and only builds the requested model.
 - Overview attention is exception, advancing, review, unstarted, finished;
   priority and numeric identifier descending break ties. This is a layout
   preference only. An active run advances a review/blocked source dependency;
-  a cancelled source remains cancelled-blocking regardless of runs.
-- A parent dependency target is finished only after the entire subtree ends.
-  Q3 hides only complete top-level lines. Q4 pulls cancelled blockers out of
-  hidden lines as standalone context cards, including prerequisites inherited
-  through an already-finished parent with unfinished children.
-- Redundancy includes inherited prerequisites but never treats parent status
-  as a child wait. An unsatisfied redundant edge is retained if every alternate
-  path crosses a finished intermediate waiter. Inheritance through a finished
-  parent still conveys a wait to its children, but that parent's own outgoing
-  dependencies cannot convey it. Focus exposes redundant edges without hiding
-  them. Inconsistent dependency cycles conservatively keep all edges.
-- Focus takes a raw issue ID as a single task seed and uses the same raw
-  upstream/downstream traversal, including inherited prerequisites.
+  both done and cancelled (`closed`) sources satisfy a native blocker.
+- A blocker is satisfied as soon as its source or its direct target finishes
+  (`done` or `closed`); parentage never transfers blockers between ancestors
+  and descendants. Q3 hides only complete top-level lines (all members
+  `done`/`closed`) and standalone finished tasks uniformly.
+- Redundancy walks only actual snapshot edges and never infers parent-to-child
+  inheritance. An unsatisfied redundant edge is retained if every alternate
+  path crosses a finished intermediate waiter. Focus exposes redundant edges
+  without hiding them. Inconsistent dependency cycles conservatively keep all
+  edges.
+- Focus takes a raw issue ID as a single task seed and walks only actual
+  snapshot upstream/downstream edges.
   Visible ancestor frames needed solely for grouping have `contextOnly: true`.
   Hidden closure members are counted once, never reintroduced as frame headers.
 - Restricted context is a boolean, not a synthesized node or hidden count.

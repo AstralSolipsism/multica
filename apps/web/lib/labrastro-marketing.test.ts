@@ -4,7 +4,7 @@ import { isRetiredMarketingPath } from "./labrastro-marketing";
 
 describe("retired marketing route trees", () => {
   it.each([
-    "/about", "/homepage", "/changelog", "/contact-sales", "/usecases",
+    "/about", "/homepage", "/changelog", "/contact-sales", "/llms.txt", "/usecases",
     "/blog", "/careers", "/customers", "/press", "/pricing", "/product",
     "/security", "/solutions", "/about/", "/usecases/auto-data-analysis",
     "/usecases/auto-data-analysis.en", "/ABOUT", "/%61bout",

@@ -5,7 +5,6 @@ import ruQuota from "./ru/quota.json";
 import ruThinking from "./ru/thinking.json";
 import ruLark from "./ru/lark.json";
 import ruForkUi from "./ru/fork-ui.json";
-import ruDependencies from "./ru/dependencies.json";
 import ruDag from "./ru/dag.json";
 import ruAgentConfig from "./ru/agent-config.json";
 import ruAuth from "./ru/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: ruThinking,
   lark: ruLark,
   "fork-ui": ruForkUi,
-  dependencies: ruDependencies,
   dag: ruDag,
   "agent-config": ruAgentConfig,
   auth: ruAuth,

@@ -86,6 +86,8 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["docs", "folders", ":id"],
   ["skills"],
   ["skills", ":id"],
+  ["apps"],
+  ["apps", ":id"],
   ["settings"],
   ["attachments", ":id", "preview"],
 ];

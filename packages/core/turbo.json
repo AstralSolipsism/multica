@@ -4,7 +4,12 @@
     "test": {
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/server/internal/handler/testdata/quick_action_bodies.json"
+        "$TURBO_ROOT$/server/internal/handler/testdata/quick_action_bodies.json",
+        // Fork tests verify shared fixtures with the Go backend.
+        "$TURBO_ROOT$/server/pkg/agent/testdata/adapt_thinking_candidates.json",
+        "$TURBO_ROOT$/server/internal/engineering/testdata/wikilinks.json",
+        // appearance/theme-check.test.ts checks themes against the shipped palette.
+        "$TURBO_ROOT$/packages/ui/styles/tokens.css"
       ]
     }
   }

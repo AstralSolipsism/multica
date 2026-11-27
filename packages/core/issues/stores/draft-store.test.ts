@@ -43,7 +43,7 @@ const RESET_STATE = {
       assigneeType: undefined,
       assigneeId: undefined,
       labelIds: [],
-      blockedBy: [],
+      blocked_by: [],
       propertyValues: {},
     },
     agent: {

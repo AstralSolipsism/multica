@@ -59,7 +59,7 @@ describe("model to layout boundary", () => {
 });
 
 describe("focus side assignment", () => {
-  it("only creates ancestor fragments that contain members or carry a dependency", () => {
+  it("only creates ancestor fragments for grouping and never inherits a parent's blocker onto a child", () => {
     const index = createDagModelIndex(issueGraph([
       graphNode("line"), graphNode("seed", { parentIssueId: "line" }),
       graphNode("other"), graphNode("after", { parentIssueId: "other" }),
@@ -71,10 +71,16 @@ describe("focus side assignment", () => {
     const withPrerequisite = createDagModelIndex(issueGraph([
       ...index.graph.nodes, graphNode("before"),
     ], [["seed", "after"], ["before", "line"]]));
-    const inherited = dagFocusLayoutInput(computeDagFocus(withPrerequisite, "seed"));
-    const ancestor = inherited.input.frames.find((frame) => frame.modelId === "line" && frame.side === "upstream")!;
-    expect(ancestor).toBeDefined();
-    expect(inherited.input.edges).toContainEqual(expect.objectContaining({ source: "before", target: ancestor.id }));
+    const childFocus = dagFocusLayoutInput(computeDagFocus(withPrerequisite, "seed"));
+    expect(childFocus.input.frames.map((frame) => [frame.modelId, frame.side])).toEqual([
+      ["line", "current"], ["other", "downstream"],
+    ]);
+    expect(childFocus.input.nodes.find((node) => node.id === "before")).toBeUndefined();
+    expect(childFocus.input.edges.map((edge) => edge.id)).toEqual(["seed-after"]);
+
+    const parentFocus = dagFocusLayoutInput(computeDagFocus(withPrerequisite, "line"));
+    const focusedFrame = parentFocus.input.frames.find((frame) => frame.modelId === "line" && frame.side === "current")!;
+    expect(parentFocus.input.edges).toContainEqual(expect.objectContaining({ source: "before", target: focusedFrame.id }));
   });
 
   it("places cyclic peers alongside the seed instead of arbitrarily upstream", () => {
@@ -83,16 +89,20 @@ describe("focus side assignment", () => {
     expect(Object.fromEntries(plan.input.nodes.map((node) => [node.id, node.side]))).toEqual({ a: "current", b: "current", up: "upstream", down: "downstream" });
   });
 
-  it("places a retained cancelled context ancestor on its descendant's side", () => {
+  it("hides a finished cancelled line in focus when showCompleted is off and groups its frame on the descendant's side when on", () => {
     const index = createDagModelIndex(issueGraph([
       graphNode("cancelled", { status: "cancelled", statusCategory: "closed" }),
       graphNode("child", { parentIssueId: "cancelled", status: "cancelled", statusCategory: "closed" }),
-      graphNode("seed"), graphNode("outside"), graphNode("waiter"),
-    ], [["seed", "child"], ["child", "waiter"], ["cancelled", "outside"]]));
-    const model = computeDagFocus(index, "seed");
-    expect(model.downstreamIds.has("cancelled")).toBe(false);
-    expect(model.upstreamIds.has("cancelled")).toBe(false);
-    const plan = dagFocusLayoutInput(model);
-    expect(plan.input.nodes.find((node) => node.id === "cancelled")?.side).toBe("downstream");
+      graphNode("seed"), graphNode("waiter"),
+    ], [["seed", "child"], ["child", "waiter"]]));
+    const hidden = computeDagFocus(index, "seed");
+    expect(hidden.hiddenIssueCount).toBe(1);
+    expect(hidden.downstreamIds.has("child")).toBe(false);
+
+    const shown = computeDagFocus(index, "seed", true);
+    expect(shown.hiddenIssueCount).toBe(0);
+    const plan = dagFocusLayoutInput(shown);
+    expect(plan.input.nodes.find((node) => node.id === "child")?.side).toBe("downstream");
+    expect(plan.input.frames.find((frame) => frame.modelId === "cancelled")?.side).toBe("downstream");
   });
 });

@@ -1,4 +1,4 @@
-import { invalidateDependencyQueries, invalidateIssueQueries } from "./invalidation";
+import { invalidateIssueQueries } from "./invalidation";
 import { issueStatusCategory } from "./status-category";
 import type { QueryClient } from "@tanstack/react-query";
 import { issueKeys } from "./queries";
@@ -28,6 +28,7 @@ import type {
   Issue,
   IssueLabelsResponse,
   IssueMetadata,
+  IssueReaction,
   IssuePropertyValues,
   IssueTableRowsResponse,
   Label,
@@ -36,7 +37,12 @@ import type { ListIssuesCache } from "../types";
 
 const auxiliaryIssueRevisions = new WeakMap<QueryClient, Map<string, number>>();
 
-type AuxiliaryIssueProjection = "generic" | "labels" | "metadata" | "properties";
+type AuxiliaryIssueProjection =
+  | "generic"
+  | "labels"
+  | "metadata"
+  | "properties"
+  | "reactions";
 
 function auxiliaryIssueRevisionPrefix(wsId: string, issueId: string) {
   return `${wsId}:${issueId}:`;
@@ -500,7 +506,12 @@ export function onIssueUpdated(
   // stale keys for the drift a patch cannot fix (enter/leave beyond the
   // loaded window, undecidable membership, off-screen bucket counts). The
   // server has already committed, so stale keys are flushed immediately.
-  const change = applyIssueChange(qc, wsId, issue.id, issue, {
+  // A broadcast's blocked_by is not this reader's view: the server drops
+  // cross-project private blockers and fills the rest with the writer's
+  // access. Keep the cached list; a blocker change refetches it
+  // (blockers_changed).
+  const { blocked_by: _broadcastBlockers, ...patch } = issue;
+  const change = applyIssueChange(qc, wsId, issue.id, patch, {
     changed,
     baseIssue: cachedIssue,
     acceptCurrent: (current) =>
@@ -514,13 +525,6 @@ export function onIssueUpdated(
       issue.status !== undefined || issue.project_id !== undefined,
     refreshSidebar: false,
   });
-  // Dependency projections evaluate the CURRENT state of every registered
-  // prerequisite (status, parent chain, revision — OL-38 D1). A relation-only
-  // compound edit publishes this event with every change flag false and just
-  // a bumped revision, so gating on the dims would strand an open detail
-  // page's prerequisite list. Invalidate the prefix on every accepted event:
-  // only mounted observers (open detail/editor) actually refetch.
-  void invalidateDependencyQueries(qc, wsId);
   invalidateSidebarListsForIssue(qc, wsId, issue.id, [oldProjectId, issue.project_id]);
   // Group counts, branch membership and hierarchy are server-owned. Never
   // guess deltas from a partial branch; refetch the active Table queries.
@@ -537,7 +541,7 @@ export function onIssueUpdated(
           (issue.revision === undefined ||
             c.revision === undefined ||
             issue.revision > c.revision)
-            ? { ...c, ...issue }
+            ? { ...c, ...patch }
             : c,
         ),
       );
@@ -567,6 +571,14 @@ export function onIssueUpdated(
  * remounts — `staleTime: Infinity` + `refetchOnWindowFocus: false` (see
  * `query-client.ts`) means focus changes won't recover it.
  */
+/** Progress counts issues by label, and a label event doesn't name the project. */
+export function invalidateProjectProgress(qc: QueryClient, wsId: string) {
+  qc.invalidateQueries({
+    queryKey: projectKeys.all(wsId),
+    predicate: ({ queryKey }) => queryKey[2] === "detail" && queryKey[4] === "progress",
+  });
+}
+
 export function onIssueLabelsChanged(
   qc: QueryClient,
   wsId: string,
@@ -577,6 +589,7 @@ export function onIssueLabelsChanged(
   // Runs after the change is committed (event or mutation success), so the
   // archive can be asked again; the optimistic patch below cannot.
   void refreshArchivedInboxMatches(qc, wsId);
+  invalidateProjectProgress(qc, wsId);
   if (refetchForUnversionedIssueEvent(qc, wsId, issueId, revision)) {
     qc.invalidateQueries({ queryKey: labelKeys.byIssue(wsId, issueId) });
     return;
@@ -783,6 +796,97 @@ export function invalidatePropertyWindowQueries(qc: QueryClient, wsId: string) {
 }
 
 /**
+ * Apply a committed issue-reaction change to the issue detail cache, the only
+ * projection that carries `reactions` (list payloads omit them). Never touches
+ * `Issue.revision`: the auxiliary revision below marks the detail stale when
+ * the event proves a newer snapshot exists.
+ */
+export function patchIssueReactions(
+  qc: QueryClient,
+  wsId: string,
+  issueId: string,
+  update: (reactions: IssueReaction[]) => IssueReaction[],
+  revision?: number,
+) {
+  if (
+    isOlderThanRecordedAuxiliaryProjection(
+      qc,
+      wsId,
+      issueId,
+      revision,
+      "reactions",
+    )
+  ) {
+    return;
+  }
+  qc.setQueryData<Issue>(issueKeys.detail(wsId, issueId), (old) => {
+    if (!old) return old;
+    // A snapshot at or past this revision already reflects the change; a
+    // removal replayed onto it could drop a later re-add of the same emoji.
+    if (
+      revision !== undefined &&
+      old.revision !== undefined &&
+      revision <= old.revision
+    ) {
+      return old;
+    }
+    const reactions = old.reactions ?? [];
+    const next = update(reactions);
+    return next === reactions ? old : { ...old, reactions: next };
+  });
+  onIssueAuxiliaryRevision(qc, wsId, issueId, revision, "reactions");
+}
+
+export function addReactionToList(reaction: IssueReaction) {
+  return (reactions: IssueReaction[]) =>
+    reactions.some((r) => r.id === reaction.id)
+      ? reactions
+      : [...reactions, reaction];
+}
+
+export function removeReactionFromList(
+  removed: Pick<IssueReaction, "emoji" | "actor_type" | "actor_id">,
+) {
+  return (reactions: IssueReaction[]) => {
+    const next = reactions.filter(
+      (r) =>
+        !(
+          r.emoji === removed.emoji &&
+          r.actor_type === removed.actor_type &&
+          r.actor_id === removed.actor_id
+        ),
+    );
+    return next.length === reactions.length ? reactions : next;
+  };
+}
+
+export function onIssueReactionAdded(
+  qc: QueryClient,
+  wsId: string,
+  issueId: string,
+  reaction: IssueReaction,
+  revision?: number,
+) {
+  patchIssueReactions(qc, wsId, issueId, addReactionToList(reaction), revision);
+  if (revision === undefined) {
+    qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId), exact: true });
+  }
+}
+
+export function onIssueReactionRemoved(
+  qc: QueryClient,
+  wsId: string,
+  issueId: string,
+  removed: Pick<IssueReaction, "emoji" | "actor_type" | "actor_id">,
+  revision?: number,
+) {
+  patchIssueReactions(qc, wsId, issueId, removeReactionFromList(removed), revision);
+  if (revision === undefined) {
+    qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId), exact: true });
+  }
+}
+
+/**
  * Refreshes the duplicate relations an issue:updated event touched: the issue
  * itself and the originals it was marked against before and after the write.
  */
@@ -810,7 +914,4 @@ export function onIssueDeleted(
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-  // A deleted issue may have been a registered prerequisite — projections
-  // referencing it must re-read instead of pointing at a ghost.
-  void invalidateDependencyQueries(qc, wsId);
 }

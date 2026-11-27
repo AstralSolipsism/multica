@@ -496,7 +496,7 @@ func TestHandleDaemonWSHeartbeatMetrics(t *testing.T) {
 		RuntimeID: runtimeID,
 		Metrics:   hostMetricsSample(&cpu, nil, time.Now().Unix()),
 	}
-	ack, err := h.HandleDaemonWSHeartbeat(context.Background(), identity, payload)
+	ack, err := h.HandleDaemonWSHeartbeat(context.Background(), identity, payload.RuntimeID, payload)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: %v", err)
 	}

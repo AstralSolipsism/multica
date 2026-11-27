@@ -19,6 +19,10 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+vi.mock("@multica/core/permissions", () => ({
+  useIsGuest: () => false,
+}));
+
 vi.mock("@multica/core/paths", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/paths")>();
   return { ...actual, useWorkspacePaths: () => actual.paths.workspace("acme") };

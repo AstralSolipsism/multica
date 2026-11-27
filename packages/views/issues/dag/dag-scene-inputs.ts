@@ -66,8 +66,6 @@ export function dagFocusLayoutInput(model: DagFocusModel): DagScenePlan {
   const sideOf = (id: string): DagSceneSide => {
     const upstream = model.upstreamIds.has(id);
     if (id === model.issueId || (upstream && model.downstreamIds.has(id))) return "current";
-    // Upstream traversal already includes ancestors. Any remaining context
-    // ancestor therefore belongs to a downstream member (including cancelled ones).
     return upstream ? "upstream" : "downstream";
   };
   const frames = model.groups.flatMap((group) => group.frames);

@@ -1,9 +1,10 @@
 "use client";
 
 import katex from "katex";
-import { Node, mergeAttributes } from "@tiptap/core";
+import { mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
+import { BlockMathSchema, InlineMathSchema } from "../schema/math";
 import { createInlineMathTokenizer, parseInlineMath } from "./inline-math-tokenizer";
 import { renderInlineMath } from "./math-markdown";
 
@@ -47,19 +48,10 @@ function BlockMathView({ node }: NodeViewProps) {
   );
 }
 
-export const InlineMathExtension = Node.create({
-  name: "inlineMath",
-  group: "inline",
-  inline: true,
-  atom: true,
-  selectable: true,
-
+export const InlineMathExtension = InlineMathSchema.extend({
   addAttributes() {
     return {
-      expression: {
-        default: "",
-        rendered: false,
-      },
+      ...this.parent?.(),
       delimiter: {
         default: "$",
         rendered: false,
@@ -103,46 +95,7 @@ export const InlineMathExtension = Node.create({
   },
 });
 
-export const BlockMathExtension = Node.create({
-  name: "blockMath",
-  group: "block",
-  atom: true,
-  code: true,
-  defining: true,
-  isolating: true,
-  selectable: true,
-
-  addAttributes() {
-    return {
-      expression: {
-        default: "",
-        rendered: false,
-      },
-    };
-  },
-
-  parseHTML() {
-    return [
-      {
-        tag: 'div[data-type="block-math"]',
-        getAttrs: (el) => ({
-          expression: (el as HTMLElement).getAttribute("data-expression") ?? "",
-        }),
-      },
-    ];
-  },
-
-  renderHTML({ node, HTMLAttributes }) {
-    return [
-      "div",
-      mergeAttributes(HTMLAttributes, {
-        "data-type": "block-math",
-        "data-expression": node.attrs.expression,
-      }),
-      node.attrs.expression,
-    ];
-  },
-
+export const BlockMathExtension = BlockMathSchema.extend({
   markdownTokenizer: {
     name: "blockMath",
     level: "block" as const,
@@ -162,15 +115,6 @@ export const BlockMathExtension = Node.create({
         attributes: { expression: match[1] ?? "" },
       };
     },
-  },
-
-  parseMarkdown: (token: any, helpers: any) => {
-    return helpers.createNode("blockMath", token.attributes);
-  },
-
-  renderMarkdown: (node: any) => {
-    const expression = String(node.attrs?.expression ?? "");
-    return `$$\n${expression}\n$$`;
   },
 
   addNodeView() {

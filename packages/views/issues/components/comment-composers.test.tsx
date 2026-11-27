@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { AgentSkillSummary, Attachment } from "@multica/core/types";
 import type { Editor } from "@tiptap/core";
-import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
+import { useCommentComposerStore, useCommentDraftStore } from "@multica/core/issues/stores";
 import { issueKeys } from "@multica/core/issues/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
@@ -30,7 +30,6 @@ vi.mock("@multica/core/auth", () => ({
 const apiUploadFile = vi.hoisted(() => vi.fn());
 const apiListWorkspaces = vi.hoisted(() => vi.fn());
 const apiListQuickActions = vi.hoisted(() => vi.fn());
-const apiRenderQuickAction = vi.hoisted(() => vi.fn());
 const apiGetIssue = vi.hoisted(() => vi.fn());
 const apiListAgents = vi.hoisted(() => vi.fn());
 const apiListSquads = vi.hoisted(() => vi.fn());
@@ -68,13 +67,16 @@ const editorUploadSignal = vi.hoisted(
 // the same or the two records drift apart only in tests.
 let mockUploadIdSeq = 0;
 
+vi.mock("@multica/core/permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/permissions")>()),
+  useIsGuest: () => false,
+}));
 vi.mock("@multica/core/api", () => ({
   api: {
     getBaseUrl: () => "https://api.example.test",
     uploadFile: apiUploadFile,
     listWorkspaces: apiListWorkspaces,
     listQuickActions: apiListQuickActions,
-    renderQuickAction: apiRenderQuickAction,
     getIssue: apiGetIssue,
     listAgents: apiListAgents,
     listSquads: apiListSquads,
@@ -325,7 +327,6 @@ beforeEach(() => {
   apiUploadFile.mockReset();
   apiListWorkspaces.mockReset();
   apiListQuickActions.mockReset();
-  apiRenderQuickAction.mockReset();
   apiGetIssue.mockReset().mockResolvedValue({ id: "issue-1", assignee_type: null, assignee_id: null });
   apiListAgents.mockReset().mockResolvedValue([]);
   apiListSquads.mockReset().mockResolvedValue([]);
@@ -479,7 +480,6 @@ describe("quick action `/` menu", () => {
       await waitFor(() => {
         expect(editorQuickActionMenu.last?.getQuickActionContent?.("qa-1")).toBe("Review this issue");
       });
-      expect(apiRenderQuickAction).not.toHaveBeenCalled();
     });
 
     it(`resolves Issue assignee skills in the ${composer.name}`, async () => {
@@ -1015,7 +1015,7 @@ describe("comment composers", () => {
     });
 
     expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toBe("draft A plus more");
-    // …and the post-send caret policy must stand down with it: the guard left
+    // ...and the post-send caret policy must stand down with it: the guard left
     // the editor holding "draft A plus more", so blurring would yank the caret
     // out of the sentence the user is still writing.
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
@@ -1539,11 +1539,11 @@ describe("comment composers — upload submit gate", () => {
     });
 
     // The LIVE EDITOR received the insert (not just the store — an append the
-    // mounted editor never saw would be erased by its next emit)…
+    // mounted editor never saw would be erased by its next emit)...
     expect(insertMarkdownSpy).toHaveBeenCalledWith(
       expect.stringContaining("https://cdn.example/att-live.png"),
     );
-    // …and the draft body converged through the normal onUpdate pipeline.
+    // ...and the draft body converged through the normal onUpdate pipeline.
     await waitFor(() =>
       expect(useCommentDraftStore.getState().getDraft("new:issue-1")).toContain(
         "https://cdn.example/att-live.png",

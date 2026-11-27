@@ -629,7 +629,7 @@ describe("ReadonlyContent HTML block rendering", () => {
 
     view.rerender(ui(undefined, "settled"));
     expect(view.container.querySelector("[data-rich-content]")).toBe(contentNode);
-    expect(screen.getByText("Loading preview…")).toBeInTheDocument();
+    expect(screen.getByText("Loading preview...")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
 
     const attachment = {

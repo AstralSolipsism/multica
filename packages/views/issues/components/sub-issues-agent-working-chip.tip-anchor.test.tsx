@@ -24,6 +24,9 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/agents", () => ({
+  agentTaskSnapshotOptions: (...args: unknown[]) => ({
+    queryKey: ["agent-task-snapshot", ...args],
+  }),
   workspaceWorkingAgentsOptions: (...args: unknown[]) => ({
     queryKey: ["working-agents", ...args],
   }),
@@ -34,7 +37,13 @@ vi.mock("@tanstack/react-query", async () => {
     await vi.importActual<typeof import("@tanstack/react-query")>(
       "@tanstack/react-query",
     );
-  return { ...actual, useQuery: () => ({ data: mockState.agents }) };
+  return {
+    ...actual,
+    useQuery: (opts?: { queryKey?: readonly unknown[] }) =>
+      opts?.queryKey?.[0] === "agent-task-snapshot"
+        ? { data: undefined }
+        : { data: mockState.agents },
+  };
 });
 
 vi.mock("@multica/core/workspace/hooks", () => ({

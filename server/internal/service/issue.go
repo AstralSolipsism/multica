@@ -41,9 +41,8 @@ type IssueService struct {
 	// cmd/server/router.go after construction; nil in tests / self-hosted
 	// without the metrics listener — obsmetrics.RecordEvent treats a nil
 	// Metrics as "PostHog only", so leaving it unset is safe.
-	Metrics      *obsmetrics.BusinessMetrics
-	TaskService  *TaskService
-	Dependencies *DependencyService
+	Metrics     *obsmetrics.BusinessMetrics
+	TaskService *TaskService
 }
 
 func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.Client, ts *TaskService) *IssueService {
@@ -53,8 +52,6 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 		Bus:         bus,
 		Analytics:   ac,
 		TaskService: ts,
-
-		Dependencies: NewDependencyService(q, tx),
 	}
 }
 
@@ -62,6 +59,7 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 // to IssueService.Create. The handler owns the parsing step that turns its
 // request payload into this struct; the service stays transport-agnostic.
 type IssueCreateParams struct {
+	BlockedBy     []pgtype.UUID
 	WorkspaceID   pgtype.UUID
 	Title         string
 	Description   pgtype.Text
@@ -216,8 +214,6 @@ type IssueCreateResult struct {
 	// understood label_ids (see the create handler's compatibility contract).
 	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
-
-	Dependencies *DependencySnapshot
 }
 
 // Create is the entry point every creator shares. It runs the pipeline below and
@@ -295,10 +291,10 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
-	// Every create eventually updates this counter. Lock it before any issue
-	// or property rows so relation-aware creates use the same lock order.
-	if _, err := qtx.LockWorkspaceForDependencyWrite(ctx, p.WorkspaceID); err != nil {
-		return IssueCreateResult{}, err
+	if len(p.BlockedBy) > 0 || p.Stage.Valid {
+		if err = qtx.LockIssueBlockerGraph(ctx, p.WorkspaceID); err != nil {
+			return IssueCreateResult{}, err
+		}
 	}
 
 	if reused, stop, err := s.prepareBaselineThread(ctx, qtx, &p, opts); stop {
@@ -306,11 +302,6 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 	}
 
 	properties, err := validateIssueCreateProperties(ctx, tx, qtx, p.WorkspaceID, p.Properties)
-	if err != nil {
-		return IssueCreateResult{}, err
-	}
-
-	dependencyWrite, err := s.beforeIssueCreate(ctx, qtx, p.WorkspaceID)
 	if err != nil {
 		return IssueCreateResult{}, err
 	}
@@ -518,6 +509,11 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 		return IssueCreateResult{}, classifyIssueNumberCollision(fmt.Errorf("create issue: %w", err), issueNumber)
 	}
 
+	for _, blockerID := range p.BlockedBy {
+		if err = AddIssueBlocker(ctx, qtx, p.WorkspaceID, issue.ID, blockerID, p.CreatorType, p.CreatorID); err != nil {
+			return IssueCreateResult{}, err
+		}
+	}
 	if p.PRAutoCompleteDisabled {
 		if err := qtx.SetIssuePRAutoCompleteDisabled(ctx, db.SetIssuePRAutoCompleteDisabledParams{
 			IssueID: issue.ID, WorkspaceID: issue.WorkspaceID, AutoCompleteDisabled: true,
@@ -527,10 +523,6 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 		}
 	}
 
-	issue, dependencyAfter, err := dependencyWrite.AfterIssueWrite(ctx, qtx, issue, 0)
-	if err != nil {
-		return IssueCreateResult{}, err
-	}
 	if p.SourceContext != nil {
 		if _, err := PersistSourceContext(ctx, qtx, *p.SourceContext, issue.ID, pgtype.UUID{}); err != nil {
 			return IssueCreateResult{}, fmt.Errorf("persist source context: %w", err)
@@ -667,7 +659,7 @@ func (s *IssueService) createOnce(ctx context.Context, p IssueCreateParams, opts
 		s.TaskService.RecordHumanDelegation(ctx, attribution.DirectHumanRun(p.CreatorID, attribution.EvidenceIssueAssignment, issue.ID))
 	}
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID, Dependencies: dependencyAfter}, nil
+	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID}, nil
 }
 
 // validateIssueCreateProperties returns the canonical JSONB bag to put on the
@@ -1031,6 +1023,10 @@ func (s *IssueService) shouldEnqueueAgentTaskWithQueries(ctx context.Context, q 
 	if issue.TriageState.Valid || issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status) == "backlog" {
 		return false
 	}
+	blocked, err := q.HasOpenIssueBlockers(ctx, db.HasOpenIssueBlockersParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID})
+	if err != nil || blocked {
+		return false
+	}
 	return isAgentAssigneeReadyWithQueries(ctx, s.runtimeLookup(q), issue)
 }
 
@@ -1062,6 +1058,10 @@ func agentAssigneeVerdict(ctx context.Context, lookup RuntimeLookup, issue db.Is
 
 func (s *IssueService) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
 	if issue.TriageState.Valid || issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status) == "backlog" {
+		return false
+	}
+	blocked, err := s.Queries.HasOpenIssueBlockers(ctx, db.HasOpenIssueBlockersParams{WorkspaceID: issue.WorkspaceID, IssueID: issue.ID})
+	if err != nil || blocked {
 		return false
 	}
 	return s.isSquadLeaderReady(ctx, issue)

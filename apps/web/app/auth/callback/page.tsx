@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
@@ -32,6 +32,9 @@ function CallbackContent() {
   const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
   const [error, setError] = useState<CallbackError | null>(null);
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
+  // Single-use OAuth codes must only be exchanged once even if React StrictMode
+  // re-invokes mount effects in development.
+  const exchangedCodeRef = useRef<string | null>(null);
 
   useEffect(() => {
     const code = searchParams.get("code");
@@ -50,6 +53,11 @@ function CallbackContent() {
       setError({ kind: "missing_code" });
       return;
     }
+
+    if (exchangedCodeRef.current === code) {
+      return;
+    }
+    exchangedCodeRef.current = code;
 
     const state = searchParams.get("state") || "";
     const stateParts = state.split(",");
@@ -149,7 +157,10 @@ function CallbackContent() {
 
           // 3. Default: hand off to the resolver (onboarding for first-timers,
           //    first workspace for returning users, /workspaces/new for
-          //    onboarded users with zero workspaces).
+          //    onboarded users with zero workspaces). Source-attribution
+          //    backfill for onboarded users with no recorded source is
+          //    handled by `<SourceBackfillModal />` inside the dashboard
+          //    shell — not a route detour, so we route straight to dest.
           router.push(resolvePostAuthDestination(wsList, onboarded));
         })
         .catch((err) => {

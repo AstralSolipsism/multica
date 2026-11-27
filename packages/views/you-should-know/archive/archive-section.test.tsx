@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/paths", () => ({
+  issueRouteRef: ({ id, identifier }: { id: string; identifier: string | null | undefined }) =>
+    identifier || id,
   useCurrentWorkspace: () => ({
     id: "ws-1",
     name: "Acme",

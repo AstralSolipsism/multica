@@ -11,12 +11,13 @@ type ModalType =
   | "issue-set-parent"
   | "issue-mark-duplicate"
   | "issue-add-child"
+  | "issue-add-blocker"
+  | "issue-add-blocking"
   | "project-add-issue"
   | "project-rename"
   | "issue-rename"
   | "issue-delete-confirm"
   | "issue-run-confirm"
-  | "issue-edit-dependencies"
   | "issue-workflow-handoff"
   | null;
 

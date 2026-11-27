@@ -121,6 +121,8 @@ vi.mock("@multica/core/message-delivery", () => ({
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 
 vi.mock("@multica/core/paths", () => ({
+  issueRouteRef: ({ id, identifier }: { id: string; identifier: string | null | undefined }) =>
+    identifier || id,
   useWorkspacePaths: () => ({ issueDetail: (id: string) => `/ws/issues/${id}` }),
 }));
 

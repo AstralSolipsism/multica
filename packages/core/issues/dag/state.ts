@@ -1,7 +1,7 @@
 import type { IssueGraphNode } from "../../api/issue-graph-schemas";
 import { normalizeIssueStatusCategory } from "../config/status";
 
-export type DagDependencyState = "satisfied" | "cancelled-blocking" | "advancing" | "blocking";
+export type DagDependencyState = "satisfied" | "advancing" | "blocking";
 
 export function dagIssueFinished(node: Pick<IssueGraphNode, "statusCategory">): boolean {
   const category = normalizeIssueStatusCategory(node.statusCategory);
@@ -15,17 +15,16 @@ export function dagHasActiveRun(node: RunState): boolean {
   return !!run && (run.queued > 0 || run.dispatched > 0 || run.running > 0 || run.waitingLocalDirectory > 0);
 }
 
-/** A parent waiter is finished only when its entire subtree has ended. */
-export function dagDependencyState(source: Pick<IssueGraphNode, "status" | "statusCategory"> & RunState, targetSubtreeFinished: boolean): DagDependencyState {
+/** Native blockers treat both done and cancelled (closed) as terminal. */
+export function dagDependencyState(source: Pick<IssueGraphNode, "status" | "statusCategory"> & RunState, targetFinished: boolean): DagDependencyState {
+  if (dagIssueFinished(source) || targetFinished) return "satisfied";
   const category = normalizeIssueStatusCategory(source.statusCategory);
-  if (category === "done" || targetSubtreeFinished) return "satisfied";
-  if (category === "closed") return "cancelled-blocking";
   if ((category === "started" && source.status !== "blocked") || dagHasActiveRun(source)) return "advancing";
   return "blocking";
 }
 
 const attention: Record<DagDependencyState, number> = {
-  satisfied: 0, advancing: 1, blocking: 2, "cancelled-blocking": 3,
+  satisfied: 0, advancing: 1, blocking: 2,
 };
 
 export function aggregateDagDependencyState(states: Iterable<DagDependencyState>): DagDependencyState {

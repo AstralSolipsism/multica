@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,23 +28,25 @@ type IssueContentPatch struct {
 // remain separate operations because each has additional policy and side
 // effects.
 func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch IssueContentPatch) (db.Issue, error) {
-	if s.TxStarter == nil {
-		return db.Issue{}, errors.New("issue content update requires a transaction starter")
-	}
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
-		return db.Issue{}, err
+		return db.Issue{}, fmt.Errorf("begin issue content update: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	q := s.Queries.WithTx(tx)
-	// UpdateIssue accepts nullable hierarchy/assignment fields. Populate them
-	// from the locked row so a content edit cannot restore stale structure.
-	issue, err = q.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{ID: issue.ID, WorkspaceID: issue.WorkspaceID})
+	qtx := s.Queries.WithTx(tx)
+	// The update writes these fields as given, so take them from the locked row:
+	// the caller's copy may predate a concurrent write.
+	issue, err = qtx.LockIssueForDescriptionUpdate(ctx, db.LockIssueForDescriptionUpdateParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	// A revision-checked write against an issue that is already gone is the
+	// same conflict as a stale revision, not a storage failure.
 	if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
 		return db.Issue{}, ErrIssueRevisionConflict
 	}
 	if err != nil {
-		return db.Issue{}, err
+		return db.Issue{}, fmt.Errorf("lock issue for content update: %w", err)
 	}
 	params := db.UpdateIssueParams{
 		ID:            issue.ID,
@@ -65,7 +68,7 @@ func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch 
 		params.Description = pgtype.Text{String: *patch.Description, Valid: true}
 	}
 
-	updated, err := q.UpdateIssue(ctx, params)
+	updated, err := qtx.UpdateIssue(ctx, params)
 	if patch.ExpectedRevision != nil && errors.Is(err, pgx.ErrNoRows) {
 		return db.Issue{}, ErrIssueRevisionConflict
 	}
@@ -73,7 +76,7 @@ func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch 
 		return db.Issue{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.Issue{}, err
+		return db.Issue{}, fmt.Errorf("commit issue content update: %w", err)
 	}
 	return updated, nil
 }

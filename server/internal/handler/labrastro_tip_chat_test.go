@@ -344,14 +344,11 @@ func TestLabrastroTipChatFirstTurnAndVisibility(t *testing.T) {
 			t.Fatalf("hidden context reached realtime: %s", event)
 		}
 	}
-	// Machine-readable list/detail responses must not discover tip snapshots.
+	// A machine credential with no live owner-started task is refused by the
+	// detail route, so it cannot discover tip snapshots.
 	r := f.request("GET", nil, "sessionId", session.ID)
 	r.Header.Set("X-Actor-Source", "task_token")
-	var machine ChatSessionResponse
-	testutil.Call(t, f.tipChatHandler(f.h.GetChatSession), r).Want(200).JSON(&machine)
-	if machine.TipSource != nil {
-		t.Fatal("tip source exposed to a machine credential")
-	}
+	testutil.Call(t, f.tipChatHandler(f.h.GetChatSession), r).Want(http.StatusForbidden)
 }
 
 func TestLabrastroTipChatSubmissionReplayRechecksSourceAccess(t *testing.T) {

@@ -60,12 +60,6 @@ vi.mock("../../you-should-know/archive/archive-section", () => ({
   },
 }));
 
-vi.mock("./issue-dependencies-section", () => ({
-  IssueDependenciesSection: ({ issue }: { issue: { id: string } }) => (
-    <div data-testid="issue-dependencies-section" data-issue-id={issue.id} />
-  ),
-}));
-
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -200,6 +194,8 @@ vi.mock("../../editor", async () => ({
   // provider, but paging between files is covered in
   // preview-sequence-context.test.tsx against the real provider.
   PreviewSequenceProvider: ({ children }: { children: React.ReactNode }) =>
+    children,
+  ImageThumbnailsProvider: ({ children }: { children: React.ReactNode }) =>
     children,
   usePreviewSequence: () => ({ openAt: () => false }),
   collectPreviewSequence: () => [],

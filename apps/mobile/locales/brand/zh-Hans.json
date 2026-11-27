@@ -14,7 +14,8 @@
   },
   "inbox": {
     "detail": {
-      "review_billing_web": "在网页端打开 Labrastro 查看账单选项。"
+      "review_billing_web": "在网页端打开 Labrastro 查看账单选项。",
+      "buy_runs_web": "在网页端打开 Labrastro 加购执行次数。"
     }
   }
 }

@@ -1,25 +1,26 @@
 # Complete issue graph API (OL-40)
 
-This API and headless data layer implement the OL-38 v2 graph contract on top
-of OL-39 persistence for the shared Issue surface.
+This API and headless data layer implement the OL-38 graph contract on top of
+upstream's native issue blockers for the shared Issue surface.
 
-## Informational dependency policy
+## Blocker source
 
-The dependency execution policy was retired by the confirmed
-[upstream synchronization decisions](engineering/upstream-sync-20260926.md).
+The graph reads `effective_issue_blocker`: the manual `issue_blocker` rows
+and the same-parent stage order, exactly the edges that gate execution. The
+fork's informational `issue_dependency` relations were retired by the
+v0.13.0 upgrade (OL-1517): migration
+`9079_labrastro_migrate_issue_dependency_to_blocker` turns every historical
+blocking edge into a manual blocker, and the table, its rows and its audit
+log stay in place as retired data. An edge upstream's graph rules refuse (a
+cycle through the same-parent stage order, or an ancestor linked to a
+descendant) is left behind and reported with `RAISE NOTICE`.
 
-Dependency edges, inherited relation summaries, graph views and versioned edits
-remain available for planning. They do not block assignment, enqueue, claim,
-retry, comments, automation, or Squad execution. These use upstream rules.
-There is no one-shot dependency override, human-only relation removal, or
-dependency-specific dispatch result. Historical migrations and stored records
-remain to preserve existing databases; they do not activate the retired policy.
-
-The current [CLI and API contract](../server/internal/service/builtin_skills/multica-platform/references/issue-dependencies.md)
-documents informational relations and graph validation. Regression coverage is
-in `dependency_informational_test.go`, `dependency_cli_test.go`,
-`issue_dependency_test.go`, and the issue graph tests. No real agent CLI is
-required or permitted by the default tests.
+Blockers are never inherited from an ancestor: parentage only adds context
+nodes. Regression coverage is `TestIssueGraph*` in the handler and service
+packages, `TestLabrastroPrivateProjectBlockersAndGraph` for hidden blockers,
+parents and revoked members, and `TestIssueGraphRouteRefusesGuestsAndHidesPrivateProjects`
+through the production router. No real agent CLI is required or permitted by
+the default tests.
 
 ## Request and authorization
 
@@ -33,26 +34,36 @@ required or permitted by the default tests.
 
 An omitted query returns the entire authorized workspace, including tasks with
 no project, dates or assignee. Project/filter matches form the subject set.
-All ancestors and recursive prerequisites are then added to a fixed point;
+All ancestors and recursive blockers are then added to a fixed point;
 unrelated descendants are not added. No list pages or Gantt windows are used.
 There is no node-count limit, cursor, `limit` or `scheduled` parameter. The
 JSON query limit is 1 MiB; transport/proxy URL limits also apply.
 
-Membership, project/focus scope, matched IDs, status catalog, dependency
+Membership, project/focus scope, matched IDs, status catalog, blocker
 relations, compact details and active task counts use one read-only
 REPEATABLE READ transaction. Membership is rechecked inside that transaction.
 The request workspace must match its authenticated transport scope, including
-task credential binding. Existing workspace membership is the current access
-policy; there is no separate project/issue ACL in this stage. The projection
-accepts a visibility policy for future finer permissions and is tested through
-hidden parent/prerequisite paths. A failed transaction never emits a success.
+task credential binding. A failed transaction never emits a success.
+
+Access follows the workspace routes' default-deny order:
+
+- The membership middleware answers first. A workspace member continues. A
+  guest is refused with 403, because the graph route is not in the guest
+  allowlist (`middleware/guest.go`), whatever projects that guest may read.
+- For a member, the graph is narrowed by private-project access. An issue in a
+  private project the member is not in is hidden, and so are its project, its
+  blockers and its parent: `has_restricted_context`, `has_restricted_parent`
+  and `dependency_summary` carry only the boolean markers below.
+- A hidden project or focus issue answers 404, byte-identical to a missing
+  one.
 
 ## Response and projection
 
 The checked-in `packages/core/api/testdata/issue-graph.json` is a real handler
-response from the synthetic OL-38 14-node/7-edge fixture. It includes cross
-project edges in both aggregate directions, hierarchy inheritance, an
-unprojected prerequisite and an undated issue. No production data is included.
+response captured from the synthetic OL-38 14-node fixture: cross-project
+edges in both aggregate directions, an unprojected prerequisite and an undated
+issue, with no production data. Regenerate it after any change to the server's
+graph; the frontend stage of an upgrade does so together with its expectations.
 `server/internal/handler/testdata/issue-graph/reference.json` preserves the
 logical source fixture; integration tests map its logical IDs to fixture UUIDs.
 
@@ -69,34 +80,36 @@ The version-1 envelope includes `snapshot_id`, `captured_at`, `complete: true`,
 | `capturedAt` | Transaction timestamp; all run summaries use the same value. |
 | `role` | `match` contributes to the subject count; `context` explains prerequisites or ancestry. |
 | `parentIssueId` / `projectId` / `stage` | Hierarchy, project and stage grouping. Null has its ordinary unassigned meaning unless `hasRestrictedParent` is true. |
-| `edges` | Direct `blocked_by` relations only. Stored B-depends-on-A becomes A → B. Every edge retains its real `sourceEdgeId`. No expanded descendant execution edge set is transferred. |
-| `dependencySummary` | Unique unfinished direct/inherited prerequisites: visible count, restricted blocker boolean and the same opaque version as dependency detail. Only each prerequisite's current effective `done` category satisfies it. |
+| `edges` | Every effective `blocked_by` edge, prerequisite → dependent. `sourceEdgeId` is `manual:<issue>:<blocker>` for a stored `issue_blocker` row and `stage:<issue>:<blocker>` for same-parent stage order; a stored edge replaces that pair's stage edge. No expanded descendant execution edge set is transferred. |
+| `dependencySummary` | The node's own unfinished blockers, manual and stage alike: visible count, restricted blocker boolean and an opaque version of the blocker set. Only each blocker's current effective `done` or `cancelled` category satisfies it. |
 | `runSummary` | Counts actual queue rows in queued/dispatched/running/waiting_local_directory states. Zero is an observed empty active set, not a guess from Issue status. |
-| restricted markers | Only booleans are returned. Hidden node/parent/source-edge IDs, titles and counts are omitted. Server-side satisfaction still includes hidden prerequisites. |
+| restricted markers | Only booleans are returned. Hidden node/parent/source-edge IDs, titles and counts are omitted. Server-side satisfaction still includes hidden blockers. |
 
 `projectIssueGraph(graph, representatives)` groups visible node IDs under
 display representatives and merges directed edges while retaining all real
 source-edge IDs. It separately counts internal edges. Task-line collapse
 can produce both A → B and B → A; those display arrows do not imply a task
-dependency cycle. Edit or explain the original edges, never the aggregate IDs.
-For inherited explanations, follow the node's parent chain and original
-incoming edges, or request `/api/issues/{id}/dependencies` on demand.
+dependency cycle. Explain the original edges, never the aggregate IDs: a
+`manual:` source edge is a stored blocker, a `stage:` source edge is
+same-parent stage order, and there is no separate dependency detail endpoint.
+Selected nodes reuse the native Relations actions to add blockers in either
+direction. The bus popup removes only `manual:` edges through the native
+blocker mutation; `stage:` edges display their Stage tag and stay read-only.
 
 ## DAG stage ordering
 
 The shared Web/Desktop layout uses ascending stage numbers **within the same
-parent issue** as display order, even when no dependency edges are stored.
-Stages on unrelated task lines or unparented issues are not compared. Unstaged
-issues and same-stage siblings remain unconstrained unless a direct or
-transitive dependency orders them. Parentage alone creates no precedence.
+parent issue** as display order, whether or not edges are stored. Stages on
+unrelated task lines or unparented issues are not compared. Unstaged issues
+and same-stage siblings remain unconstrained unless a blocker orders them.
 
-Stage ordering constraints exist only inside the layout worker; they produce no
-task-to-task arrows, persisted relations, or execution gates. Stage progression
-is shown in stage headers, separately from dependency arrows. Folded issues use their own
-stage, never a child's stage. If stage ordering would create a cycle through
-real dependencies (including cross-line paths), conflicting stage boundaries
-are omitted; real arrows retain their original direction. A stage edit changes
-`topologyId` and relayouts the graph; status/run-only updates keep its positions.
+Upstream gates execution on that stage order and reports it as `stage:` edges
+in the graph; parentage alone creates no edge. Stage progression is shown in
+stage headers. Folded issues use their own stage, never a child's stage. If
+stage ordering would create a cycle through manual blockers (including
+cross-line paths), conflicting stage boundaries are omitted; stored blockers
+retain their direction. A stage edit changes `topologyId` and relayouts the
+graph; status/run-only updates keep its positions.
 
 ## Grouped Web/Desktop canvas
 
@@ -145,8 +158,7 @@ canvas does not substitute straight or guessed dependency lines. Selection,
 title, status and run refreshes do not relayout an unchanged topology.
 
 Single-click selects a card or task; the toolbar's selection zone keeps the
-OL-182 actions (open detail, highlight prerequisites/dependents, edit
-prerequisites, assign), and line cards additionally offer **Enter task line**.
+OL-182 actions (open detail, highlight prerequisites/dependents, assign), and line cards additionally offer **Enter task line**.
 **Focus issue group** remains available on a selected member, recentering its
 innermost sub-line frame. Double-click follows the level: line cards enter,
 tasks open the detail. Returning to the overview restores its viewport and
@@ -199,7 +211,7 @@ invalidates the graph and reports `stale`/`outside_snapshot`; it never changes
 nodes or edges using detail data. The UI must pass the **current** graph at
 detail completion, not a captured stale graph object.
 
-Existing issue updates (including compound relation changes), creation,
+Existing issue updates (including blocker edits), creation,
 deletion, label/property/metadata edits, parent/project/status changes,
 catalog changes and task lifecycle events invalidate the graph. Generic
 comment/attachment revisions do too. Reconnect recovers all issue query
@@ -218,37 +230,26 @@ ordinary list/detail request cancellation keeps its existing behavior.
 
 ## Errors and verification
 
-Malformed/unsupported queries return 400. Inaccessible workspace/project/focus
-returns 404 after authentication/membership routing. Invalid canonical or
-unverified historical dependency data fails closed with 422. Database/commit
-failure returns 500 `graph_query_failed`; an exhausted 8-second query deadline
-returns 504 `graph_query_timeout`. Successful responses are `private, no-store`.
-Schema parsing rejects incomplete or structurally malformed topology as a
-whole, tolerates additive fields and degrades only optional summaries to
-unknown. Compound dependency writes are enabled in production and validate graph
-structure; dependency summaries do not control assignment or execution.
+Malformed/unsupported queries return 400. A guest is refused with 403 before
+the handler runs. Inaccessible workspace/project/focus returns 404 after
+authentication/membership routing. A blocker endpoint outside the workspace's
+issues is refused with 422 `dependency_data_unverified` and no graph is
+returned. Database/commit failure returns 500 `graph_query_failed`; an
+exhausted 8-second query deadline returns 504 `graph_query_timeout`. Successful
+responses are `private, no-store`. Schema parsing rejects incomplete or
+structurally malformed topology as a whole, tolerates additive fields and
+degrades only optional summaries to unknown. The graph is read-only: blockers
+gate execution through upstream's `blockers_done` system wakeup, and the
+summaries here only report that state.
 
-The opaque `dependency_version` used for relation edits covers the target's
-ancestor chain and its direct/inherited `blocked_by` edge sources. Issue titles,
-statuses, revisions and the status catalog do not invalidate it; those changes
-still refresh graph/detail displays. Structural changes to that relation view
-return 409 when a caller submits an older `expected_dependency_version`. Deploying
-the structural-only version format invalidates previously issued edit tokens
-once, requiring clients to refresh before retrying.
+The opaque `dependency_version` covers the node's own blocker set. Issue
+titles, statuses, revisions, the status catalog and a blocker's completion do
+not change it; those changes still refresh the graph display. Blockers are
+edited with upstream's `--blocked-by`, `--remove-blocked-by` and `--blocked`
+flags on `multica issue`, never through the graph.
 
-Structural edits serialize with the workspace's transaction-scoped advisory
-lock, without locking every issue row. Ordinary content edits and ordinary
-(non-`with-dependencies`) creation without `blocked_by` do not take that lock or
-load a dependency snapshot. `POST /api/issues/with-dependencies` defaults omitted
-`blocked_by` to `[]`, so it still takes the lock and loads a snapshot.
-Deletion keeps the structure lock while detaching surviving children and
-removing incident edges, but does not load or validate the full graph. Only
-explicit relation edits and reparenting write dependency audit entries; deletion
-uses the existing issue deletion/child update events, without building graph
-snapshots solely for audit rows that have no reader.
-
-Backend regression suites are `TestIssueGraph*`, `TestDependency*` and the
-shared Issue Table filter tests. Client tests cover the API boundary, query
+Backend regression suites are `TestIssueGraph*` and the shared Issue Table
+filter tests. Client tests cover the API boundary, query
 cancellation/detail races, collapse provenance and actual realtime wiring.
 Regenerate the mock by running `TestIssueGraphReferenceCompleteAndProjectContext`
 with `ISSUE_GRAPH_MOCK_PATH` set to the desired path (relative to the handler
@@ -265,11 +266,3 @@ excluding authentication, fixture setup, response decoding, network and
 browser rendering. Total allocation is a
 conservative per-request allocation measure, not process RSS or DB memory.
 These test sizes are measurements, not product limits.
-
-`TestDependencyWriteScale` measures reparenting, child creation without
-`blocked_by`, and deletion at 20,000 issues and 200 canonical edges. Enable it
-with `ISSUE_DEPENDENCY_WRITE_BENCHMARK=1`; set
-`ISSUE_DEPENDENCY_WRITE_BENCHMARK_PATH` to an absolute output path for the JSON
-samples. Each operation has one warm-up and 20 measured requests through the
-real handlers, including transaction commits and excluding fixture setup,
-cleanup, authentication and network time.

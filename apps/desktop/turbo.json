@@ -1,0 +1,12 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        // scripts/package-cli.test.mjs reads the shared release helper.
+        "$TURBO_ROOT$/scripts/check-release.mjs"
+      ]
+    }
+  }
+}

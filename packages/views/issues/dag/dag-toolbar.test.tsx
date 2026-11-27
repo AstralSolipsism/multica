@@ -14,9 +14,24 @@ import type { DagSelectionTarget } from "./dag-scene-flow";
 const issueSelection = vi.hoisted(() => ({
   current: {
     issue: null as null | { id: string; assignee_type: null; assignee_id: null },
-    actions: { openEditDependencies: vi.fn(), updateField: vi.fn() },
+    actions: { openAddBlocker: vi.fn(), openAddBlocking: vi.fn(), updateField: vi.fn() },
     detailFailed: false,
     retryDetail: vi.fn(),
+  },
+}));
+const blockerMutation = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+}));
+const blockerTarget = vi.hoisted(() => vi.fn<(wsId: string, targetId: string) => void>());
+vi.mock("@multica/core/hooks", () => ({
+  useWorkspaceId: () => "ws-1",
+}));
+vi.mock("@multica/core/issues/blockers", () => ({
+  useUpdateIssueBlockers: (wsId: string, targetId: string) => {
+    blockerTarget(wsId, targetId);
+    return blockerMutation;
   },
 }));
 const assignSpy = vi.hoisted(() =>
@@ -95,9 +110,13 @@ function harness(
 }
 
 beforeEach(() => {
+  blockerMutation.mutate.mockClear();
+  blockerMutation.isPending = false;
+  blockerMutation.error = null;
+  blockerTarget.mockClear();
   issueSelection.current = {
     issue: null,
-    actions: { openEditDependencies: vi.fn(), updateField: vi.fn() },
+    actions: { openAddBlocker: vi.fn(), openAddBlocking: vi.fn(), updateField: vi.fn() },
     detailFailed: false,
     retryDetail: vi.fn(),
   };
@@ -154,7 +173,7 @@ describe("DagToolbar navigation", () => {
     expect(store.getState().dagShowCompleted).toBe(true);
   });
 
-  it("collects the four edge states and the side cards into the legend", async () => {
+  it("collects the active edge states and the side cards into the legend", async () => {
     harness();
     fireEvent.click(screen.getByRole("button", { name: "Legend" }));
     expect(await screen.findByText("Thin light-gray line: satisfied dependency")).toBeInTheDocument();
@@ -163,8 +182,8 @@ describe("DagToolbar navigation", () => {
       screen.getByText("Dark solid line with flowing dots: prerequisite is advancing"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Red dashed line, slowly pulsing: cancelled but still blocking"),
-    ).toBeInTheDocument();
+      screen.queryByText("Red dashed line, slowly pulsing: cancelled but still blocking"),
+    ).toBeNull();
     expect(
       screen.getByText("Dashed side cards: dependencies on other task lines — click to jump"),
     ).toBeInTheDocument();
@@ -175,9 +194,12 @@ describe("DagToolbar navigation", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "On a lit chain, a glowing dot with a short tail travels from prerequisite to dependent: brand blue while blocking, soft green when satisfied, red when cancelled but still blocking",
+        "On a lit chain, a glowing dot with a short tail travels from prerequisite to dependent: brand blue while blocking, soft green when satisfied",
       ),
     ).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(7);
+    expect(items.every((item) => !/cancelled/i.test(item.textContent ?? ""))).toBe(true);
   });
 });
 
@@ -217,7 +239,7 @@ describe("DagToolbar node selection", () => {
       "Open detail",
       "Highlight prerequisites",
       "Highlight dependents",
-      "Edit prerequisites",
+      "Relations",
       "Assign",
     ];
     let at = -1;
@@ -243,7 +265,7 @@ describe("DagToolbar node selection", () => {
     m.fire();
     fireEvent.click(within(m.zone()).getByRole("button", { name: "More" }));
     await screen.findByRole("menu");
-    expect(screen.getByRole("menuitem", { name: "Edit prerequisites" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Relations" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /this group/ })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: /Focus issue group/ })).toBeNull();
     expect(screen.queryByRole("menuitemcheckbox", { name: "Highlight prerequisites" })).toBeNull();
@@ -314,19 +336,23 @@ describe("DagToolbar node selection", () => {
     expect(props.onFocusFrame).toHaveBeenCalledWith("sub-frame");
   });
 
-  it("disables edit prerequisites until the issue detail is available, then wires it", () => {
+  it("disables Relations until the issue detail is available, then wires both native blocker directions", async () => {
     const { view, props, store } = harness({ selection: TASK });
-    expect(screen.getByRole("button", { name: "Edit prerequisites" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Relations" })).toBeDisabled();
     issueSelection.current.issue = { id: "a", assignee_type: null, assignee_id: null };
     view.rerender(
       <ViewStoreProvider store={store}>
         <DagToolbar {...props} />
       </ViewStoreProvider>,
     );
-    const edit = screen.getByRole("button", { name: "Edit prerequisites" });
-    expect(edit).toBeEnabled();
-    fireEvent.click(edit);
-    expect(issueSelection.current.actions.openEditDependencies).toHaveBeenCalledOnce();
+    const relations = screen.getByRole("button", { name: "Relations" });
+    expect(relations).toBeEnabled();
+    fireEvent.click(relations);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Wait for another task..." }));
+    expect(issueSelection.current.actions.openAddBlocker).toHaveBeenCalledOnce();
+    fireEvent.click(relations);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Block another task..." }));
+    expect(issueSelection.current.actions.openAddBlocking).toHaveBeenCalledOnce();
   });
 
   it("clears the selection", () => {
@@ -616,7 +642,7 @@ describe("DagToolbar overflow", () => {
 describe("DagToolbar bus selection", () => {
   const BUS_ITEMS = [
     {
-      id: "d-1",
+      id: "manual:issue-b:issue-a",
       sourceId: "issue-a",
       sourceLabel: "T-1",
       sourceTitle: "Task one",
@@ -625,7 +651,7 @@ describe("DagToolbar bus selection", () => {
       targetTitle: "Task two",
     },
     {
-      id: "d-2",
+      id: "stage:issue-b:issue-c",
       sourceId: "issue-c",
       sourceLabel: "T-3",
       sourceTitle: "Task three",
@@ -640,7 +666,7 @@ describe("DagToolbar bus selection", () => {
     const onLocateDependency = vi.fn();
     const { store } = harness(
       { busSelection: BUS_ITEMS, onOpenIssue, onLocateDependency },
-      (store) => store.getState().setDagSelectedDependencyIds(["d-1", "d-2"]),
+      (store) => store.getState().setDagSelectedDependencyIds(["manual:issue-b:issue-a", "stage:issue-b:issue-c"]),
     );
     const region = screen.getByRole("region", { name: "Selection" });
     fireEvent.click(within(region).getByRole("button", { name: "Summary of 2 dependencies" }));
@@ -648,9 +674,21 @@ describe("DagToolbar bus selection", () => {
     fireEvent.click(await screen.findByText("T-1"));
     expect(onOpenIssue).toHaveBeenCalledWith("issue-a");
     fireEvent.click(screen.getAllByRole("button", { name: "Locate" })[0]!);
-    expect(onLocateDependency).toHaveBeenCalledWith("d-1");
+    expect(onLocateDependency).toHaveBeenCalledWith("manual:issue-b:issue-a");
     fireEvent.click(within(region).getByRole("button", { name: "Clear selection" }));
     expect(store.getState().dagSelectedDependencyIds).toBeNull();
+  });
+
+  it("deletes only manual edges through the native blocker mutation and keeps stage edges read-only", async () => {
+    harness({ busSelection: BUS_ITEMS });
+    const region = screen.getByRole("region", { name: "Selection" });
+    fireEvent.click(within(region).getByRole("button", { name: "Summary of 2 dependencies" }));
+    const remove = await screen.findByRole("button", { name: "Remove T-1" });
+    expect(screen.queryByRole("button", { name: "Remove T-3" })).toBeNull();
+    expect(screen.getByText("Stage")).toBeInTheDocument();
+    expect(blockerTarget).toHaveBeenCalledWith("ws-1", "issue-b");
+    fireEvent.click(remove);
+    expect(blockerMutation.mutate).toHaveBeenCalledWith({ remove_blocked_by: ["issue-a"] });
   });
 
   it("shows the node selection when both a node and a bus are selected", () => {

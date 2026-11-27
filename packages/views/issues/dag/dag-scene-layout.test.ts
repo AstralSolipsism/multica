@@ -124,12 +124,17 @@ describe("Stage 8 scene geometry", () => {
     }]);
     expect(geometry.junctions).toEqual([]);
   });
-  it("canonicalizes unrelated overlaps in actual ELK output for the largest shared line", async () => {
+  it("canonicalizes unrelated overlaps in actual ELK output for the densest shared line", async () => {
     const index = createDagModelIndex(IssueGraphSchema.parse(buildIssueGraphFixture("accept-5000")));
-    const largest = [...index.lineInputs.values()]
+    const densest = [...index.lineInputs.values()]
       .filter((line) => index.forest.children.has(line.id))
-      .sort((a, b) => b.members.length - a.members.length)[0]!;
-    const scene = dagLineLayoutInput(computeDagLine(index, largest.id)!).input;
+      .sort(
+        (a, b) =>
+          (b.dependencies.length + b.upstream.length + b.downstream.length) -
+            (a.dependencies.length + a.upstream.length + a.downstream.length) ||
+          b.members.length - a.members.length,
+      )[0]!;
+    const scene = dagLineLayoutInput(computeDagLine(index, densest.id)!).input;
     const result = await layoutDagScene(scene, engine);
 
     invariants(scene, result);

@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useReducedMotion } from "@multica/core/appearance";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { CHAT_COLUMN, CHAT_GUTTER } from "../../chat/components/chat-column";
 import { useT } from "../../i18n";
-import { usePrefersReducedMotion } from "../bubble/page-signals";
 
 /**
  * A side chat before its first visible message (OL-288 §3): three common
@@ -24,7 +24,7 @@ export function TipSideChatStarters({
   disabled: boolean;
 }) {
   const { t } = useT("you-should-know");
-  const reducedMotion = usePrefersReducedMotion();
+  const reducedMotion = useReducedMotion();
   const [sending, setSending] = useState(false);
   const questions = [
     t(($) => $.side_chat.starters.more),

@@ -13,7 +13,7 @@
       }
     },
     "telegram": {
-      "disconnect_confirm_description": "봇이 이 워크스페이스의 Telegram 메시지를 더 이상 수신하지 않습니다. Labrastro의 대화 기록은 유지되며 같은 에이전트에서 다시 연결할 수 있습니다.",
+      "disconnect_confirm_description": "봇이 이 워크스페이스의 Telegram 메시지를 더 이상 수신하지 않습니다. Labrastro의 채팅 기록은 유지되며, 나중에 같은 에이전트에서 다시 연결할 수 있습니다.",
       "connect_docs_link": "단계별 가이드: Labrastro 에이전트를 Telegram에 연결하기"
     },
     "lark": {
@@ -23,7 +23,7 @@
       "byo_docs_link": "Step-by-step: Labrastro 에이전트를 Slack에 연결하기"
     },
     "dingtalk": {
-      "group_forget_description": "Labrastro 목록에서만 삭제됩니다. 대화와 메시지는 유지되며 봇을 다시 @멘션하면 목록에 다시 나타납니다.",
+      "group_forget_description": "DingTalk의 메시지는 삭제하지 않고 Labrastro 목록에서만 이 그룹을 제거합니다.",
       "byo_docs_link": "Step-by-step: Labrastro 에이전트를 DingTalk에 연결하기"
     },
     "wecom": {
@@ -34,7 +34,7 @@
       "apps": "Labrastro로 연결한 팀 또는 개인 계정을 각 에이전트에 추가합니다."
     },
     "connected_apps": {
-      "catalog_description": "엄선된 앱에는 검토된 기본 규칙이 있습니다. '모든 앱'은 Composio로 연결할 수 있는 모든 앱을 포함하며, Labrastro가 분류하지 못한 작업은 항상 먼저 확인을 받습니다. 사용자 지정 목록은 선택한 앱만 허용합니다."
+      "catalog_description": "엄선된 앱에는 검토된 기본 규칙이 있습니다. '모든 앱'은 Labrastro로 연결할 수 있는 모든 앱을 포함하며, Labrastro가 분류하지 못한 작업은 항상 먼저 확인을 받습니다. 사용자 지정 목록은 선택한 앱만 허용합니다."
     },
     "shortcuts": {
       "actions": {
@@ -45,33 +45,37 @@
     },
     "chat": {
       "ask_agent_label": "Labrastro에게 묻기 에이전트"
+    },
+    "desktop": {
+      "daemon": {
+        "auto_start_description": "Labrastro Desktop을 실행할 때 로컬 데몬을 자동으로 시작합니다"
+      }
     }
   },
   "common": {
     "lark_bind": {
-      "needs_auth_description": "바인딩을 완료하려면 Labrastro에 로그인하세요. 링크의 토큰이 Lark 계정을 현재 로그인된 Labrastro 사용자에 연결하므로, 먼저 로그인해야 합니다.",
-      "error_already_bound": "이 Lark 계정은 이미 다른 Labrastro 사용자에 연결되어 있습니다. 계정 이전은 먼저 명시적으로 연결을 해제해야 합니다.",
+      "needs_auth_description": "Feishu / Lark 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
+      "error_already_bound": "이 Feishu / Lark 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "현재 로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아닙니다."
     },
     "slack_bind": {
-      "needs_auth_description": "연결을 완료하려면 Labrastro에 로그인하세요. 링크의 토큰이 Slack 계정을 이 Labrastro 사용자와 연결하므로 먼저 로그인해야 해요.",
-      "error_already_bound": "이 Slack 계정은 이미 다른 Labrastro 사용자에 연결되어 있어요. 이전하려면 먼저 명시적으로 연결을 해제해야 합니다.",
+      "needs_auth_description": "Slack 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
+      "error_already_bound": "이 Slack 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아니에요."
     },
     "dingtalk_bind": {
-      "needs_auth_description": "연결을 완료하려면 Labrastro에 로그인하세요. 링크의 토큰이 DingTalk 계정을 이 Labrastro 사용자와 연결하므로 먼저 로그인해야 해요.",
-      "error_already_bound": "이 DingTalk 계정은 이미 다른 Labrastro 사용자에 연결되어 있어요. 이전하려면 먼저 명시적으로 연결을 해제해야 합니다.",
+      "needs_auth_description": "DingTalk 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
+      "error_already_bound": "이 DingTalk 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아니에요."
     },
     "telegram_bind": {
-      "needs_auth_description": "연결을 완료하려면 Labrastro에 로그인하세요. 링크의 토큰은 Telegram 계정을 현재 로그인한 Labrastro 사용자에게 바인딩하므로 먼저 로그인해야 합니다.",
-      "error_already_bound": "이 Telegram 계정은 이미 다른 Labrastro 사용자에게 연결되어 있습니다. 계정을 이전하려면 먼저 명시적으로 연결을 해제해야 합니다.",
+      "needs_auth_description": "Telegram 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
+      "error_already_bound": "이 Telegram 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아닙니다."
     },
     "wecom_bind": {
-      "page_title": "Labrastro 계정 연결",
-      "needs_auth_description": "연결을 완료하려면 Labrastro에 로그인하세요. 토큰은 WeCom 신원을 현재 로그인한 Labrastro 사용자에게 연결해요.",
-      "error_already_bound": "이 WeCom 신원은 다른 Labrastro 사용자에게 연결되어 있어요. 계정 이전은 명시적 해제가 필요해요.",
+      "needs_auth_description": "WeCom 계정을 Labrastro 계정에 연결하려면 로그인하세요.",
+      "error_already_bound": "이 WeCom 계정은 이미 다른 Labrastro 계정에 연결되어 있습니다. 여기에 연결하려면 먼저 해당 계정에서 연결을 해제하세요.",
       "error_not_member": "로그인한 Labrastro 계정이 이 워크스페이스의 멤버가 아니에요."
     },
     "not_found": {
@@ -105,7 +109,7 @@
       "local_build_title": "이 런타임은 릴리스 버전이 아닌 버전을 보고하므로 Labrastro가 업그레이드 가능 여부를 판단할 수 없습니다. 머신에서 직접 업데이트하세요."
     },
     "profiles": {
-      "empty_description": "기본 프로토콜 제품군을 선택한 다음 Labrastro가 실행할 명령을 지정하세요."
+      "empty_description": "호환되는 기본 런타임을 선택한 다음, Labrastro가 실행할 명령을 지정하세요."
     },
     "qoder": {
       "description": "Connect Qoder Cloud Agents. Labrastro manages execution and stores credentials encrypted. Workspace administrators can change this configuration.",
@@ -165,7 +169,8 @@
       "outdated_hint": "이 기기의 Labrastro를 업데이트하면 여기서 관리할 수 있습니다.",
       "app_desktop_hint": "데스크톱 앱입니다. 실행 중인 머신의 Labrastro Desktop에서 창으로 전환할 수 있습니다.",
       "app_remote_hint": "{{machine}}에서 실행 중입니다. 해당 머신의 Labrastro Desktop에서 창으로 전환할 수 있습니다.",
-      "focus_unsupported": "이 머신의 데몬은 아직 앱 창으로 전환할 수 없습니다. Labrastro를 업데이트한 뒤 다시 시도하세요."
+      "focus_unsupported": "이 머신의 Labrastro는 아직 앱 창 전환을 지원하지 않습니다. Labrastro를 업데이트한 뒤 다시 시도하세요.",
+      "focus_unavailable": "Labrastro 로컬 서비스가 실행되고 있지 않습니다"
     }
   },
   "billing": {
@@ -262,6 +267,13 @@
         "managed_title": "Labrastro에서 관리",
         "managed_empty": "Labrastro에서 관리하는 MCP Server가 없습니다.",
         "runtime_overridden_badge": "Labrastro에서 재정의"
+      }
+    }
+  },
+  "modals": {
+    "create_issue": {
+      "agent": {
+        "prompt_placeholder": "에이전트에게 할 일을 알려주세요. 예: \"Mizuki이 Web 프로젝트의 인박스 로딩 지연을 고치게 해줘\""
       }
     }
   }

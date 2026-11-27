@@ -13,7 +13,7 @@ import (
 func TestIssueCreateDSHProfileNoticeWithAtomicAdmission(t *testing.T) {
 	for _, status := range []string{"todo", "backlog"} {
 		t.Run(status, func(t *testing.T) {
-			h, fx := dependencyFixture(t)
+			h, fx := issueGraphFixture(t)
 			runtimeID := fx.Runtime(t, "DSH missing profile", testutil.Cols{
 				"provider": "dsh", "status": "offline",
 				"metadata": `{"offline_reason":{"code":"dsh_profile","detail":"the Multica runtime profile is not installed","repair":{"package":"DeepSeek Harness runtime profile"}}}`,

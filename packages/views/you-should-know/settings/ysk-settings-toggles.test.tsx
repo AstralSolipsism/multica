@@ -75,7 +75,7 @@ import { YouShouldKnowPersonalRow } from "./personal-toggle";
 import { useSettingsSearchIndex } from "../../settings/components/use-settings-search-index";
 import { searchSettings } from "../../settings/components/settings-search";
 
-function withQuery(ui: ReactElement) {
+function withQuery(ui: ReactElement, options?: Parameters<typeof renderWithI18n>[1]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -85,6 +85,7 @@ function withQuery(ui: ReactElement) {
   });
   return renderWithI18n(
     <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    options,
   );
 }
 
@@ -170,7 +171,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
   }
 
   it("anchors both toggles for the settings search", () => {
-    renderWithI18n(<IndexProbe />);
+    withQuery(<IndexProbe />);
 
     expect(screen.getByText("workspace#you-should-know:Generate bystander tips while agents work")).toBeInTheDocument();
     expect(screen.getByText("notifications#you-should-know:Show bystander tips to me")).toBeInTheDocument();
@@ -201,7 +202,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
     // test would assert a combination the real gate can never produce.
     state.workspaceEnabled = false;
     state.missingWorkspaceKey = missingKey;
-    const { unmount } = renderWithI18n(<IndexProbe />);
+    const { unmount } = withQuery(<IndexProbe />);
 
     expect(screen.queryByText(/^notifications#you-should-know/)).toBeNull();
     expect(screen.getByText(/^workspace#you-should-know/)).toBeInTheDocument();
@@ -227,7 +228,7 @@ describe("YouShouldKnowWorkspaceSection", () => {
         </ul>
       );
     }
-    renderWithI18n(<SearchProbe />, { locale });
+    withQuery(<SearchProbe />, { locale });
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(
       tabs.map((tab) => `${tab}#you-should-know`),

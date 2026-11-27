@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { ApiError } from "@multica/core/api";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 
@@ -17,7 +16,11 @@ const selection = vi.hoisted(() => ({
 }));
 const deletionPolicy = vi.hoisted(() => ({ allowed: true }));
 vi.mock("@multica/core/issues/use-issue-deletion", () => ({
-  useIssueDeletion: () => ({ canDelete: () => deletionPolicy.allowed }),
+  useIssueDeletion: () => ({ canDelete: () => deletionPolicy.allowed, offersDelete: true }),
+}));
+vi.mock("@multica/core/permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/permissions")>()),
+  useIsGuest: () => false,
 }));
 
 vi.mock("@multica/core/issues/stores/selection-store", () => ({
@@ -58,8 +61,8 @@ vi.mock("../../i18n", () => ({
     },
   }),
 }));
-const mockToast = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }));
-vi.mock("sonner", () => ({ toast: mockToast }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn(), error: vi.fn() }));
+vi.mock("sonner", () => ({ toast }));
 
 // Interactive picker stubs: each renders buttons that fire the real onUpdate the
 // toolbar passes in, so we exercise handleBatchStatus / handleBatchAssignee.
@@ -144,9 +147,8 @@ beforeEach(() => {
   batchDelete.mockClear();
   openModal.mockClear();
   selection.clear.mockClear();
-  mockToast.error.mockClear();
-  mockToast.success.mockClear();
-  mockToast.warning.mockClear();
+  toast.success.mockClear();
+  toast.warning.mockClear();
 });
 
 describe("BatchActionToolbar status routing (MUL-4155)", () => {
@@ -169,8 +171,8 @@ describe("BatchActionToolbar status routing (MUL-4155)", () => {
     batchUpdate.mockResolvedValueOnce({ updated: 1 });
     render(<BatchActionToolbar issues={[makeIssue({ id: "a" }), makeIssue({ id: "b" })]} />);
     fireEvent.click(screen.getByTestId("status-done"));
-    await waitFor(() => expect(mockToast.warning).toHaveBeenCalled());
-    expect(mockToast.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("still routes agent assignment through the run-confirm modal", () => {
@@ -181,21 +183,6 @@ describe("BatchActionToolbar status routing (MUL-4155)", () => {
       expect.objectContaining({ issueIds: ["a"], mode: "assign", assigneeType: "agent", assigneeId: "agent-1" }),
     );
     expect(batchUpdate).not.toHaveBeenCalled();
-  });
-
-  it("localizes an unreadable batch response and preserves the selection", async () => {
-    const diagnostic = "Unreadable response from POST /api/issues/batch-update";
-    batchUpdate.mockRejectedValueOnce(new ApiError(diagnostic, 0, "", {
-      code: "response_unreadable",
-    }));
-    render(<BatchActionToolbar issues={[makeIssue()]} />);
-    fireEvent.click(screen.getByTestId("status-done"));
-
-    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith("batch.update_failed"));
-    expect(mockToast.error).not.toHaveBeenCalledWith(diagnostic);
-    expect(mockToast.success).not.toHaveBeenCalled();
-    expect(selection.clear).not.toHaveBeenCalled();
-    expect(screen.getByTestId("status-done")).toBeInTheDocument();
   });
 
   it("applies member assignment directly (never starts a run)", () => {
@@ -232,7 +219,7 @@ describe("BatchActionToolbar selection after apply (MUL-8179)", () => {
   it("keeps the selection after an update by default, so edits can be chained", async () => {
     render(<BatchActionToolbar issues={[makeIssue()]} />);
     fireEvent.click(screen.getByTestId("status-done"));
-    await waitFor(() => expect(mockToast.success).toHaveBeenCalled());
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(selection.clear).not.toHaveBeenCalled();
   });
 
@@ -252,7 +239,7 @@ describe("BatchActionToolbar selection after apply (MUL-8179)", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("status-done"));
-    await waitFor(() => expect(mockToast.warning).toHaveBeenCalled());
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
     expect(selection.clear).not.toHaveBeenCalled();
   });
 

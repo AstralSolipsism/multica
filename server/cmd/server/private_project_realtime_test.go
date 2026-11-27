@@ -39,11 +39,18 @@ const (
 	ppAutopilotTask    = "00000000-0000-0000-0000-0000000000e2"
 	ppQuickCreateTask  = "00000000-0000-0000-0000-0000000000e3"
 	ppCrossProjectTask = "00000000-0000-0000-0000-0000000000e4"
+
+	// Workspace members in no private project, and another issue in the
+	// first private project.
+	ppPlain         = "00000000-0000-0000-0000-0000000000c4"
+	ppGuest         = "00000000-0000-0000-0000-0000000000c5"
+	ppSecretSibling = "00000000-0000-0000-0000-0000000000d4"
 )
 
 type fakeAudienceQuerier struct {
-	fail      bool
-	noPrivate bool
+	fail bool
+	// noPrivateProjects makes the workspace have no private project at all.
+	noPrivateProjects bool
 }
 
 func ppUUID(s string) pgtype.UUID {
@@ -55,11 +62,11 @@ func ppUUID(s string) pgtype.UUID {
 }
 
 func (f fakeAudienceQuerier) ListPrivateProjectAudience(context.Context, pgtype.UUID) ([]db.ListPrivateProjectAudienceRow, error) {
-	if f.noPrivate {
-		return nil, nil
-	}
 	if f.fail {
 		return nil, errors.New("db down")
+	}
+	if f.noPrivateProjects {
+		return nil, nil
 	}
 	// The audience is these rows and nothing else: nobody is added for their
 	// workspace role.
@@ -73,7 +80,7 @@ func (f fakeAudienceQuerier) ListPrivateProjectAudience(context.Context, pgtype.
 
 func (fakeAudienceQuerier) GetIssueProjectID(_ context.Context, id pgtype.UUID) (pgtype.UUID, error) {
 	switch util.UUIDToString(id) {
-	case ppSecretIssue:
+	case ppSecretIssue, ppSecretSibling:
 		return ppUUID(ppPrivate), nil
 	case ppPublicIssue:
 		return ppUUID(ppPublic), nil
@@ -81,6 +88,14 @@ func (fakeAudienceQuerier) GetIssueProjectID(_ context.Context, id pgtype.UUID) 
 		return ppUUID(ppPrivate2), nil
 	}
 	return pgtype.UUID{}, pgx.ErrNoRows
+}
+
+func (fakeAudienceQuerier) ListMembers(_ context.Context, ws pgtype.UUID) ([]db.Member, error) {
+	var out []db.Member
+	for _, id := range []string{ppMember, ppShared, ppOther, ppPlain} {
+		out = append(out, db.Member{WorkspaceID: ws, UserID: ppUUID(id), Role: "member"})
+	}
+	return append(out, db.Member{WorkspaceID: ws, UserID: ppUUID(ppGuest), Role: "guest"}), nil
 }
 
 func (fakeAudienceQuerier) GetCommentIssueProjectID(_ context.Context, id pgtype.UUID) (pgtype.UUID, error) {
@@ -263,7 +278,7 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 	}
 	for scenario, querier := range map[string]fakeAudienceQuerier{
 		"workspace with private projects":    {},
-		"workspace without private projects": {noPrivate: true},
+		"workspace without private projects": {noPrivateProjects: true},
 	} {
 		for name, payload := range map[string]any{
 			"missing":      map[string]any{"folder_id": "f"},
@@ -280,7 +295,7 @@ func TestRegisterListeners_ExtensionProjectEventReachesOnlyItsAudience(t *testin
 	}
 	// A valid id on a workspace with no private projects keeps the workspace
 	// fanout: the shortcut answers before the private map is consulted.
-	if fb := publishPayload(fakeAudienceQuerier{noPrivate: true}, map[string]any{"project_id": ppPrivate, "folder_id": "f"}); len(fb.workspaceCalls) != 1 {
+	if fb := publishPayload(fakeAudienceQuerier{noPrivateProjects: true}, map[string]any{"project_id": ppPrivate, "folder_id": "f"}); len(fb.workspaceCalls) != 1 {
 		t.Errorf("valid id on a workspace without private projects: workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
 	}
 }

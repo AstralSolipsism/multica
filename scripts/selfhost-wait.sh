@@ -72,6 +72,9 @@ echo "Built local development images from this checkout."
 echo "Images: labrastro-backend:${MULTICA_IMAGE_TAG}"
 echo "        labrastro-web:${MULTICA_IMAGE_TAG}"
 echo "For subsequent direct Compose commands: export MULTICA_IMAGE_TAG=${MULTICA_IMAGE_TAG}"
+case ",${COMPOSE_PROFILES:-}," in
+  *,collab,*) echo "Live doc co-editing: on (collab service)" ;;
+esac
 echo ""
 echo "Log in: configure RESEND_API_KEY in .env for email codes,"
 echo "        or read the generated code from backend logs when Resend is unset."

@@ -888,7 +888,7 @@ dagTest(`DAG view performance (${DATASET})`, async ({ page, context, baseURL }) 
       const completed = page.getByRole("button", { name: /^Show completed/ });
       if (await completed.getAttribute("aria-pressed") === "false") await completed.click();
     }
-    await expect(page.getByText("Computing layout…", { exact: true })).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.getByText("Computing layout...", { exact: true })).toHaveCount(0, { timeout: 10_000 });
     // The preceding pan/zoom sample may leave this line outside the viewport;
     // fit first so Flow's viewport culling also mounts the target card.
     await page.getByRole("button", { name: "Fit View", exact: true }).click();

@@ -5,7 +5,6 @@ import frQuota from "./fr/quota.json";
 import frThinking from "./fr/thinking.json";
 import frLark from "./fr/lark.json";
 import frForkUi from "./fr/fork-ui.json";
-import frDependencies from "./fr/dependencies.json";
 import frDag from "./fr/dag.json";
 import frAgentConfig from "./fr/agent-config.json";
 import frAuth from "./fr/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: frThinking,
   lark: frLark,
   "fork-ui": frForkUi,
-  dependencies: frDependencies,
   dag: frDag,
   "agent-config": frAgentConfig,
   auth: frAuth,

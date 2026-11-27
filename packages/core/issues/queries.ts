@@ -145,18 +145,6 @@ export const issueKeys = {
   graphAll: (wsId: string) => [...issueKeys.all(wsId), "graph"] as const,
   graph: (wsId: string, request: IssueGraphRequest) =>
     [...issueKeys.graphAll(wsId), request] as const,
-  /** Prefix for every per-issue dependency projection in a workspace — a
-   *  relation or status write on one issue can change another issue's
-   *  inherited/unsatisfied sets, so mutations invalidate the whole prefix. */
-  dependenciesAll: (wsId: string) =>
-    [...issueKeys.all(wsId), "dependencies"] as const,
-  dependencies: (wsId: string, id: string) =>
-    [...issueKeys.dependenciesAll(wsId), id] as const,
-  /** Workspace-wide issue search used by pickers and the
-   *  dependency editor — a server read, so it lives in Query like every
-   *  other one, keyed with wsId per the workspace-scoping rule. */
-  search: (wsId: string, q: string, limit = 20) =>
-    [...issueKeys.all(wsId), "search", q, limit] as const,
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
@@ -209,9 +197,6 @@ export const issueKeys = {
   /** PREFIX — the picker hook appends a signature of the prospective write. */
   issueTriggerPreview: (signature: string) =>
     [...issueKeys.issueTriggerPreviewAll(), signature] as const,
-  reactionsAll: () => ["issues", "reactions"] as const,
-  reactions: (issueId: string) =>
-    [...issueKeys.reactionsAll(), issueId] as const,
   subscribersAll: () => ["issues", "subscribers"] as const,
   subscribers: (issueId: string) =>
     [...issueKeys.subscribersAll(), issueId] as const,
@@ -521,61 +506,10 @@ export function sidebarIssuesOptions(
   });
 }
 
-const issueDetailReads = new WeakMap<QueryClient, Map<string, Promise<Issue>>>();
-
-function readIssueDetail(qc: QueryClient, wsId: string, id: string): Promise<Issue> {
-  let reads = issueDetailReads.get(qc);
-  if (!reads) {
-    reads = new Map();
-    issueDetailReads.set(qc, reads);
-  }
-  const key = `${wsId}:${id}`;
-  const existing = reads.get(key);
-  if (existing) return existing;
-  const request = api.getIssue(id).finally(() => {
-    reads.delete(key);
-    if (reads.size === 0) issueDetailReads.delete(qc);
-  });
-  reads.set(key, request);
-  return request;
-}
-
 export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
-    queryFn: ({ client }) => readIssueDetail(client, wsId, id),
-  });
-}
-
-/**
- * The dependency projection for one issue (`GET /api/issues/:id/dependencies`):
- * direct/inherited prerequisites, direct successors, the unsatisfied subset
- * and the opaque `dependencyVersion` a replacing write must echo back.
- *
- * A malformed payload parses to `null` ("unknown"), never to an empty — and
- * therefore falsely "ready" — view; callers render that as needing a refresh.
- * Dependency state rides the same WS invalidation as the rest of the issue
- * (`issueKeys.all(wsId)` covers this prefix), so no custom staleTime here.
- */
-export function issueDependenciesOptions(wsId: string, id: string) {
-  return queryOptions({
-    queryKey: issueKeys.dependencies(wsId, id),
-    queryFn: () => api.getIssueDependencies(id),
-  });
-}
-
-/**
- * Workspace-wide issue search (`GET /api/issues/search`) for picker-style UI.
- * Cross-project within the workspace; closed issues included so a completed
- * prerequisite can still be referenced. The query key carries the wsId and
- * the trimmed query and page size; callers debounce the input and gate with `enabled`.
- */
-export function issueSearchOptions(wsId: string, query: string, limit = 20) {
-  return queryOptions({
-    queryKey: issueKeys.search(wsId, query, limit),
-    queryFn: ({ signal }) =>
-      api.searchIssues({ q: query, limit, include_closed: true, signal }),
-    staleTime: 30_000,
+    queryFn: () => api.getIssue(id),
   });
 }
 
@@ -743,29 +677,43 @@ export function issueTimelineOptions(issueId: string) {
 }
 
 /**
+ * The issue a link names by UUID or identifier, also cached under its UUID,
+ * the key the issue page reads it by once an identifier URL has resolved
+ * through the identifier-keyed entry (`useCanonicalIssue`).
+ */
+export async function fetchIssueByRef(qc: QueryClient, wsId: string, ref: string): Promise<Issue> {
+  const issue = await qc.fetchQuery(issueDetailOptions(wsId, ref));
+  if (issue.id !== ref) {
+    qc.setQueryData<Issue>(issueKeys.detail(wsId, issue.id), (old) => old ?? issue);
+  }
+  return issue;
+}
+
+/**
  * Warm what the issue page holds its first paint and a comment landing on: the
  * issue, its timeline, its runs and its sub-issues, so opening it renders from
- * cache instead of waiting on a request chain. All four are keyed by UUID and
- * fetched in parallel; `identifier` mirrors the issue under the key an
- * identifier URL resolves through (`useCanonicalIssue`), so that hop is cached
- * too. prefetchQuery honours each query's staleTime: a warm entry costs nothing.
+ * cache instead of waiting on a request chain. All four are fetched in
+ * parallel. With an `identifier`, the issue is fetched under the key an
+ * identifier URL resolves through and mirrored to its UUID, so a link to that
+ * URL warming the same issue shares the request. prefetchQuery honours each
+ * query's staleTime: a warm entry costs nothing. `runs: false` leaves out the
+ * runs, for a viewer whose issue page shows none (a guest).
  */
 export async function prefetchIssuePage(
   qc: QueryClient,
   wsId: string,
   issueId: string,
   identifier?: string | null,
+  { runs = true }: { runs?: boolean } = {},
 ): Promise<void> {
   await Promise.all([
-    qc.prefetchQuery(issueDetailOptions(wsId, issueId)),
+    identifier
+      ? fetchIssueByRef(qc, wsId, identifier).catch(() => undefined)
+      : qc.prefetchQuery(issueDetailOptions(wsId, issueId)),
     qc.prefetchQuery(issueTimelineOptions(issueId)),
-    qc.prefetchQuery(issueTasksOptions(issueId)),
+    runs && qc.prefetchQuery(issueTasksOptions(issueId)),
     qc.prefetchQuery(childIssuesOptions(wsId, issueId)),
   ]);
-  const issue = qc.getQueryData<Issue>(issueKeys.detail(wsId, issueId));
-  if (identifier && issue) {
-    qc.setQueryData<Issue>(issueKeys.detail(wsId, identifier), (old) => old ?? issue);
-  }
 }
 
 export function issueCommentThreadOptions(issueId: string, commentId: string) {
@@ -777,16 +725,6 @@ export function issueCommentThreadOptions(issueId: string, commentId: string) {
         throw new Error("Comment not found in thread");
       }
       return comments;
-    },
-  });
-}
-
-export function issueReactionsOptions(wsId: string, issueId: string) {
-  return queryOptions({
-    queryKey: issueKeys.reactions(issueId),
-    queryFn: async ({ client }) => {
-      const issue = await readIssueDetail(client, wsId, issueId);
-      return issue.reactions ?? [];
     },
   });
 }

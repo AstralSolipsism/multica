@@ -19,13 +19,24 @@ runs:
 
     - name: Check product branding
       shell: bash
-      run: |
-        node --test scripts/check-branding.test.mjs
-        node scripts/check-branding.mjs
+      run: node scripts/check-branding.mjs
 
     - name: Test YSK runtime extensions
       shell: bash
       run: pnpm test:ysk
+
+    - name: Check UI transition properties
+      shell: bash
+      run: node scripts/check-ui-transition-properties.mjs
+
+    - name: Check UI focus outlines
+      shell: bash
+      run: node scripts/check-ui-focus-outlines.mjs
+
+    - name: Check tests declare the files they read outside their package
+      shell: bash
+      run: node scripts/check-test-cache-inputs.mjs
+
     - name: Check shared dependencies use the pnpm catalog
       shell: bash
       run: node scripts/check-dependency-catalog.mjs

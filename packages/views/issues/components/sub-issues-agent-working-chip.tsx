@@ -15,7 +15,10 @@ import type {
   TipAnchorScope,
 } from "@multica/core/you-should-know/anchors";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
-import { WorkingAgentsHoverContent } from "./workspace-agent-working-chip";
+import {
+  useWorkingExecutionUnits,
+  WorkingAgentsHoverContent,
+} from "./workspace-agent-working-chip";
 import { useT } from "../../i18n";
 
 interface SubIssuesAgentWorkingChipProps {
@@ -54,6 +57,7 @@ export const SubIssuesAgentWorkingChip = memo(
     const { data: agents = [] } = useQuery(
       workspaceWorkingAgentsOptions(wsId, "issue", undefined, parentIssueId),
     );
+    const units = useWorkingExecutionUnits(agents);
 
     // YSK summary anchor (OL-193). Memoized — descriptors must be stable.
     // Hooked before the empty-agent early return on purpose (Rules of Hooks).
@@ -68,6 +72,8 @@ export const SubIssuesAgentWorkingChip = memo(
     if (agents.length === 0) return null;
 
     const agentIds = agents.map((agent) => agent.id);
+    const actors = units?.map(({ type, id }) => ({ type, id })) ?? [];
+    const count = units?.length ?? agentIds.length;
 
     return (
       <HoverCard>
@@ -78,18 +84,19 @@ export const SubIssuesAgentWorkingChip = memo(
         >
           <AgentAvatarStack
             agentIds={agentIds}
+            actors={actors}
             size="xs"
             max={3}
             tipAnchor={tipAnchor}
           />
           <ShimmerText className="text-micro font-medium tabular-nums">
             {t(($) => $.agent_activity.chip_agents_working, {
-              count: agentIds.length,
+              count,
             })}
           </ShimmerText>
         </HoverCardTrigger>
         <HoverCardContent align="start" className="w-72">
-          <WorkingAgentsHoverContent agents={agents} />
+          <WorkingAgentsHoverContent agents={agents} units={units} />
         </HoverCardContent>
       </HoverCard>
     );

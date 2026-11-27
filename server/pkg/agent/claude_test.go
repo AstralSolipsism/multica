@@ -511,6 +511,7 @@ func TestBuildClaudeArgsInheritsMCPByDefault(t *testing.T) {
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--permission-mode", "bypassPermissions",
 		"--disallowedTools", "AskUserQuestion",
 	}
@@ -743,7 +744,7 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 func TestBuildClaudeInputEncodesUserMessage(t *testing.T) {
 	t.Parallel()
 
-	data, err := buildClaudeInput("say pong")
+	data, err := buildClaudeInput("", "say pong")
 	if err != nil {
 		t.Fatalf("buildClaudeInput: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +18,22 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
+
+// issueGraphFixture is an isolated workspace read through a copy of the
+// shared handler.
+func issueGraphFixture(t *testing.T) (*Handler, *testutil.Fixture) {
+	t.Helper()
+	ws := dbfx.Insert(t, "workspace", testutil.Cols{"name": "Issue graph tests", "slug": "issue-graph-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + time.Now().Format("150405.000000000"), "issue_prefix": "DEP"})
+	dbfx.Insert(t, "member", testutil.Cols{"workspace_id": ws, "user_id": testUserID, "role": "owner"})
+	h := *testHandler
+	return &h, testutil.New(testPool, ws, testUserID)
+}
+
+// addBlocker stores one manual issue_blocker row the way the write API does.
+func addBlocker(t *testing.T, fx *testutil.Fixture, issue, blocker string) {
+	t.Helper()
+	fx.InsertNoID(t, "issue_blocker", testutil.Cols{"workspace_id": fx.WorkspaceID, "issue_id": issue, "blocker_issue_id": blocker, "created_by_type": "member", "created_by_id": testUserID}, "issue_id=$1 AND blocker_issue_id=$2", issue, blocker)
+}
 
 func graphRequest(fx *testutil.Fixture, params url.Values) *http.Request {
 	r := withURLParam(newRequest(http.MethodGet, "/api/workspaces/"+fx.WorkspaceID+"/issues/graph?"+params.Encode(), nil), "workspaceId", fx.WorkspaceID)
@@ -46,7 +61,9 @@ func graphNodes(g service.IssueGraph) map[string]service.IssueGraphNode {
 	return m
 }
 
-func referenceGraph(t *testing.T, fx *testutil.Fixture) (map[string]string, map[string]string) {
+// referenceGraph seeds the fixture and returns its logical IDs plus every
+// effective blocker the graph must report, keyed by edge ID.
+func referenceGraph(t *testing.T, fx *testutil.Fixture) (map[string]string, map[string]service.IssueGraphEdge) {
 	t.Helper()
 	data, err := os.ReadFile("testdata/issue-graph/reference.json")
 	if err != nil {
@@ -60,16 +77,15 @@ func referenceGraph(t *testing.T, fx *testutil.Fixture) (map[string]string, map[
 			ParentID          string `json:"parent_issue_id"`
 			Stage             *int
 		}
-		Dependencies []struct {
-			ID          string
-			IssueID     string `json:"issue_id"`
-			DependsOnID string `json:"depends_on_issue_id"`
+		Blockers []struct {
+			IssueID   string `json:"issue_id"`
+			BlockerID string `json:"blocker_issue_id"`
 		}
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	ids, edges := map[string]string{}, map[string]string{}
+	ids, expected := map[string]string{}, map[string]service.IssueGraphEdge{}
 	for _, p := range fixture.Projects {
 		ids[p.ID] = fx.Project(t, p.Name)
 	}
@@ -86,15 +102,21 @@ func referenceGraph(t *testing.T, fx *testutil.Fixture) (map[string]string, map[
 		}
 		ids[n.ID] = fx.Issue(t, n.Title, cols)
 	}
-	for _, e := range fixture.Dependencies {
-		edges[e.ID] = fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": ids[e.IssueID], "depends_on_issue_id": ids[e.DependsOnID], "type": "blocked_by"})
+	for _, b := range fixture.Blockers {
+		addBlocker(t, fx, ids[b.IssueID], ids[b.BlockerID])
+		id := "manual:" + ids[b.IssueID] + ":" + ids[b.BlockerID]
+		expected[id] = service.IssueGraphEdge{SourceEdgeID: id, Source: ids[b.BlockerID], Target: ids[b.IssueID], Type: "blocked_by"}
 	}
-	return ids, edges
+	// Stage 3 waits for the stage 1 sibling; the stored edge to the stage 2
+	// sibling replaces that pair's stage order.
+	stage := "stage:" + ids["B_UI"] + ":" + ids["B_MODEL"]
+	expected[stage] = service.IssueGraphEdge{SourceEdgeID: stage, Source: ids["B_MODEL"], Target: ids["B_UI"], Type: "blocked_by"}
+	return ids, expected
 }
 
 func TestIssueGraphReferenceCompleteAndProjectContext(t *testing.T) {
-	h, fx := dependencyFixture(t)
-	ids, edges := referenceGraph(t, fx)
+	h, fx := issueGraphFixture(t)
+	ids, expected := referenceGraph(t, fx)
 	g := readGraph(t, h, fx, nil)
 	if path := os.Getenv("ISSUE_GRAPH_MOCK_PATH"); path != "" {
 		data, err := json.MarshalIndent(g, "", "  ")
@@ -105,21 +127,15 @@ func TestIssueGraphReferenceCompleteAndProjectContext(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !g.Complete || g.MatchedCount != 14 || g.ContextCount != 0 || len(g.Nodes) != 14 || len(g.Edges) != 7 || len(g.Projects) != 2 {
+	if !g.Complete || g.MatchedCount != 14 || g.ContextCount != 0 || len(g.Nodes) != 14 || len(g.Edges) != len(expected) || len(g.Projects) != 2 {
 		t.Fatalf("incomplete reference graph: %+v", g)
 	}
-	var actual []string
+	got := map[string]service.IssueGraphEdge{}
 	for _, e := range g.Edges {
-		actual = append(actual, e.SourceEdgeID)
+		got[e.SourceEdgeID] = e
 	}
-	var expected []string
-	for _, id := range edges {
-		expected = append(expected, id)
-	}
-	sort.Strings(actual)
-	sort.Strings(expected)
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatal("graph differs from the stored edge ID set")
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("graph edges differ from the effective blockers:\n got %+v\nwant %+v", got, expected)
 	}
 	nodes := graphNodes(g)
 	for name, id := range ids {
@@ -127,39 +143,25 @@ func TestIssueGraphReferenceCompleteAndProjectContext(t *testing.T) {
 			t.Fatalf("missing database node %s", name)
 		}
 	}
-	expectedEndpoints := map[string][2]string{
-		edges["E1"]: {ids["U"], ids["A_MODEL"]}, edges["E2"]: {ids["A_MODEL"], ids["A_API"]},
-		edges["E3"]: {ids["FAUTH"], ids["FCHECKOUT"]}, edges["E4"]: {ids["A_API"], ids["B_API"]},
-		edges["E5"]: {ids["B_MODEL"], ids["B_API"]}, edges["E6"]: {ids["B_API"], ids["B_UI"]},
-		edges["E7"]: {ids["B_REPORT"], ids["A_UI"]},
-	}
-	for _, e := range g.Edges {
-		if expectedEndpoints[e.SourceEdgeID] != [2]string{e.Source, e.Target} {
-			t.Fatal("graph edge endpoints disagree with the stored prerequisite direction")
-		}
-	}
 	if nodes[ids["UNDATED"]].ProjectID != nil || nodes[ids["U"]].Title == "" {
 		t.Fatal("unprojected/undated nodes were omitted")
 	}
-	if nodes[ids["B_API"]].DependencySummary.VisibleUnsatisfiedCount != 2 || nodes[ids["A_TEST"]].DependencySummary.VisibleUnsatisfiedCount != 0 {
-		t.Fatal("direct/inherited readiness differs from OL-38")
+	for name, want := range map[string]int{"B_API": 1, "B_UI": 2, "FCHECKOUT": 1, "A_TEST": 0, "A_UI": 0, "A_MODEL": 0} {
+		if got := nodes[ids[name]].DependencySummary; got.VisibleUnsatisfiedCount != want || got.HasRestrictedBlockers || got.DependencyVersion == "" {
+			t.Fatalf("%s blocker summary = %+v, want %d open", name, got, want)
+		}
 	}
 	if nodes[ids["FA"]].RunSummary.Running != 0 {
 		t.Fatal("in_progress was mistaken for a real run")
 	}
-	for _, n := range g.Nodes {
-		if n.DependencySummary.DependencyVersion != dependencies(t, h, fx, n.ID).DependencyVersion {
-			t.Fatal("graph and dependency detail use different versions")
-		}
-	}
 	project := readGraph(t, h, fx, url.Values{"project_id": {ids["P2"]}})
-	if project.MatchedCount != 6 || project.ContextCount != 5 || len(project.Edges) != 6 {
+	if project.MatchedCount != 6 || project.ContextCount != 5 || len(project.Edges) != 7 {
 		t.Fatalf("incorrect project closure: %+v", project)
 	}
 	pnodes := graphNodes(project)
-	for _, key := range []string{"FA", "FAUTH", "A_API", "A_MODEL", "U"} {
+	for _, key := range []string{"FA", "FAUTH", "A_MODEL", "A_API", "U"} {
 		if pnodes[ids[key]].Role != "context" {
-			t.Fatalf("missing external prerequisite/ancestor %s", key)
+			t.Fatalf("missing external blocker/ancestor %s", key)
 		}
 	}
 	if _, exists := pnodes[ids["A_UI"]]; exists {
@@ -169,7 +171,7 @@ func TestIssueGraphReferenceCompleteAndProjectContext(t *testing.T) {
 	params.Set("focus_issue_id", ids["B_API"])
 	focus := readGraph(t, h, fx, params)
 	if focus.MatchedCount != 1 || graphNodes(focus)[ids["FAUTH"]].Role != "context" {
-		t.Fatal("focus lost inherited prerequisite context")
+		t.Fatal("focus lost the transitive blocker context")
 	}
 	params.Set("focus_issue_id", ids["A_API"])
 	filteredFocus := readGraph(t, h, fx, params)
@@ -179,7 +181,7 @@ func TestIssueGraphReferenceCompleteAndProjectContext(t *testing.T) {
 }
 
 func TestIssueGraphFiltersUseSharedSurfaceSemantics(t *testing.T) {
-	h, fx := dependencyFixture(t)
+	h, fx := issueGraphFixture(t)
 	ids, _ := referenceGraph(t, fx)
 	for _, tc := range []struct {
 		filters map[string]any
@@ -204,7 +206,7 @@ func TestIssueGraphFiltersUseSharedSurfaceSemantics(t *testing.T) {
 }
 
 func TestIssueGraphRunsAndContentVersions(t *testing.T) {
-	h, fx := dependencyFixture(t)
+	h, fx := issueGraphFixture(t)
 	id := fx.Issue(t, "Active", testutil.Cols{"status": "in_progress"})
 	before := readGraph(t, h, fx, nil)
 	runtimeID := fx.Runtime(t, "Graph fake runtime")
@@ -285,16 +287,16 @@ func (tx *graphTestTx) Commit(ctx context.Context) error {
 }
 
 func TestIssueGraphRepeatableReadDuringEdits(t *testing.T) {
-	h, fx := dependencyFixture(t)
-	ids, edges := referenceGraph(t, fx)
+	h, fx := issueGraphFixture(t)
+	ids, expected := referenceGraph(t, fx)
 	before := readGraph(t, h, fx, nil)
 	interleaved := *h
 	changed := false
 	interleaved.TxStarter = graphTestStarter{inner: h.TxStarter, beforeQuery: func(sql string) error {
-		if !changed && strings.Contains(sql, "ListIssueDependencyNodes") {
+		if !changed && strings.Contains(sql, "ListIssueGraphIssues") {
 			changed = true
 			fx.Exec(t, "UPDATE issue SET status='done',revision=revision+1,parent_issue_id=NULL,project_id=NULL WHERE id=$1", ids["FAUTH"])
-			fx.Exec(t, "DELETE FROM issue_dependency WHERE id=$1", edges["E3"])
+			fx.Exec(t, "DELETE FROM issue_blocker WHERE issue_id=$1 AND blocker_issue_id=$2", ids["FCHECKOUT"], ids["FAUTH"])
 			fx.Exec(t, "UPDATE project SET title='Changed project' WHERE id=$1", ids["P1"])
 		}
 		return nil
@@ -304,15 +306,15 @@ func TestIssueGraphRepeatableReadDuringEdits(t *testing.T) {
 		t.Fatal("response mixed topology/state/project data from different snapshots")
 	}
 	after := readGraph(t, h, fx, nil)
-	if after.SnapshotID == before.SnapshotID || len(after.Edges) != 6 || graphNodes(after)[ids["B_API"]].DependencySummary.VisibleUnsatisfiedCount != 1 {
+	if after.SnapshotID == before.SnapshotID || len(after.Edges) != len(expected)-1 || graphNodes(after)[ids["FAUTH"]].ParentIssueID != nil {
 		t.Fatal("subsequent snapshot did not observe committed edits")
 	}
 }
 
 func TestIssueGraphWorkspaceIsolationAndInvalidReferences(t *testing.T) {
-	h, fx := dependencyFixture(t)
+	h, fx := issueGraphFixture(t)
 	id := fx.Issue(t, "Local")
-	_, foreign := dependencyFixture(t)
+	_, foreign := issueGraphFixture(t)
 	other := foreign.Issue(t, "Private foreign title")
 	project := foreign.Project(t, "Private foreign project")
 	for _, params := range []url.Values{{"focus_issue_id": {other}}, {"project_id": {project}}} {
@@ -326,7 +328,9 @@ func TestIssueGraphWorkspaceIsolationAndInvalidReferences(t *testing.T) {
 	testutil.Call(t, h.GetIssueGraph, r).Want(http.StatusNotFound)
 	fx.Exec(t, "DELETE FROM member WHERE workspace_id=$1 AND user_id=$2", foreign.WorkspaceID, fx.UserID)
 	testutil.Call(t, h.GetIssueGraph, graphRequest(foreign, nil)).Want(http.StatusNotFound)
-	fx.Insert(t, "issue_dependency", testutil.Cols{"issue_id": id, "depends_on_issue_id": other, "type": "blocked_by"})
+	// A blocker endpoint outside the workspace cannot be placed; the graph
+	// refuses instead of dropping the edge and claiming completeness.
+	fx.InsertNoID(t, "issue_blocker", testutil.Cols{"workspace_id": fx.WorkspaceID, "issue_id": id, "blocker_issue_id": other, "created_by_type": "member", "created_by_id": testUserID}, "issue_id=$1", id)
 	res := testutil.Call(t, h.GetIssueGraph, graphRequest(fx, nil)).Want(http.StatusUnprocessableEntity)
 	if strings.Contains(res.Body.String(), other) || strings.Contains(res.Body.String(), "Private") || strings.Contains(res.Body.String(), `"complete":true`) {
 		t.Fatal("invalid graph leaked or claimed completeness")
@@ -334,7 +338,7 @@ func TestIssueGraphWorkspaceIsolationAndInvalidReferences(t *testing.T) {
 }
 
 func TestIssueGraphLateFailuresNeverReturnPartialSuccess(t *testing.T) {
-	h, fx := dependencyFixture(t)
+	h, fx := issueGraphFixture(t)
 	fx.Issue(t, "A")
 	for _, commit := range []bool{false, true} {
 		broken := *h
@@ -353,7 +357,7 @@ func TestIssueGraphLateFailuresNeverReturnPartialSuccess(t *testing.T) {
 }
 
 func TestIssueGraphURLWorkspaceAndTaskBinding(t *testing.T) {
-	h, fx := dependencyFixture(t)
+	h, fx := issueGraphFixture(t)
 	fx.Issue(t, "Visible from URL")
 	router := chi.NewRouter()
 	router.With(middleware.RequireWorkspaceMemberFromURL(h.Queries, "workspaceId")).
@@ -369,7 +373,7 @@ func TestIssueGraphURLWorkspaceAndTaskBinding(t *testing.T) {
 	r.Header.Set("X-Actor-Source", "task_token")
 	r.Header.Set("X-Workspace-ID", fx.WorkspaceID)
 	testutil.Call(t, router.ServeHTTP, r).Want(http.StatusOK)
-	_, other := dependencyFixture(t)
+	_, other := issueGraphFixture(t)
 	r.Header.Set("X-Workspace-ID", other.WorkspaceID)
 	testutil.Call(t, router.ServeHTTP, r).Want(http.StatusForbidden)
 }

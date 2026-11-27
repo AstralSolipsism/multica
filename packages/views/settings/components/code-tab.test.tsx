@@ -584,7 +584,7 @@ describe("CodeTab — GitHub", () => {
 
     await user.click(screen.getByRole("button", { name: "Connect GitHub" }));
     await user.click(await screen.findByRole("menuitem", { name: /outlune/ }));
-    const busy = await screen.findByRole("button", { name: "Connecting…" });
+    const busy = await screen.findByRole("button", { name: "Connecting..." });
     expect(busy).toHaveAttribute("aria-busy", "true");
     expect(busy).toBeDisabled();
     await user.click(busy);

@@ -1,13 +1,16 @@
 # Unmodified upstream Go files that are not gofmt-clean.
-# Source: multica-ai/multica at e1fe10d6694848e35dd1aa00e08cd11d93e545ac (v0.11.1)
+# Source: multica-ai/multica at 35b54a3742bb51bdf5ffa688655367ec98044862 (v0.13.0)
 # Format: Git blob ID, then a literal repository-relative Go path (no whitespace).
 # A changed file loses its exemption automatically. Never refresh a hash from fork content.
 # Reconcile with docs/engineering/upstream-sync-checklist.md on every upstream sync.
+b1b8dd45e3f24caeb7df018969ce11be48bd6e0a server/cmd/multica/cmd_quick_action_test.go
+eda4419b3475e58bc2d86a9b39814da1e4d2c6ba server/cmd/multica/cmd_squad_test.go
 f90234704257dffc4ed7345d9f9f4273d5215fdb server/internal/auth/cloud_pat_test.go
 ad7d259dec1d351b8482db2a81ef9e1a942c9fde server/internal/auth/membership_cache_test.go
+2295b12ea2f93382201e1996a4854c259f5f7151 server/internal/handler/dashboard_squad_integration_test.go
+766b722dbad2d88f0174291aed08d2821704e679 server/internal/handler/doc_comment_test.go
+12153b91e33754a517f7b6e173de66185058d259 server/internal/handler/team_app_feature_test.go
 fa16c63ab8b87beda8104898b29b06a96e7d340d server/internal/integrations/lark/markdown_detect.go
-f028826a565d6312232ac4642b865731c40db2bd server/internal/integrations/lark/ws_chunk_assembler.go
-ac5ab5e9f87d68db7dbf13445285e2cf9bb03d90 server/internal/integrations/lark/ws_chunk_assembler_test.go
 31e8b12d48ef29d696024552dede3a9c3931fd65 server/internal/integrations/lark/ws_frame_test.go
 f2574a29d596239b2131b16d0f9c61b4ca49a1bd server/internal/middleware/daemon_auth_test.go
 620746cb12de71098d96282a23dc0c6331677b8f server/pkg/featureflag/eval_context_test.go

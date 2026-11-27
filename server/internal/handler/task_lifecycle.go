@@ -250,9 +250,6 @@ func (h *Handler) rerunIssue(w http.ResponseWriter, r *http.Request, issue db.Is
 	}
 
 	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{}, actorUserID, fresh, canInvoke)
-	if h.writeDependencyError(w, r, err) {
-		return
-	}
 	if errors.Is(err, service.ErrRerunInvokeNotAllowed) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
@@ -273,6 +270,7 @@ func (h *Handler) rerunIssue(w http.ResponseWriter, r *http.Request, issue db.Is
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.archiveActorInboxOnAgentTrigger(r.Context(), workspaceID, uuidToString(issue.ID), actorType, actorID)
 	resp := taskToResponse(*task, uuidToString(issue.WorkspaceID))
 	h.hydrateTaskAttributions(r.Context(), []*TaskAttribution{resp.Attribution})
 	writeJSON(w, http.StatusAccepted, resp)
@@ -312,9 +310,6 @@ func (h *Handler) RetrySourceContextQuickCreate(w http.ResponseWriter, r *http.R
 		} else {
 			task, err = h.TaskService.RetrySourceContextQuickCreate(r.Context(), workspaceID, requesterID, taskID, canInvoke)
 		}
-	}
-	if h.writeDependencyError(w, r, err) {
-		return
 	}
 	if errors.Is(err, service.ErrRerunInvokeNotAllowed) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)

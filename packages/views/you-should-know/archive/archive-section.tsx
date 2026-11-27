@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "@multica/ui/icons";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { issueRouteRef, useWorkspacePaths } from "@multica/core/paths";
 import {
   issueTipsOptions,
   useYouShouldKnowEnabled,
@@ -244,7 +244,7 @@ function ArchiveGroup({
   // issue-description group has no comment to jump to and renders as text.
   const href =
     group.commentId !== null && identifier
-      ? `${paths.issueDetail(identifier)}#comment-${group.commentId}`
+      ? `${paths.issueDetail(issueRouteRef({ id: "", identifier }))}#comment-${group.commentId}`
       : null;
   // The label renders the group's labelTime — the anchor comment's own
   // creation time down to the minute when known, else the group's earliest
@@ -385,7 +385,7 @@ function InvalidNote({
     if (!commentId) return;
     if (onJumpToComment) onJumpToComment(commentId);
     else if (identifier)
-      navigation.push(`${paths.issueDetail(identifier)}#comment-${commentId}`);
+      navigation.push(`${paths.issueDetail(issueRouteRef({ id: "", identifier }))}#comment-${commentId}`);
   };
   return (
     <Note>

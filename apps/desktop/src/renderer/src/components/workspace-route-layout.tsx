@@ -14,6 +14,7 @@ import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { YouShouldKnowProvider } from "@multica/views/you-should-know";
 import { VoiceWorkspaceWords } from "@multica/views/voice";
 import { useTabStore } from "@/stores/tab-store";
+import { DocumentTitleSync } from "./document-title-sync";
 
 /**
  * Which mounted layout instance currently owns the platform workspace
@@ -165,6 +166,7 @@ export function WorkspaceRouteLayout() {
 
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
+      <DocumentTitleSync />
       <WorkspacePresencePrefetch />
       <VoiceWorkspaceWords />
       <YouShouldKnowProvider><Outlet /></YouShouldKnowProvider>

@@ -5,7 +5,6 @@ import enQuota from "./en/quota.json";
 import enThinking from "./en/thinking.json";
 import enLark from "./en/lark.json";
 import enForkUi from "./en/fork-ui.json";
-import enDependencies from "./en/dependencies.json";
 import enDag from "./en/dag.json";
 import enAgentConfig from "./en/agent-config.json";
 import enAuth from "./en/auth.json";
@@ -45,7 +44,6 @@ const resources: LocaleResources = {
   thinking: enThinking,
   lark: enLark,
   "fork-ui": enForkUi,
-  dependencies: enDependencies,
   dag: enDag,
   "agent-config": enAgentConfig,
   auth: enAuth,

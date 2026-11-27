@@ -5,6 +5,21 @@ SELECT w.issue_prefix, transaction_timestamp()::timestamptz AS captured_at
 FROM workspace w JOIN member m ON m.workspace_id = w.id
 WHERE w.id = $1 AND m.user_id = $2;
 
+-- name: ListIssueGraphIssues :many
+SELECT id, parent_issue_id, status, revision, title, number, project_id
+FROM issue
+WHERE workspace_id = $1 ORDER BY id;
+
+-- name: ListIssueGraphBlockers :one
+-- One row of aligned arrays over effective_issue_blocker: the manual
+-- issue_blocker rows plus the same-parent stage order, exactly the edges that
+-- gate execution. Stage edges are never materialized, so `via` plus the two
+-- endpoints is the edge ID.
+SELECT coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(blocker_issue_id), '{}')::uuid[] AS blocker_issue_ids,
+       coalesce(array_agg(via), '{}')::text[] AS vias
+FROM effective_issue_blocker WHERE workspace_id = $1;
+
 -- name: ListIssueGraphDetails :many
 -- Compact display fields only: no descriptions, comments, attachments or logs.
 SELECT i.id, i.project_id, i.stage, i.priority, i.assignee_type, i.assignee_id,

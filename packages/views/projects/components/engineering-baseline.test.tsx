@@ -164,7 +164,7 @@ describe("EngineeringBaselineWiki", () => {
     expect(await screen.findByRole("button", { name: "历史版本（6）" })).toBeInTheDocument(); // meta line loaded
     expect(document.querySelector('[data-wiki-tree-page="overview"]')).not.toBeNull();
     // The child row appears once its parent expands.
-    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    fireEvent.click(screen.getByRole("button", { name: '展开或收起 "项目概览"' }));
     expect(document.querySelector('[data-wiki-tree-page="architecture"]')).not.toBeNull();
     expect(await screen.findByRole("heading", { name: "Rules" })).toHaveAttribute("id", "s-rules");
     expect(screen.getByRole("button", { name: "历史版本（6）" })).toBeInTheDocument();
@@ -408,7 +408,7 @@ describe("EngineeringBaselineWiki", () => {
   it("creates a child page from the tree hover action and selects it for rename", async () => {
     renderWiki();
     await screen.findByRole("button", { name: "历史版本（6）" });
-    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    fireEvent.click(screen.getByRole("button", { name: '展开或收起 "项目概览"' }));
     const overviewRow = document.querySelector('[data-wiki-tree-page="overview"]') as HTMLElement;
     fireEvent.click(within(overviewRow).getByRole("button", { name: /新建子页面|New child page/i }));
     await waitFor(() => expect(createProjectWikiPage).toHaveBeenCalledExactlyOnceWith(
@@ -447,7 +447,7 @@ describe("EngineeringBaselineWiki", () => {
     const source = (await screen.findByTestId("wiki-editor-source")) as HTMLTextAreaElement;
     fireEvent.change(source, { target: { value: "# 项目概览\n\n## Rules\n\nUnsaved draft." } });
     // Tree click while dirty: guard dialog, no navigation yet.
-    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    fireEvent.click(screen.getByRole("button", { name: '展开或收起 "项目概览"' }));
     const archRow = await screen.findByText("架构", { selector: '[data-wiki-tree-page="architecture"] button' });
     fireEvent.click(archRow);
     expect(await screen.findByText("有未保存的修改")).toBeInTheDocument();
@@ -480,9 +480,9 @@ describe("EngineeringBaselineWiki", () => {
   it("wires the tree ⋯ menu via onClick and demotes to the PREVIOUS sibling", async () => {
     renderWiki();
     await screen.findByRole("button", { name: "历史版本（6）" });
-    fireEvent.click(screen.getByRole("button", { name: "展开或收起「项目概览」" }));
+    fireEvent.click(screen.getByRole("button", { name: '展开或收起 "项目概览"' }));
     const rulesRow = document.querySelector('[data-wiki-tree-page="rules"]') as HTMLElement;
-    fireEvent.click(within(rulesRow).getByRole("button", { name: "「规则」更多操作" }));
+    fireEvent.click(within(rulesRow).getByRole("button", { name: '"规则" 更多操作' }));
     // Base UI DropdownMenuItem only forwards onClick — the action must fire.
     fireEvent.click(await screen.findByRole("menuitem", { name: /降为上一页的子页/ }));
     await waitFor(() => expect(moveProjectWikiPage).toHaveBeenCalledExactlyOnceWith(

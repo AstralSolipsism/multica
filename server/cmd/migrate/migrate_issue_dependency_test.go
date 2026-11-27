@@ -53,8 +53,7 @@ func TestDependencyMigrationsPreserveHistoryAndRepairInvalidIndex(t *testing.T) 
 		t.Fatal("a failed migration removed historical rows")
 	}
 	assertIndexValidity(t, pool, schema, "idx_issue_dependency_blocked_by", false)
-	// The audit command's separate integration test covers durable backup and
-	// exact normalization. Here simulate that authorized repair before retry.
+	// Here simulate that authorized repair before retry.
 	fx.Exec(t, "DELETE FROM issue_dependency WHERE id=$1", duplicate)
 	if err := runMigrations(ctx, pool, opts); err != nil {
 		t.Fatal(err)

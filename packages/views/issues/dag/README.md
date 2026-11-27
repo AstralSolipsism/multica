@@ -9,13 +9,12 @@ core models; it does not fetch data or choose rendering styles.
 
 `dag-scene-canvas.tsx` keeps React Flow nodes for cards and paints everything
 else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
-- **Four edge states** (OL-183 §4): satisfied (thin grey), blocking (dark),
-  advancing (dark with dots flowing downstream), cancelled-blocking (red
-  dashes breathing). Motion is CSS (`dag-edge-motion.css`) and follows a
+- **Three edge states** (OL-183 §4): satisfied (thin grey), blocking (dark),
+  advancing (dark with dots flowing downstream). Motion is CSS (`dag-edge-motion.css`) and follows a
   budget (`dag-highlight.ts#dagMotionPlan`): system reduced motion or
   zoom < 50% stops it; past ~60 moving elements on screen (the OL-997 lit
   flows count too) only the selected chain keeps moving, truncated to
-  cancelled-blocking, then unsatisfied, then satisfied routes.
+  unsatisfied, then satisfied routes.
 - **Highlight**: a click selects the one-layer neighborhood; a second click
   on the same node (after a 400 ms double-click window, skipped for
   `event.detail > 1`, rolled back when a slow double-click still fires)
@@ -31,9 +30,8 @@ else in `dag-edge-layer.tsx`, a window-sized SVG in the `ViewportPortal`:
   state-colored flow (OL-997): a glowing dot with a short trailing echo
   traveling the route's own point order via CSS motion path, source to
   target — brand blue while unsatisfied, softened success green once
-  satisfied, destructive red for a cancelled blocker (which keeps its red
-  dashed breath). Routes sharing a bus interval each follow their own
-  direction and stack satisfied → unsatisfied → cancelled-blocking; the
+  satisfied. Routes sharing a bus interval each follow their own
+  direction and stack satisfied → unsatisfied; the
   background dots a lit advancing segment used to borrow are gone — the
   route flow replaces them. The flow dots pause while the viewport moves
   (pan/zoom) and resume on move end.
@@ -226,8 +224,7 @@ Upstream/downstream highlight actions keep their in-place behavior. The focus sc
 selection resolver and per-dependency highlight routes as the line scene;
 satisfied and redundant dependencies are always present. Frame fragments keep
 scene IDs for selection/geometry and raw issue IDs for issue actions. Cyclic
-peers sit in the current column. Retained cancelled context ancestors stay
-downstream, matching the original model behavior: upstream traversal already includes ancestors in its closure.
+peers sit in the current column.
 Ancestor frame fragments appear only when they contain members or carry a
 dependency endpoint; a seed that is itself a frame keeps its current fragment.
 

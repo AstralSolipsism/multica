@@ -30,7 +30,7 @@ func TestV1ReviewFailedTerminalPreservesResultWithoutReplacement(t *testing.T) {
 	if len(before.Result) == 0 {
 		t.Fatal("fixture: no existing result")
 	}
-	// Same SQL arguments used by failAutopilotRun -> failAutopilotRunWithResult(nil).
+	// Same SQL arguments used by failAutopilotRun (Result: nil).
 	after, err := q.UpdateAutopilotRunTerminalWithQuota(context.Background(), db.UpdateAutopilotRunTerminalWithQuotaParams{
 		RunID: before.ID, TerminalStatus: "failed", Result: nil,
 		FailureReason: pgtype.Text{String: "synthetic ordinary task failure", Valid: true},

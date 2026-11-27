@@ -20,13 +20,13 @@ import {
   PROJECT_GANTT_PAGE_LIMIT,
   childrenByParentsOptions,
   childIssuesOptions,
+  fetchIssueByRef,
   flattenIssueBuckets,
-  issueDetailOptions,
   issueIdentifierOptions,
   issueKeys,
   issueListOptions,
-  issueReactionsOptions,
   issueTableRowPageOptions,
+  prefetchIssuePage,
   projectGanttIssuesOptions,
   sidebarIssuesOptions,
   sourceContextPreviewOptions,
@@ -719,42 +719,6 @@ describe("issueIdentifierOptions", () => {
   });
 });
 
-describe("issueReactionsOptions", () => {
-  it("shares a cold detail read without sharing the reaction cache or suppressing later refetches", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const issue = makeIssue(1, {
-      reactions: [{
-        id: "reaction-1",
-        issue_id: "issue-1",
-        actor_type: "member",
-        actor_id: "user-1",
-        emoji: "+1",
-        created_at: "2026-01-01T00:00:00Z",
-      }],
-    });
-    let resolveIssue!: (value: Issue) => void;
-    const getIssue = vi.fn<(id: string) => Promise<Issue>>().mockImplementationOnce(
-      () => new Promise((resolve) => { resolveIssue = resolve; }),
-    );
-    installFakeIssueApi(getIssue);
-
-    const detail = qc.fetchQuery(issueDetailOptions(WS_ID, "issue-1"));
-    const reactions = qc.fetchQuery(issueReactionsOptions(WS_ID, "issue-1"));
-    expect(getIssue).toHaveBeenCalledTimes(1);
-
-    resolveIssue(issue);
-    await expect(detail).resolves.toEqual(issue);
-    await expect(reactions).resolves.toEqual(issue.reactions);
-    expect(qc.getQueryData(issueKeys.reactions("issue-1"))).toEqual(issue.reactions);
-
-    getIssue.mockResolvedValue({ ...issue, reactions: [] });
-    await qc.invalidateQueries({ queryKey: issueKeys.reactions("issue-1") });
-    await expect(qc.fetchQuery(issueReactionsOptions(WS_ID, "issue-1"))).resolves.toEqual([]);
-    expect(getIssue).toHaveBeenCalledTimes(2);
-    qc.clear();
-  });
-});
-
 describe("sidebarIssuesOptions", () => {
   const issues = Array.from({ length: 120 }, (_, i) => makeIssue(i));
 
@@ -787,5 +751,29 @@ describe("sidebarIssuesOptions", () => {
       { limit: 100, cursor: null },
       { limit: 20, cursor: "100" },
     ]);
+  });
+});
+
+describe("prefetchIssuePage", () => {
+  it("shares one issue request with a link warming the same issue by its identifier", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const issue = makeIssue(7);
+    const getIssue = vi.fn().mockResolvedValue(issue);
+    setApiInstance({
+      getIssue,
+      listTimeline: vi.fn().mockResolvedValue([]),
+      listTasksByIssue: vi.fn().mockResolvedValue([]),
+      listChildIssues: vi.fn().mockResolvedValue({ issues: [] }),
+    } as unknown as ApiClient);
+
+    await Promise.all([
+      prefetchIssuePage(qc, WS_ID, issue.id, issue.identifier),
+      fetchIssueByRef(qc, WS_ID, issue.identifier),
+    ]);
+
+    expect(getIssue).toHaveBeenCalledTimes(1);
+    expect(getIssue.mock.calls[0]?.[0]).toBe("MUL-7");
+    expect(qc.getQueryData(issueKeys.detail(WS_ID, "MUL-7"))).toBe(issue);
+    expect(qc.getQueryData(issueKeys.detail(WS_ID, issue.id))).toBe(issue);
   });
 });

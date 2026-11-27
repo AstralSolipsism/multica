@@ -9,23 +9,26 @@
  * level), task lines of 30–40 issues with 2–3 sub-line layers, 1–2 in-line
  * prerequisites per task plus ~20% cross-line prerequisites (always down the
  * production flow), a work frontier per line, fully-completed lines (hidden
- * by default), and the "cancelled-but-still-blocking" case.
+ * by default), and a cancelled task inside a hidden completed line that still
+ * carries a satisfied outgoing edge to unfinished work.
  *
- * Two backend rules the wire data must obey (the real endpoint refuses the
- * graph otherwise — see server/internal/issuedependency/model.go Validate
- * and server/internal/service/issue_graph.go):
+ * Two backend rules the wire data must obey (matching native
+ * effective_issue_blocker and server/internal/service/issue_graph.go):
  *   - no edge may connect an ancestor and a descendant (in-line
  *     prerequisites therefore only link leaf tasks of the same line);
- *   - the response lists nodes, edges and projects sorted by id, and a
- *     node's dependency_summary counts unique unfinished prerequisites of
- *     the node AND its ancestors (only `done` satisfies; cancelled keeps
- *     blocking).
+ *   - edges merge explicit `manual:<target>:<source>` rows with all
+ *     same-parent earlier-stage sibling pairs as `stage:<target>:<source>`
+ *     (manual takes precedence when both cover the same pair, matching
+ *     migration 746's `effective_issue_blocker` view); the response lists
+ *     nodes, edges and projects sorted by id, and a node's dependency_summary
+ *     counts only unique direct unsatisfied blockers of that node (no ancestor
+ *     inheritance; both `done` and `cancelled` satisfy).
  *
  * Pure TypeScript on purpose: no zod, no node: imports, so the same file can
  * run in a browser-context vitest suite and be bundled into a Playwright spec.
  */
 
-export const ISSUE_GRAPH_FIXTURE_VERSION = "2.1.0";
+export const ISSUE_GRAPH_FIXTURE_VERSION = "2.3.0";
 
 export type IssueGraphFixtureDatasetName =
   | "accept-5000"
@@ -312,9 +315,9 @@ const STATUS_CATEGORY: Record<string, string> = {
   cancelled: "closed",
 };
 
-/** Only a `done` status satisfies a prerequisite (backend rule). */
-const satisfied = (status: string) => status === "done";
-const unfinishedStatus = (status: string) => status !== "done" && status !== "cancelled";
+/** Both `done` and `cancelled` satisfy a native blocker (backend rule). */
+const satisfied = (status: string) => status === "done" || status === "cancelled";
+const unfinishedStatus = (status: string) => !satisfied(status);
 
 // ---------------------------------------------------------------------------
 // Builder state
@@ -335,6 +338,7 @@ interface Builder {
   rng: Rng;
   config: IssueGraphFixtureConfig;
   nodes: SyntheticGraphNode[];
+  nodeById: Map<string, SyntheticGraphNode>;
   edges: SyntheticGraphEdge[];
   projects: { id: string; title: string; flow: 0 | 1 | 2 | 3 }[];
   lines: LineContext[];
@@ -370,15 +374,16 @@ function makeNode(
     dependency_summary: null,
   };
   builder.nodes.push(node);
+  builder.nodeById.set(node.id, node);
   return node;
 }
 
-function addEdge(builder: Builder, source: string, target: string): void {
+function addEdge(builder: Builder, source: string, target: string, via: "manual" | "stage" = "manual"): void {
   const pair = `${source}->${target}`;
   if (source === target || builder.edgePairs.has(pair)) return;
   builder.edgePairs.add(pair);
   builder.edges.push({
-    source_edge_id: builder.rng.uuid(),
+    source_edge_id: `${via}:${target}:${source}`,
     source,
     target,
     type: "blocked_by",
@@ -536,7 +541,7 @@ function assignLineCompletion(builder: Builder): void {
   const { profile } = builder.config;
   const rng = builder.rng;
   // The first line — always tooling, upstream of everything — is forced done
-  // so the cancelled-but-still-blocking anchor below has a guaranteed home.
+  // so the cancelled-satisfied anchor below has a guaranteed home.
   builder.lines.forEach((line, index) => {
     line.fullyDone = !builder.config.singleLine && (index === 0 || rng.chance(profile.doneLineShare));
   });
@@ -551,11 +556,12 @@ function assignLineCompletion(builder: Builder): void {
 }
 
 /**
- * The cancelled-but-still-blocking case: a cancelled task inside a hidden
- * fully-done line, with a direct dependent in a visible unfinished line
- * further down the production flow.
+ * Cancelled-prerequisite anchor: a cancelled task inside a hidden completed
+ * line with a direct outgoing edge to a visible unfinished task further down
+ * the production flow. Under native issue_blocker rules the edge stays in the
+ * graph but is already satisfied (does not block the target).
  */
-function addCancelledBlockingAnchor(builder: Builder): void {
+function addCancelledSatisfiedAnchor(builder: Builder): void {
   if (builder.config.singleLine) return;
   const anchor = builder.lines[0]!;
   const cancelledLeaf = anchor.leaves[Math.min(2, anchor.leaves.length - 1)]!;
@@ -565,7 +571,7 @@ function addCancelledBlockingAnchor(builder: Builder): void {
     (line) => !line.fullyDone && PROJECT_BANKS[line.projectIndex]!.flow >= 2,
   ) ?? builder.lines.find((line) => !line.fullyDone);
   if (!downstream) {
-    throw new Error("no unfinished line to anchor the cancelled-blocking case (doneLineShare too high?)");
+    throw new Error("no unfinished line to anchor the cancelled-satisfied case (doneLineShare too high?)");
   }
   const target = downstream.leaves.find((leaf) => unfinishedStatus(leaf.status)) ?? downstream.leaves.at(-1)!;
   addEdge(builder, cancelledLeaf.id, target.id);
@@ -669,14 +675,38 @@ function assignRunSummariesAndAssignees(builder: Builder): void {
 }
 
 /**
- * Dependency summaries exactly the way the backend computes them: unique
- * direct prerequisites of the node AND its ancestors; a prerequisite is
- * satisfied only by `done` (cancelled keeps blocking — that is the case the
- * DAG redo draws in red).
+ * Same-parent stage-order edges matching migration 746's
+ * `effective_issue_blocker` view: every sibling pair under a non-null parent
+ * with `source.stage < target.stage` gets a `stage:<target>:<source>` edge
+ * unless an explicit `manual:` row already covers the same pair.
+ */
+function addStageDerivedEdges(builder: Builder): void {
+  const byParent = new Map<string, SyntheticGraphNode[]>();
+  for (const node of builder.nodes) {
+    if (node.parent_issue_id === null || node.stage === null) continue;
+    const list = byParent.get(node.parent_issue_id) ?? [];
+    list.push(node);
+    byParent.set(node.parent_issue_id, list);
+  }
+  for (const siblings of byParent.values()) {
+    for (const target of siblings) {
+      for (const source of siblings) {
+        if (source.stage! < target.stage!) {
+          addEdge(builder, source.id, target.id, "stage");
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Dependency summaries matching server/internal/service/issue_graph.go:
+ * count only unique direct effective blockers of the node itself (native
+ * blockers never inherit across ancestors), where both `done` and `cancelled`
+ * satisfy the blocker.
  */
 function assignDependencySummaries(builder: Builder): void {
   const rng = builder.rng;
-  const byId = new Map(builder.nodes.map((node) => [node.id, node]));
   const sourcesOf = new Map<string, string[]>();
   for (const edge of builder.edges) {
     const list = sourcesOf.get(edge.target) ?? [];
@@ -684,15 +714,9 @@ function assignDependencySummaries(builder: Builder): void {
     sourcesOf.set(edge.target, list);
   }
   for (const node of builder.nodes) {
-    const closure = new Set<string>();
-    let current: string | null = node.id;
-    while (current != null) {
-      for (const source of sourcesOf.get(current) ?? []) closure.add(source);
-      current = byId.get(current)!.parent_issue_id;
-    }
     let unsatisfied = 0;
-    for (const source of closure) {
-      if (!satisfied(byId.get(source)!.status)) unsatisfied += 1;
+    for (const source of sourcesOf.get(node.id) ?? []) {
+      if (!satisfied(builder.nodeById.get(source)!.status)) unsatisfied += 1;
     }
     node.dependency_summary = {
       visible_unsatisfied_count: unsatisfied,
@@ -727,6 +751,7 @@ export function buildIssueGraphFixture(
     rng,
     config,
     nodes: [],
+    nodeById: new Map(),
     edges: [],
     projects: PROJECT_BANKS.map((bank) => ({ id: rng.uuid(), title: bank.title, flow: bank.flow })),
     lines: [],
@@ -748,8 +773,9 @@ export function buildIssueGraphFixture(
   }
   createLines(builder);
   assignLineCompletion(builder);
-  addCancelledBlockingAnchor(builder);
+  addCancelledSatisfiedAnchor(builder);
   addCrossLineDependencies(builder);
+  addStageDerivedEdges(builder);
   assignRunSummariesAndAssignees(builder);
   assignDependencySummaries(builder);
 
@@ -767,7 +793,7 @@ export function buildIssueGraphFixture(
     matched_count: builder.nodes.length,
     context_count: 0,
     nodes: [...builder.nodes].sort(byId),
-    edges: [...builder.edges].sort((a, b) => (a.source_edge_id < b.source_edge_id ? -1 : 1)),
+    edges: [...builder.edges].sort((a, b) => (a.source_edge_id < b.source_edge_id ? -1 : a.source_edge_id > b.source_edge_id ? 1 : 0)),
     projects: [...builder.projects].sort(byId).map(({ id, title }) => ({ id, title })),
     has_restricted_context: false,
   };
@@ -811,8 +837,8 @@ export interface IssueGraphFixtureStats {
   inlinePrereqMax: number;
   inProgressWithoutRunSummary: number;
   inProgressWithoutActiveRun: number;
-  /** Cancelled tasks inside fully-done lines that still block unfinished work. */
-  cancelledStillBlocking: number;
+  /** Cancelled tasks inside hidden completed lines with satisfied edges to unfinished work. */
+  cancelledSatisfiedEdges: number;
   acyclic: boolean;
 }
 
@@ -846,7 +872,7 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
       crossLineTasks: 0, crossLineShare: 0, crossLineAgainstFlow: 0, ancestorEdges: 0,
       leavesWithoutInlinePrereq: 0, inlinePrereqMin: 0, inlinePrereqMax: 0,
       inProgressWithoutRunSummary: 0, inProgressWithoutActiveRun: 0,
-      cancelledStillBlocking: 0, acyclic: true,
+      cancelledSatisfiedEdges: 0, acyclic: true,
     };
   }
   const { byId, children, ancestorsOf } = graphIndex(graph);
@@ -877,12 +903,13 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
   const fullyDoneRoots = roots.filter((root) => lineMembers(root).every(finished));
   const hiddenLineTasks = fullyDoneRoots.reduce((sum, root) => sum + lineMembers(root).length, 0);
 
-  // Dependency views: same-line vs cross-line, direction, ancestry.
-  const prereqsOf = new Map<string, SyntheticGraphNode[]>();
+  // Dependency views: explicit (non-stage) in-line vs cross-line, direction, ancestry.
+  const explicitPrereqsOf = new Map<string, SyntheticGraphNode[]>();
   for (const edge of graph.edges) {
-    const list = prereqsOf.get(edge.target) ?? [];
+    if (edge.source_edge_id.startsWith("stage:")) continue;
+    const list = explicitPrereqsOf.get(edge.target) ?? [];
     list.push(byId.get(edge.source)!);
-    prereqsOf.set(edge.target, list);
+    explicitPrereqsOf.set(edge.target, list);
   }
   // Project flow lives in PROJECT_BANKS; recover it by title.
   const flowByProject = new Map<string, number>();
@@ -898,7 +925,7 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
   let inlineMin = Number.POSITIVE_INFINITY;
   let inlineMax = 0;
   for (const leaf of leaves) {
-    const prereqs = prereqsOf.get(leaf.id) ?? [];
+    const prereqs = explicitPrereqsOf.get(leaf.id) ?? [];
     const inline = prereqs.filter((p) => lineOf.get(p) === lineOf.get(leaf));
     const cross = prereqs.filter((p) => lineOf.get(p) !== lineOf.get(leaf));
     if (cross.length > 0) crossLineTasks += 1;
@@ -939,14 +966,16 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
     }
   }
 
-  // Cancelled blockers of hidden done lines.
+  // Cancelled tasks in hidden completed lines that still carry satisfied
+  // outgoing edges to unfinished work (present as edges, non-blocking).
   const hiddenScope = new Set<string>();
   for (const root of fullyDoneRoots) for (const member of lineMembers(root)) hiddenScope.add(member.id);
-  let cancelledStillBlocking = 0;
+  let cancelledSatisfiedEdges = 0;
   for (const node of graph.nodes) {
     if (node.status !== "cancelled" || !hiddenScope.has(node.id)) continue;
-    const blocks = (downstream.get(node.id) ?? []).some((id) => !finished(byId.get(id)!));
-    if (blocks) cancelledStillBlocking += 1;
+    for (const targetId of downstream.get(node.id) ?? []) {
+      if (!finished(byId.get(targetId)!)) cancelledSatisfiedEdges += 1;
+    }
   }
 
   const depthOf = (node: SyntheticGraphNode): number => {
@@ -990,7 +1019,7 @@ export function analyzeIssueGraphFixture(graph: SyntheticIssueGraph): IssueGraph
       const run = node.run_summary;
       return run.queued + run.dispatched + run.running + run.waiting_local_directory === 0;
     }).length,
-    cancelledStillBlocking,
+    cancelledSatisfiedEdges,
     acyclic: visited === graph.nodes.length,
   };
 }

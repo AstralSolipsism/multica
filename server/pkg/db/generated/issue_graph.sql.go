@@ -36,6 +36,30 @@ func (q *Queries) GetIssueGraphAccess(ctx context.Context, arg GetIssueGraphAcce
 	return i, err
 }
 
+const listIssueGraphBlockers = `-- name: ListIssueGraphBlockers :one
+SELECT coalesce(array_agg(issue_id), '{}')::uuid[] AS issue_ids,
+       coalesce(array_agg(blocker_issue_id), '{}')::uuid[] AS blocker_issue_ids,
+       coalesce(array_agg(via), '{}')::text[] AS vias
+FROM effective_issue_blocker WHERE workspace_id = $1
+`
+
+type ListIssueGraphBlockersRow struct {
+	IssueIds        []pgtype.UUID `json:"issue_ids"`
+	BlockerIssueIds []pgtype.UUID `json:"blocker_issue_ids"`
+	Vias            []string      `json:"vias"`
+}
+
+// One row of aligned arrays over effective_issue_blocker: the manual
+// issue_blocker rows plus the same-parent stage order, exactly the edges that
+// gate execution. Stage edges are never materialized, so `via` plus the two
+// endpoints is the edge ID.
+func (q *Queries) ListIssueGraphBlockers(ctx context.Context, workspaceID pgtype.UUID) (ListIssueGraphBlockersRow, error) {
+	row := q.db.QueryRow(ctx, listIssueGraphBlockers, workspaceID)
+	var i ListIssueGraphBlockersRow
+	err := row.Scan(&i.IssueIds, &i.BlockerIssueIds, &i.Vias)
+	return i, err
+}
+
 const listIssueGraphDetails = `-- name: ListIssueGraphDetails :many
 SELECT i.id, i.project_id, i.stage, i.priority, i.assignee_type, i.assignee_id,
        p.title AS project_title
@@ -71,6 +95,50 @@ func (q *Queries) ListIssueGraphDetails(ctx context.Context, workspaceID pgtype.
 			&i.AssigneeType,
 			&i.AssigneeID,
 			&i.ProjectTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueGraphIssues = `-- name: ListIssueGraphIssues :many
+SELECT id, parent_issue_id, status, revision, title, number, project_id
+FROM issue
+WHERE workspace_id = $1 ORDER BY id
+`
+
+type ListIssueGraphIssuesRow struct {
+	ID            pgtype.UUID `json:"id"`
+	ParentIssueID pgtype.UUID `json:"parent_issue_id"`
+	Status        string      `json:"status"`
+	Revision      int64       `json:"revision"`
+	Title         string      `json:"title"`
+	Number        int32       `json:"number"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) ListIssueGraphIssues(ctx context.Context, workspaceID pgtype.UUID) ([]ListIssueGraphIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listIssueGraphIssues, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueGraphIssuesRow{}
+	for rows.Next() {
+		var i ListIssueGraphIssuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentIssueID,
+			&i.Status,
+			&i.Revision,
+			&i.Title,
+			&i.Number,
+			&i.ProjectID,
 		); err != nil {
 			return nil, err
 		}

@@ -10,7 +10,7 @@ import {
 } from "@multica/core/message-delivery";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { issueRouteRef, useWorkspacePaths } from "@multica/core/paths";
 import { errorCode } from "@multica/core/api";
 import type { MessageSourceDelivery } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -329,7 +329,7 @@ export function SourceDeliveryDetailDialog({
       }}
       badge={t(($) => $.deliveries.source_kind[messageDeliverySourceKindKey(full.source_kind)])}
       issueLink={sourceRef?.issue_identifier ? {
-        href: wsPaths.issueDetail(sourceRef.issue_identifier),
+        href: wsPaths.issueDetail(issueRouteRef({ id: sourceRef.issue_id ?? "", identifier: sourceRef.issue_identifier })),
         label: `${t(($) => $.deliveries.detail.view_issue)} ${sourceRef.issue_identifier}`,
       } : undefined}
       description={full.status === "sent" ? t(($) => $.deliveries.description) : undefined}

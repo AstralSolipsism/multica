@@ -55,7 +55,7 @@ func TestHeartbeatAcceptsUnnamedAntigravityGroups(t *testing.T) {
 					if err := json.Unmarshal(raw, &payload); err != nil {
 						t.Fatal(err)
 					}
-					ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(), identity, payload)
+					ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(), identity, runtimeID, payload)
 					if err != nil || ack == nil || ack.Status != "ok" {
 						t.Fatalf("ack=%+v error=%v", ack, err)
 					}
