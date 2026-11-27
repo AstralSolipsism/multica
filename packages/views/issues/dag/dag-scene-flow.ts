@@ -11,7 +11,7 @@ import {
   type DagTask,
 } from "@multica/core/issues/dag";
 import type { DagFocusWay } from "@multica/core/issues/stores/view-store";
-import { dagExternalNodeId, type DagSceneFrameBox, type DagSceneGeometry, type DagScenePlan } from "./dag-scene";
+import { dagExternalNodeId, type DagSceneEdge, type DagSceneFrameBox, type DagSceneGeometry, type DagScenePlan } from "./dag-scene";
 import { dagFocusLayoutInput } from "./dag-scene-inputs";
 import { routeDagOverlays } from "./dag-scene-geometry";
 
@@ -22,6 +22,36 @@ export type DagCanvasModel =
   | { kind: "line"; line: DagLineModel }
   | { kind: "focus"; focus: DagFocusModel; tasks: DagTask[]; frames: DagFrame[]; plan: DagScenePlan }
   | { kind: "independent"; tasks: readonly DagTask[] };
+
+export interface DagRelationVisibility {
+  manual: boolean;
+  wakeup: boolean;
+  mention: boolean;
+}
+
+/** Filters only display relations. Weak edges remain outside dependency
+ * semantics; shared bundles retain their non-manual members. */
+export function dagVisibleScenePlan(plan: DagScenePlan, visibility: DagRelationVisibility): DagScenePlan {
+  const dependencyIds: Record<string, string[]> = {};
+  const overlayDependencyIds: Record<string, string[]> = {};
+  for (const [id, rawIds] of Object.entries(plan.dependencyIds))
+    dependencyIds[id] = visibility.manual ? [...rawIds] : rawIds.filter((rawId) => !rawId.startsWith("manual:"));
+  for (const [id, rawIds] of Object.entries(plan.overlayDependencyIds))
+    overlayDependencyIds[id] = visibility.manual ? [...rawIds] : rawIds.filter((rawId) => !rawId.startsWith("manual:"));
+  const visible = (edge: DagSceneEdge) => {
+    if (edge.kind) return visibility[edge.kind];
+    if (visibility.manual) return true;
+    const rawIds = dependencyIds[edge.id] ?? overlayDependencyIds[edge.id];
+    return rawIds ? rawIds.length > 0 : true;
+  };
+  return {
+    ...plan,
+    input: { ...plan.input, edges: plan.input.edges.filter(visible) },
+    dependencyIds,
+    overlays: plan.overlays.filter(visible),
+    overlayDependencyIds,
+  };
+}
 
 /** Fragment IDs belong to the scene; backing issues retain their raw identity. */
 export function dagFocusCanvasModel(focus: DagFocusModel): Extract<DagCanvasModel, { kind: "focus" }> {
@@ -47,6 +77,7 @@ export interface DagTaskCardData extends Record<string, unknown> {
   projectTitle: string | null;
   /** Stage pill instead of band columns when the owning frame uses labels. */
   showStage: boolean;
+  connectable?: boolean;
   simplified?: boolean;
 }
 export interface DagFrameData extends Record<string, unknown> {
@@ -54,7 +85,8 @@ export interface DagFrameData extends Record<string, unknown> {
   box: DagSceneFrameBox;
   statusColor: string | null;
   projectTitle: string | null;
-  /** Zoom degradation: the frame renders as a plain block without text. */
+  connectable?: boolean;
+  /** Zoom degradation: the frame renders as a plain block. */
   simplified?: boolean;
 }
 export interface DagExternalCardData extends Record<string, unknown> {
@@ -451,7 +483,7 @@ export function dagSceneFocusSet(
       edgeIds: new Set([...(upstream?.edgeIds ?? []), ...(downstream?.edgeIds ?? [])]),
     };
   }
-  const edges = [...plan.input.edges, ...plan.overlays];
+  const edges = [...plan.input.edges, ...plan.overlays].filter((edge) => !edge.kind);
   const forward = new Map<string, string[]>();
   const backward = new Map<string, string[]>();
   const byEndpoint = new Map<string, string[]>();
@@ -491,6 +523,7 @@ export interface DagFlowNodesOptions {
   geometry: DagSceneGeometry;
   statusColorOf: (statusKey: string) => string | null;
   projectNames: ReadonlyMap<string, string>;
+  connectable?: boolean;
 }
 
 function dagIssueAriaLabel(issue: { id: string; identifier: string | null; title: string }) {
@@ -501,7 +534,7 @@ export function dagSceneFlowNodes(
   model: DagCanvasModel,
   options: DagFlowNodesOptions,
 ): DagCanvasFlowNode[] {
-  const { geometry, statusColorOf, projectNames } = options;
+  const { geometry, statusColorOf, projectNames, connectable = false } = options;
   if (model.kind === "overview") {
     return model.overview.cards.flatMap((card) => {
       const box = geometry.nodes[card.id];
@@ -559,6 +592,7 @@ export function dagSceneFlowNodes(
           box,
           statusColor: statusColorOf(frame.issue.status),
           projectTitle: frame.issue.projectId ? projectNames.get(frame.issue.projectId) ?? null : null,
+          connectable,
         },
         ariaLabel: dagIssueAriaLabel(frame.issue),
         draggable: false,
@@ -583,6 +617,7 @@ export function dagSceneFlowNodes(
           statusColor: statusColorOf(task.issue.status),
           projectTitle: task.issue.projectId ? projectNames.get(task.issue.projectId) ?? null : null,
           showStage: parentId ? stageLabels.get(parentId) === true : true,
+          connectable,
         },
         ariaLabel: dagIssueAriaLabel(task.issue),
         selected: false,

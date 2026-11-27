@@ -32,7 +32,7 @@ import {
   sameDagViewport,
   type DagFirstOpenAnchor,
 } from "./dag-viewport";
-import { dagSceneFlowNodes, dagSceneFocusSet, type DagCanvasFlowNode, type DagCanvasModel } from "./dag-scene-flow";
+import { dagSceneFlowNodes, dagSceneFocusSet, dagVisibleScenePlan, type DagCanvasFlowNode, type DagCanvasModel, type DagRelationVisibility } from "./dag-scene-flow";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
 import type { DagExternalGroup } from "@multica/core/issues/dag";
 import { DagOverviewCardView } from "./dag-overview-card";
@@ -90,6 +90,18 @@ export interface DagSceneCanvasProps {
   onOpenIssue: (issueId: string) => void;
   onExternalJump: (group: DagExternalGroup, side: "upstream" | "downstream") => void;
   registerCanvasApi?: (api: DagSceneCanvasApi | null) => void;
+  /** Star Map hands off its settled camera and keeps it centered when the
+   *  peek/viewport changes. Ordinary DAG navigation leaves these unset. */
+  viewportOverride?: { viewport: Viewport; nonce: number } | null;
+  viewportConstraint?: (viewport: Viewport) => Viewport;
+  /** Embedded scenes keep the host's atmospheric background and HUD. */
+  embedded?: boolean;
+  relationVisibility?: DagRelationVisibility;
+  /** Opt-in native React Flow blocker creation used by the Star Map near scene. */
+  blockerConnection?: {
+    enabled: boolean;
+    onConnect: (source: string, target: string) => void;
+  };
 }
 
 /** Zoom degradation swaps cards to their plain block only where the flag
@@ -132,6 +144,11 @@ export function DagSceneCanvasInner({
   onOpenIssue,
   onExternalJump,
   registerCanvasApi,
+  viewportOverride,
+  viewportConstraint,
+  embedded = false,
+  relationVisibility,
+  blockerConnection,
 }: DagSceneCanvasProps) {
   const storeApi = useViewStoreApi();
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
@@ -186,9 +203,13 @@ export function DagSceneCanvasInner({
     height: canvasHeight,
   });
   viewportBounds.current = { targets: viewportTargets, width: canvasWidth, height: canvasHeight };
+  const externalConstraint = useRef(viewportConstraint);
+  externalConstraint.current = viewportConstraint;
   const boundedViewport = useCallback(
-    (viewport: Viewport, preferredId?: string) =>
-      constrainDagViewport(viewport, viewportBounds.current, viewportBounds.current.targets, preferredId),
+    (viewport: Viewport, preferredId?: string) => {
+      const bounded = constrainDagViewport(viewport, viewportBounds.current, viewportBounds.current.targets, preferredId);
+      return externalConstraint.current?.(bounded) ?? bounded;
+    },
     [],
   );
   const persistViewport = useCallback(() => {
@@ -215,9 +236,17 @@ export function DagSceneCanvasInner({
     [geometry, canvasWidth, canvasHeight, setViewport, fitView],
   );
 
+  const appliedViewportKey = useRef<string | null>(null);
+  const handledViewportOverride = useRef(0);
+  useEffect(() => {
+    if (!viewportInitialized || !viewportOverride || handledViewportOverride.current === viewportOverride.nonce) return;
+    handledViewportOverride.current = viewportOverride.nonce;
+    appliedViewportKey.current = viewportKey;
+    void setViewport(viewportOverride.viewport, { duration: reducedMotion ? 0 : 440 });
+  }, [viewportInitialized, viewportOverride, viewportKey, setViewport, reducedMotion]);
+
   // Level switches restore that level's remembered viewport; a level opened
   // for the first time fits its content (see fitFirstOpen).
-  const appliedViewportKey = useRef<string | null>(null);
   useEffect(() => {
     if (!viewportInitialized || appliedViewportKey.current === viewportKey) return;
     appliedViewportKey.current = viewportKey;
@@ -371,14 +400,19 @@ export function DagSceneCanvasInner({
     return boxes;
   }, [activeNodeSet, geometry]);
 
+  const edgePlan = useMemo(
+    () => relationVisibility ? dagVisibleScenePlan(plan, relationVisibility) : plan,
+    [plan, relationVisibility],
+  );
   const baseNodes = useMemo(
     () =>
       dagSceneFlowNodes(model, {
         geometry,
         statusColorOf,
         projectNames,
+        connectable: blockerConnection?.enabled,
       }),
-    [model, geometry, statusColorOf, projectNames],
+    [model, geometry, statusColorOf, projectNames, blockerConnection?.enabled],
   );
   const nodes = useMemo(
     () => applySimplified(baseNodes, simplified),
@@ -551,7 +585,13 @@ export function DagSceneCanvasInner({
           nodes={nodes}
           edges={[]}
           nodeTypes={nodeTypes}
-          defaultViewport={{ x: 20, y: 20, zoom: 1 }}
+          defaultViewport={viewportOverride?.viewport ?? { x: 20, y: 20, zoom: 1 }}
+          onConnect={({ source, target }) => {
+            if (!source || !target || source === target) return;
+            const sourceId = plan.input.frames.find((frame) => frame.id === source)?.modelId ?? source;
+            const targetId = plan.input.frames.find((frame) => frame.id === target)?.modelId ?? target;
+            if (sourceId !== targetId) blockerConnection?.onConnect(sourceId, targetId);
+          }}
           onNodesChange={handleNodesChange}
           onNodeClick={(event, node) => handleNodeClick(node, event.detail)}
           onNodeDoubleClick={(_, node) => {
@@ -596,7 +636,7 @@ export function DagSceneCanvasInner({
           zoomOnPinch
           zoomActivationKeyCode={["Control", "Meta"]}
           nodesDraggable={false}
-          nodesConnectable={false}
+          nodesConnectable={blockerConnection?.enabled ?? false}
           nodesFocusable
           edgesFocusable={false}
           elementsSelectable
@@ -605,12 +645,12 @@ export function DagSceneCanvasInner({
           maxZoom={2}
           deleteKeyCode={null}
           colorMode={colorMode === "dark" ? "dark" : "light"}
-          className="bg-background"
+          className={embedded ? "bg-transparent" : "bg-background"}
         >
           <ViewportPortal>
             <DagEdgeLayer
               geometry={geometry}
-              plan={plan}
+              plan={edgePlan}
               model={model}
               showSatisfied={showSatisfied}
               highlightedEdgeIds={highlightedEdgeIds}
@@ -625,9 +665,9 @@ export function DagSceneCanvasInner({
               onBusClick={handleBusClick}
             />
           </ViewportPortal>
-          <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />
-          <Controls showInteractive={false} position="bottom-left" />
-          <MiniMap pannable zoomable className="!bg-card" />
+          {!embedded && <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />}
+          {!embedded && <Controls showInteractive={false} position="bottom-left" />}
+          {!embedded && <MiniMap pannable zoomable className="!bg-card" />}
         </ReactFlow>
       </DagCanvasActionsContext.Provider>
     </div>

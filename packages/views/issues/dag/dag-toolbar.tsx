@@ -7,6 +7,7 @@ import {
   Info,
   ListTree,
   Loader2,
+  Network,
   X,
 } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
@@ -60,6 +61,7 @@ export interface DagToolbarProps {
   onExitLine: () => void;
   onFocusFrame: (frameId: string) => void;
   onLocateDependency: (dependencyId: string) => void;
+  onOpenStarMap?: () => void;
 }
 
 export function DagToolbar({
@@ -85,6 +87,7 @@ export function DagToolbar({
   onExitLine,
   onFocusFrame,
   onLocateDependency,
+  onOpenStarMap,
 }: DagToolbarProps) {
   const { t: tDag } = useT("dag");
   const { t: tIssues } = useT("issues");
@@ -296,6 +299,18 @@ export function DagToolbar({
               {tDag(($) => $.context_only_hint)}
             </TooltipContent>
           </Tooltip>
+        )}
+        {onOpenStarMap && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-caption"
+            onClick={onOpenStarMap}
+            data-dag-open-star-map
+          >
+            <Network className="size-3.5" />
+            {tDag(($) => $.star_map.open)}
+          </Button>
         )}
         {hiddenTotal > 0 ? (
           <Tooltip>

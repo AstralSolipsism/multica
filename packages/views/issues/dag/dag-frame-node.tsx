@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import type { NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { ArrowRight } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import type { IssueStatusCategory } from "@multica/core/types";
@@ -40,6 +40,12 @@ export const DagFrameNode = memo(
         )}
         data-dag-frame={frame.id}
       >
+        {data.connectable && (
+          <>
+            <Handle type="target" position={Position.Left} className="pointer-events-auto !size-2.5 !border-white !bg-brand" />
+            <Handle type="source" position={Position.Right} className="pointer-events-auto !size-2.5 !border-white !bg-brand" />
+          </>
+        )}
         <button
           type="button"
           className="nopan pointer-events-auto absolute left-0 top-0 z-10 flex w-full items-center gap-2 rounded-t-lg bg-card/80 px-3 py-2 text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-brand"

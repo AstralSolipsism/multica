@@ -17,7 +17,7 @@ import { DAG_MOTION_MAX_SEGMENTS, DAG_MOTION_MIN_ZOOM } from "./dag-constants";
 /** Scene edges touching a node resolve through the current plan (base first,
  *  then satisfied overlays), so selection/focus work with the switch off. */
 function sceneEdges(plan: DagScenePlan) {
-  return [...plan.input.edges, ...plan.overlays];
+  return [...plan.input.edges, ...plan.overlays].filter((edge) => !edge.kind);
 }
 
 /** Keep the frames containing lit nodes lit as well — dimming a sub-line

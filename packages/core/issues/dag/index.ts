@@ -7,3 +7,4 @@ export * from "./detail";
 export * from "./selector";
 export * from "./use-dag-data";
 export * from "./use-dag-surface-graph";
+export * from "./star-map";

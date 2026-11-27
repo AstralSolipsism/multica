@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import type { NodeProps } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { AlertTriangle, CircleHelp, Loader2 } from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { issueGraphReadiness } from "@multica/core/api";
@@ -108,6 +108,12 @@ export const DagTaskCard = memo(
         style={{ width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT }}
         data-dag-task={issue.identifier}
       >
+        {data.connectable && (
+          <>
+            <Handle type="target" position={Position.Left} className="!size-2.5 !border-white !bg-brand" />
+            <Handle type="source" position={Position.Right} className="!size-2.5 !border-white !bg-brand" />
+          </>
+        )}
         <div className="flex min-w-0 items-center gap-1.5">
           <PriorityIcon priority={issue.priority} className="size-3.5 shrink-0" />
           <span className="shrink-0 text-caption text-muted-foreground tabular-nums">

@@ -5,6 +5,40 @@ below: `dag-view.tsx` builds plans from the OL-279 models, this engine computes
 geometry, and `dag-scene-canvas.tsx` paints it. The engine imports only the
 core models; it does not fetch data or choose rendering styles.
 
+## Star Map (OL-1536)
+
+`dag-view.tsx` defaults to `StarMapDagView`; `LegacyDagView` remains available through the
+traditional-flow / star-map switch, without adding a host view mode. The choice is stored in
+`dagRenderer` by the workspace-aware view store. The star-map path is:
+
+```text
+issue graph + DagModelIndex
+  -> buildStarMapHierarchy (core, immutable hierarchy/camera helpers)
+  -> StarMapCanvas (orbital + 440 ms morph)
+  -> useDagSceneLayout (the same ELK worker and geometry)
+  -> DagSceneCanvas (the same React cards, orthogonal edges and interactions)
+```
+
+- `star-map-canvas.tsx` owns only the HTML Canvas orbital camera, hit testing, LOD, sprites and
+  sphere-to-card interpolation. `starMapMacroBounds` lives in core and covers root and sector
+  envelopes for initialization, layout changes, Fit All and resize. Orbital text is painted after
+  leaving the world transform, so its screen-pixel size stays fixed. Hidden moon tracks are culled
+  at far LOD; gradients are cached as sprites instead of recreated per body per frame.
+- A wheel crossing resolves the visible node nearest the live cursor, ignoring any older selection.
+  Parent systems use `computeDagLine`; standalone/chain intent uses `computeDagFocus`. The camera
+  fits the complete ELK bounds into the remaining viewport, including the issue-peek inset. The
+  existing canvas receives that exact viewport on handoff, and wheel-out reverses the morph.
+- `star-map-scene.ts` adds `wakeup` peers as display-only context cards on the correct upstream or
+  downstream side. `DagSceneEdge.kind` keeps those routes out of dependency aggregation, selection
+  closure and blocker writes; `DagEdgeLayer` paints them as violet dashed routes. `mention` stays an
+  optional star-map overlay and never enters the linear dependency model.
+- Near-scene blocker creation uses native React Flow handles on the existing task/frame cards;
+  bus clicks open the existing `DagBusSelection` for location and removal. `relationVisibility`
+  filters displayed routes without changing strong dependency semantics or allowing weak-edge writes.
+- Blocker creation/removal calls `useUpdateIssueBlockers`; opening an issue calls the surface's
+  `useIssuePeekActions().open(issueId)`. Reduced motion completes the same handoff without spatial
+  animation.
+
 ## Rendering and interaction (Stage 10)
 
 `dag-scene-canvas.tsx` keeps React Flow nodes for cards and paints everything

@@ -50,6 +50,10 @@ export interface DagSceneEdge {
   target: string;
   sourceKind: "task" | "frame";
   targetKind: "task" | "frame";
+  /** Display-only relations participate in placement but never in blocker
+   *  selection, execution semantics or aggregate bus counts. */
+  kind?: "wakeup" | "mention";
+  untilState?: string;
 }
 /** Only fields that change geometry cross the worker boundary / enter the LRU. */
 export interface DagSceneInput {

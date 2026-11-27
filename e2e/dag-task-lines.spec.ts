@@ -19,6 +19,7 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
   await display.click();
   await page.getByRole("group", { name: "View", exact: true }).getByRole("button", { name: "Graph", exact: true }).click();
   await page.keyboard.press("Escape");
+  await showLegacyDag(page);
   // Warm the dev server's on-demand compile of the issue detail route: the
   // first soft navigation commits its URL only after the route compiles,
   // which can outlast the navigation assertion on a cold server.
@@ -26,6 +27,14 @@ async function bootGraph(page: Page, api: TestApiClient, workspace: { id: string
     (slug) => fetch(`/${slug}/issues/__warm__`, { credentials: "same-origin" }).catch(() => undefined),
     workspace.slug,
   );
+}
+
+async function showLegacyDag(page: Page) {
+  if (await page.locator("[data-dag-canvas]").isVisible()) return;
+  const entry = page.getByRole("button", { name: "Layered flow", exact: true });
+  await expect(entry).toBeVisible({ timeout: 30_000 });
+  await entry.click();
+  await expect(page.locator("[data-dag-canvas]")).toBeVisible({ timeout: 30_000 });
 }
 
 async function setBlockedBy(api: TestApiClient, workspaceId: string, id: string, blockedBy: string[]) {
