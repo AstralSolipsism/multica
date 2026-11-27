@@ -148,6 +148,47 @@ describe("star map hierarchy", () => {
       }
     }
   });
+
+  it.each(["constellation", "polar"] as const)("keeps mixed and many-project roots separately pickable in %s layout", (layout) => {
+    const size = { width: 1280, height: 720 };
+    const insets = { left: 28, right: 28, top: 64, bottom: 64 };
+    for (const { projectCount, solos, suns } of [{ projectCount: 4, solos: 5, suns: 1 }, { projectCount: 12, solos: 0, suns: 2 }]) {
+      const nodes = Array.from({ length: projectCount }, (_, project) => {
+        const projectId = `p${project + 1}`;
+        return [
+          ...Array.from({ length: solos }, (_, solo) => n(`solo-${project}-${solo}`, { projectId })),
+          ...Array.from({ length: suns }, (_, sun) => {
+            const id = `sun-${project}-${sun}`;
+            return [n(id, { projectId }), n(`${id}-child`, { projectId, parentIssueId: id })];
+          }),
+        ].flat();
+      }).flat();
+      const graph = g(nodes);
+      graph.projects = Array.from({ length: projectCount }, (_, index) => ({ id: `p${index + 1}`, title: `Project ${index + 1}` }));
+      const hierarchy = buildStarMapHierarchy(createDagModelIndex(graph), { layout, showCompleted: false });
+      const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), size, { insets, minZoom: 0.05, maxZoom: 0.45, fill: 0.92 });
+      const dense = hierarchy.nodes.length > 180;
+      const roots = hierarchy.roots.map((root) => ({
+        id: root.id,
+        x: root.anchor.x * camera.zoom + camera.x,
+        y: root.anchor.y * camera.zoom + camera.y,
+        r: starMapScreenRadius(root, camera.zoom, dense) * camera.zoom,
+      }));
+      expect(new Set(roots.map((root) => `${root.x},${root.y}`)).size).toBe(hierarchy.roots.length);
+      for (const { x, y, r } of roots) {
+        expect(x - r).toBeGreaterThanOrEqual(insets.left);
+        expect(x + r).toBeLessThanOrEqual(size.width - insets.right);
+        expect(y - r).toBeGreaterThanOrEqual(insets.top);
+        expect(y + r).toBeLessThanOrEqual(size.height - insets.bottom);
+      }
+      for (let left = 0; left < roots.length; left += 1) {
+        for (let right = left + 1; right < roots.length; right += 1) {
+          const a = roots[left]!, b = roots[right]!;
+          expect(Math.hypot(a.x - b.x, a.y - b.y), `${a.id} / ${b.id}`).toBeGreaterThan(a.r + b.r);
+        }
+      }
+    }
+  });
 });
 
 describe("star map interaction", () => {

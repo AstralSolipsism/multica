@@ -126,8 +126,9 @@ const minimumRootSpacing = 76;
 function packStandaloneRings(count: number, firstRadius: number, arcSpan: number, spacing = minimumRootSpacing) {
   const rings: { radius: number; angles: number[] }[] = [];
   const oneRootRadius = spacing / (2 * Math.sin(Math.min(Math.PI, arcSpan) / 2));
+  const baseRadius = Math.max(firstRadius, oneRootRadius);
   for (let placed = 0, ringIndex = 0; placed < count; ringIndex += 1) {
-    const radius = Math.max(firstRadius + ringIndex * spacing, oneRootRadius);
+    const radius = baseRadius + ringIndex * spacing;
     const minimumAngle = 2 * Math.asin(spacing / (2 * radius));
     const capacity = Math.max(1, Math.floor(arcSpan / minimumAngle + 1e-9));
     const ringCount = Math.min(capacity, count - placed);
@@ -299,9 +300,9 @@ function layoutPolar(roots: DraftNode[], sectors: (string | null)[], index: DagM
     const outerStandaloneRadius = standaloneRings.length ? standaloneRings[standaloneRings.length - 1]!.radius : 0;
     const maxSunDomain = suns.length ? Math.max(...suns.map((sun) => sun.domainRadius)) : 0;
     const sunSpacing = maxSunDomain * 2 + 40;
-    const firstSun = count === 1
-      ? standalones.length === 0 ? sunSpacing : outerStandaloneRadius + maxSunDomain + 44
-      : 220;
+    const firstSun = standalones.length > 0
+      ? outerStandaloneRadius + maxSunDomain + 44
+      : count === 1 ? sunSpacing : 220;
     const sunRings = packStandaloneRings(suns.length, firstSun, arc, sunSpacing);
     let sunIndex = 0;
     for (const ring of sunRings) {
