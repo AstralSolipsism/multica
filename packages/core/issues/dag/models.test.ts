@@ -114,6 +114,22 @@ describe("overview", () => {
     expect(computeDagOverview(index, { showSatisfiedDependencies: true }).dependencies).toHaveLength(2);
   });
 
+  it("exposes weak edges both ways without making them dependencies or relations", () => {
+    const graph = g([n("a"), n("b"), n("c")], [["a", "b"]], [
+      { from: "a", to: "b", kind: "wakeup", untilState: "in_review" },
+      { from: "b", to: "a", kind: "mention" },
+      { from: "b", to: "c", kind: "mention" },
+    ]);
+    const index = createDagModelIndex(graph), model = computeDagOverview(index);
+    expect(index.weakEdges).toEqual(graph.weakEdges);
+    expect(index.dependencies.map((d) => [d.source, d.target])).toEqual([["a", "b"]]);
+    expect(model.dependencies.map((d) => [d.source, d.target])).toEqual([["a", "b"]]);
+    // c is only mentioned by b, so it stays an independent task.
+    expect(model.cards.map((c) => c.id).toSorted()).toEqual(["a", "b", "independent:root"]);
+    expect(model.cards.find((c) => c.kind === "independent")?.memberIds).toEqual(["c"]);
+    expect(index.lineInputs.get("c")!.upstream).toEqual([]);
+  });
+
   it("keeps match/context, unknown and restricted signals without inventing unauthorized members", () => {
     const graph = g([
       n("root", { role: "context", hasRestrictedParent: true, projectId: "p1" }),

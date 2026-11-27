@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -69,25 +70,36 @@ type IssueGraphEdge struct {
 	Type         string `json:"type"`
 }
 
+// IssueGraphWeakEdge relates two visible issues without gating execution:
+// a wakeup wait (awaited issue -> waiting issue, UntilState is what it waits
+// for) or a mention reference (citing issue -> cited issue).
+type IssueGraphWeakEdge struct {
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	UntilState string `json:"until_state,omitempty"`
+}
+
 type IssueGraphProject struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 }
 
 type IssueGraph struct {
-	SchemaVersion        int                 `json:"schema_version"`
-	SnapshotID           string              `json:"snapshot_id"`
-	TopologyID           string              `json:"topology_id"`
-	CapturedAt           time.Time           `json:"captured_at"`
-	Complete             bool                `json:"complete"`
-	Scope                IssueGraphScope     `json:"scope"`
-	FocusIssueID         *string             `json:"focus_issue_id"`
-	MatchedCount         int                 `json:"matched_count"`
-	ContextCount         int                 `json:"context_count"`
-	Nodes                []IssueGraphNode    `json:"nodes"`
-	Edges                []IssueGraphEdge    `json:"edges"`
-	Projects             []IssueGraphProject `json:"projects"`
-	HasRestrictedContext bool                `json:"has_restricted_context"`
+	SchemaVersion        int                  `json:"schema_version"`
+	SnapshotID           string               `json:"snapshot_id"`
+	TopologyID           string               `json:"topology_id"`
+	CapturedAt           time.Time            `json:"captured_at"`
+	Complete             bool                 `json:"complete"`
+	Scope                IssueGraphScope      `json:"scope"`
+	FocusIssueID         *string              `json:"focus_issue_id"`
+	MatchedCount         int                  `json:"matched_count"`
+	ContextCount         int                  `json:"context_count"`
+	Nodes                []IssueGraphNode     `json:"nodes"`
+	Edges                []IssueGraphEdge     `json:"edges"`
+	WeakEdges            []IssueGraphWeakEdge `json:"weak_edges"`
+	Projects             []IssueGraphProject  `json:"projects"`
+	HasRestrictedContext bool                 `json:"has_restricted_context"`
 }
 
 // IssueGraphError refuses a graph read by stable code: not_found answers like
@@ -117,11 +129,13 @@ type IssueGraphBlocker struct {
 }
 
 // IssueGraphModel is one snapshot of the rows a graph is built from: every
-// issue of the workspace and its effective blockers, sorted by edge ID.
+// issue of the workspace, its effective blockers sorted by edge ID, and its
+// wakeup and mention relations sorted by endpoints.
 type IssueGraphModel struct {
 	Workspace string
 	Issues    map[string]IssueGraphIssue
 	Blockers  []IssueGraphBlocker
+	WeakEdges []IssueGraphWeakEdge
 }
 
 // LoadIssueGraph reads the graph inputs on the caller's transaction, so one
@@ -164,6 +178,26 @@ func LoadIssueGraph(ctx context.Context, q *db.Queries, ws pgtype.UUID) (IssueGr
 		issueID, blockerID := endpoint(blockers.IssueIds[i]), endpoint(blockers.BlockerIssueIds[i])
 		model.Blockers = append(model.Blockers, IssueGraphBlocker{ID: blockers.Vias[i] + ":" + issueID + ":" + blockerID, IssueID: issueID, BlockerID: blockerID})
 	}
+	wakeups, err := q.ListIssueGraphWakeupEdges(ctx, ws)
+	if err != nil {
+		return IssueGraphModel{}, err
+	}
+	mentions, err := q.ListIssueGraphMentionEdges(ctx, ws)
+	if err != nil {
+		return IssueGraphModel{}, err
+	}
+	model.WeakEdges = make([]IssueGraphWeakEdge, 0, len(wakeups.WaitingIssueIds)+len(mentions.FromIssueIds))
+	for i := range wakeups.WaitingIssueIds {
+		model.WeakEdges = append(model.WeakEdges, IssueGraphWeakEdge{Kind: "wakeup", From: endpoint(wakeups.TargetIssueIds[i]), To: endpoint(wakeups.WaitingIssueIds[i]), UntilState: wakeups.UntilStates[i]})
+	}
+	for i := range mentions.FromIssueIds {
+		model.WeakEdges = append(model.WeakEdges, IssueGraphWeakEdge{Kind: "mention", From: endpoint(mentions.FromIssueIds[i]), To: endpoint(mentions.ToIssueIds[i])})
+	}
+	slices.SortFunc(model.WeakEdges, func(a, b IssueGraphWeakEdge) int {
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.From, b.From), strings.Compare(a.To, b.To), strings.Compare(a.UntilState, b.UntilState))
+	})
+	// Two wakeups on one issue can await the same issue and state.
+	model.WeakEdges = slices.Compact(model.WeakEdges)
 	// Keep traversal deterministic without sorting full SQL rows, which can
 	// spill to temporary files at the default work_mem.
 	slices.SortFunc(model.Blockers, func(a, b IssueGraphBlocker) int { return strings.Compare(a.ID, b.ID) })
@@ -188,7 +222,7 @@ func (m IssueGraphModel) Graph(nodes []IssueGraphNode, projects []IssueGraphProj
 			return nil, &IssueGraphError{Code: "dependency_data_unverified", Message: "blocker endpoints must belong to the workspace"}
 		}
 	}
-	g := &IssueGraph{SchemaVersion: 1, Scope: scope, FocusIssueID: focus, Nodes: []IssueGraphNode{}, Edges: []IssueGraphEdge{}, Projects: []IssueGraphProject{}}
+	g := &IssueGraph{SchemaVersion: 1, Scope: scope, FocusIssueID: focus, Nodes: []IssueGraphNode{}, Edges: []IssueGraphEdge{}, WeakEdges: []IssueGraphWeakEdge{}, Projects: []IssueGraphProject{}}
 	parents := make(map[string][]string)
 	for id, n := range m.Issues {
 		if n.ParentID != "" {
@@ -284,6 +318,13 @@ func (m IssueGraphModel) Graph(nodes []IssueGraphNode, projects []IssueGraphProj
 	for _, b := range m.Blockers {
 		if public[b.IssueID] && public[b.BlockerID] {
 			g.Edges = append(g.Edges, IssueGraphEdge{SourceEdgeID: b.ID, Source: b.BlockerID, Target: b.IssueID, Type: "blocked_by"})
+		}
+	}
+	// Weak edges join public nodes only. A hidden endpoint is dropped here and
+	// never widens the closure, counts as a blocker or sets a restricted flag.
+	for _, e := range m.WeakEdges {
+		if public[e.From] && public[e.To] {
+			g.WeakEdges = append(g.WeakEdges, e)
 		}
 	}
 	for _, p := range projects {

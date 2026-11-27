@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,11 +9,13 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -33,6 +36,15 @@ func issueGraphFixture(t *testing.T) (*Handler, *testutil.Fixture) {
 func addBlocker(t *testing.T, fx *testutil.Fixture, issue, blocker string) {
 	t.Helper()
 	fx.InsertNoID(t, "issue_blocker", testutil.Cols{"workspace_id": fx.WorkspaceID, "issue_id": issue, "blocker_issue_id": blocker, "created_by_type": "member", "created_by_id": testUserID}, "issue_id=$1 AND blocker_issue_id=$2", issue, blocker)
+}
+
+// addWakeup stores one enabled event wakeup with a platform-evaluated
+// condition, the way `--until-issue` does.
+func addWakeup(t *testing.T, fx *testutil.Fixture, waiting string, condition map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(condition)
+	fx.Exec(t, `INSERT INTO issue_wakeup(id,workspace_id,issue_id,instruction,kind,mode,condition)
+ VALUES(gen_random_uuid(),$1,$2,'go','event','once',$3::jsonb)`, fx.WorkspaceID, waiting, raw)
 }
 
 func graphRequest(fx *testutil.Fixture, params url.Values) *http.Request {
@@ -298,6 +310,7 @@ func TestIssueGraphRepeatableReadDuringEdits(t *testing.T) {
 			fx.Exec(t, "UPDATE issue SET status='done',revision=revision+1,parent_issue_id=NULL,project_id=NULL WHERE id=$1", ids["FAUTH"])
 			fx.Exec(t, "DELETE FROM issue_blocker WHERE issue_id=$1 AND blocker_issue_id=$2", ids["FCHECKOUT"], ids["FAUTH"])
 			fx.Exec(t, "UPDATE project SET title='Changed project' WHERE id=$1", ids["P1"])
+			fx.Exec(t, "UPDATE issue SET description=$2,revision=revision+1 WHERE id=$1", ids["B_API"], "see mention://issue/"+ids["A_API"])
 		}
 		return nil
 	}}
@@ -306,7 +319,7 @@ func TestIssueGraphRepeatableReadDuringEdits(t *testing.T) {
 		t.Fatal("response mixed topology/state/project data from different snapshots")
 	}
 	after := readGraph(t, h, fx, nil)
-	if after.SnapshotID == before.SnapshotID || len(after.Edges) != len(expected)-1 || graphNodes(after)[ids["FAUTH"]].ParentIssueID != nil {
+	if after.SnapshotID == before.SnapshotID || len(after.Edges) != len(expected)-1 || graphNodes(after)[ids["FAUTH"]].ParentIssueID != nil || len(after.WeakEdges) != 1 || after.WeakEdges[0] != (service.IssueGraphWeakEdge{From: ids["B_API"], To: ids["A_API"], Kind: "mention"}) {
 		t.Fatal("subsequent snapshot did not observe committed edits")
 	}
 }
@@ -376,4 +389,65 @@ func TestIssueGraphURLWorkspaceAndTaskBinding(t *testing.T) {
 	_, other := issueGraphFixture(t)
 	r.Header.Set("X-Workspace-ID", other.WorkspaceID)
 	testutil.Call(t, router.ServeHTTP, r).Want(http.StatusForbidden)
+}
+
+// Wakeup waits and mention references are read with the blockers. Descriptions
+// and live comments each count once per directed pair, either direction is
+// legal, and none of it becomes a blocker.
+func TestIssueGraphWeakEdgesFromWakeupsAndMentions(t *testing.T) {
+	h, fx := issueGraphFixture(t)
+	awaited, waiting, citing, cited := fx.Issue(t, "Awaited"), fx.Issue(t, "Waiting"), fx.Issue(t, "Citing"), fx.Issue(t, "Cited")
+	mention := func(to string) string { return "see mention://issue/" + to }
+	// One pair however it is written: again, in upper case, glued to a suffix
+	// or right after an empty reference. A reference to itself never counts.
+	description := strings.Join([]string{mention(cited), "see mention://issue/" + strings.ToUpper(cited), mention(citing),
+		"mention://issue/mention://issue/" + cited, mention(cited) + "tail"}, " ")
+	fx.Exec(t, "UPDATE issue SET description=$2 WHERE id=$1", citing, description)
+	fx.Comment(t, citing, mention(cited))
+	fx.Comment(t, cited, mention(awaited)+" then "+mention(citing))
+	fx.Comment(t, citing, mention(awaited), testutil.Cols{"deleted_at": time.Now()})
+	fx.Comment(t, citing, "dangling mention://issue/"+uuid.NewString())
+	otherIssue := func(issueID, state string) map[string]any {
+		return map[string]any{"type": "other_issue", "issue_id": issueID, "state": state}
+	}
+	addWakeup(t, fx, waiting, otherIssue(awaited, "in_review"))
+	addWakeup(t, fx, waiting, otherIssue(awaited, "in_review"))
+	addWakeup(t, fx, cited, map[string]any{"type": "other_issue", "issue_id": citing})
+	// No edge from a disabled, platform-owned, self-watching, other-type or
+	// malformed rule; the malformed one must not fail the whole read.
+	fx.Exec(t, `INSERT INTO issue_wakeup(id,workspace_id,issue_id,instruction,kind,mode,enabled,system_rule,condition)
+ VALUES(gen_random_uuid(),$1,$2,'go','event','once',false,NULL,jsonb_build_object('type','other_issue','issue_id',$3::text,'state','done')),
+        (gen_random_uuid(),$1,$2,'go','event','once',true,'child_done',jsonb_build_object('type','other_issue','issue_id',$3::text)),
+        (gen_random_uuid(),$1,$2,'go','event','once',true,NULL,jsonb_build_object('type','other_issue','issue_id',upper($2::text),'state','done')),
+        (gen_random_uuid(),$1,$2,'go','event','once',true,NULL,jsonb_build_object('type','issue_field','field','status','value','"done"')),
+        (gen_random_uuid(),$1,$2,'go','event','once',true,NULL,jsonb_build_object('type','other_issue','issue_id','not-a-uuid','state','done'))`,
+		fx.WorkspaceID, waiting, awaited)
+	want := map[service.IssueGraphWeakEdge]bool{
+		{From: citing, To: cited, Kind: "mention"}:                            true,
+		{From: cited, To: awaited, Kind: "mention"}:                           true,
+		{From: cited, To: citing, Kind: "mention"}:                            true,
+		{From: awaited, To: waiting, Kind: "wakeup", UntilState: "in_review"}: true,
+		{From: citing, To: cited, Kind: "wakeup", UntilState: "done"}:         true,
+	}
+	g := readGraph(t, h, fx, nil)
+	got := map[service.IssueGraphWeakEdge]bool{}
+	for _, e := range g.WeakEdges {
+		got[e] = true
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("weak edges:\n got %+v\nwant %+v", got, want)
+	}
+	if !slices.IsSortedFunc(g.WeakEdges, func(a, b service.IssueGraphWeakEdge) int {
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.From, b.From), strings.Compare(a.To, b.To), strings.Compare(a.UntilState, b.UntilState))
+	}) {
+		t.Fatalf("weak edges are not ordered by kind and endpoints: %+v", g.WeakEdges)
+	}
+	if len(g.Edges) != 0 || g.MatchedCount != 4 || g.ContextCount != 0 || g.HasRestrictedContext {
+		t.Fatalf("weak edges changed the blocker graph: %+v", g)
+	}
+	for _, n := range g.Nodes {
+		if n.DependencySummary.VisibleUnsatisfiedCount != 0 || n.DependencySummary.HasRestrictedBlockers {
+			t.Fatalf("%s: a weak edge was counted as a blocker", n.Title)
+		}
+	}
 }

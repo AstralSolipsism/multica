@@ -150,6 +150,55 @@ func (q *Queries) ListIssueGraphIssues(ctx context.Context, workspaceID pgtype.U
 	return items, nil
 }
 
+const listIssueGraphMentionEdges = `-- name: ListIssueGraphMentionEdges :one
+WITH raw_mentions AS (
+  SELECT i.id AS from_issue_id, m.target::uuid AS to_issue_id
+  FROM issue i
+  CROSS JOIN LATERAL unnest(string_to_array(i.description, 'mention://issue/')) WITH ORDINALITY p(part, n)
+  CROSS JOIN LATERAL (SELECT substr(p.part, 1, 36) AS target) m
+  WHERE i.workspace_id = $1 AND i.description IS NOT NULL
+    AND i.description LIKE '%mention://issue/%' AND p.n > 1
+    AND m.target ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  UNION
+  SELECT c.issue_id, m.target::uuid
+  FROM (
+    SELECT issue_id, content
+    FROM comment
+    WHERE workspace_id = $1 AND deleted_at IS NULL
+      AND content LIKE '%mention://issue/%'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 20000
+  ) c
+  CROSS JOIN LATERAL unnest(string_to_array(c.content, 'mention://issue/')) WITH ORDINALITY p(part, n)
+  CROSS JOIN LATERAL (SELECT substr(p.part, 1, 36) AS target) m
+  WHERE p.n > 1
+    AND m.target ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+)
+SELECT coalesce(array_agg(from_issue_id ORDER BY from_issue_id, to_issue_id), '{}')::uuid[] AS from_issue_ids,
+       coalesce(array_agg(to_issue_id ORDER BY from_issue_id, to_issue_id), '{}')::uuid[] AS to_issue_ids
+FROM raw_mentions
+WHERE from_issue_id <> to_issue_id
+`
+
+type ListIssueGraphMentionEdgesRow struct {
+	FromIssueIds []pgtype.UUID `json:"from_issue_ids"`
+	ToIssueIds   []pgtype.UUID `json:"to_issue_ids"`
+}
+
+// mention://issue/<uuid> in issue descriptions and the newest 20,000 comments
+// that carry one, citing issue -> cited issue. UNION deduplicates; A <-> B and
+// cycles are legal. Endpoint visibility is the service's, not this query's.
+// No content index exists (migrations 454 and 463 retired them), so both
+// branches scan the workspace. Splitting on the literal and checking the 36
+// following characters returns what regexp_matches(..., 'g') would, without
+// compiling that pattern once per row.
+func (q *Queries) ListIssueGraphMentionEdges(ctx context.Context, workspaceID pgtype.UUID) (ListIssueGraphMentionEdgesRow, error) {
+	row := q.db.QueryRow(ctx, listIssueGraphMentionEdges, workspaceID)
+	var i ListIssueGraphMentionEdgesRow
+	err := row.Scan(&i.FromIssueIds, &i.ToIssueIds)
+	return i, err
+}
+
 const listIssueGraphRuns = `-- name: ListIssueGraphRuns :many
 SELECT t.issue_id, t.status, count(*)::bigint AS count
 FROM agent_task_queue t JOIN issue i ON i.id = t.issue_id
@@ -185,4 +234,31 @@ func (q *Queries) ListIssueGraphRuns(ctx context.Context, workspaceID pgtype.UUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const listIssueGraphWakeupEdges = `-- name: ListIssueGraphWakeupEdges :one
+SELECT coalesce(array_agg(w.issue_id), '{}')::uuid[] AS waiting_issue_ids,
+       coalesce(array_agg((w.condition->>'issue_id')::uuid), '{}')::uuid[] AS target_issue_ids,
+       coalesce(array_agg(coalesce(w.condition->>'state', 'done')), '{}')::text[] AS until_states
+FROM issue_wakeup w
+WHERE w.workspace_id = $1 AND w.enabled AND w.system_rule IS NULL
+  AND w.condition->>'type' = 'other_issue'
+  AND w.condition->>'issue_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND lower(w.condition->>'issue_id') <> w.issue_id::text
+`
+
+type ListIssueGraphWakeupEdgesRow struct {
+	WaitingIssueIds []pgtype.UUID `json:"waiting_issue_ids"`
+	TargetIssueIds  []pgtype.UUID `json:"target_issue_ids"`
+	UntilStates     []string      `json:"until_states"`
+}
+
+// Enabled `--until-issue` wakeups, awaited issue -> waiting issue, with the
+// awaited state. Platform-owned rules (system_rule) relate an issue to its own
+// sub-issues, not to another issue. Reads idx_wakeup_workspace_enabled.
+func (q *Queries) ListIssueGraphWakeupEdges(ctx context.Context, workspaceID pgtype.UUID) (ListIssueGraphWakeupEdgesRow, error) {
+	row := q.db.QueryRow(ctx, listIssueGraphWakeupEdges, workspaceID)
+	var i ListIssueGraphWakeupEdgesRow
+	err := row.Scan(&i.WaitingIssueIds, &i.TargetIssueIds, &i.UntilStates)
+	return i, err
 }

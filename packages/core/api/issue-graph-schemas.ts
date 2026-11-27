@@ -64,6 +64,23 @@ const node = z.object({
   dependencySummary: v.dependency_summary,
 }));
 
+export interface IssueGraphWeakEdge {
+  from: string;
+  to: string;
+  kind: "wakeup" | "mention";
+  /** The state a wakeup waits for; absent for a mention. */
+  untilState?: string;
+}
+
+// A wakeup wait or a mention reference never gates execution. Both endpoints
+// are visible nodes.
+const weakEdge: z.ZodType<IssueGraphWeakEdge> = z.object({
+  from: id,
+  to: id,
+  kind: z.enum(["wakeup", "mention"]),
+  until_state: id.optional(),
+}).transform((v) => ({ from: v.from, to: v.to, kind: v.kind, untilState: v.until_state }));
+
 export const IssueGraphSchema = z.object({
   schema_version: z.literal(1),
   snapshot_id: id,
@@ -78,6 +95,8 @@ export const IssueGraphSchema = z.object({
   // `manual|stage:<dependent>:<blocker>` remains intact for DAG provenance;
   // the relation direction and wire type stay blocker -> dependent / blocked_by.
   edges: z.array(z.object({ source_edge_id: id, source: id, target: id, type: z.literal("blocked_by") })),
+  // Display-only relations; absent from servers that predate them.
+  weak_edges: z.array(weakEdge).default([]),
   projects: z.array(z.object({ id, title: z.string() })),
   has_restricted_context: z.boolean(),
 }).superRefine((g, ctx) => {
@@ -103,6 +122,13 @@ export const IssueGraphSchema = z.object({
     }
     for (const item of path) checked.add(item);
   }
+  const weakIds = new Set<string>();
+  for (const e of g.weak_edges) {
+    const key = JSON.stringify([e.kind, e.from, e.to, e.untilState]);
+    if (!nodes.has(e.from) || !nodes.has(e.to) || e.from === e.to) invalid("Invalid weak edge endpoints");
+    if (weakIds.has(key)) invalid("Duplicate weak edge");
+    weakIds.add(key);
+  }
   const edgeIds = new Set<string>();
   for (const e of g.edges) {
     if (edgeIds.has(e.source_edge_id)) invalid("Duplicate source edge");
@@ -121,6 +147,7 @@ export const IssueGraphSchema = z.object({
   contextCount: g.context_count,
   nodes: g.nodes,
   edges: g.edges.map((e) => ({ sourceEdgeId: e.source_edge_id, source: e.source, target: e.target, type: e.type })),
+  weakEdges: g.weak_edges,
   projects: g.projects,
   hasRestrictedContext: g.has_restricted_context,
 }));

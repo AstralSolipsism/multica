@@ -59,6 +59,9 @@ creates the index once per snapshot and only builds the requested model.
 - Restricted context is a boolean, not a synthesized node or hidden count.
   Match/context labels are preserved; missing parents and parent cycles are
   repaired only for display. Source graphs are not mutated.
+- `weakEdges` are wakeup waits and mention references between two visible
+  nodes. They are display-only: they never enter `dependencies`, `lineInputs`
+  or traversal, so a merely mentioned task stays independent.
 
 ## Object identity
 

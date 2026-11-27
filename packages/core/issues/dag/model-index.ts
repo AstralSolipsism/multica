@@ -1,5 +1,5 @@
 import { replaceEqualDeep } from "@tanstack/react-query";
-import type { IssueGraph, IssueGraphNode } from "../../api/issue-graph-schemas";
+import type { IssueGraph, IssueGraphNode, IssueGraphWeakEdge } from "../../api/issue-graph-schemas";
 import { dagDisplayForest, dagDescendants, dagCompletedVisibility, dagIndependentIssueIds } from "./projection";
 import { dagDependencyState, dagIssueFinished, type DagDependencyState } from "./state";
 import { createDagTraversal } from "./traversal";
@@ -62,6 +62,8 @@ export interface DagModelIndex {
   projects: ReadonlyMap<string, IssueGraph["projects"][number]>;
   lineInputs: ReadonlyMap<string, DagLineInput>;
   dependencies: readonly DagDependency[];
+  /** Wakeup waits and mention references between visible nodes. They are never dependencies and never gate execution. */
+  weakEdges: readonly IssueGraphWeakEdge[];
   visibility: ReturnType<typeof dagCompletedVisibility>;
   independentIds: ReadonlySet<string>;
 }
@@ -130,6 +132,7 @@ export function createDagModelIndex(graph: IssueGraph, previous?: DagModelIndex)
   }
   return {
     graph, issues, forest, traversal, rootOf, projects, lineInputs,
+    weakEdges: graph.weakEdges,
     dependencies, visibility: dagCompletedVisibility(graph, forest),
     independentIds: dagIndependentIssueIds(graph, forest),
   };

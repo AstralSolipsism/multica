@@ -13,6 +13,7 @@ function respond(body: unknown, status = 200) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("issue graph API boundary", () => {
+  const [a, b] = reference.nodes.map((n) => n.id);
   it("parses the Go reference response, pins the workspace and passes cancellation", async () => {
     const fetch = respond({ ...reference, future_field: true });
     const signal = new AbortController().signal;
@@ -25,7 +26,28 @@ describe("issue graph API boundary", () => {
       reference.edges.map((edge) => edge.source_edge_id),
     );
     expect(graph?.edges.every((edge) => edge.type === "blocked_by")).toBe(true);
+    expect(graph?.weakEdges).toEqual([]);
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ signal, headers: { "X-Workspace-ID": "ws-1", "X-Workspace-Slug": "" } });
+  });
+
+  it("reads weak edges both ways and defaults to none on a server without them", async () => {
+    respond({ ...reference, weak_edges: [{ from: a, to: b, kind: "wakeup", until_state: "in_review" }, { from: b, to: a, kind: "mention" }] });
+    expect((await new ApiClient("https://api.test").getIssueGraph("ws", request))?.weakEdges).toEqual([
+      { from: a, to: b, kind: "wakeup", untilState: "in_review" },
+      { from: b, to: a, kind: "mention", untilState: undefined },
+    ]);
+    respond({ ...reference, weak_edges: undefined });
+    expect((await new ApiClient("https://api.test").getIssueGraph("ws", request))?.weakEdges).toEqual([]);
+  });
+
+  it.each([
+    { weak_edges: [{ from: a, to: b, kind: "parent" }] },
+    { weak_edges: [{ from: a, to: "missing", kind: "mention" }] },
+    { weak_edges: [{ from: a, to: a, kind: "mention" }] },
+    { weak_edges: [{ from: a, to: b, kind: "mention" }, { from: a, to: b, kind: "mention" }] },
+  ])("does not accept a weak edge outside the visible graph: %j", async ({ weak_edges }) => {
+    respond({ ...reference, weak_edges });
+    expect(await new ApiClient("https://api.test").getIssueGraph("ws", request)).toBeNull();
   });
 
   it.each([
