@@ -1,6 +1,6 @@
 # Upstream v0.13.0 sync — 2026-11-26 (OL-1517 / OL-1520)
 
-Stages 1–4 share `sync/v0.13.0-ol-1517`, targeting
+Stages 1–5 share `sync/v0.13.0-ol-1517`, targeting
 `AstralSolipsism/multica:main`. Stage 1 (OL-1518) owns the two-parent merge
 base `M1`, server/CLI three-way fusion, retiring the fork's `issue_dependency`
 backend/CLI in favor of upstream's native `issue_blocker`, pure data migration
@@ -14,8 +14,9 @@ cycle-conflict verification), isolated retained E2E execution, this sync
 record and opening the sole formal PR (kept **OPEN** pending Stage 4 after
 cross-family dual review and green remote `CI required`). Stage 4 (OL-1521)
 owns the whole-branch file-by-file, line-by-line restraint and necessity audit
-before Master's release sign-off; Stage 5 (OL-1522) owns tagging and deploying
-`v0.13.0-labrastro.1`.
+before Master's release sign-off; Stage 5 (OL-1533) owns the Docs / baseline
+Wiki responsibility boundary and merging the PR; Stage 6 (OL-1522) owns tagging
+and deploying `v0.13.0-labrastro.1`.
 
 ## Ancestry
 
@@ -124,11 +125,23 @@ were untouched.
      and `squad_handoff`; `server/internal/daemon/planquota_kimi.go` has
      **0-diff** vs fork `main` `d0fde9ffc3` (same-UID peer-proof boundary
      untouched).
-   - **Production 149 toggles (Stage 5)**: keep `FF_DOCS_V1=false` and
-     `FF_ISSUE_DESCRIPTION_LIVE=false` and do **not** deploy `multica-collab`;
-     generate and inject a 32-byte base64 `MULTICA_APPS_SECRET_KEY` (zero
-     plaintext secrets in logs/docs) into `multica-backend` so Connected Apps
-     with Composio (`OL-1516`) also support remote OAuth MCP.
+   - **Production 149 toggles (Stage 6) — Master's final ruling `方式 B`
+     (OL-1533), superseding the earlier default-off plan**: set
+     `FF_DOCS_V1=true` and `FF_ISSUE_DESCRIPTION_LIVE=true`, run the
+     lightweight `multica-collab` container behind a `/collab` WebSocket
+     reverse-proxy route, and keep upstream's official Docs naming in
+     Simplified Chinese with zero new locale forks. The two document systems
+     are separated for agents in fork-owned or already-customized files only:
+     a project's formal specs, architecture contracts and engineering
+     baselines live in its `multica project baseline` Wiki (stated in the
+     claim context appended by `labrastro_engineering.go`), while
+     workspace-wide `multica doc` is for cross-project scratch notes, shared
+     ledgers and drafts (the routing row of `multica-platform/SKILL.md`,
+     covering direct Chat and tasks without a project); `references/docs.md`
+     stays 0-diff vs `v0.13.0`. Also generate and inject a 32-byte base64
+     `MULTICA_APPS_SECRET_KEY` (zero plaintext secrets in logs/docs) into
+     `multica-backend` so Connected Apps with Composio (`OL-1516`) also
+     support remote OAuth MCP.
 
 ## Fork candidate release chain retained (`ours` in M1)
 
@@ -410,7 +423,8 @@ failure groups fixed in the linear follow-up commit on
    `dev-<sha>` or `v0.13.0-labrastro.N` application tags that do not exist on
    upstream GHCR) via `${MULTICA_COLLAB_IMAGE_TAG:-v0.13.0}`, and aligned the
    compose config assertion to `ghcr.io/multica-ai/multica-collab:v0.13.0`
-   (149 production continues to keep `collab` disabled).
+   (149 production kept `collab` disabled at this point; superseded by
+   `方式 B` under "Production 149 toggles" above).
 2. **`CI/docs-test` (`apps/docs/content/docs/tutorial.zh-Hant.mdx:202`)**: fixed
    broken internal heading anchor `/mentioning-agents#給正在運行的-ai-代理插話`
    → `/mentioning-agents#給正在執行的-ai-代理插話`.
@@ -640,11 +654,20 @@ on `sync/v0.13.0-ol-1517`, no rebase):
   can complete the whole-branch file-by-file, line-by-line restraint and
   necessity audit on the same open PR branch and report to Master for explicit
   release authorization.
-- **Stage 5 (OL-1522 — release & production deployment)**: unlocked only after
-  Stage 4 completes, Master approves release on OL-1517 and the PR merges into
-  `AstralSolipsism/multica:main` with green `CI required`. Tag and publish
-  `v0.13.0-labrastro.1`, keep `FF_DOCS_V1=false` /
-  `FF_ISSUE_DESCRIPTION_LIVE=false` with no `multica-collab` container, and
-  provision/forward `MULTICA_APPS_SECRET_KEY` on 149 `multica-backend`.
+- **Stage 5 (OL-1533 — Docs / baseline Wiki responsibility boundary, merge)**:
+  Master approved release on OL-1517 under `方式 B`. One linear commit on
+  `sync/v0.13.0-ol-1517` touches only fork-owned or already-customized files:
+  `server/internal/handler/labrastro_engineering.go`,
+  `server/internal/service/builtin_skills/multica-platform/SKILL.md` and this
+  record; `references/docs.md` and `packages/views/locales/**` stay 0-diff vs
+  the Stage 4 head. After cross-family review the reviewer merges PR #340 into
+  `AstralSolipsism/multica:main` once remote `CI required` is green on its
+  head.
+- **Stage 6 (OL-1522 — release & production deployment)**: unlocked only after
+  the PR merges into `AstralSolipsism/multica:main` with green `CI required`.
+  Tag and publish `v0.13.0-labrastro.1`, apply the `方式 B` toggles above
+  (`FF_DOCS_V1=true` / `FF_ISSUE_DESCRIPTION_LIVE=true`, `multica-collab`
+  container plus `/collab` WebSocket route), and provision/forward
+  `MULTICA_APPS_SECRET_KEY` on 149 `multica-backend`.
 
 No temporary screenshots, archives, raw logs or audit scripts belong in Git.

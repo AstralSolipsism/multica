@@ -124,6 +124,7 @@ func (h *Handler) appendEngineeringProjectDescription(ctx context.Context, works
 	tail := []string{
 		fmt.Sprintf("本项目已启用工程管理（Project ID: %s）。读：先 `multica project baseline tree %s` 看目录，再 `multica project baseline get %s --page <slug> [--section \"<小节>\"]` 按需读取。", pid, pid, pid),
 		fmt.Sprintf("写（人机同权直写，带读取时的修订号）：`multica project baseline write %s --page <slug> [--section \"<小节>\"] --content-file <文件> --base <N> [--summary \"…\"] [--source-issue <Issue>]`；退出码 3 表示冲突，先重读再合并。", pid),
+		"本项目的正式需求规格、架构契约与工程基线一律维护在本项目 multica project baseline Wiki；工作区全局 multica doc 仅用于跨项目日常便签、共享台账与临时记录，切勿混存本项目工程基线。",
 		"如已绑定 strixnova-* 系列工程 skill，请按对应 skill 规程调用相关能力。",
 	}
 	if len(flat) == 0 {

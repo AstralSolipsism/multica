@@ -24,7 +24,7 @@ Read the invariants below, then open the reference(s) your task actually needs
 | `references/batch-changes.md` | Changing many issues at once (`issue batch update`, `issue delete <id>... --dry-run`): label and property operations, per-issue results, dry runs |
 | `references/sub-issues.md` | Sub-issues: whether to split an issue at all, `todo` vs `backlog` children, serial chains, stages and the parent wakeups they drive |
 | `references/mentions.md` | Writing a `mention://` link: which types enqueue a run, which are inert, why one silently did nothing; steering another agent's running turn (`comment add --steer`) |
-| `references/docs.md` | Docs (the workspace knowledge base): reading, searching, editing a doc people may be editing live, folders, review comment threads, version history and restore, which doc actions are human-only |
+| `references/docs.md` | Docs (workspace-wide notes, shared ledgers & drafts — NOT for formal specs/architecture baselines of a project with Engineering enabled, which belong in `multica project baseline`): reading, searching, editing a doc people may be editing live, folders, review comment threads, version history and restore, which doc actions are human-only |
 | `references/agents.md` | Creating, copying or debugging an agent definition: fields, secrets, MCP config, skill binding |
 | `references/squads.md` | Squads: leader routing, roster, recording leader activity, why a squad did or did not run |
 | `references/autopilots.md` | Autopilots: schedule / webhook / manual triggers, `create_issue` vs `run_only`, why one did not fire |
