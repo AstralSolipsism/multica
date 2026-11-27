@@ -110,29 +110,41 @@ describe("star map hierarchy", () => {
     }
   });
 
-  it.each(["constellation", "polar"] as const)("fits 300 independent roots and preserves 18px spacing in %s layout", (layout) => {
+  it.each(["constellation", "polar"] as const)("fits the independent and parent root matrix in %s layout", (layout) => {
     const size = { width: 1280, height: 720 };
     const insets = { left: 28, right: 28, top: 64, bottom: 64 };
     for (const projectCount of [1, 4]) {
-      const graph = g(Array.from({ length: 300 }, (_, index) => n(`task-${index}`, {
-        projectId: `p${index % projectCount + 1}`,
-      })));
-      const hierarchy = buildStarMapHierarchy(createDagModelIndex(graph), { layout, showCompleted: false });
-      const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), size, {
-        insets, minZoom: 0.05, maxZoom: 4, fill: 0.92,
-      });
-      let outside = 0, minimumDistance = Infinity;
-      for (let left = 0; left < hierarchy.roots.length; left += 1) {
-        const a = hierarchy.roots[left]!.anchor;
-        const x = a.x * camera.zoom + camera.x, y = a.y * camera.zoom + camera.y;
-        if (x < insets.left || x > size.width - insets.right || y < insets.top || y > size.height - insets.bottom) outside += 1;
-        for (let right = left + 1; right < hierarchy.roots.length; right += 1) {
-          const b = hierarchy.roots[right]!.anchor;
-          minimumDistance = Math.min(minimumDistance, Math.hypot(a.x - b.x, a.y - b.y) * camera.zoom);
+      for (const kind of ["independent", "parents"] as const) {
+        const rootCount = kind === "independent" ? 300 : 150;
+        const nodes = Array.from({ length: rootCount }, (_, index) => {
+          const id = `${kind}-${index}`, projectId = `p${index % projectCount + 1}`;
+          return kind === "independent" ? [n(id, { projectId })] : [
+            n(id, { projectId }), n(`${id}-child`, { projectId, parentIssueId: id }),
+          ];
+        }).flat();
+        const graph = g(nodes);
+        graph.projects = Array.from({ length: projectCount }, (_, index) => ({ id: `p${index + 1}`, title: `Project ${index + 1}` }));
+        const hierarchy = buildStarMapHierarchy(createDagModelIndex(graph), { layout, showCompleted: false });
+        const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), size, {
+          insets, minZoom: 0.05, maxZoom: 4, fill: 0.92,
+        });
+        let outside = 0, minimumDistance = Infinity;
+        for (let left = 0; left < hierarchy.roots.length; left += 1) {
+          const root = hierarchy.roots[left]!, a = root.anchor;
+          const x = a.x * camera.zoom + camera.x, y = a.y * camera.zoom + camera.y;
+          const minimumRadius = root.children.length ? 12 : 9;
+          const radius = Math.max(root.coreRadius, minimumRadius / camera.zoom) * camera.zoom;
+          if (x - radius < insets.left || x + radius > size.width - insets.right ||
+            y - radius < insets.top || y + radius > size.height - insets.bottom) outside += 1;
+          if (kind === "independent") expect(radius * 2).toBeGreaterThanOrEqual(18);
+          for (let right = left + 1; right < hierarchy.roots.length; right += 1) {
+            const b = hierarchy.roots[right]!.anchor;
+            minimumDistance = Math.min(minimumDistance, Math.hypot(a.x - b.x, a.y - b.y) * camera.zoom);
+          }
         }
+        expect(outside).toBe(0);
+        if (kind === "independent") expect(minimumDistance).toBeGreaterThanOrEqual(22);
       }
-      expect(outside).toBe(0);
-      expect(minimumDistance).toBeGreaterThanOrEqual(18);
     }
   });
 });

@@ -111,11 +111,11 @@ function point(x: number, y: number): StarMapPoint {
 // Leaves 32.4px between root centers at 0.45x zoom, including room for labels and hit targets.
 const minimumRootSpacing = 72;
 
-function packStandaloneRings(count: number, firstRadius: number, arcSpan: number) {
+function packStandaloneRings(count: number, firstRadius: number, arcSpan: number, spacing = minimumRootSpacing) {
   const rings: { radius: number; angles: number[] }[] = [];
   for (let placed = 0, ringIndex = 0; placed < count; ringIndex += 1) {
-    const radius = firstRadius + ringIndex * minimumRootSpacing;
-    const minimumAngle = 2 * Math.asin(minimumRootSpacing / (2 * radius));
+    const radius = firstRadius + ringIndex * spacing;
+    const minimumAngle = 2 * Math.asin(spacing / (2 * radius));
     const capacity = Math.max(1, Math.floor(arcSpan / minimumAngle + 1e-9));
     const ringCount = Math.min(capacity, count - placed);
     const angles = Array.from({ length: ringCount }, (_, index) =>
@@ -206,6 +206,15 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
       const x = -distance * 0.5 + (first.domainRadius - second.domainRadius) * 0.5;
       positions = [point(x, 0), point(x + distance, 0)];
       extent = (first.domainRadius * 2 + 54 + second.domainRadius * 2) * 0.5;
+    } else if (suns.length > 6) {
+      const maxDomain = Math.max(...suns.map((sun) => sun.domainRadius));
+      const spacing = 2 * maxDomain + 44;
+      const rings = packStandaloneRings(suns.length, spacing, Math.PI * 2, spacing);
+      positions = rings.flatMap((ring) => ring.angles.map((offset) => {
+        const angle = -Math.PI * 0.5 + offset;
+        return point(Math.cos(angle) * ring.radius, Math.sin(angle) * ring.radius);
+      }));
+      extent = rings[rings.length - 1]!.radius + maxDomain;
     } else if (suns.length > 2) {
       const maxDomain = Math.max(...suns.map((sun) => sun.domainRadius));
       const ringRadius = (maxDomain + 27) / Math.sin(Math.PI / suns.length);
@@ -226,7 +235,7 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
   });
   const maxOuter = Math.max(...packing.map((pack) => pack.outerBound));
   const count = packing.length;
-  const clusterDistance = count === 1 ? 0 : Math.max(640, (maxOuter + 68) / Math.sin(Math.PI / count));
+  const clusterDistance = count === 1 ? 0 : Math.max(480, (maxOuter + 56) / Math.sin(Math.PI / count));
   const guides: StarMapSectorGuide[] = [];
   packing.forEach((pack, sectorIndex) => {
     const sectorAngle = count === 4
@@ -244,7 +253,7 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
     for (const ring of pack.standaloneRings) {
       for (const offset of ring.angles) {
         const standalone = pack.standalones[standaloneIndex]!;
-        const angle = sectorAngle + offset;
+        const angle = sectorAngle + (pack.suns.length === 0 ? Math.PI / count : 0) + offset;
         standalone.anchor = point(cx + Math.cos(angle) * ring.radius, cy + Math.sin(angle) * ring.radius);
         standaloneIndex += 1;
       }
@@ -268,14 +277,29 @@ function layoutPolar(roots: DraftNode[], sectors: (string | null)[], index: DagM
     const sectorRoots = roots.filter((root) => root.projectId === sector);
     const suns = sectorRoots.filter((root) => root.children.length > 0);
     const standalones = sectorRoots.filter((root) => root.children.length === 0);
-    suns.forEach((sun, i) => {
-      const angle = startAngle + span * (0.15 + 0.70 * ((i + 0.5) / Math.max(1, suns.length)));
-      sun.anchor = point(Math.cos(angle) * 480, Math.sin(angle) * 480);
-    });
     const midAngle = (startAngle + endAngle) * 0.5;
-    const standaloneArc = count === 1 && suns.length === 0 ? Math.PI * 2 : span * 0.76;
+    if (suns.length > 6) {
+      const maxDomain = Math.max(...suns.map((sun) => sun.domainRadius));
+      const spacing = 2 * maxDomain + 44;
+      const arc = count === 1 ? Math.PI * 2 : span * 0.70;
+      const rings = packStandaloneRings(suns.length, spacing, arc, spacing);
+      let sunIndex = 0;
+      for (const ring of rings) {
+        for (const offset of ring.angles) {
+          const angle = midAngle + offset;
+          suns[sunIndex]!.anchor = point(Math.cos(angle) * ring.radius, Math.sin(angle) * ring.radius);
+          sunIndex += 1;
+        }
+      }
+    } else {
+      suns.forEach((sun, i) => {
+        const angle = startAngle + span * (0.15 + 0.70 * ((i + 0.5) / Math.max(1, suns.length)));
+        sun.anchor = point(Math.cos(angle) * 480, Math.sin(angle) * 480);
+      });
+    }
+    const standaloneArc = count === 1 && suns.length === 0 ? Math.PI * 2 : span * 0.84;
     const standaloneRings = packStandaloneRings(
-      standalones.length, count === 1 && suns.length === 0 ? minimumRootSpacing : 210, standaloneArc,
+      standalones.length, count === 1 && suns.length === 0 ? minimumRootSpacing : 200, standaloneArc,
     );
     let standaloneIndex = 0;
     for (const ring of standaloneRings) {

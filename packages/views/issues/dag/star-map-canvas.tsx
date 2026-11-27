@@ -25,6 +25,7 @@ import { rgba, StarMapSpriteCache, SPRITE_CORE_RATIO, type StarMapRGB } from "./
 const SANS = '"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",system-ui,sans-serif';
 const NUM = '"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
 const DURATION = 440;
+const MIN_ORBIT_ZOOM = 0.05;
 const TAU = Math.PI * 2;
 const WHITE: StarMapRGB = [226, 232, 240];
 const CYAN: StarMapRGB = [125, 211, 252];
@@ -328,6 +329,10 @@ export function starMapNodeRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">) 
   return { x: node.x - node.w / 2, y: node.y - node.h / 2, w: node.w, h: node.h };
 }
 
+export function starMapCornerRadius(radius: number, width: number, height: number, morph: number) {
+  return Math.min(Math.min(width, height) / 2, radius * (1 - morph) + 7 * morph);
+}
+
 /** Scale the full texture so its visible core, not the transparent border,
  * matches the interpolated outline. */
 export function starMapSpriteRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">) {
@@ -373,7 +378,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
     const runtime = runtimeRef.current!;
     runtime.homeIssueId = null;
     const next = fitStarMapCamera(starMapMacroBounds(propsRef.current.hierarchy), { width: runtime.width, height: runtime.height }, {
-      insets: insets(propsRef.current.peekOpen), minZoom: 0.05, maxZoom: 0.45, fill: 0.92,
+      insets: insets(propsRef.current.peekOpen), minZoom: MIN_ORBIT_ZOOM, maxZoom: 0.45, fill: 0.92,
     });
     if (instant || propsRef.current.reducedMotion) {
       runtime.camera = next;
@@ -599,7 +604,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         return;
       }
       const factor = Math.exp(-event.deltaY * 0.00145);
-      const nextZoom = Math.max(0.05, Math.min(2.2, runtime.camera.zoom * factor));
+      const nextZoom = Math.max(MIN_ORBIT_ZOOM, Math.min(2.2, runtime.camera.zoom * factor));
       if (event.deltaY < 0 && nextZoom >= 0.9) {
         const nearest = nearestStarMapNode(runtime.nearestNodes, runtime.positions, runtime.cursor, runtime.camera.zoom);
         const node = nearest?.node ?? runtime.nearestNodes.find((candidate) => candidate.depth === 0);
@@ -683,9 +688,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         const baseMinPx = data.depth === 0
           ? (data.childrenIds.length ? dense ? 12 : 20.5 : dense ? 9 : 14.5)
           : data.depth === 1 ? dense ? 10.5 : 14.8 : dense ? 9 : 13.8;
-        // Fit the complete dense envelope without forcing 18px cores onto a
-        // sub-0.45x view. Tiny far cores hide their digits; labels declutter.
-        const minPx = dense ? baseMinPx * Math.min(1, runtime.camera.zoom / 0.45) : baseMinPx;
+        const minPx = baseMinPx;
         const radius = Math.max(data.coreRadius, minPx / runtime.camera.zoom);
         node.x = parent ? node.orbX * (1 - parent.veil) + parent.x * parent.veil : node.orbX;
         node.y = parent ? node.orbY * (1 - parent.veil) + parent.y * parent.veil : node.orbY;
@@ -902,23 +905,33 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
       ctx.globalAlpha = alpha;
     }
     const rect = starMapNodeRect(node);
-    const spriteAlpha = 1 - smoothstep(0.12, 0.72, m);
-    if (spriteAlpha > 0) {
-      const sprite = isSun ? spritesRef.current!.sun(projectRGB(node.data)) : spritesRef.current!.orb(rgb, running(node.data) || node.data.childrenIds.length > 0 || node.data.issue.statusCategory === "started", isClosed);
+    const sprite = isSun ? spritesRef.current!.sun(projectRGB(node.data)) : spritesRef.current!.orb(rgb, running(node.data) || node.data.childrenIds.length > 0 || node.data.issue.statusCategory === "started", isClosed);
+    if (m <= 0.004) {
       const spriteRect = starMapSpriteRect(node);
-      ctx.globalAlpha = alpha * spriteAlpha;
       ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
-    }
-    const cardAlpha = smoothstep(0.36, 0.86, m);
-    if (cardAlpha > 0) {
+    } else {
       const { x, y } = rect;
+      const cornerRadius = starMapCornerRadius(r, rect.w, rect.h, m);
+      const cardAlpha = smoothstep(0.2, 0.86, m);
       ctx.globalAlpha = alpha * cardAlpha;
-      roundRect(ctx, x, y, node.w, node.h, r * (1 - m) + 7 * m);
-      const gradient = ctx.createLinearGradient(x, y, x, y + node.h);
+      roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
+      const gradient = ctx.createLinearGradient(x, y, x, y + rect.h);
       gradient.addColorStop(0, current.light ? "rgba(255,255,255,.98)" : "rgba(26,32,46,.94)");
       gradient.addColorStop(1, current.light ? "rgba(248,250,252,.95)" : "rgba(17,21,31,.96)");
       ctx.fillStyle = isClosed ? (current.light ? "rgba(248,250,252,.72)" : "rgba(15,19,28,.72)") : gradient;
       ctx.fill();
+      const spriteAlpha = 1 - smoothstep(0.05, 0.55, m);
+      if (spriteAlpha > 0) {
+        const spriteRect = starMapSpriteRect(node);
+        ctx.save();
+        roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
+        ctx.clip();
+        ctx.globalAlpha = alpha * spriteAlpha;
+        ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
+        ctx.restore();
+      }
+      ctx.globalAlpha = alpha * cardAlpha;
+      roundRect(ctx, x, y, rect.w, rect.h, cornerRadius);
       ctx.strokeStyle = current.light ? "rgba(15,23,42,.14)" : "rgba(226,232,240,.16)";
       ctx.lineWidth = 1 / runtime.camera.zoom;
       if (node.target && (node.target.w < 248 || node.data.issue.role === "context")) ctx.setLineDash([4 / runtime.camera.zoom, 3 / runtime.camera.zoom]);
@@ -1302,7 +1315,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
           else if (event.key === "Enter" && runtime.selectedId) propsRef.current.onRequestScene(runtime.selectedId, propsRef.current.intent);
           else if ((event.key === "o" || event.key === "O") && runtime.selectedId) propsRef.current.onOpenIssue(runtime.selectedId);
           else if (event.key === "+" || event.key === "=") runtime.cameraGoal = { ...runtime.camera, zoom: Math.min(2.2, runtime.camera.zoom * 1.2) };
-          else if (event.key === "-") runtime.cameraGoal = { ...runtime.camera, zoom: Math.max(0.05, runtime.camera.zoom / 1.2) };
+          else if (event.key === "-") runtime.cameraGoal = { ...runtime.camera, zoom: Math.max(MIN_ORBIT_ZOOM, runtime.camera.zoom / 1.2) };
           else return;
           event.preventDefault();
         }}

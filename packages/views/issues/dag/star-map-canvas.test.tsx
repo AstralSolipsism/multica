@@ -3,7 +3,7 @@ import { cleanup, fireEvent } from "@testing-library/react";
 import { buildStarMapHierarchy, createDagModelIndex, fitStarMapCamera, starMapMacroBounds } from "@multica/core/issues/dag";
 import { renderWithI18n } from "../../test/i18n";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
-import { StarMapCanvas, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
+import { StarMapCanvas, starMapCornerRadius, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
 import { SPRITE_CORE_RATIO } from "./star-map-sprites";
 
 const layers = { completed: false, manual: true, wakeup: true, mention: true, stage: true };
@@ -52,6 +52,18 @@ describe("star map sprite outline", () => {
   });
 });
 
+describe("star map corner interpolation", () => {
+  it("keeps one rounded-rectangle outline continuous in both directions", () => {
+    for (const morph of [0.004, 0.25, 0.5, 0.558, 0.559, 0.56, 0.561, 0.75, 1, 0.75, 0.561, 0.56, 0.559, 0.558, 0.5, 0.25, 0.004]) {
+      const size = starMapNodeSize(15, { x: 0, y: 0, w: 248, h: 116 }, morph);
+      expect(starMapCornerRadius(15, size.w, size.h, morph)).toBeCloseTo(
+        Math.min(Math.min(size.w, size.h) / 2, 15 * (1 - morph) + 7 * morph),
+        10,
+      );
+    }
+  });
+});
+
 describe("star map orbital motion", () => {
   it("stops for pause and reduced motion, while hover only slows it", () => {
     expect(starMapTimeScaleTarget(false, false, false, 0)).toBe(0);
@@ -72,14 +84,22 @@ describe("star map macro camera", () => {
       const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), { width: 1280, height: 720 }, {
         insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.05, maxZoom: 0.45, fill: 0.92,
       });
-      for (const root of hierarchy.roots) {
+      let minimumDistance = Infinity;
+      for (let left = 0; left < hierarchy.roots.length; left += 1) {
+        const root = hierarchy.roots[left]!;
         const x = root.anchor.x * camera.zoom + camera.x;
         const y = root.anchor.y * camera.zoom + camera.y;
         expect(x).toBeGreaterThanOrEqual(28);
         expect(x).toBeLessThanOrEqual(1252);
         expect(y).toBeGreaterThanOrEqual(64);
         expect(y).toBeLessThanOrEqual(656);
+        expect(Math.max(root.coreRadius * 2 * camera.zoom, 18)).toBeGreaterThanOrEqual(18);
+        for (let right = left + 1; right < hierarchy.roots.length; right += 1) {
+          const other = hierarchy.roots[right]!;
+          minimumDistance = Math.min(minimumDistance, Math.hypot(root.anchor.x - other.anchor.x, root.anchor.y - other.anchor.y) * camera.zoom);
+        }
       }
+      expect(minimumDistance).toBeGreaterThanOrEqual(22);
     }
   });
 });
