@@ -4,7 +4,7 @@ import { createDagModelIndex } from "./model-index";
 import { graphNode as n, issueGraph as g } from "./test-fixtures";
 import {
   buildStarMapHierarchy, clampStarMapCamera, fitStarMapCamera,
-  nearestStarMapNode, starMapMorphAt,
+  nearestStarMapNode, starMapMacroBounds, starMapMorphAt,
 } from "./star-map";
 
 const done = { status: "done", statusCategory: "done" };
@@ -76,6 +76,13 @@ describe("star map hierarchy", () => {
     expect(second.sectorGuides).toEqual(first.sectorGuides);
     expect(new Set(first.roots.map((root) => `${root.anchor.x},${root.anchor.y}`)).size).toBe(300);
 
+    const innerRing = first.roots.filter((root) => Math.abs(Math.hypot(root.anchor.x, root.anchor.y) - 72) < 1e-9);
+    expect(innerRing).toHaveLength(6);
+    const innerAngles = innerRing.map((root) => Math.atan2(root.anchor.y, root.anchor.x)).sort((a, b) => a - b);
+    const angularGaps = innerAngles.map((angle, index) =>
+      (innerAngles[(index + 1) % innerAngles.length]! + (index === innerAngles.length - 1 ? Math.PI * 2 : 0)) - angle);
+    expect(Math.max(...angularGaps)).toBeCloseTo(Math.PI / 3);
+
     let minimumDistance = Infinity;
     for (let left = 0; left < first.roots.length; left += 1) {
       for (let right = left + 1; right < first.roots.length; right += 1) {
@@ -100,6 +107,32 @@ describe("star map hierarchy", () => {
         expect(angle).toBeGreaterThanOrEqual(angularRadius);
         expect(angle).toBeLessThanOrEqual(guide.end - guide.start - angularRadius);
       }
+    }
+  });
+
+  it.each(["constellation", "polar"] as const)("fits 300 independent roots and preserves 18px spacing in %s layout", (layout) => {
+    const size = { width: 1280, height: 720 };
+    const insets = { left: 28, right: 28, top: 64, bottom: 64 };
+    for (const projectCount of [1, 4]) {
+      const graph = g(Array.from({ length: 300 }, (_, index) => n(`task-${index}`, {
+        projectId: `p${index % projectCount + 1}`,
+      })));
+      const hierarchy = buildStarMapHierarchy(createDagModelIndex(graph), { layout, showCompleted: false });
+      const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), size, {
+        insets, minZoom: 0.05, maxZoom: 4, fill: 0.92,
+      });
+      let outside = 0, minimumDistance = Infinity;
+      for (let left = 0; left < hierarchy.roots.length; left += 1) {
+        const a = hierarchy.roots[left]!.anchor;
+        const x = a.x * camera.zoom + camera.x, y = a.y * camera.zoom + camera.y;
+        if (x < insets.left || x > size.width - insets.right || y < insets.top || y > size.height - insets.bottom) outside += 1;
+        for (let right = left + 1; right < hierarchy.roots.length; right += 1) {
+          const b = hierarchy.roots[right]!.anchor;
+          minimumDistance = Math.min(minimumDistance, Math.hypot(a.x - b.x, a.y - b.y) * camera.zoom);
+        }
+      }
+      expect(outside).toBe(0);
+      expect(minimumDistance).toBeGreaterThanOrEqual(18);
     }
   });
 });

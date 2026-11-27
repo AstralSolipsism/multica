@@ -196,7 +196,7 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
       .sort((a, b) => b.domainRadius - a.domainRadius || identifiers.compare(a.issue.identifier, b.issue.identifier) || a.id.localeCompare(b.id));
     const standalones = sectorRoots.filter((root) => root.children.length === 0);
     let positions: StarMapPoint[] = [];
-    let extent = 130;
+    let extent = suns.length === 0 ? 0 : 130;
     if (suns.length === 1) {
       positions = [point(0, 0)];
       extent = suns[0]!.domainRadius;
@@ -215,7 +215,8 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
       });
       extent = ringRadius + maxDomain;
     }
-    const standaloneArc = Math.min(Math.PI * 1.35, Math.max(0.45, standalones.length * 0.28));
+    const standaloneArc = suns.length === 0 ? Math.PI * 2
+      : Math.min(Math.PI * 1.35, Math.max(0.45, standalones.length * 0.28));
     const standaloneRings = packStandaloneRings(standalones.length, extent + minimumRootSpacing, standaloneArc);
     const outerStandaloneRadius = standaloneRings.length ? standaloneRings[standaloneRings.length - 1]!.radius : 0;
     return {
@@ -272,7 +273,10 @@ function layoutPolar(roots: DraftNode[], sectors: (string | null)[], index: DagM
       sun.anchor = point(Math.cos(angle) * 480, Math.sin(angle) * 480);
     });
     const midAngle = (startAngle + endAngle) * 0.5;
-    const standaloneRings = packStandaloneRings(standalones.length, 210, span * 0.76);
+    const standaloneArc = count === 1 && suns.length === 0 ? Math.PI * 2 : span * 0.76;
+    const standaloneRings = packStandaloneRings(
+      standalones.length, count === 1 && suns.length === 0 ? minimumRootSpacing : 210, standaloneArc,
+    );
     let standaloneIndex = 0;
     for (const ring of standaloneRings) {
       for (const offset of ring.angles) {
@@ -360,6 +364,22 @@ export function buildStarMapHierarchy(
     roots: frozenRoots, nodeById, nodes, sectorGuides,
     edges: buildEdges(index, new Set(nodeById.keys())),
   });
+}
+
+export function starMapMacroBounds(hierarchy: StarMapHierarchy): StarMapBounds {
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  const include = (cx: number, cy: number, radius: number) => {
+    left = Math.min(left, cx - radius);
+    top = Math.min(top, cy - radius);
+    right = Math.max(right, cx + radius);
+    bottom = Math.max(bottom, cy + radius);
+  };
+  for (const root of hierarchy.roots) include(root.anchor.x, root.anchor.y, root.domainRadius);
+  for (const guide of hierarchy.sectorGuides) {
+    if (guide.kind === "cluster") include(guide.cx, guide.cy, guide.radius);
+    else include(0, 0, guide.outerR);
+  }
+  return Number.isFinite(left) ? { left, top, right, bottom } : { left: -200, top: -150, right: 200, bottom: 150 };
 }
 
 export function nearestStarMapNode(
