@@ -126,4 +126,29 @@ describe("star map wakeup scene context", () => {
     expect(focus.plan.input.edges[0]).toMatchObject({ source: "solo", target: "child" });
     expect(focus.plan.input.edges[1]).toMatchObject({ source: "child", target: "solo" });
   });
+
+  it("connects mention and wakeup endpoints already present in the same scene", () => {
+    const index = createDagModelIndex(issueGraph([
+      node("root"),
+      node("a", { parentIssueId: "root" }),
+      node("b", { parentIssueId: "root" }),
+    ], [{ id: "manual:b:a", source: "a", target: "b" }], [
+      { from: "a", to: "b", kind: "mention" },
+      { from: "a", to: "b", kind: "wakeup", untilState: "done" },
+    ]));
+    const line = starMapLineScene(computeDagLine(index, "root")!, index, { mention: true });
+    expect(line.plan.input.edges).toEqual([
+      expect.objectContaining({ id: "manual:b:a", source: "a", target: "b" }),
+      expect.objectContaining({ id: "mention:a:b:", source: "a", target: "b", kind: "mention" }),
+      expect.objectContaining({ id: "wakeup:a:b:done", source: "a", target: "b", kind: "wakeup" }),
+    ]);
+
+    const focus = starMapFocusScene(computeDagFocus(index, "a"), index, { mention: true });
+    expect(focus.model.tasks.map((task) => task.issue.id).sort()).toEqual(["a", "b"]);
+    expect(focus.plan.input.edges).toEqual([
+      expect.objectContaining({ id: "manual:b:a", source: "a", target: "b" }),
+      expect.objectContaining({ id: "mention:a:b:", source: "a", target: "b", kind: "mention" }),
+      expect.objectContaining({ id: "wakeup:a:b:done", source: "a", target: "b", kind: "wakeup" }),
+    ]);
+  });
 });

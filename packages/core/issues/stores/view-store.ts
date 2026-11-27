@@ -428,6 +428,9 @@ export interface IssueViewState {
   tableCalculation: TableCalculation;
   /** Shared-view metadata; see DagGrouping. */
   dagGrouping: DagGrouping;
+  /** Preferred DAG renderer, persisted by the workspace-aware view store. */
+  dagRenderer: "star" | "legacy";
+  setDagRenderer: (renderer: "star" | "legacy") => void;
   /** DAG's own display switch: show task lines and single tasks that already
    *  reached a done/closed category. Off by default — finished work hides. */
   dagShowCompleted: boolean;
@@ -575,6 +578,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableHierarchy: true,
   tableCalculation: "none",
   dagGrouping: "parent",
+  dagRenderer: "star",
+  setDagRenderer: (dagRenderer) => set({ dagRenderer }),
   dagShowCompleted: false,
   dagShowSatisfiedDependencies: false,
   dagLineId: null,
@@ -1012,6 +1017,7 @@ export const viewStorePersistOptions = (name: string) => ({
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
     dagGrouping: state.dagGrouping,
+    dagRenderer: state.dagRenderer,
     dagShowCompleted: state.dagShowCompleted,
     dagShowSatisfiedDependencies: state.dagShowSatisfiedDependencies,
     dagLineId: state.dagLineId,

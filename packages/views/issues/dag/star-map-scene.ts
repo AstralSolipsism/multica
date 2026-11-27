@@ -40,6 +40,16 @@ export function starMapLineScene(
     if (edge.kind === "wakeup" ? !wakeup : !mention) continue;
     const fromInside = members.has(edge.from);
     const toInside = members.has(edge.to);
+    if (fromInside && toInside) {
+      plan.input.edges.push({
+        ...weakEdgeMetadata(edge),
+        source: edge.from,
+        target: edge.to,
+        sourceKind: index.forest.children.has(edge.from) ? "frame" : "task",
+        targetKind: index.forest.children.has(edge.to) ? "frame" : "task",
+      });
+      continue;
+    }
     if (fromInside === toInside) continue;
     const side: DagSceneSide = toInside ? "upstream" : "downstream";
     const insideId = toInside ? edge.to : edge.from;
@@ -106,6 +116,18 @@ export function starMapFocusScene(
     if (edge.kind === "wakeup" ? !wakeup : !mention) continue;
     const fromInside = members.has(edge.from);
     const toInside = members.has(edge.to);
+    if (fromInside && toInside) {
+      const from = focusEndpoint(plan, edge.from, index);
+      const to = focusEndpoint(plan, edge.to, index);
+      if (from && to) plan.input.edges.push({
+        ...weakEdgeMetadata(edge),
+        source: from.id,
+        target: to.id,
+        sourceKind: from.kind,
+        targetKind: to.kind,
+      });
+      continue;
+    }
     if (fromInside === toInside) continue;
     const from = fromInside ? focusEndpoint(plan, edge.from, index) : { id: edge.from, kind: "task" as const };
     const to = toInside ? focusEndpoint(plan, edge.to, index) : { id: edge.to, kind: "task" as const };

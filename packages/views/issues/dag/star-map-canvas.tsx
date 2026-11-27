@@ -232,7 +232,7 @@ function makeRuntime(hierarchy: StarMapHierarchy): Runtime {
   };
 }
 
-function macroBounds(hierarchy: StarMapHierarchy) {
+export function starMapMacroBounds(hierarchy: StarMapHierarchy) {
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
   for (const root of hierarchy.roots) {
     const pad = root.domainRadius + 60;
@@ -339,6 +339,15 @@ export function starMapNodeRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">) 
   return { x: node.x - node.w / 2, y: node.y - node.h / 2, w: node.w, h: node.h };
 }
 
+/** The orb occupies 68% of its sprite's width and height. Scale the full
+ * texture so that visible core, not the transparent border, matches node.w/h. */
+export const STAR_MAP_ORB_VISIBLE_FRACTION = 0.68;
+export function starMapSpriteRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">) {
+  const w = node.w / STAR_MAP_ORB_VISIBLE_FRACTION;
+  const h = node.h / STAR_MAP_ORB_VISIBLE_FRACTION;
+  return { x: node.x - w / 2, y: node.y - h / 2, w, h };
+}
+
 export function starMapTimeScaleTarget(orbiting: boolean, reducedMotion: boolean, slowed: boolean, morph: number) {
   if (!orbiting || reducedMotion) return 0;
   return (slowed ? 0.08 : 1) * (1 - morph);
@@ -375,9 +384,8 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
   const fitMacro = (instant = false) => {
     const runtime = runtimeRef.current!;
     runtime.homeIssueId = null;
-    const dense = propsRef.current.hierarchy.nodes.length > 180;
-    const next = fitStarMapCamera(macroBounds(propsRef.current.hierarchy), { width: runtime.width, height: runtime.height }, {
-      insets: insets(propsRef.current.peekOpen), minZoom: dense ? 0.45 : 0.12, maxZoom: 0.45, fill: 0.92,
+    const next = fitStarMapCamera(starMapMacroBounds(propsRef.current.hierarchy), { width: runtime.width, height: runtime.height }, {
+      insets: insets(propsRef.current.peekOpen), minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
     });
     if (instant || propsRef.current.reducedMotion) {
       runtime.camera = next;
@@ -684,9 +692,12 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         node.veil += (veilTarget - node.veil) * Math.min(1, dt * 10);
         node.emergence = parent ? parent.emergence * Math.pow(Math.max(0, 1 - parent.veil), 1.4) : 1;
         const dense = current.hierarchy.nodes.length > 180;
-        const minPx = data.depth === 0
+        const baseMinPx = data.depth === 0
           ? (data.childrenIds.length ? dense ? 12 : 20.5 : dense ? 9 : 14.5)
           : data.depth === 1 ? dense ? 10.5 : 14.8 : dense ? 9 : 13.8;
+        // Fit the complete dense envelope without forcing 18px cores onto a
+        // sub-0.45x view. Tiny far cores hide their digits; labels declutter.
+        const minPx = dense ? baseMinPx * Math.min(1, runtime.camera.zoom / 0.45) : baseMinPx;
         const radius = Math.max(data.coreRadius, minPx / runtime.camera.zoom);
         node.x = parent ? node.orbX * (1 - parent.veil) + parent.x * parent.veil : node.orbX;
         node.y = parent ? node.orbY * (1 - parent.veil) + parent.y * parent.veil : node.orbY;
@@ -905,7 +916,8 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
     const rect = starMapNodeRect(node);
     if (m < 0.56) {
       const sprite = isSun ? spritesRef.current!.sun(projectRGB(node.data)) : spritesRef.current!.orb(rgb, running(node.data) || node.data.childrenIds.length > 0 || node.data.issue.statusCategory === "started", isClosed);
-      ctx.drawImage(sprite, rect.x, rect.y, rect.w, rect.h);
+      const spriteRect = starMapSpriteRect(node);
+      ctx.drawImage(sprite, spriteRect.x, spriteRect.y, spriteRect.w, spriteRect.h);
     } else {
       const { x, y } = rect;
       roundRect(ctx, x, y, node.w, node.h, r * (1 - m) + 7 * m);
@@ -1185,7 +1197,6 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
     const point = world(screen);
     const current = propsRef.current;
     for (const edge of current.hierarchy.edges) {
-      if (edge.kind !== "manual") continue;
       const appearance = edgeAppearance(edge, runtime, current);
       if (!appearance) continue;
       const { source, target } = appearance;

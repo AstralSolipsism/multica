@@ -76,7 +76,6 @@ test("focus mode traces cross-line dependencies, survives reload and restores th
   await expect(page.locator('[data-dag-task="FOCUS-5"]')).toBeAttached();
   await testInfo.attach("focus-cross-lines", { body: await page.screenshot(), contentType: "image/png" });
   await page.reload();
-  await showLegacyDag(page);
   await expect(page.locator('[data-dag-level="focus"]')).toHaveAttribute("data-dag-scene", id(2));
   await page.locator("[data-dag-exit-focus]").click();
   await expect(page.locator('[data-dag-level="line"]')).toHaveAttribute("data-dag-scene", id(1));

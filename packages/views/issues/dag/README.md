@@ -8,7 +8,8 @@ core models; it does not fetch data or choose rendering styles.
 ## Star Map (OL-1536)
 
 `dag-view.tsx` defaults to `StarMapDagView`; `LegacyDagView` remains available through the
-traditional-flow / star-map switch, without adding a host view mode. The star-map path is:
+traditional-flow / star-map switch, without adding a host view mode. The choice is stored in
+`dagRenderer` by the workspace-aware view store. The star-map path is:
 
 ```text
 issue graph + DagModelIndex

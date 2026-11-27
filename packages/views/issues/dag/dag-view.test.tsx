@@ -6,7 +6,8 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { ApiError, setApiInstance, type ApiClient } from "@multica/core/api";
-import { viewStoreSlice, type FilterSnapshot, type IssueViewState } from "@multica/core/issues/stores/view-store";
+import { viewStoreSlice, viewStorePersistOptions, type FilterSnapshot, type IssueViewState } from "@multica/core/issues/stores/view-store";
+import { createWorkspaceAwareStorage, defaultStorage, setCurrentWorkspace } from "@multica/core/platform";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { ViewBaselineProvider } from "../surface/view-baseline-context";
 import type { IssueViewBaseline } from "@multica/core/issue-views/baseline";
@@ -799,5 +800,29 @@ describe("useDagEmptyBusSelectionReset", () => {
     // "汇总 0 条依赖", so the selection clears instead.
     rerender({ rows: [] });
     expect(store.getState().dagSelectedDependencyIds).toBeNull();
+  });
+});
+
+describe("DAG renderer persistence", () => {
+  afterEach(() => {
+    setCurrentWorkspace(null, null);
+    localStorage.clear();
+  });
+
+  it("persists through the workspace-aware adapter without leaking into another workspace", async () => {
+    const store = createStore<IssueViewState>()(viewStoreSlice);
+    expect(store.getState().dagRenderer).toBe("star");
+    store.getState().setDagRenderer("legacy");
+    const persisted = viewStorePersistOptions("multica_issues_view").partialize(store.getState());
+    const storage = createWorkspaceAwareStorage(defaultStorage);
+    setCurrentWorkspace("workspace-a", "id-a");
+    await storage.setItem("multica_issues_view", JSON.stringify({ state: persisted }));
+
+    setCurrentWorkspace("workspace-b", "id-b");
+    expect(await storage.getItem("multica_issues_view")).toBeNull();
+    setCurrentWorkspace("workspace-a", "id-a");
+    const restored = await storage.getItem("multica_issues_view");
+    expect(restored).not.toBeNull();
+    expect(JSON.parse(restored!).state.dagRenderer).toBe("legacy");
   });
 });

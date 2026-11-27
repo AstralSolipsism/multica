@@ -100,17 +100,11 @@ export interface DagViewProps {
 }
 
 export function DagView(props: DagViewProps) {
-  const [renderer, setRenderer] = useState<"star" | "legacy">("star");
-  useEffect(() => {
-    if (window.localStorage.getItem("multica-dag-renderer") === "legacy") setRenderer("legacy");
-  }, []);
-  const chooseRenderer = (next: "star" | "legacy") => {
-    window.localStorage.setItem("multica-dag-renderer", next);
-    setRenderer(next);
-  };
+  const storeApi = useViewStoreApi();
+  const renderer = useViewStore((state) => state.dagRenderer);
   return renderer === "star"
-    ? <StarMapDagView {...props} onOpenLegacy={() => chooseRenderer("legacy")} />
-    : <LegacyDagView {...props} onOpenStarMap={() => chooseRenderer("star")} />;
+    ? <StarMapDagView {...props} onOpenLegacy={() => storeApi.getState().setDagRenderer("legacy")} />
+    : <LegacyDagView {...props} onOpenStarMap={() => storeApi.getState().setDagRenderer("star")} />;
 }
 
 export interface LegacyDagViewProps extends DagViewProps {

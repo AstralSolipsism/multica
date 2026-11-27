@@ -482,7 +482,6 @@ test("DAG levels: overview cards, line and focus navigation, bundles and persist
     await selectThenDblclick(page, cardA);
     await expect(page.locator("[data-dag-task]")).toHaveCount(2);
     await page.reload({ waitUntil: "domcontentloaded" });
-    await showLegacyDag(page);
     await expect(
       page.getByRole("navigation", { name: "Task line path" }),
     ).toContainText("design and implementation", { timeout: 30_000 });
@@ -535,7 +534,6 @@ test("DAG auto-enters a single visible line only until the user returns", async 
 
     // The pin survives a reload; a double-click re-enters.
     await page.reload({ waitUntil: "domcontentloaded" });
-    await showLegacyDag(page);
     await expect(cards).toHaveCount(1, { timeout: 30_000 });
     await page.waitForTimeout(800);
     await expect(cards).toHaveCount(1);

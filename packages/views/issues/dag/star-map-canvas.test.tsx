@@ -3,7 +3,7 @@ import { cleanup, fireEvent } from "@testing-library/react";
 import { buildStarMapHierarchy, createDagModelIndex, fitStarMapCamera } from "@multica/core/issues/dag";
 import { renderWithI18n } from "../../test/i18n";
 import { graphNode, issueGraph } from "./dag-test-fixtures";
-import { StarMapCanvas, starMapNodeRect, starMapNodeSize, starMapTimeScaleTarget, type StarMapCanvasProps } from "./star-map-canvas";
+import { StarMapCanvas, starMapMacroBounds, starMapNodeRect, starMapNodeSize, starMapSpriteRect, starMapTimeScaleTarget, STAR_MAP_ORB_VISIBLE_FRACTION, type StarMapCanvasProps } from "./star-map-canvas";
 
 const layers = { completed: false, manual: true, wakeup: true, mention: true, stage: true };
 
@@ -38,6 +38,19 @@ describe("star map node morph geometry", () => {
   });
 });
 
+describe("star map sprite outline", () => {
+  it("aligns the visible core with the interpolated card outline at the cutoff", () => {
+    for (const morph of [0.559, 0.56]) {
+      const size = starMapNodeSize(15, { x: 0, y: 0, w: 248, h: 116 }, morph);
+      const rect = starMapSpriteRect({ x: 80, y: 60, ...size });
+      expect(rect.w * STAR_MAP_ORB_VISIBLE_FRACTION).toBeCloseTo(size.w, 10);
+      expect(rect.h * STAR_MAP_ORB_VISIBLE_FRACTION).toBeCloseTo(size.h, 10);
+      expect(rect.x + rect.w * (1 - STAR_MAP_ORB_VISIBLE_FRACTION) / 2).toBeCloseTo(80 - size.w / 2, 10);
+      expect(rect.y + rect.h * (1 - STAR_MAP_ORB_VISIBLE_FRACTION) / 2).toBeCloseTo(60 - size.h / 2, 10);
+    }
+  });
+});
+
 describe("star map orbital motion", () => {
   it("stops for pause and reduced motion, while hover only slows it", () => {
     expect(starMapTimeScaleTarget(false, false, false, 0)).toBe(0);
@@ -47,11 +60,34 @@ describe("star map orbital motion", () => {
   });
 });
 
+describe("star map macro camera", () => {
+  it("keeps every independent root inside the fitted viewport for one or four projects", () => {
+    for (const projectCount of [1, 4]) {
+      const nodes = Array.from({ length: 300 }, (_, index) => graphNode(`solo-${index}`, {
+        identifier: `OL-${3000 + index}`,
+        projectId: `p${index % projectCount + 1}`,
+      }));
+      const hierarchy = buildStarMapHierarchy(createDagModelIndex(issueGraph(nodes)), { layout: "constellation", showCompleted: true });
+      const camera = fitStarMapCamera(starMapMacroBounds(hierarchy), { width: 1280, height: 720 }, {
+        insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
+      });
+      for (const root of hierarchy.roots) {
+        const x = root.anchor.x * camera.zoom + camera.x;
+        const y = root.anchor.y * camera.zoom + camera.y;
+        expect(x).toBeGreaterThanOrEqual(28);
+        expect(x).toBeLessThanOrEqual(1252);
+        expect(y).toBeGreaterThanOrEqual(64);
+        expect(y).toBeLessThanOrEqual(656);
+      }
+    }
+  });
+});
+
 describe("star map manual edge interaction", () => {
-  it("does not reach the blocker removal write through a hidden completed endpoint", () => {
+  it("removes a visible manual edge at the same coordinates where a hidden endpoint cannot write", () => {
     const hierarchy = buildStarMapHierarchy(createDagModelIndex(issueGraph([
       graphNode("root"),
-      graphNode("done", { parentIssueId: "root", status: "done", statusCategory: "completed" }),
+      graphNode("done", { status: "done", statusCategory: "done" }),
     ], [{ id: "manual:root:done", source: "root", target: "done" }])), {
       layout: "constellation",
       showCompleted: true,
@@ -79,8 +115,6 @@ describe("star map manual edge interaction", () => {
       onAddBlocker: vi.fn(),
       onRemoveBlocker,
     };
-    const { container } = renderWithI18n(<StarMapCanvas {...props} />);
-    const canvas = container.querySelector("canvas")!;
     const root = hierarchy.nodeById.get("root")!;
     const done = hierarchy.nodeById.get("done")!;
     const edge = hierarchy.edges[0]!;
@@ -96,22 +130,32 @@ describe("star map manual edge interaction", () => {
       x: u * u * a.x + 2 * u * t * control.x + t * t * b.x,
       y: u * u * a.y + 2 * u * t * control.y + t * t * b.y,
     };
-    const pad = root.domainRadius + 60;
-    const camera = fitStarMapCamera({
-      left: root.anchor.x - pad,
-      right: root.anchor.x + pad,
-      top: root.anchor.y - pad,
-      bottom: root.anchor.y + pad,
-    }, { width: 800, height: 600 }, {
+    let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+    for (const node of [root, done]) {
+      const pad = node.domainRadius + 60;
+      left = Math.min(left, node.anchor.x - pad);
+      right = Math.max(right, node.anchor.x + pad);
+      top = Math.min(top, node.anchor.y - pad);
+      bottom = Math.max(bottom, node.anchor.y + pad);
+    }
+    const camera = fitStarMapCamera({ left, right, top, bottom }, { width: 800, height: 600 }, {
       insets: { left: 28, right: 28, top: 64, bottom: 64 }, minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
     });
     const clientX = world.x * camera.zoom + camera.x;
     const clientY = world.y * camera.zoom + camera.y;
+    const click = (canvas: HTMLCanvasElement) => {
+      fireEvent.pointerDown(canvas, { clientX, clientY, pointerId: 1 });
+      fireEvent.pointerUp(canvas, { clientX, clientY, pointerId: 1, detail: 0 });
+    };
 
-    fireEvent.pointerDown(canvas, { clientX, clientY, pointerId: 1 });
-    fireEvent.pointerUp(canvas, { clientX, clientY, pointerId: 1, detail: 0 });
+    const visible = renderWithI18n(<StarMapCanvas {...props} layers={{ ...layers, completed: true }} />);
+    click(visible.container.querySelector("canvas")!);
+    expect(onRemoveBlocker).toHaveBeenCalledWith("root", "done");
+    visible.unmount();
 
-    expect(onRemoveBlocker).not.toHaveBeenCalled();
+    const hidden = renderWithI18n(<StarMapCanvas {...props} />);
+    click(hidden.container.querySelector("canvas")!);
+    expect(onRemoveBlocker).toHaveBeenCalledTimes(1);
     expect(props.onAddBlocker).not.toHaveBeenCalled();
   });
 });
