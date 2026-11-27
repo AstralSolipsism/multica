@@ -40,7 +40,8 @@ WHERE w.workspace_id = $1 AND w.enabled AND w.system_rule IS NULL
 -- No content index exists (migrations 454 and 463 retired them), so both
 -- branches scan the workspace. Splitting on the literal and checking the 36
 -- following characters returns what regexp_matches(..., 'g') would, without
--- compiling that pattern once per row.
+-- compiling that pattern once per row. The comment prefilter stays
+-- case-insensitive: it decides which 20,000 comments enter the window.
 WITH raw_mentions AS (
   SELECT i.id AS from_issue_id, m.target::uuid AS to_issue_id
   FROM issue i
@@ -55,7 +56,7 @@ WITH raw_mentions AS (
     SELECT issue_id, content
     FROM comment
     WHERE workspace_id = $1 AND deleted_at IS NULL
-      AND content LIKE '%mention://issue/%'
+      AND LOWER(content) LIKE '%mention://issue/%'
     ORDER BY created_at DESC, id DESC
     LIMIT 20000
   ) c

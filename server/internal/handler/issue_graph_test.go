@@ -29,12 +29,18 @@ func issueGraphFixture(t *testing.T) (*Handler, *testutil.Fixture) {
 	ws := dbfx.Insert(t, "workspace", testutil.Cols{"name": "Issue graph tests", "slug": "issue-graph-" + strings.ReplaceAll(t.Name(), "/", "-") + "-" + time.Now().Format("150405.000000000"), "issue_prefix": "DEP"})
 	dbfx.Insert(t, "member", testutil.Cols{"workspace_id": ws, "user_id": testUserID, "role": "owner"})
 	h := *testHandler
-	return &h, testutil.New(testPool, ws, testUserID)
+	fx := testutil.New(testPool, ws, testUserID)
+	// Wakeups do not cascade from their issue: remove the rows a test adds
+	// and the blocker rules the triggers create.
+	fx.Cleanup(t, "DELETE FROM issue_wakeup WHERE workspace_id=$1", ws)
+	return &h, fx
 }
 
 // addBlocker stores one manual issue_blocker row the way the write API does.
 func addBlocker(t *testing.T, fx *testutil.Fixture, issue, blocker string) {
 	t.Helper()
+	// Arming a blocker also stores its blockers_done system rule.
+	fx.Cleanup(t, "DELETE FROM issue_wakeup WHERE issue_id=$1 AND system_rule IS NOT NULL", issue)
 	fx.InsertNoID(t, "issue_blocker", testutil.Cols{"workspace_id": fx.WorkspaceID, "issue_id": issue, "blocker_issue_id": blocker, "created_by_type": "member", "created_by_id": testUserID}, "issue_id=$1 AND blocker_issue_id=$2", issue, blocker)
 }
 
@@ -43,8 +49,10 @@ func addBlocker(t *testing.T, fx *testutil.Fixture, issue, blocker string) {
 func addWakeup(t *testing.T, fx *testutil.Fixture, waiting string, condition map[string]any) {
 	t.Helper()
 	raw, _ := json.Marshal(condition)
-	fx.Exec(t, `INSERT INTO issue_wakeup(id,workspace_id,issue_id,instruction,kind,mode,condition)
- VALUES(gen_random_uuid(),$1,$2,'go','event','once',$3::jsonb)`, fx.WorkspaceID, waiting, raw)
+	fx.Insert(t, "issue_wakeup", testutil.Cols{
+		"id": testutil.Raw("gen_random_uuid()"), "workspace_id": fx.WorkspaceID, "issue_id": waiting,
+		"instruction": "go", "kind": "event", "mode": "once", "condition": json.RawMessage(raw),
+	})
 }
 
 func graphRequest(fx *testutil.Fixture, params url.Values) *http.Request {
@@ -434,7 +442,8 @@ func TestIssueGraphWeakEdgesFromWakeupsAndMentions(t *testing.T) {
 	for _, e := range g.WeakEdges {
 		got[e] = true
 	}
-	if !reflect.DeepEqual(got, want) {
+	// The map comparison cannot see a repeated edge; the schema rejects one.
+	if !reflect.DeepEqual(got, want) || len(g.WeakEdges) != len(want) {
 		t.Fatalf("weak edges:\n got %+v\nwant %+v", got, want)
 	}
 	if !slices.IsSortedFunc(g.WeakEdges, func(a, b service.IssueGraphWeakEdge) int {
@@ -449,5 +458,26 @@ func TestIssueGraphWeakEdgesFromWakeupsAndMentions(t *testing.T) {
 		if n.DependencySummary.VisibleUnsatisfiedCount != 0 || n.DependencySummary.HasRestrictedBlockers {
 			t.Fatalf("%s: a weak edge was counted as a blocker", n.Title)
 		}
+	}
+}
+
+// The comment window holds the newest 20,000 comments that pass the
+// case-insensitive prefilter. An upper-case prefix takes a slot without
+// yielding an edge, so an older valid reference stays outside the window.
+func TestIssueGraphMentionWindowIsCaseInsensitive(t *testing.T) {
+	h, fx := issueGraphFixture(t)
+	citing, inWindow, pushedOut := fx.Issue(t, "Citing"), fx.Issue(t, "Cited inside the window"), fx.Issue(t, "Cited before the window")
+	// 19,999 references to inWindow, then the oldest comment, the only one
+	// citing pushedOut, and the newest comment, whose upper-case prefix yields
+	// no edge.
+	fx.Exec(t, `INSERT INTO comment(id, issue_id, workspace_id, author_type, author_id, content, type, created_at)
+ SELECT md5('graph-mention-window-'||g)::uuid, $1, $2, 'member', $3,
+        CASE g WHEN 1 THEN $5 WHEN 20001 THEN 'see MENTION://ISSUE/'||$4 ELSE 'see mention://issue/'||$4 END,
+        'comment', now() - (20002 - g) * interval '1 second'
+ FROM generate_series(1, 20001) g`, citing, fx.WorkspaceID, fx.UserID, inWindow, "see mention://issue/"+pushedOut)
+	fx.Cleanup(t, "DELETE FROM comment WHERE workspace_id=$1", fx.WorkspaceID)
+	want := []service.IssueGraphWeakEdge{{From: citing, To: inWindow, Kind: "mention"}}
+	if got := readGraph(t, h, fx, nil).WeakEdges; !reflect.DeepEqual(got, want) {
+		t.Fatalf("comment window edges:\n got %+v\nwant %+v", got, want)
 	}
 }

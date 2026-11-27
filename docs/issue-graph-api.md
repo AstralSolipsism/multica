@@ -33,8 +33,10 @@ the snapshot below, deduplicated and ordered by kind and endpoints.
   `other_issue`), awaited issue → waiting issue, with the awaited state in
   `until_state`. Platform rules and other condition types are not relations.
 - `mention`: a `mention://issue/<uuid>` in an issue description or in one of the
-  workspace's newest 20,000 comments that carry one, citing issue → cited issue.
-  A ↔ B and cycles are legal; deleted comments and self-references are ignored.
+  workspace's newest 20,000 comments containing `mention://issue/` in any letter
+  case, citing issue → cited issue. An upper-case prefix takes a window slot
+  without yielding an edge. A ↔ B and cycles are legal; deleted comments and
+  self-references are ignored.
 
 `idx_wakeup_workspace_enabled` serves the wakeup read. Neither `issue` nor
 `comment` keeps a content index (migrations 454 and 463 retired them), so the
