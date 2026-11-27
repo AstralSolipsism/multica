@@ -35,7 +35,7 @@ describe("star map wakeup scene context", () => {
         source: "child", target: dagExternalNodeId("downstream", "other-root"), untilState: "in_review",
       }),
     ]);
-    expect(plan.dependencyIds["wakeup:solo:child"]).toBeUndefined();
+    expect(plan.dependencyIds["wakeup:solo:child:done"]).toBeUndefined();
     expect(dagSceneSelectionSet(plan, "child")).toBeNull();
   });
 
@@ -47,6 +47,83 @@ describe("star map wakeup scene context", () => {
     expect(sceneModel.tasks.find((task) => task.issue.id === "solo")).toMatchObject({ parentId: null, role: "context" });
     expect(plan.input.nodes.find((node) => node.id === "solo")).toMatchObject({ side: "upstream", parentId: null });
     expect(plan.input.edges.some((edge) => edge.kind === "wakeup" && edge.source === "solo" && edge.target === "child")).toBe(true);
-    expect(dagSceneFocusSet(plan, "child", "upstream")?.edgeIds.has("wakeup:solo:child")).toBe(false);
+    expect(dagSceneFocusSet(plan, "child", "upstream")?.edgeIds.has("wakeup:solo:child:done")).toBe(false);
+  });
+
+  it("keeps an independent task's parent peer as a context endpoint", () => {
+    const index = createDagModelIndex(issueGraph([
+      node("root"), node("child", { parentIssueId: "root" }), node("solo"),
+    ], [], [{ from: "solo", to: "root", kind: "wakeup" }]));
+    const { model: sceneModel, plan } = starMapFocusScene(computeDagFocus(index, "solo"), index);
+    expect(sceneModel.kind).toBe("focus");
+    if (sceneModel.kind !== "focus") return;
+    expect(sceneModel.tasks.find((task) => task.issue.id === "root")).toMatchObject({ role: "context", parentId: null });
+    expect(plan.input.edges).toContainEqual(expect.objectContaining({
+      id: "wakeup:solo:root:done", source: "solo", target: "root", kind: "wakeup", untilState: "done",
+    }));
+  });
+
+  it("uses only original focus members when weak-edge order changes", () => {
+    const weakEdges = [
+      { from: "solo", to: "child", kind: "wakeup", untilState: "done" },
+      { from: "peer", to: "child", kind: "wakeup", untilState: "in_review" },
+    ] as const;
+    const makeScene = (edges: readonly { from: string; to: string; kind: "wakeup"; untilState: string }[]) => {
+      const index = createDagModelIndex(issueGraph([
+        node("root"), node("child", { parentIssueId: "root" }), node("solo"), node("peer"),
+      ], [], [...edges]));
+      return starMapFocusScene(computeDagFocus(index, "child"), index);
+    };
+    const forward = makeScene(weakEdges);
+    const reversed = makeScene([...weakEdges].reverse());
+    expect(forward.model.tasks.map((task) => task.issue.id).sort()).toEqual(["child", "peer", "solo"]);
+    expect(reversed.model.tasks.map((task) => task.issue.id).sort()).toEqual(["child", "peer", "solo"]);
+    expect(reversed.plan.input.edges).toHaveLength(forward.plan.input.edges.length);
+  });
+
+  it("distinguishes waits for the same endpoints by normalized state in both scenes", () => {
+    const index = createDagModelIndex(issueGraph([
+      node("root"), node("child", { parentIssueId: "root" }), node("solo"),
+    ], [], [
+      { from: "solo", to: "child", kind: "wakeup" },
+      { from: "solo", to: "child", kind: "wakeup", untilState: "in_review" },
+    ]));
+    const line = starMapLineScene(computeDagLine(index, "root")!, index);
+    const focus = starMapFocusScene(computeDagFocus(index, "child"), index);
+    for (const scene of [line, focus]) {
+      expect(scene.plan.input.edges.map((edge) => edge.id)).toEqual([
+        "wakeup:solo:child:done", "wakeup:solo:child:in_review",
+      ]);
+      expect(scene.plan.input.edges.map((edge) => edge.untilState)).toEqual(["done", "in_review"]);
+      expect(scene.plan.dependencyIds).toEqual({});
+    }
+    expect(line.model.kind).toBe("line");
+    if (line.model.kind === "line")
+      expect(line.model.line.upstream.find((group) => group.id === "solo")?.count).toBe(2);
+  });
+
+  it("enables mentions explicitly without changing dependency or closure semantics", () => {
+    const index = createDagModelIndex(issueGraph([
+      node("root"), node("child", { parentIssueId: "root" }), node("solo"),
+    ], [], [
+      { from: "solo", to: "child", kind: "mention" },
+      { from: "child", to: "solo", kind: "mention" },
+    ]));
+    expect(starMapLineScene(computeDagLine(index, "root")!, index).plan.input.edges).toHaveLength(0);
+    expect(starMapFocusScene(computeDagFocus(index, "child"), index).model.tasks).toHaveLength(1);
+
+    const line = starMapLineScene(computeDagLine(index, "root")!, index, { mention: true });
+    const focus = starMapFocusScene(computeDagFocus(index, "child"), index, { mention: true });
+    for (const scene of [line, focus]) {
+      expect(scene.plan.input.edges).toEqual([
+        expect.objectContaining({ id: "mention:solo:child:", source: expect.any(String), target: "child", kind: "mention" }),
+        expect.objectContaining({ id: "mention:child:solo:", source: "child", target: expect.any(String), kind: "mention" }),
+      ]);
+      expect(scene.plan.dependencyIds).toEqual({});
+      expect(dagSceneSelectionSet(scene.plan, "child")).toBeNull();
+      expect(dagSceneFocusSet(scene.plan, "child", "upstream")?.edgeIds.size).toBe(0);
+    }
+    expect(focus.plan.input.edges[0]).toMatchObject({ source: "solo", target: "child" });
+    expect(focus.plan.input.edges[1]).toMatchObject({ source: "child", target: "solo" });
   });
 });

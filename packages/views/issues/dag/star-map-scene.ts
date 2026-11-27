@@ -9,9 +9,27 @@ import { dagExternalNodeId, type DagSceneEdge, type DagScenePlan, type DagSceneS
 import { dagFocusCanvasModel, type DagCanvasModel } from "./dag-scene-flow";
 import { dagLineLayoutInput } from "./dag-scene-inputs";
 
+export interface StarMapSceneRelations {
+  wakeup?: boolean;
+  mention?: boolean;
+}
+
+function weakEdgeMetadata(edge: { from: string; to: string; kind: "wakeup" | "mention"; untilState?: string }) {
+  const untilState = edge.kind === "wakeup" ? edge.untilState ?? "done" : undefined;
+  return {
+    id: `${edge.kind}:${edge.from}:${edge.to}:${untilState ?? ""}`,
+    kind: edge.kind,
+    untilState,
+  };
+}
+
 /** Adds only display-only wakeup context. Strong blocker models stay intact;
  * external endpoints still use the repository's DagExternalCard. */
-export function starMapLineScene(line: DagLineModel, index: DagModelIndex) {
+export function starMapLineScene(
+  line: DagLineModel,
+  index: DagModelIndex,
+  { wakeup = true, mention = false }: StarMapSceneRelations = {},
+) {
   const upstream = line.upstream.map((group) => ({ ...group, dependencies: [...group.dependencies] }));
   const downstream = line.downstream.map((group) => ({ ...group, dependencies: [...group.dependencies] }));
   const model: DagLineModel = { ...line, upstream, downstream };
@@ -19,7 +37,7 @@ export function starMapLineScene(line: DagLineModel, index: DagModelIndex) {
   const members = new Set(line.input.members.map((member) => member.issue.id));
 
   for (const edge of index.weakEdges) {
-    if (edge.kind !== "wakeup") continue;
+    if (edge.kind === "wakeup" ? !wakeup : !mention) continue;
     const fromInside = members.has(edge.from);
     const toInside = members.has(edge.to);
     if (fromInside === toInside) continue;
@@ -47,13 +65,11 @@ export function starMapLineScene(line: DagLineModel, index: DagModelIndex) {
     group.count++;
     const insideKind = index.forest.children.has(insideId) ? "frame" : "task";
     plan.input.edges.push({
-      id: `wakeup:${edge.from}:${edge.to}`,
+      ...weakEdgeMetadata(edge),
       source: toInside ? externalId : insideId,
       target: toInside ? insideId : externalId,
       sourceKind: toInside ? "task" : insideKind,
       targetKind: toInside ? insideKind : "task",
-      kind: "wakeup",
-      untilState: edge.untilState,
     });
   }
   return { model: { kind: "line" as const, line: model }, plan };
@@ -68,9 +84,13 @@ function focusEndpoint(plan: DagScenePlan, issueId: string, index: DagModelIndex
   return index.forest.children.has(issueId) ? null : { id: issueId, kind: "task" as const };
 }
 
-/** Focus keeps computeDagFocus topology and appends wakeup peers as dashed
+/** Focus keeps computeDagFocus topology and appends weak peers as dashed
  * context task cards on the correct left/right side. */
-export function starMapFocusScene(focus: DagFocusModel, index: DagModelIndex) {
+export function starMapFocusScene(
+  focus: DagFocusModel,
+  index: DagModelIndex,
+  { wakeup = true, mention = false }: StarMapSceneRelations = {},
+) {
   const base = dagFocusCanvasModel(focus);
   const plan: DagScenePlan = {
     ...base.plan,
@@ -78,16 +98,17 @@ export function starMapFocusScene(focus: DagFocusModel, index: DagModelIndex) {
     dependencyIds: { ...base.plan.dependencyIds },
   };
   const tasks: DagTask[] = [...base.tasks];
-  const present = new Set(tasks.map((task) => task.issue.id));
-  for (const frame of plan.input.frames) present.add(frame.modelId);
+  const members = new Set(tasks.map((task) => task.issue.id));
+  for (const frame of plan.input.frames) members.add(frame.modelId);
+  const present = new Set(members);
 
   for (const edge of index.weakEdges) {
-    if (edge.kind !== "wakeup") continue;
-    const fromInside = present.has(edge.from);
-    const toInside = present.has(edge.to);
+    if (edge.kind === "wakeup" ? !wakeup : !mention) continue;
+    const fromInside = members.has(edge.from);
+    const toInside = members.has(edge.to);
     if (fromInside === toInside) continue;
-    const from = focusEndpoint(plan, edge.from, index);
-    const to = focusEndpoint(plan, edge.to, index);
+    const from = fromInside ? focusEndpoint(plan, edge.from, index) : { id: edge.from, kind: "task" as const };
+    const to = toInside ? focusEndpoint(plan, edge.to, index) : { id: edge.to, kind: "task" as const };
     if (!from || !to) continue;
     const outsideId = toInside ? edge.from : edge.to;
     const issue = index.issues.get(outsideId);
@@ -106,13 +127,11 @@ export function starMapFocusScene(focus: DagFocusModel, index: DagModelIndex) {
       });
     }
     const sceneEdge: DagSceneEdge = {
-      id: `wakeup:${edge.from}:${edge.to}`,
+      ...weakEdgeMetadata(edge),
       source: from.id,
       target: to.id,
       sourceKind: from.kind,
       targetKind: to.kind,
-      kind: "wakeup",
-      untilState: edge.untilState,
     };
     plan.input.edges.push(sceneEdge);
   }

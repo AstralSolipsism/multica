@@ -30,6 +30,9 @@ issue graph + DagModelIndex
   downstream side. `DagSceneEdge.kind` keeps those routes out of dependency aggregation, selection
   closure and blocker writes; `DagEdgeLayer` paints them as violet dashed routes. `mention` stays an
   optional star-map overlay and never enters the linear dependency model.
+- Near-scene blocker creation uses native React Flow handles on the existing task/frame cards;
+  bus clicks open the existing `DagBusSelection` for location and removal. `relationVisibility`
+  filters displayed routes without changing strong dependency semantics or allowing weak-edge writes.
 - Blocker creation/removal calls `useUpdateIssueBlockers`; opening an issue calls the surface's
   `useIssuePeekActions().open(issueId)`. Reduced motion completes the same handoff without spatial
   animation.

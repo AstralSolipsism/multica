@@ -31,10 +31,11 @@ import { useIssuePeekActions, useIssuePeekOpen } from "../surface/peek-context";
 import { useViewBaseline } from "../surface/view-baseline-context";
 import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
 import DagSceneCanvas from "./dag-scene-canvas";
-import type { DagSceneCanvasApi, DagSceneCanvasProps } from "./dag-scene-canvas";
+import type { DagSceneCanvasApi, DagSceneCanvasProps, DagLocateRequest } from "./dag-scene-canvas";
+import { DagBusSelection, type DagBusSelectionItem } from "./dag-selection-bus";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
 import { dagLevelFromPlan, type DagLevel } from "./dag-level";
-import { dagLineWithSatisfiedFilter } from "./dag-scene-flow";
+import { dagBusSelectionRows, dagDependencyStates, dagLineWithSatisfiedFilter } from "./dag-scene-flow";
 import { starMapFocusScene, starMapLineScene } from "./star-map-scene";
 import { dagSceneContentBounds } from "./dag-viewport";
 import { useDagSceneLayout } from "./use-dag-scene-layout";
@@ -107,6 +108,8 @@ export function StarMapDagView({
   const index = useMemo(() => graph ? createDagModelIndex(graph) : null, [graph]);
   const showCompleted = useViewStore((s) => s.dagShowCompleted);
   const showSatisfied = useViewStore((s) => s.dagShowSatisfiedDependencies);
+  const selectedDependencyIds = useViewStore((s) => s.dagSelectedDependencyIds);
+  const [linearLocateRequest, setLinearLocateRequest] = useState<DagLocateRequest | null>(null);
   const [layout, setLayout] = useState<StarMapLayoutMode>("cluster");
   const [intent, setIntent] = useState<StarMapFocusIntent>("line");
   const [edgeLayers, setEdgeLayers] = useState<Omit<StarMapLayers, "completed">>({
@@ -146,14 +149,15 @@ export function StarMapDagView({
 
   const sceneDefinition = useMemo<{ model: PaintedTarget["model"]; plan: DagScenePlan } | null>(() => {
     if (!index || !sceneLevel) return null;
+    const relations = { wakeup: edgeLayers.wakeup, mention: edgeLayers.mention };
     if (sceneLevel.kind === "focus") {
       const focus = computeDagFocus(index, sceneLevel.issueId, showCompleted);
-      return starMapFocusScene(focus, index);
+      return starMapFocusScene(focus, index, relations);
     }
     const line = computeDagLine(index, sceneLevel.lineId);
     if (!line) return null;
-    return starMapLineScene(dagLineWithSatisfiedFilter(line, showSatisfied), index);
-  }, [index, sceneLevel, showCompleted, showSatisfied]);
+    return starMapLineScene(dagLineWithSatisfiedFilter(line, showSatisfied), index, relations);
+  }, [index, sceneLevel, showCompleted, showSatisfied, edgeLayers.wakeup, edgeLayers.mention]);
   const canvasModel = sceneDefinition?.model ?? null;
   const plan = sceneDefinition?.plan ?? null;
   const sceneScope = `${wsId}:${hashKey([safeSpec])}:star-map`;
@@ -176,6 +180,27 @@ export function StarMapDagView({
     () => new Map((graph?.projects ?? []).map((project) => [project.id, project.title])),
     [graph],
   );
+  const issuesById = useMemo(
+    () => new Map((graph?.nodes ?? []).map((node) => [node.id, node])),
+    [graph],
+  );
+  const linearBusSelection = useMemo<DagBusSelectionItem[] | null>(() => {
+    if (phase !== "linear" || !selectedDependencyIds?.length || !graph || !currentTarget) return null;
+    return dagBusSelectionRows({
+      dependencyIds: selectedDependencyIds,
+      edges: graph.edges,
+      issuesById,
+      states: dagDependencyStates(currentTarget.model),
+      plan: currentTarget.plan,
+      showSatisfied,
+    });
+  }, [phase, selectedDependencyIds, graph, currentTarget, issuesById, showSatisfied]);
+  useEffect(() => {
+    if (linearBusSelection?.length === 0) storeApi.getState().setDagSelectedDependencyIds(null);
+  }, [linearBusSelection, storeApi]);
+  useEffect(() => {
+    if (!edgeLayers.manual) storeApi.getState().setDagSelectedDependencyIds(null);
+  }, [edgeLayers.manual, storeApi]);
   const searchResults = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     if (!needle || !hierarchy) return [];
@@ -208,13 +233,12 @@ export function StarMapDagView({
 
   useEffect(() => {
     if (!blockerWrite) return;
+    const write = blockerWrite;
     blockerMutation.mutate(
-      blockerWrite.remove
-        ? { remove_blocked_by: [blockerWrite.source] }
-        : { blocked_by: [blockerWrite.source] },
+      write.remove ? { remove_blocked_by: [write.source] } : { blocked_by: [write.source] },
+      { onSettled: () => setBlockerWrite((current) => current === write ? null : current) },
     );
-    setBlockerWrite(null);
-    // The write component changes the native hook's target and fires in the same commit.
+    // Keep the native hook's target mounted until its mutation has settled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockerWrite]);
 
@@ -282,6 +306,9 @@ export function StarMapDagView({
   }, [currentTarget, peekOpen, size]);
 
   const openIssue = useCallback((issueId: string) => peek?.open(issueId), [peek]);
+  const locateLinearDependency = useCallback((dependencyId: string) => {
+    setLinearLocateRequest((old) => ({ dependencyId, nonce: (old?.nonce ?? 0) + 1 }));
+  }, []);
   const openExternal = useCallback((group: { id: string; kind: "line" | "issue" }) => {
     setSceneLevel(group.kind === "line" ? { kind: "line", lineId: group.id } : { kind: "focus", issueId: group.id });
     setSeed({ id: group.id, intent: group.kind === "line" ? "line" : "chain" });
@@ -368,7 +395,12 @@ export function StarMapDagView({
           projectNames={projectNames}
           showSatisfied={showSatisfied}
           focusRequest={null}
-          locateRequest={null}
+          locateRequest={linearLocateRequest}
+          relationVisibility={edgeLayers}
+          blockerConnection={{
+            enabled: linking,
+            onConnect: (source, target) => setBlockerWrite({ source, target, remove: false }),
+          }}
           onEnterLine={(lineId) => {
             setSceneLevel({ kind: "line", lineId });
             setSeed({ id: lineId, intent: "line" });
@@ -404,6 +436,16 @@ export function StarMapDagView({
           onAddBlocker={(source, target) => setBlockerWrite({ source, target, remove: false })}
           onRemoveBlocker={(source, target) => setBlockerWrite({ source, target, remove: true })}
         />
+      )}
+
+      {phase === "linear" && linearBusSelection && linearBusSelection.length > 0 && (
+        <div className="absolute left-1/2 top-16 z-30 min-w-0 -translate-x-1/2 rounded-lg border border-border bg-background/90 p-1.5 shadow-lg backdrop-blur-md">
+          <DagBusSelection
+            items={linearBusSelection}
+            onLocate={locateLinearDependency}
+            onOpenIssue={openIssue}
+          />
+        </div>
       )}
 
       <StarMapControls

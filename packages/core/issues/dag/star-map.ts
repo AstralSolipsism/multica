@@ -108,6 +108,24 @@ function point(x: number, y: number): StarMapPoint {
   return { x, y };
 }
 
+// Leaves 32.4px between root centers at 0.45x zoom, including room for labels and hit targets.
+const minimumRootSpacing = 72;
+
+function packStandaloneRings(count: number, firstRadius: number, arcSpan: number) {
+  const rings: { radius: number; angles: number[] }[] = [];
+  for (let placed = 0, ringIndex = 0; placed < count; ringIndex += 1) {
+    const radius = firstRadius + ringIndex * minimumRootSpacing;
+    const minimumAngle = 2 * Math.asin(minimumRootSpacing / (2 * radius));
+    const capacity = Math.max(1, Math.floor(arcSpan / minimumAngle));
+    const ringCount = Math.min(capacity, count - placed);
+    const angles = Array.from({ length: ringCount }, (_, index) =>
+      ((index + 0.5) / ringCount - 0.5) * arcSpan);
+    rings.push({ radius, angles });
+    placed += ringCount;
+  }
+  return rings;
+}
+
 function createNode(
   model: DagModelIndex,
   order: ReadonlyMap<string, number>,
@@ -197,10 +215,12 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
       });
       extent = ringRadius + maxDomain;
     }
-    const standaloneOrbit = extent + 48;
+    const standaloneArc = Math.min(Math.PI * 1.35, Math.max(0.45, standalones.length * 0.28));
+    const standaloneRings = packStandaloneRings(standalones.length, extent + minimumRootSpacing, standaloneArc);
+    const outerStandaloneRadius = standaloneRings.length ? standaloneRings[standaloneRings.length - 1]!.radius : 0;
     return {
-      sector, suns, standalones, positions, standaloneOrbit,
-      outerBound: standalones.length ? standaloneOrbit + 36 : extent + 30,
+      sector, suns, standalones, positions, standaloneRings,
+      outerBound: standalones.length ? outerStandaloneRadius + 36 : extent + 30,
     };
   });
   const maxOuter = Math.max(...packing.map((pack) => pack.outerBound));
@@ -219,12 +239,15 @@ function layoutConstellation(roots: DraftNode[], sectors: (string | null)[], ind
       const local = pack.positions[i]!;
       sun.anchor = point(cx + local.x * cos - local.y * sin, cy + local.x * sin + local.y * cos);
     });
-    pack.standalones.forEach((standalone, i) => {
-      const arcSpan = Math.min(Math.PI * 1.35, Math.max(0.45, pack.standalones.length * 0.28));
-      const fraction = pack.standalones.length === 1 ? 0 : i / (pack.standalones.length - 1) - 0.5;
-      const angle = sectorAngle + fraction * arcSpan;
-      standalone.anchor = point(cx + Math.cos(angle) * pack.standaloneOrbit, cy + Math.sin(angle) * pack.standaloneOrbit);
-    });
+    let standaloneIndex = 0;
+    for (const ring of pack.standaloneRings) {
+      for (const offset of ring.angles) {
+        const standalone = pack.standalones[standaloneIndex]!;
+        const angle = sectorAngle + offset;
+        standalone.anchor = point(cx + Math.cos(angle) * ring.radius, cy + Math.sin(angle) * ring.radius);
+        standaloneIndex += 1;
+      }
+    }
     const project = pack.sector === null ? null : index.projects.get(pack.sector) ?? null;
     if (project) guides.push({ kind: "cluster", sector: project, cx, cy, radius: pack.outerBound });
   });
@@ -248,15 +271,23 @@ function layoutPolar(roots: DraftNode[], sectors: (string | null)[], index: DagM
       const angle = startAngle + span * (0.15 + 0.70 * ((i + 0.5) / Math.max(1, suns.length)));
       sun.anchor = point(Math.cos(angle) * 480, Math.sin(angle) * 480);
     });
-    standalones.forEach((standalone, i) => {
-      const angle = startAngle + span * (0.12 + 0.76 * ((i + 0.5) / Math.max(1, standalones.length)));
-      standalone.anchor = point(Math.cos(angle) * 210, Math.sin(angle) * 210);
-    });
+    const midAngle = (startAngle + endAngle) * 0.5;
+    const standaloneRings = packStandaloneRings(standalones.length, 210, span * 0.76);
+    let standaloneIndex = 0;
+    for (const ring of standaloneRings) {
+      for (const offset of ring.angles) {
+        const standalone = standalones[standaloneIndex]!;
+        const angle = midAngle + offset;
+        standalone.anchor = point(Math.cos(angle) * ring.radius, Math.sin(angle) * ring.radius);
+        standaloneIndex += 1;
+      }
+    }
+    const outerStandaloneRadius = standaloneRings.length ? standaloneRings[standaloneRings.length - 1]!.radius : 0;
     const project = sector === null ? null : index.projects.get(sector) ?? null;
     if (project) guides.push({
       kind: "sector", sector: project,
-      start: startAngle, end: endAngle, mid: (startAngle + endAngle) * 0.5,
-      innerR: 150, outerR: 740,
+      start: startAngle, end: endAngle, mid: midAngle,
+      innerR: 150, outerR: Math.max(740, outerStandaloneRadius + 36),
     });
   }
   return guides;
@@ -284,12 +315,12 @@ function buildEdges(index: DagModelIndex, visible: ReadonlySet<string>): StarMap
     if (edge.from === edge.to || !visible.has(edge.from) || !visible.has(edge.to)) continue;
     if (edge.kind === "wakeup") {
       edges.push({
-        id: `wakeup:${edge.from}:${edge.to}`,
+        id: `wakeup:${edge.from}:${edge.to}:${edge.untilState ?? "done"}`,
         source: edge.from, target: edge.to, kind: "wakeup", untilState: edge.untilState,
       });
     } else {
       edges.push({
-        id: `mention:${edge.from}:${edge.to}`,
+        id: `mention:${edge.from}:${edge.to}:`,
         source: edge.from, target: edge.to, kind: "mention",
         mutual: mentionDirections.has(`${edge.to}->${edge.from}`),
       });

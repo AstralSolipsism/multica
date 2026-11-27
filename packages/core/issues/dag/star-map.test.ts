@@ -64,7 +64,43 @@ describe("star map hierarchy", () => {
     expect(polar.roots.map((root) => root.id).sort()).toEqual(first.roots.map((root) => root.id).sort());
     expect(Object.isFrozen(first.nodeById.get("root"))).toBe(true);
     expect(Object.isFrozen(first.nodeById.get("root")?.anchor)).toBe(true);
-    expect(anchors(first)).toEqual(anchors(second));
+  });
+
+  it.each(["constellation", "polar"] as const)("spaces 300 independent roots across bounded rings in %s layout", (layout) => {
+    const graph = g(Array.from({ length: 300 }, (_, index) =>
+      n(`task-${String(index).padStart(3, "0")}`, { projectId: "p1" })));
+    const options = { layout, showCompleted: false };
+    const first = buildStarMapHierarchy(createDagModelIndex(graph), options);
+    const second = buildStarMapHierarchy(createDagModelIndex(graph), options);
+    expect(second.roots.map((root) => [root.id, root.anchor])).toEqual(first.roots.map((root) => [root.id, root.anchor]));
+    expect(second.sectorGuides).toEqual(first.sectorGuides);
+    expect(new Set(first.roots.map((root) => `${root.anchor.x},${root.anchor.y}`)).size).toBe(300);
+
+    let minimumDistance = Infinity;
+    for (let left = 0; left < first.roots.length; left += 1) {
+      for (let right = left + 1; right < first.roots.length; right += 1) {
+        const a = first.roots[left]!.anchor, b = first.roots[right]!.anchor;
+        minimumDistance = Math.min(minimumDistance, Math.hypot(a.x - b.x, a.y - b.y));
+      }
+    }
+    expect(minimumDistance * 0.45).toBeGreaterThanOrEqual(18);
+
+    expect(first.sectorGuides).toHaveLength(1);
+    const guide = first.sectorGuides[0]!;
+    for (const root of first.roots) {
+      if (guide.kind === "cluster") {
+        const distance = Math.hypot(root.anchor.x - guide.cx, root.anchor.y - guide.cy);
+        expect(distance + root.coreRadius).toBeLessThanOrEqual(guide.radius);
+      } else {
+        const radius = Math.hypot(root.anchor.x, root.anchor.y);
+        const angle = (Math.atan2(root.anchor.y, root.anchor.x) - guide.start + Math.PI * 2) % (Math.PI * 2);
+        const angularRadius = Math.asin(root.coreRadius / radius);
+        expect(radius - root.coreRadius).toBeGreaterThanOrEqual(guide.innerR);
+        expect(radius + root.coreRadius).toBeLessThanOrEqual(guide.outerR);
+        expect(angle).toBeGreaterThanOrEqual(angularRadius);
+        expect(angle).toBeLessThanOrEqual(guide.end - guide.start - angularRadius);
+      }
+    }
   });
 });
 

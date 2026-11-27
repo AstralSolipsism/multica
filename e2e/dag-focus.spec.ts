@@ -38,6 +38,14 @@ const viewport = (page: Page) => page.locator(".react-flow__viewport").evaluate(
   return { x: matrix.e, y: matrix.f, zoom: matrix.a };
 });
 
+async function showLegacyDag(page: Page) {
+  if (await page.locator("[data-dag-canvas]").isVisible()) return;
+  const entry = page.getByRole("button", { name: /Layered flow|传统流图/ });
+  await expect(entry).toBeVisible({ timeout: 20_000 });
+  await entry.click();
+  await expect(page.locator("[data-dag-canvas]")).toBeVisible({ timeout: 20_000 });
+}
+
 async function expectCenteredSeed(page: Page, identifier: string) {
   await expect.poll(async () => (await viewport(page)).zoom).toBeGreaterThanOrEqual(0.85);
   await expect.poll(async () => {
@@ -52,6 +60,7 @@ test("focus mode traces cross-line dependencies, survives reload and restores th
   page.on("pageerror", (error) => errors.push(error.message));
   const network = await mockDagGraph(context, new URL(baseURL!).origin, fixture(), { preferences: { dagLineId: id(1) } });
   await page.goto(`/${WORKSPACE_SLUG}/issues`);
+  await showLegacyDag(page);
   await expect(page.locator('[data-dag-task="FOCUS-2"]')).toBeVisible({ timeout: 20_000 });
   const before = await viewport(page);
   await enterFocus(page, id(2));
@@ -67,6 +76,7 @@ test("focus mode traces cross-line dependencies, survives reload and restores th
   await expect(page.locator('[data-dag-task="FOCUS-5"]')).toBeAttached();
   await testInfo.attach("focus-cross-lines", { body: await page.screenshot(), contentType: "image/png" });
   await page.reload();
+  await showLegacyDag(page);
   await expect(page.locator('[data-dag-level="focus"]')).toHaveAttribute("data-dag-scene", id(2));
   await page.locator("[data-dag-exit-focus]").click();
   await expect(page.locator('[data-dag-level="line"]')).toHaveAttribute("data-dag-scene", id(1));
@@ -88,6 +98,7 @@ test("render an authorized workspace snapshot in focus mode", async ({ page, con
   page.on("pageerror", (error) => errors.push(error.message));
   await mockDagGraph(context, new URL(baseURL!).origin, graph, { locale: "zh-Hans", workspaceName: "Labrastro · 只读快照", preferences: { dagLineId: index.rootOf.get(seed.id), dagShowCompleted: true } });
   await page.goto(`/${WORKSPACE_SLUG}/issues`);
+  await showLegacyDag(page);
   await page.locator(`[data-dag-task="${seed.identifier}"]`).waitFor();
   await page.screenshot({ path: testInfo.outputPath("workspace-before.png") });
   await page.locator(`[data-dag-task="${seed.identifier}"]`).dispatchEvent("click");

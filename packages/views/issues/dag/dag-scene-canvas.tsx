@@ -32,7 +32,7 @@ import {
   sameDagViewport,
   type DagFirstOpenAnchor,
 } from "./dag-viewport";
-import { dagSceneFlowNodes, dagSceneFocusSet, type DagCanvasFlowNode, type DagCanvasModel } from "./dag-scene-flow";
+import { dagSceneFlowNodes, dagSceneFocusSet, dagVisibleScenePlan, type DagCanvasFlowNode, type DagCanvasModel, type DagRelationVisibility } from "./dag-scene-flow";
 import type { DagSceneGeometry, DagScenePlan } from "./dag-scene";
 import type { DagExternalGroup } from "@multica/core/issues/dag";
 import { DagOverviewCardView } from "./dag-overview-card";
@@ -96,6 +96,12 @@ export interface DagSceneCanvasProps {
   viewportConstraint?: (viewport: Viewport) => Viewport;
   /** Embedded scenes keep the host's atmospheric background and HUD. */
   embedded?: boolean;
+  relationVisibility?: DagRelationVisibility;
+  /** Opt-in native React Flow blocker creation used by the Star Map near scene. */
+  blockerConnection?: {
+    enabled: boolean;
+    onConnect: (source: string, target: string) => void;
+  };
 }
 
 /** Zoom degradation swaps cards to their plain block only where the flag
@@ -141,6 +147,8 @@ export function DagSceneCanvasInner({
   viewportOverride,
   viewportConstraint,
   embedded = false,
+  relationVisibility,
+  blockerConnection,
 }: DagSceneCanvasProps) {
   const storeApi = useViewStoreApi();
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
@@ -392,14 +400,19 @@ export function DagSceneCanvasInner({
     return boxes;
   }, [activeNodeSet, geometry]);
 
+  const edgePlan = useMemo(
+    () => relationVisibility ? dagVisibleScenePlan(plan, relationVisibility) : plan,
+    [plan, relationVisibility],
+  );
   const baseNodes = useMemo(
     () =>
       dagSceneFlowNodes(model, {
         geometry,
         statusColorOf,
         projectNames,
+        connectable: blockerConnection?.enabled,
       }),
-    [model, geometry, statusColorOf, projectNames],
+    [model, geometry, statusColorOf, projectNames, blockerConnection?.enabled],
   );
   const nodes = useMemo(
     () => applySimplified(baseNodes, simplified),
@@ -573,6 +586,12 @@ export function DagSceneCanvasInner({
           edges={[]}
           nodeTypes={nodeTypes}
           defaultViewport={viewportOverride?.viewport ?? { x: 20, y: 20, zoom: 1 }}
+          onConnect={({ source, target }) => {
+            if (!source || !target || source === target) return;
+            const sourceId = plan.input.frames.find((frame) => frame.id === source)?.modelId ?? source;
+            const targetId = plan.input.frames.find((frame) => frame.id === target)?.modelId ?? target;
+            if (sourceId !== targetId) blockerConnection?.onConnect(sourceId, targetId);
+          }}
           onNodesChange={handleNodesChange}
           onNodeClick={(event, node) => handleNodeClick(node, event.detail)}
           onNodeDoubleClick={(_, node) => {
@@ -617,7 +636,7 @@ export function DagSceneCanvasInner({
           zoomOnPinch
           zoomActivationKeyCode={["Control", "Meta"]}
           nodesDraggable={false}
-          nodesConnectable={false}
+          nodesConnectable={blockerConnection?.enabled ?? false}
           nodesFocusable
           edgesFocusable={false}
           elementsSelectable
@@ -631,7 +650,7 @@ export function DagSceneCanvasInner({
           <ViewportPortal>
             <DagEdgeLayer
               geometry={geometry}
-              plan={plan}
+              plan={edgePlan}
               model={model}
               showSatisfied={showSatisfied}
               highlightedEdgeIds={highlightedEdgeIds}

@@ -327,6 +327,34 @@ function nodeVisible(node: RuntimeNode, layers: StarMapLayers, selectedId: strin
   return node.inLinearScene || layers.completed || !closed(node.data) || node.activeSubtree || node.data.id === selectedId;
 }
 
+export function starMapNodeSize(radius: number, target: CardTarget | undefined, morph: number) {
+  const m = target && morph > 0.004 ? morph : 0;
+  return {
+    w: radius * 2 * (1 - m) + (target?.w ?? radius * 2) * m,
+    h: radius * 2 * (1 - m) + (target?.h ?? radius * 2) * m,
+  };
+}
+
+export function starMapNodeRect(node: Pick<RuntimeNode, "x" | "y" | "w" | "h">) {
+  return { x: node.x - node.w / 2, y: node.y - node.h / 2, w: node.w, h: node.h };
+}
+
+export function starMapTimeScaleTarget(orbiting: boolean, reducedMotion: boolean, slowed: boolean, morph: number) {
+  if (!orbiting || reducedMotion) return 0;
+  return (slowed ? 0.08 : 1) * (1 - morph);
+}
+
+function edgeAppearance(edge: StarMapEdge, runtime: Runtime, current: StarMapCanvasProps) {
+  if (!current.layers[edge.kind]) return null;
+  const source = runtime.byId.get(edge.source), target = runtime.byId.get(edge.target);
+  if (!source || !target || !nodeVisible(source, current.layers, runtime.selectedId) || !nodeVisible(target, current.layers, runtime.selectedId)) return null;
+  const route = runtime.routeByRaw.get(edge.id);
+  const selected = runtime.selectedId && runtime.litEdges.has(edge.id);
+  const dim = runtime.selectedId && !selected ? 0.16 : 1;
+  const alpha = (route ? 1 : 1 - runtime.morph) * dim * Math.min(source.emergence + 0.15, target.emergence + 0.15);
+  return alpha < 0.015 ? null : { source, target, route, m: route ? runtime.morph : 0, selected, alpha };
+}
+
 export function StarMapCanvas(props: StarMapCanvasProps) {
   const { t } = useT("dag");
   const tRef = useRef(t);
@@ -336,9 +364,8 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
   const propsRef = useRef(props);
   propsRef.current = props;
   const runtimeRef = useRef<Runtime | null>(null);
-  if (!runtimeRef.current || runtimeRef.current.nodes[0]?.data && !props.hierarchy.nodeById.has(runtimeRef.current.nodes[0].data.id)) {
-    runtimeRef.current = makeRuntime(props.hierarchy);
-  }
+  if (!runtimeRef.current) runtimeRef.current = makeRuntime(props.hierarchy);
+  const layoutRef = useRef<StarMapLayoutMode | null>(null);
   const spritesRef = useRef<StarMapSpriteCache | null>(null);
   if (!spritesRef.current) spritesRef.current = new StarMapSpriteCache(props.light);
   const backgroundRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
@@ -348,8 +375,9 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
   const fitMacro = (instant = false) => {
     const runtime = runtimeRef.current!;
     runtime.homeIssueId = null;
+    const dense = propsRef.current.hierarchy.nodes.length > 180;
     const next = fitStarMapCamera(macroBounds(propsRef.current.hierarchy), { width: runtime.width, height: runtime.height }, {
-      insets: insets(propsRef.current.peekOpen), minZoom: 0.12, maxZoom: 0.45, fill: 0.92,
+      insets: insets(propsRef.current.peekOpen), minZoom: dense ? 0.45 : 0.12, maxZoom: 0.45, fill: 0.92,
     });
     if (instant || propsRef.current.reducedMotion) {
       runtime.camera = next;
@@ -420,16 +448,25 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
   useEffect(() => {
     const previous = runtimeRef.current;
     const next = makeRuntime(props.hierarchy);
+    const previousLayout = layoutRef.current;
+    layoutRef.current = props.layout;
     if (previous) {
       next.width = previous.width;
       next.height = previous.height;
       next.dpr = previous.dpr;
       next.camera = previous.camera;
-      next.homeIssueId = previous.homeIssueId;
+      next.cameraGoal = previous.cameraGoal;
+      next.homeIssueId = previous.homeIssueId && next.byId.has(previous.homeIssueId) ? previous.homeIssueId : null;
+      next.selectedId = previous.selectedId && next.byId.has(previous.selectedId) ? previous.selectedId : null;
+      next.hoverId = previous.hoverId && next.byId.has(previous.hoverId) ? previous.hoverId : null;
+      next.hoverEdgeId = previous.hoverEdgeId && props.hierarchy.edges.some((edge) => edge.id === previous.hoverEdgeId) ? previous.hoverEdgeId : null;
+      next.previewId = previous.previewId && next.byId.has(previous.previewId) ? previous.previewId : null;
+      next.linkSource = previous.linkSource && next.byId.has(previous.linkSource) ? previous.linkSource : null;
     }
     runtimeRef.current = next;
-    fitMacro(true);
-  }, [props.hierarchy]);
+    if (next.selectedId) selectNode(next.selectedId);
+    if (previousLayout === null || previousLayout !== props.layout) fitMacro(true);
+  }, [props.hierarchy, props.layout]);
 
   useEffect(() => {
     spritesRef.current = new StarMapSpriteCache(props.light);
@@ -515,8 +552,8 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const runtime = runtimeRef.current!;
     const resize = () => {
+      const runtime = runtimeRef.current!;
       const rect = canvas.getBoundingClientRect();
       runtime.width = Math.max(1, rect.width);
       runtime.height = Math.max(1, rect.height);
@@ -626,8 +663,9 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         }
       }
       const easeM = runtime.morph;
-      const desiredTimeScale = (current.orbiting && !current.reducedMotion && !runtime.hoverId && !runtime.linkSource ? 1 : 0.08) * (1 - easeM);
-      runtime.timeScale += (desiredTimeScale - runtime.timeScale) * Math.min(1, dt * 7);
+      const desiredTimeScale = starMapTimeScaleTarget(current.orbiting, current.reducedMotion, Boolean(runtime.hoverId || runtime.linkSource), easeM);
+      if (desiredTimeScale === 0) runtime.timeScale = 0;
+      else runtime.timeScale += (desiredTimeScale - runtime.timeScale) * Math.min(1, dt * 7);
       runtime.orbitalTime += dt * runtime.timeScale;
 
       const update = (node: RuntimeNode, parent?: RuntimeNode) => {
@@ -660,15 +698,13 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
         const card = runtime.targetCards.get(data.id);
         node.target = card;
         node.inLinearScene = Boolean(card && easeM > 0.004);
-        if (card && easeM > 0.004) {
-          node.x = node.x * (1 - easeM) + card.x * easeM;
-          node.y = node.y * (1 - easeM) + card.y * easeM;
-          node.w = node.r * 2 * (1 - easeM) + card.w * easeM;
-          node.h = node.r * 2 * (1 - easeM) + card.h * easeM;
-        } else {
-          node.w = node.r * 2;
-          node.h = node.r * 2;
+        if (node.inLinearScene) {
+          node.x = node.x * (1 - easeM) + card!.x * easeM;
+          node.y = node.y * (1 - easeM) + card!.y * easeM;
         }
+        const size = starMapNodeSize(node.r, card, easeM);
+        node.w = size.w;
+        node.h = size.h;
         for (const childId of data.childrenIds) {
           const child = runtime.byId.get(childId);
           if (child) update(child, node);
@@ -796,17 +832,11 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
 
   const drawEdges = (ctx: CanvasRenderingContext2D, runtime: Runtime, current: StarMapCanvasProps) => {
     for (const edge of current.hierarchy.edges) {
-      if (!current.layers[edge.kind]) continue;
-      const source = runtime.byId.get(edge.source), targetNode = runtime.byId.get(edge.target);
-      if (!source || !targetNode || !nodeVisible(source, current.layers, runtime.selectedId) || !nodeVisible(targetNode, current.layers, runtime.selectedId)) continue;
-      const a = { x: source.x, y: source.y }, b = { x: targetNode.x, y: targetNode.y };
+      const appearance = edgeAppearance(edge, runtime, current);
+      if (!appearance) continue;
+      const { source, target, route, m, selected, alpha } = appearance;
+      const a = { x: source.x, y: source.y }, b = { x: target.x, y: target.y };
       const control = arcControl(a, b, edge);
-      const route = runtime.routeByRaw.get(edge.id);
-      const m = route ? runtime.morph : 0;
-      const selected = runtime.selectedId && runtime.litEdges.has(edge.id);
-      const dim = runtime.selectedId && !selected ? 0.16 : 1;
-      const alpha = (route ? 1 : 1 - runtime.morph) * dim * Math.min(source.emergence + 0.15, targetNode.emergence + 0.15);
-      if (alpha < 0.015) continue;
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.strokeStyle = edge.kind === "wakeup" ? rgba(VIOLET, current.light ? 0.58 : 0.68) : edge.kind === "mention" ? rgba(WHITE, 0.28) : selected ? rgba(CYAN, 0.86) : rgba(WHITE, current.light ? 0.32 : 0.25);
@@ -872,12 +902,12 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
       ctx.drawImage(veil, node.orbX - radius, node.orbY - radius, radius * 2, radius * 2);
       ctx.globalAlpha = alpha;
     }
+    const rect = starMapNodeRect(node);
     if (m < 0.56) {
       const sprite = isSun ? spritesRef.current!.sun(projectRGB(node.data)) : spritesRef.current!.orb(rgb, running(node.data) || node.data.childrenIds.length > 0 || node.data.issue.statusCategory === "started", isClosed);
-      const drawR = r / 0.34;
-      ctx.drawImage(sprite, node.x - drawR, node.y - drawR, drawR * 2, drawR * 2);
+      ctx.drawImage(sprite, rect.x, rect.y, rect.w, rect.h);
     } else {
-      const x = node.x - node.w / 2, y = node.y - node.h / 2;
+      const { x, y } = rect;
       roundRect(ctx, x, y, node.w, node.h, r * (1 - m) + 7 * m);
       const gradient = ctx.createLinearGradient(x, y, x, y + node.h);
       gradient.addColorStop(0, current.light ? "rgba(255,255,255,.98)" : "rgba(26,32,46,.94)");
@@ -1153,10 +1183,12 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
     const runtime = runtimeRef.current!;
     if (runtime.morph > 0.5) return null;
     const point = world(screen);
-    for (const edge of propsRef.current.hierarchy.edges) {
-      if (!propsRef.current.layers[edge.kind]) continue;
-      const source = runtime.byId.get(edge.source), target = runtime.byId.get(edge.target);
-      if (!source || !target) continue;
+    const current = propsRef.current;
+    for (const edge of current.hierarchy.edges) {
+      if (edge.kind !== "manual") continue;
+      const appearance = edgeAppearance(edge, runtime, current);
+      if (!appearance) continue;
+      const { source, target } = appearance;
       const a = { x: source.x, y: source.y }, b = { x: target.x, y: target.y };
       const control = arcControl(a, b, edge);
       for (let i = 1; i <= 10; i++) {
@@ -1171,7 +1203,7 @@ export function StarMapCanvas(props: StarMapCanvasProps) {
     <>
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 h-full w-full touch-none outline-none focus-visible:outline-2 focus-visible:outline-brand"
+        className="absolute inset-0 h-full w-full touch-none outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-brand"
         data-star-map-canvas
         data-peek-target={runtimeRef.current?.hoverId ?? undefined}
         role="region"

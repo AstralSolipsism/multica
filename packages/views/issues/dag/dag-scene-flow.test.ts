@@ -18,6 +18,7 @@ import {
   dagFocusHiddenCount,
   dagSceneStats,
   dagLineWithSatisfiedFilter,
+  dagVisibleScenePlan,
   dagSceneEdgeDisplay,
   dagSceneFlowNodes,
   dagSceneFocusSet,
@@ -28,7 +29,7 @@ import {
   dagLineLayoutInput,
   dagOverviewLayoutInput,
 } from "./dag-scene-inputs";
-import { dagSceneKey, type DagSceneGeometry } from "./dag-scene";
+import { dagSceneKey, type DagSceneGeometry, type DagScenePlan } from "./dag-scene";
 
 function overviewOf(graph: ReturnType<typeof g>, showSatisfiedDependencies = false): DagOverviewModel {
   return computeDagOverview(createDagModelIndex(graph), { showCompleted: false, showSatisfiedDependencies });
@@ -733,5 +734,31 @@ describe("dagBusSelectionRows", () => {
         showSatisfied: false,
       }).map((row) => row.id),
     ).toEqual(["e-a-seed", "e-a-after"]);
+  });
+});
+
+describe("dagVisibleScenePlan", () => {
+  it("hides selected relation kinds without dropping non-manual bundle members", () => {
+    const plan: DagScenePlan = {
+      input: {
+        kind: "line",
+        id: "root",
+        nodes: [],
+        frames: [],
+        edges: [
+          { id: "bundle", source: "a", target: "b", sourceKind: "task", targetKind: "task" },
+          { id: "wakeup:a:b:done", source: "a", target: "b", sourceKind: "task", targetKind: "task", kind: "wakeup", untilState: "done" },
+          { id: "mention:a:b", source: "a", target: "b", sourceKind: "task", targetKind: "task", kind: "mention" },
+        ],
+      },
+      dependencyIds: { bundle: ["manual:b:a", "stage:a:b"] },
+      overlays: [],
+      overlayDependencyIds: {},
+    };
+    const filtered = dagVisibleScenePlan(plan, { manual: false, wakeup: false, mention: false });
+    expect(filtered.input.edges.map((edge) => edge.id)).toEqual(["bundle"]);
+    expect(filtered.dependencyIds.bundle).toEqual(["stage:a:b"]);
+    expect(dagVisibleScenePlan(plan, { manual: true, wakeup: true, mention: false }).input.edges.map((edge) => edge.id)).toEqual(["bundle", "wakeup:a:b:done"]);
+    expect(dagVisibleScenePlan(plan, { manual: true, wakeup: false, mention: true }).input.edges.map((edge) => edge.id)).toEqual(["bundle", "mention:a:b"]);
   });
 });
