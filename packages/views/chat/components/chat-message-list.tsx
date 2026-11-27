@@ -64,7 +64,7 @@ import { formatElapsedMs, formatMessageTime } from "../lib/format";
 import {
   canonicalAnswerText,
   extractCopyText,
-  segmentStreamingTimeline,
+  liftLatestNarration,
   splitTimeline,
 } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
@@ -802,6 +802,7 @@ function AssistantMessage({
           items={timeline}
           attachments={message?.attachments}
           phase={phase}
+          isStreaming={!message}
           settledContent={canonicalAnswer}
           historyProcess={historyProcess}
           sourceId={sourceId}
@@ -1280,11 +1281,12 @@ function FailureBubble({
   );
 }
 
-// ─── Timeline: process folds + answer ────────────────────────────────────
+// ─── Timeline: outer process fold + answer (Conductor-style) ─────────────
 //
-// Streaming groups adjacent text and process items independently, keeping
-// intermediate narration at normal prose size and each process group folded
-// with its latest summary. Text after the last process item remains the answer.
+// While streaming, splitTimeline (lib/copy-text.ts) carves the items into:
+//   preface — text before the first thinking/tool item
+//   middle  — first → last non-text item (inclusive, may sandwich text)
+//   final   — text after the last non-text item
 //
 // Once settled, the persisted chat_message content is authoritative for the
 // answer. Preface + middle remain in one process fold so intermediate narration
@@ -1301,6 +1303,7 @@ interface HistoryProcess {
 
 function TimelineView({
   items,
+  isStreaming,
   attachments,
   phase = "settled",
   settledContent,
@@ -1308,6 +1311,7 @@ function TimelineView({
   sourceId,
 }: {
   items: ChatTimelineItem[];
+  isStreaming?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   settledContent?: string;
@@ -1323,6 +1327,7 @@ function TimelineView({
           <OuterProcessFold
             key="process"
             items={processItems}
+            isStreaming={false}
             attachments={attachments}
             phase="settled"
             stepCount={middle.length}
@@ -1342,49 +1347,16 @@ function TimelineView({
     );
   }
 
-  if (phase === "streaming") {
-    const { segments, final } = segmentStreamingTimeline(items);
-    return (
-      <>
-        {segments.map((segment) =>
-          segment.kind === "text" ? (
-            <RichContent
-              key={`stream-text:${segment.items[0]!.seq}`}
-              content={segment.items.map((item) => item.content ?? "").join("")}
-              attachments={attachments}
-              density="compact"
-              phase={phase}
-              className="leading-relaxed"
-            />
-          ) : segment.kind === "error" ? (
-            <ErrorRow key={`stream-error:${segment.items[0]!.seq}`} item={segment.items[0]!} />
-          ) : (
-            <OuterProcessFold
-              key={`stream-process:${segment.items[0]!.seq}`}
-              items={segment.items}
-              showLatestSummary
-              attachments={attachments}
-              phase={phase}
-            />
-          ),
-        )}
-        {final.length > 0 && (
-          // Same element type as the settled answer so the handoff keeps it mounted.
-          <div key="answer">
-            <RichContent
-              content={final.map((item) => item.content ?? "").join("")}
-              attachments={attachments}
-              density="compact"
-              phase={phase}
-              className="leading-relaxed"
-            />
-          </div>
-        )}
-      </>
-    );
-  }
-
   const { preface, middle, final } = splitTimeline(items);
+  // While a tool is still running there is no trailing answer yet, so the
+  // agent's latest narration is lifted out of the fold and rendered below it
+  // as prose — that is the line the user needs to act on. Earlier narration
+  // stays inside the single fold as history, and once trailing text starts
+  // streaming it is already `final` and shows as the answer.
+  const { fold, narration } =
+    isStreaming && final.length === 0
+      ? liftLatestNarration(middle)
+      : { fold: middle, narration: [] as ChatTimelineItem[] };
 
   return (
     <>
@@ -1398,12 +1370,23 @@ function TimelineView({
           className="leading-relaxed"
         />
       )}
-      {middle.length > 0 && (
+      {fold.length > 0 && (
         <OuterProcessFold
           key="process"
-          items={middle}
+          items={fold}
+          isStreaming={!!isStreaming}
           attachments={attachments}
           phase={phase}
+        />
+      )}
+      {narration.length > 0 && (
+        <RichContent
+          key={`narration:${narration[0]!.seq}`}
+          content={narration.map((t) => t.content ?? "").join("")}
+          attachments={attachments}
+          density="compact"
+          phase={phase}
+          className="leading-relaxed"
         />
       )}
       {final.length > 0 && (
@@ -1424,28 +1407,45 @@ function TimelineView({
 
 function OuterProcessFold({
   items,
+  isStreaming,
   attachments,
   phase = "settled",
   stepCount,
   historyProcess,
-  showLatestSummary = false,
 }: {
   items: ChatTimelineItem[];
+  isStreaming?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
   stepCount?: number;
   historyProcess?: HistoryProcess;
-  showLatestSummary?: boolean;
 }) {
   const { t } = useT("chat");
   const { t: tAgents } = useT("agents");
+  // Collapsed by default — while streaming the header already carries the
+  // latest step summary. The user can still open the fold to watch the steps,
+  // and the effect below closes it again once the task settles. The settle
+  // collapse used to fall out of a remount: the live TimelineView was torn
+  // down and the persisted one mounted closed. The row is now stable across
+  // that handoff (MUL-4922) — which is the point, it keeps Mermaid and HTML
+  // blocks alive — so the collapse has to be expressed directly.
   const [open, setOpen] = useState(false);
+  const wasStreaming = useRef(!!isStreaming);
+  useEffect(() => {
+    if (wasStreaming.current && !isStreaming) setOpen(false);
+    wasStreaming.current = !!isStreaming;
+  }, [isStreaming]);
   const displayedStepCount = stepCount ?? items.length;
+
+  // Streaming header: the latest step's one-line summary. Tool results are
+  // skipped (an unnamed empty one would otherwise blank the label or flush
+  // the tool's arg summary) and so is text (history or blank narration must
+  // not replace the tool summary either).
   let latestItem: ChatTimelineItem | undefined;
-  if (showLatestSummary) {
+  if (isStreaming) {
     for (let index = items.length - 1; index >= 0; index--) {
       const item = items[index]!;
-      if (item.type !== "tool_result") {
+      if (item.type !== "tool_result" && item.type !== "text") {
         latestItem = item;
         break;
       }
@@ -1458,34 +1458,37 @@ function OuterProcessFold({
           tAgents(($) => $.transcript.patch_summary_more, { path, extra: extraCount }),
       })
     : "";
+  const tooltip = [latestLabel, latestSummary].filter(Boolean).join(" · ");
 
   return (
     <Collapsible open={open} onOpenChange={(next) => {
       setOpen(next);
       historyProcess?.onOpenChange(next);
     }}>
-      <CollapsibleTrigger className="flex h-5 max-w-full min-w-0 items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors">
-        <ChevronRight
-          className={cn(
-            "size-3 shrink-0 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-            open && "rotate-90",
-          )}
-        />
-        <span className="shrink-0">{historyProcess
-          ? t(($) => $.message_list.process_history)
-          : t(($) => $.message_list.process_steps, { count: displayedStepCount })}</span>
-        {(latestLabel || latestSummary) && (
-          <>
-            <span aria-hidden="true" className="shrink-0">·</span>
-            {latestLabel && <span className="max-w-[60%] shrink-0 truncate">{latestLabel}</span>}
-            {latestSummary && (
-              <span className="min-w-0 truncate">
-                {latestSummary}
-              </span>
+      <TruncatedTooltip content={tooltip}>
+        <CollapsibleTrigger className="flex h-5 max-w-full min-w-0 items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors">
+          <ChevronRight
+            className={cn(
+              "size-3 shrink-0 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+              open && "rotate-90",
             )}
-          </>
-        )}
-      </CollapsibleTrigger>
+          />
+          <span className="shrink-0">{historyProcess
+            ? t(($) => $.message_list.process_history)
+            : t(($) => $.message_list.process_steps, { count: displayedStepCount })}</span>
+          {(latestLabel || latestSummary) && (
+            <>
+              <span aria-hidden="true" className="shrink-0">·</span>
+              {latestLabel && <span className="max-w-[60%] shrink-0 truncate">{latestLabel}</span>}
+              {latestSummary && (
+                <span className="min-w-0 truncate">
+                  {latestSummary}
+                </span>
+              )}
+            </>
+          )}
+        </CollapsibleTrigger>
+      </TruncatedTooltip>
       <CollapsibleContent>
         <div className="mt-1 rounded-lg border bg-muted/20 p-2 space-y-0.5">
           {historyProcess?.loading ? (

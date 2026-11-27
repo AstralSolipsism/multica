@@ -5,7 +5,7 @@ import type { ChatTimelineItem } from "@multica/core/chat";
 import {
   canonicalAnswerText,
   extractCopyText,
-  segmentStreamingTimeline,
+  liftLatestNarration,
   splitTimeline,
 } from "./copy-text";
 
@@ -87,53 +87,36 @@ describe("splitTimeline", () => {
   });
 });
 
-describe("segmentStreamingTimeline", () => {
-  it("keeps an all-text timeline as the final answer", () => {
-    const items = [text(1, "hello"), text(2, "world")];
-    expect(segmentStreamingTimeline(items)).toEqual({ segments: [], final: items });
-  });
-
-  it("groups adjacent text and process items and separates the trailing answer", () => {
-    const preface = text(1, "preface");
-    const thought = thinking(2);
-    const firstTool = tool(3);
-    const middle = text(4, "middle");
-    const middleContinued = text(5, " continued");
-    const firstError: ChatTimelineItem = { seq: 6, type: "error", content: "first" };
-    const secondError: ChatTimelineItem = { seq: 7, type: "error", content: "second" };
-    const lastTool = tool(8);
-    const final = text(9, "final");
+describe("liftLatestNarration", () => {
+  it("lifts the latest contiguous text run and keeps the rest in order", () => {
+    const t1 = thinking(1);
+    const early = text(2, "early narration");
+    const u1 = tool(3);
+    const latest = text(4, "latest instruction");
+    const latestContinued = text(5, " continued");
+    const u2 = tool(6);
     expect(
-      segmentStreamingTimeline([
-        preface,
-        thought,
-        firstTool,
-        middle,
-        middleContinued,
-        firstError,
-        secondError,
-        lastTool,
-        final,
-      ]),
+      liftLatestNarration([t1, early, u1, latest, latestContinued, u2]),
     ).toEqual({
-      segments: [
-        { kind: "text", items: [preface] },
-        { kind: "process", items: [thought, firstTool] },
-        { kind: "text", items: [middle, middleContinued] },
-        { kind: "error", items: [firstError] },
-        { kind: "error", items: [secondError] },
-        { kind: "process", items: [lastTool] },
-      ],
-      final: [final],
+      fold: [t1, early, u1, u2],
+      narration: [latest, latestContinued],
     });
   });
 
-  it("returns an empty final tail when the timeline ends with a process", () => {
-    const items = [thinking(1), tool(2)];
-    expect(segmentStreamingTimeline(items)).toEqual({
-      segments: [{ kind: "process", items }],
-      final: [],
+  it("skips a whitespace-only trailing run and lifts the earlier non-blank one", () => {
+    const u1 = tool(1);
+    const latest = text(2, "latest instruction");
+    const u2 = tool(3);
+    const blank = text(4, "  \n ");
+    expect(liftLatestNarration([u1, latest, u2, blank])).toEqual({
+      fold: [u1, u2, blank],
+      narration: [latest],
     });
+  });
+
+  it("returns the input unchanged when no non-blank text exists", () => {
+    const items = [thinking(1), tool(2), text(3, "   ")];
+    expect(liftLatestNarration(items)).toEqual({ fold: items, narration: [] });
   });
 });
 
