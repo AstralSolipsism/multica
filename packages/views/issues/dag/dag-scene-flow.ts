@@ -451,7 +451,7 @@ export function dagSceneFocusSet(
       edgeIds: new Set([...(upstream?.edgeIds ?? []), ...(downstream?.edgeIds ?? [])]),
     };
   }
-  const edges = [...plan.input.edges, ...plan.overlays];
+  const edges = [...plan.input.edges, ...plan.overlays].filter((edge) => !edge.kind);
   const forward = new Map<string, string[]>();
   const backward = new Map<string, string[]>();
   const byEndpoint = new Map<string, string[]>();

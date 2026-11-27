@@ -14,7 +14,7 @@ import type { IssueTableQuerySpec } from "@multica/core/types";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { layoutDagScene } from "./dag-scene-layout";
 import type { DagSceneRequest, DagSceneResponse, DagSceneRunner } from "./dag-scene-runner";
-import { DagView, useDagEmptyBusSelectionReset } from "./dag-view";
+import { LegacyDagView, useDagEmptyBusSelectionReset } from "./dag-view";
 import type { DagSceneCanvasProps } from "./dag-scene-canvas";
 import type { DagToolbarProps } from "./dag-toolbar";
 import { graphNode as makeNode, issueGraph as makeGraph } from "./dag-test-fixtures";
@@ -156,7 +156,7 @@ function setup(
     <QueryClientProvider client={client}>
       <ViewStoreProvider store={store}>
         <ViewBaselineProvider baseline={opts.baseline ?? null}>
-          <DagView
+          <LegacyDagView
             spec={spec}
             hasActiveFilters={opts.hasActiveFilters ?? false}
             sceneRunnerFactory={opts.runnerFactory ?? syncSceneRunner}
@@ -301,7 +301,7 @@ describe("DagView level navigation", () => {
     render(
       <QueryClientProvider client={client}>
         <ViewStoreProvider store={store}>
-          <DagView spec={mySpec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
+          <LegacyDagView spec={mySpec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
         </ViewStoreProvider>
       </QueryClientProvider>,
     );
@@ -427,7 +427,7 @@ describe("DagView error and refresh handling", () => {
       <QueryClientProvider client={client}>
         <ViewStoreProvider store={store}>
           <ViewBaselineProvider baseline={baseline ?? null}>
-            <DagView spec={spec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
+            <LegacyDagView spec={spec} hasActiveFilters={false} sceneRunnerFactory={syncSceneRunner} />
           </ViewBaselineProvider>
         </ViewStoreProvider>
       </QueryClientProvider>,

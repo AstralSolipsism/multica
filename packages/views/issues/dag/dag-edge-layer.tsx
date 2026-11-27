@@ -199,6 +199,13 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
       }),
     [composed.routes, plan, states, showSatisfied],
   );
+  const weakRoutes = useMemo(() => {
+    const edges = new Map(plan.input.edges.filter((edge) => edge.kind).map((edge) => [edge.id, edge]));
+    return Object.entries(composed.routes).flatMap(([edgeId, route]) => {
+      const edge = edges.get(edgeId);
+      return edge ? [{ edge, route }] : [];
+    });
+  }, [composed.routes, plan.input.edges]);
   const visibleArrows = useMemo(() => {
     if (degraded || !bounds) return degraded ? [] : arrows;
     return arrows.filter(({ route }) => dagRouteVisible(route, bounds));
@@ -582,6 +589,23 @@ export const DagEdgeLayer = memo(function DagEdgeLayer({
             )}
           </g>
         )}
+        {weakRoutes.map(({ edge, route }) => (
+          <polyline
+            key={`weak:${edge.id}`}
+            data-dag-weak-edge={edge.id}
+            data-dag-weak-kind={edge.kind}
+            points={route.map((point) => `${point.x},${point.y}`).join(" ")}
+            fill="none"
+            stroke={edge.kind === "wakeup" ? "#a78bfa" : "#94a3b8"}
+            strokeOpacity={edge.kind === "wakeup" ? 0.68 : 0.4}
+            strokeWidth={edge.kind === "wakeup" ? 1.25 : 0.8}
+            strokeDasharray={edge.kind === "wakeup" ? "5 4" : "1 5"}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          >
+            {edge.untilState && <title>{`until ${edge.untilState}`}</title>}
+          </polyline>
+        ))}
         {selectedBox && (
           <g data-dag-selected={selectedNodeId}>
             <rect

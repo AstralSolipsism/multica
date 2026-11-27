@@ -90,6 +90,12 @@ export interface DagSceneCanvasProps {
   onOpenIssue: (issueId: string) => void;
   onExternalJump: (group: DagExternalGroup, side: "upstream" | "downstream") => void;
   registerCanvasApi?: (api: DagSceneCanvasApi | null) => void;
+  /** Star Map hands off its settled camera and keeps it centered when the
+   *  peek/viewport changes. Ordinary DAG navigation leaves these unset. */
+  viewportOverride?: { viewport: Viewport; nonce: number } | null;
+  viewportConstraint?: (viewport: Viewport) => Viewport;
+  /** Embedded scenes keep the host's atmospheric background and HUD. */
+  embedded?: boolean;
 }
 
 /** Zoom degradation swaps cards to their plain block only where the flag
@@ -132,6 +138,9 @@ export function DagSceneCanvasInner({
   onOpenIssue,
   onExternalJump,
   registerCanvasApi,
+  viewportOverride,
+  viewportConstraint,
+  embedded = false,
 }: DagSceneCanvasProps) {
   const storeApi = useViewStoreApi();
   const selectedNodeId = useViewStore((s) => s.dagSelectedNodeId);
@@ -186,9 +195,13 @@ export function DagSceneCanvasInner({
     height: canvasHeight,
   });
   viewportBounds.current = { targets: viewportTargets, width: canvasWidth, height: canvasHeight };
+  const externalConstraint = useRef(viewportConstraint);
+  externalConstraint.current = viewportConstraint;
   const boundedViewport = useCallback(
-    (viewport: Viewport, preferredId?: string) =>
-      constrainDagViewport(viewport, viewportBounds.current, viewportBounds.current.targets, preferredId),
+    (viewport: Viewport, preferredId?: string) => {
+      const bounded = constrainDagViewport(viewport, viewportBounds.current, viewportBounds.current.targets, preferredId);
+      return externalConstraint.current?.(bounded) ?? bounded;
+    },
     [],
   );
   const persistViewport = useCallback(() => {
@@ -215,9 +228,17 @@ export function DagSceneCanvasInner({
     [geometry, canvasWidth, canvasHeight, setViewport, fitView],
   );
 
+  const appliedViewportKey = useRef<string | null>(null);
+  const handledViewportOverride = useRef(0);
+  useEffect(() => {
+    if (!viewportInitialized || !viewportOverride || handledViewportOverride.current === viewportOverride.nonce) return;
+    handledViewportOverride.current = viewportOverride.nonce;
+    appliedViewportKey.current = viewportKey;
+    void setViewport(viewportOverride.viewport, { duration: reducedMotion ? 0 : 440 });
+  }, [viewportInitialized, viewportOverride, viewportKey, setViewport, reducedMotion]);
+
   // Level switches restore that level's remembered viewport; a level opened
   // for the first time fits its content (see fitFirstOpen).
-  const appliedViewportKey = useRef<string | null>(null);
   useEffect(() => {
     if (!viewportInitialized || appliedViewportKey.current === viewportKey) return;
     appliedViewportKey.current = viewportKey;
@@ -551,7 +572,7 @@ export function DagSceneCanvasInner({
           nodes={nodes}
           edges={[]}
           nodeTypes={nodeTypes}
-          defaultViewport={{ x: 20, y: 20, zoom: 1 }}
+          defaultViewport={viewportOverride?.viewport ?? { x: 20, y: 20, zoom: 1 }}
           onNodesChange={handleNodesChange}
           onNodeClick={(event, node) => handleNodeClick(node, event.detail)}
           onNodeDoubleClick={(_, node) => {
@@ -605,7 +626,7 @@ export function DagSceneCanvasInner({
           maxZoom={2}
           deleteKeyCode={null}
           colorMode={colorMode === "dark" ? "dark" : "light"}
-          className="bg-background"
+          className={embedded ? "bg-transparent" : "bg-background"}
         >
           <ViewportPortal>
             <DagEdgeLayer
@@ -625,9 +646,9 @@ export function DagSceneCanvasInner({
               onBusClick={handleBusClick}
             />
           </ViewportPortal>
-          <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />
-          <Controls showInteractive={false} position="bottom-left" />
-          <MiniMap pannable zoomable className="!bg-card" />
+          {!embedded && <Background gap={24} size={1} className="stroke-border/40" bgColor="transparent" />}
+          {!embedded && <Controls showInteractive={false} position="bottom-left" />}
+          {!embedded && <MiniMap pannable zoomable className="!bg-card" />}
         </ReactFlow>
       </DagCanvasActionsContext.Provider>
     </div>

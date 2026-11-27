@@ -55,6 +55,7 @@ import { DagToolbar } from "./dag-toolbar";
 import type { DagBusSelectionItem } from "./dag-selection-bus";
 import { DagErrorState, graphErrorPolicy } from "./dag-error-state";
 import type { DagLocateRequest, DagSceneCanvasApi } from "./dag-scene-canvas";
+import { StarMapDagView } from "./star-map-view";
 
 const loadDagCanvas = once(() => import("./dag-scene-canvas"));
 type DagSceneCanvasModule = typeof import("./dag-scene-canvas");
@@ -98,12 +99,25 @@ export interface DagViewProps {
   canvasLoader?: () => Promise<DagSceneCanvasModule>;
 }
 
-export function DagView({
+export function DagView(props: DagViewProps) {
+  const [renderer, setRenderer] = useState<"star" | "legacy">("star");
+  return renderer === "star"
+    ? <StarMapDagView {...props} onOpenLegacy={() => setRenderer("legacy")} />
+    : <LegacyDagView {...props} onOpenStarMap={() => setRenderer("star")} />;
+}
+
+export interface LegacyDagViewProps extends DagViewProps {
+  onOpenStarMap?: () => void;
+}
+
+/** Traditional layered flow, retained as a first-class alternate renderer. */
+export function LegacyDagView({
   spec,
   hasActiveFilters,
   sceneRunnerFactory,
   canvasLoader,
-}: DagViewProps) {
+  onOpenStarMap,
+}: LegacyDagViewProps) {
   const { t } = useT("issues");
   const { t: tDag } = useT("dag");
   const wsId = useWorkspaceId();
@@ -512,6 +526,7 @@ export function DagView({
         onExitLine={onExitLine}
         onFocusFrame={onFocusFrame}
         onLocateDependency={onLocateDependency}
+        onOpenStarMap={onOpenStarMap}
       />
 
       {focusUnavailableAt === levelKey && (
