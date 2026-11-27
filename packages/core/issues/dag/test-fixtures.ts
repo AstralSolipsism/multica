@@ -1,4 +1,4 @@
-import type { IssueGraph, IssueGraphNode } from "../../api/issue-graph-schemas";
+import type { IssueGraph, IssueGraphNode, IssueGraphWeakEdge } from "../../api/issue-graph-schemas";
 
 export function graphNode(
   id: string,
@@ -37,6 +37,7 @@ export function graphNode(
 export function issueGraph(
   nodes: IssueGraphNode[],
   edges: ([source: string, target: string] | { id: string; source: string; target: string })[] = [],
+  weakEdges: IssueGraphWeakEdge[] = [],
 ): IssueGraph {
   return {
     schemaVersion: 1,
@@ -53,6 +54,7 @@ export function issueGraph(
       const { id, source, target } = Array.isArray(edge) ? { id: `${edge[0]}-${edge[1]}`, source: edge[0], target: edge[1] } : edge;
       return { sourceEdgeId: id, source, target, type: "blocked_by" as const };
     }),
+    weakEdges,
     projects: [
       { id: "p1", title: "Project One" },
       { id: "p2", title: "Project Two" },

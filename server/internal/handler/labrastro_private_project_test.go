@@ -67,6 +67,47 @@ func TestLabrastroPrivateProjectBlockersAndGraph(t *testing.T) {
 	}
 }
 
+// A wakeup wait or a mention that touches a private project is no relation for
+// a member outside it: the edge is dropped with no restricted flag and no trace
+// of the hidden issue, while relations between visible issues remain.
+func TestLabrastroPrivateProjectHidesWeakEdges(t *testing.T) {
+	f := newPrivateProjectFixture(t)
+	peer := dbfx.Issue(t, "public peer", testutil.Cols{"description": "see mention://issue/" + f.publicIssue})
+	dbfx.Exec(t, "UPDATE issue SET description=$2 WHERE id=$1", f.publicIssue, "see mention://issue/"+f.secretIssue)
+	dbfx.Exec(t, "UPDATE issue SET description=$2 WHERE id=$1", f.secretIssue, "see mention://issue/"+f.publicIssue)
+	addWakeup(t, dbfx, f.publicIssue, map[string]any{"type": "other_issue", "issue_id": f.secretIssue, "state": "in_review"})
+	addWakeup(t, dbfx, f.secretIssue, map[string]any{"type": "other_issue", "issue_id": f.publicIssue, "state": "done"})
+	ours := map[string]bool{peer: true, f.publicIssue: true, f.secretIssue: true}
+	for _, tc := range []struct {
+		user string
+		want int
+	}{{f.outsider, 1}, {f.insider, 5}, {testUserID, 5}} {
+		var graph service.IssueGraph
+		body := testutil.Call(t, testHandler.GetIssueGraph, asUser(graphRequest(dbfx, nil), tc.user)).Want(http.StatusOK).JSON(&graph).Text()
+		edges := map[service.IssueGraphWeakEdge]bool{}
+		for _, e := range graph.WeakEdges {
+			if ours[e.From] && ours[e.To] {
+				edges[e] = true
+			}
+		}
+		if len(edges) != tc.want {
+			t.Fatalf("weak edges for %s: %+v", tc.user, edges)
+		}
+		if tc.user == f.outsider {
+			_, visible := edges[service.IssueGraphWeakEdge{From: peer, To: f.publicIssue, Kind: "mention"}]
+			if !visible || strings.Contains(body, f.secretIssue) || strings.Contains(body, f.projectID) {
+				t.Fatalf("a private weak edge leaked to an outsider: %s", body)
+			}
+		}
+	}
+	// Alone, the public issue reports no hidden relation at all.
+	var focused service.IssueGraph
+	testutil.Call(t, testHandler.GetIssueGraph, asUser(graphRequest(dbfx, url.Values{"focus_issue_id": {f.publicIssue}}), f.outsider)).Want(http.StatusOK).JSON(&focused)
+	if len(focused.WeakEdges) != 0 || focused.HasRestrictedContext || len(focused.Nodes) != 1 {
+		t.Fatalf("a hidden weak edge was restricted instead of dropped: %+v", focused)
+	}
+}
+
 func TestLabrastroPrivateProjectEngineeringHTTP(t *testing.T) {
 	f := newPrivateProjectFixture(t)
 	router := chi.NewRouter()

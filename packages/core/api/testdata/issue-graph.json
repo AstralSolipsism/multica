@@ -441,6 +441,7 @@
       "type": "blocked_by"
     }
   ],
+  "weak_edges": [],
   "projects": [
     {
       "id": "003ad6c9-8134-44a8-89f7-61e967ff40f9",

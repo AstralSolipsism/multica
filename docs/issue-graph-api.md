@@ -18,9 +18,31 @@ descendant) is left behind and reported with `RAISE NOTICE`.
 Blockers are never inherited from an ancestor: parentage only adds context
 nodes. Regression coverage is `TestIssueGraph*` in the handler and service
 packages, `TestLabrastroPrivateProjectBlockersAndGraph` for hidden blockers,
-parents and revoked members, and `TestIssueGraphRouteRefusesGuestsAndHidesPrivateProjects`
+parents and revoked members, `TestLabrastroPrivateProjectHidesWeakEdges` for
+hidden wakeup and mention endpoints, and `TestIssueGraphRouteRefusesGuestsAndHidesPrivateProjects`
 through the production router. No real agent CLI is required or permitted by
 the default tests.
+
+## Weak edges
+
+Wakeup waits and mention references are display-only relations: neither gates
+execution, widens the context closure or counts as a blocker. Both are read in
+the snapshot below, deduplicated and ordered by kind and endpoints.
+
+- `wakeup`: an enabled `--until-issue` wakeup (`issue_wakeup.condition` of type
+  `other_issue`), awaited issue → waiting issue, with the awaited state in
+  `until_state`. Platform rules and other condition types are not relations.
+- `mention`: a `mention://issue/<uuid>` in an issue description or in one of the
+  workspace's newest 20,000 comments containing `mention://issue/` in any letter
+  case, citing issue → cited issue. An upper-case prefix takes a window slot
+  without yielding an edge. A ↔ B and cycles are legal; deleted comments and
+  self-references are ignored.
+
+`idx_wakeup_workspace_enabled` serves the wakeup read. Neither `issue` nor
+`comment` keeps a content index (migrations 454 and 463 retired them), so the
+mention read filters every issue description and comment of the workspace on
+each graph request; the limit bounds the comments it extracts from, not the
+rows it filters.
 
 ## Request and authorization
 
@@ -40,8 +62,9 @@ There is no node-count limit, cursor, `limit` or `scheduled` parameter. The
 JSON query limit is 1 MiB; transport/proxy URL limits also apply.
 
 Membership, project/focus scope, matched IDs, status catalog, blocker
-relations, compact details and active task counts use one read-only
-REPEATABLE READ transaction. Membership is rechecked inside that transaction.
+relations, wakeup and mention relations, compact details and active task counts
+use one read-only REPEATABLE READ transaction. Membership is rechecked inside
+that transaction.
 The request workspace must match its authenticated transport scope, including
 task credential binding. A failed transaction never emits a success.
 
@@ -53,7 +76,8 @@ Access follows the workspace routes' default-deny order:
 - For a member, the graph is narrowed by private-project access. An issue in a
   private project the member is not in is hidden, and so are its project, its
   blockers and its parent: `has_restricted_context`, `has_restricted_parent`
-  and `dependency_summary` carry only the boolean markers below.
+  and `dependency_summary` carry only the boolean markers below. A wakeup or
+  mention edge with a hidden endpoint is omitted and sets no flag.
 - A hidden project or focus issue answers 404, byte-identical to a missing
   one.
 
@@ -68,7 +92,7 @@ graph; the frontend stage of an upgrade does so together with its expectations.
 logical source fixture; integration tests map its logical IDs to fixture UUIDs.
 
 The version-1 envelope includes `snapshot_id`, `captured_at`, `complete: true`,
-`scope`, `matched_count`, `context_count`, `nodes`, `edges` and
+`scope`, `matched_count`, `context_count`, `nodes`, `edges`, `weak_edges` and
 `has_restricted_context`. Additive fields are `topology_id`, `projects` and
 `focus_issue_id`; nodes also include `priority`, `has_restricted_parent` and
 `dependency_summary`. The TypeScript schema converts snake_case to camelCase.
@@ -81,6 +105,7 @@ The version-1 envelope includes `snapshot_id`, `captured_at`, `complete: true`,
 | `role` | `match` contributes to the subject count; `context` explains prerequisites or ancestry. |
 | `parentIssueId` / `projectId` / `stage` | Hierarchy, project and stage grouping. Null has its ordinary unassigned meaning unless `hasRestrictedParent` is true. |
 | `edges` | Every effective `blocked_by` edge, prerequisite → dependent. `sourceEdgeId` is `manual:<issue>:<blocker>` for a stored `issue_blocker` row and `stage:<issue>:<blocker>` for same-parent stage order; a stored edge replaces that pair's stage edge. No expanded descendant execution edge set is transferred. |
+| `weakEdges` | Wakeup waits and mention references between two visible nodes, `{ from, to, kind: "wakeup" \| "mention", untilState? }`. They are not blockers: they never enter `edges`, `dependencySummary` or `topologyId`, and change `snapshotId` only. A server that predates them omits the field, which parses as none. |
 | `dependencySummary` | The node's own unfinished blockers, manual and stage alike: visible count, restricted blocker boolean and an opaque version of the blocker set. Only each blocker's current effective `done` or `cancelled` category satisfies it. |
 | `runSummary` | Counts actual queue rows in queued/dispatched/running/waiting_local_directory states. Zero is an observed empty active set, not a guess from Issue status. |
 | restricted markers | Only booleans are returned. Hidden node/parent/source-edge IDs, titles and counts are omitted. Server-side satisfaction still includes hidden blockers. |

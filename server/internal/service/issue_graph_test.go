@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +113,57 @@ func TestIssueGraphRefusesUnknownBlockerEndpoints(t *testing.T) {
 	var refusal *IssueGraphError
 	if !errors.As(err, &refusal) || refusal.Code != "dependency_data_unverified" {
 		t.Fatalf("foreign blocker endpoint was not refused: %v", err)
+	}
+}
+
+// Weak edges are an induced subgraph of the public nodes: an edge with a
+// hidden or unknown endpoint is dropped without widening the closure, counting
+// as a blocker or reporting restricted context.
+func TestIssueGraphWeakEdgesJoinPublicNodesOnly(t *testing.T) {
+	m := IssueGraphModel{Workspace: "ws", Issues: map[string]IssueGraphIssue{"a": {}, "b": {}, "secret": {}}, WeakEdges: []IssueGraphWeakEdge{
+		{Kind: "mention", From: "a", To: "b"},
+		{Kind: "mention", From: "b", To: "a"},
+		{Kind: "wakeup", From: "a", To: "b", UntilState: "in_review"},
+		{Kind: "mention", From: "a", To: "secret"},
+		{Kind: "wakeup", From: "secret", To: "b", UntilState: "done"},
+		{Kind: "mention", From: "a", To: "unknown"},
+	}}
+	nodes := []IssueGraphNode{{ID: "a"}, {ID: "b"}, {ID: "secret"}}
+	visible := func(id string) bool { return id != "secret" }
+	matched := map[string]bool{"a": true, "b": true}
+	g, err := m.Graph(nodes, nil, matched, IssueGraphScope{Type: "workspace"}, nil, time.Now(), visible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A <-> B and a wakeup on the same pair are all kept.
+	want := []IssueGraphWeakEdge{{"a", "b", "mention", ""}, {"b", "a", "mention", ""}, {"a", "b", "wakeup", "in_review"}}
+	if !reflect.DeepEqual(g.WeakEdges, want) || g.HasRestrictedContext || len(g.Edges) != 0 || g.MatchedCount != 2 || g.ContextCount != 0 {
+		t.Fatalf("public weak edges differ: %+v", g)
+	}
+	for _, n := range g.Nodes {
+		if n.DependencySummary.VisibleUnsatisfiedCount != 0 || n.DependencySummary.HasRestrictedBlockers {
+			t.Fatal("a weak edge was counted as a blocker")
+		}
+	}
+	data, _ := json.Marshal(g)
+	if strings.Contains(string(data), "secret") {
+		t.Fatal("a weak edge disclosed a hidden endpoint")
+	}
+	// b is only weakly related to a, so a focus on a does not pull it in.
+	alone, err := m.Graph(nodes, nil, map[string]bool{"a": true}, IssueGraphScope{Type: "workspace"}, nil, time.Now(), visible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alone.WeakEdges) != 0 || alone.ContextCount != 0 || alone.HasRestrictedContext {
+		t.Fatalf("weak edges widened the closure: %+v", alone)
+	}
+	// Weak edges are content: they change the snapshot, not the layout identity.
+	m.WeakEdges = nil
+	without, err := m.Graph(nodes, nil, matched, IssueGraphScope{Type: "workspace"}, nil, time.Now(), visible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.TopologyID != g.TopologyID || without.SnapshotID == g.SnapshotID || without.WeakEdges == nil || len(without.WeakEdges) != 0 {
+		t.Fatal("weak edges must change the snapshot, not the topology")
 	}
 }

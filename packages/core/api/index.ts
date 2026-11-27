@@ -30,7 +30,7 @@ export type {
 } from "./schemas";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export { IssueGraphSchema, issueGraphReadiness } from "./issue-graph-schemas";
-export type { IssueGraph, IssueGraphNode, IssueGraphRequest } from "./issue-graph-schemas";
+export type { IssueGraph, IssueGraphNode, IssueGraphWeakEdge, IssueGraphRequest } from "./issue-graph-schemas";
 export * from "./labrastro-engineering-exports";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";
